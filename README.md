@@ -51,54 +51,30 @@ pnpm --filter @hile/core dev
 
 ## 添加新包
 
-1. 在 `packages/` 下创建新目录：
+使用脚手架脚本一键创建：
 
 ```bash
-mkdir -p packages/new-pkg/src
+pnpm run create <包名>
 ```
 
-2. 创建 `packages/new-pkg/package.json`：
-
-```json
-{
-  "name": "@hile/new-pkg",
-  "version": "1.0.0",
-  "type": "module",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
-  "scripts": {
-    "build": "tsc -b",
-    "dev": "tsc -b --watch",
-    "test": "vitest run"
-  },
-  "files": ["dist"],
-  "license": "MIT",
-  "devDependencies": {
-    "vitest": "^4.0.18"
-  }
-}
-```
-
-3. 创建 `packages/new-pkg/tsconfig.json`：
-
-```json
-{
-  "extends": "../../tsconfig.json",
-  "compilerOptions": {
-    "outDir": "./dist",
-    "rootDir": "./src"
-  },
-  "include": ["src"],
-  "exclude": ["node_modules", "dist", "src/**/*.test.ts"]
-}
-```
-
-4. 创建源码 `packages/new-pkg/src/index.ts`
-
-5. 安装依赖：
+例如创建一个 `utils` 包：
 
 ```bash
-pnpm install
+pnpm run create utils
+```
+
+脚本会自动完成以下步骤：
+1. 创建 `packages/utils/` 目录和 `src/index.ts` 入口文件
+2. 生成 `package.json`（包名为 `@hile/utils`，含 build/dev/test 脚本）
+3. 生成 `tsconfig.json`（继承根配置）
+4. 运行 `pnpm install` 安装依赖
+
+创建完成后即可使用：
+
+```bash
+pnpm --filter @hile/utils build    # 编译
+pnpm --filter @hile/utils test     # 测试
+pnpm --filter @hile/utils dev      # 监听开发
 ```
 
 ### 包间依赖
@@ -106,7 +82,7 @@ pnpm install
 如果新包依赖 `@hile/core`：
 
 ```bash
-pnpm --filter @hile/new-pkg add @hile/core --workspace
+pnpm --filter @hile/utils add @hile/core --workspace
 ```
 
 ## 发布
