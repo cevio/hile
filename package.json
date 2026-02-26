@@ -1,24 +1,18 @@
 {
-  "name": "hile",
-  "version": "1.0.0",
-  "description": "OpenClaw plugin",
+  "name": "hile-monorepo",
+  "private": true,
   "type": "module",
-  "main": "./dist/index.js",
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
-    "test": "vitest run"
+    "build": "lerna run build",
+    "test": "lerna run test",
+    "dev": "lerna run dev",
+    "publish": "lerna publish"
   },
-  "files": [
-    "dist",
-    "README.md",
-    "SKILL.md"
-  ],
-  "author": "",
-  "license": "MIT",
   "devDependencies": {
-    "@types/node": "^25.3.1",
-    "typescript": "^5.9.3",
-    "vitest": "^4.0.18"
-  }
+    "lerna": "^8.2.2",
+    "typescript": "^5.9.3"
+  },
+  "workspaces": [
+    "packages/*"
+  ]
 }
