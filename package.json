@@ -1,0 +1,24 @@
+{
+  "name": "hile",
+  "version": "1.0.0",
+  "description": "OpenClaw plugin",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest run"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "SKILL.md"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^25.3.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}
