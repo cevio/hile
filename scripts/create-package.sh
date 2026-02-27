@@ -38,6 +38,9 @@ cat > "$PKG_DIR/package.json" <<EOF
   },
   "files": ["dist"],
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "devDependencies": {
     "vitest": "^4.0.18"
   }
