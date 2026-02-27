@@ -1,5 +1,6 @@
 {
   "name": "@hile/http",
+  "description": "Hile http - HTTP service framework",
   "version": "1.0.0",
   "type": "module",
   "main": "./dist/index.js",
