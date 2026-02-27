@@ -46,10 +46,10 @@ type HttpProps = {
 }
 
 // 控制器处理函数：接收 Koa Context，返回值自动赋给 ctx.body
-type ControllerFunction<R> = (ctx: Context) => R | Promise<R>
+type ControllerFunction = (ctx: Context) => unknown | Promise<unknown>
 
 // 控制器注册信息：由 defineController 返回
-interface ControllerRegisterProps<R> {
+interface ControllerRegisterProps {
   id: number
   method: HTTPMethod
   middlewares: Middleware[]
@@ -499,10 +499,10 @@ const close = await http.listen()
 
 | 调用形式 | 说明 |
 |---------|------|
-| `defineController(method, fn)` | 无中间件，直接传控制器函数 |
-| `defineController(method, [mw1, mw2], fn)` | 有中间件数组 + 控制器函数 |
+| `defineController(method, fn: ControllerFunction)` | 无中间件，直接传控制器函数 |
+| `defineController(method, middlewares: Middleware[], fn: ControllerFunction)` | 有中间件数组 + 控制器函数 |
 
-**返回值 `ControllerRegisterProps`：**
+**返回值 `ControllerRegisterProps`（非泛型）：**
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -515,7 +515,7 @@ const close = await http.listen()
 
 | 方法 | 签名 | 说明 |
 |------|------|------|
-| `compile` | `(path, controllers, options?) => () => void` | 手动编译绑定路由 |
+| `compile` | `(path, controllers: ControllerRegisterProps \| ControllerRegisterProps[], options?) => () => void` | 手动编译绑定路由 |
 | `from` | `(directory, options?) => Promise<() => void>` | 文件系统批量加载 |
 
 ---
@@ -574,7 +574,7 @@ defineController('GET', [mw1, mw2], fn)
     }]
 ```
 
-控制器函数 `fn` 的返回值行为：
+控制器函数 `fn` 的返回值类型为 `unknown | Promise<unknown>`：
 - 返回非 `undefined` 值 → 自动设置 `ctx.body`
 - 返回 `undefined` → 不修改 `ctx.body`（用于流、手动设置等场景）
 

@@ -22,7 +22,7 @@ export class Loader {
    * @param options 选项
    * @returns 注销回调
    */
-  public compile<R>(path: string, controllers: ControllerRegisterProps<R> | ControllerRegisterProps<R>[], options: LoaderCompileOptions = {
+  public compile(path: string, controllers: ControllerRegisterProps | ControllerRegisterProps[], options: LoaderCompileOptions = {
     defaultSuffix: '/index',
   }) {
     const callbacks: (() => void)[] = [];

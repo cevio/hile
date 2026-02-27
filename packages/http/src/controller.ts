@@ -1,7 +1,7 @@
 import { HTTPMethod } from 'find-my-way';
 import { Context, Middleware } from 'koa';
-export type ControllerFunction<R> = (ctx: Context) => R | Promise<R>;
-export interface ControllerRegisterProps<R> {
+export type ControllerFunction = (ctx: Context) => unknown | Promise<unknown>;
+export interface ControllerRegisterProps {
   id: number;
   method: HTTPMethod;
   middlewares: Middleware[];
@@ -17,13 +17,13 @@ let _id = 1;
  * @param fn 控制器函数
  * @returns 路由控制器注册信息
  */
-export function defineController<R>(
+export function defineController(
   method: HTTPMethod,
-  middlewares: Middleware[] | ControllerFunction<R>,
-  fn?: ControllerFunction<R>
-): ControllerRegisterProps<R> {
+  middlewares: Middleware[] | ControllerFunction,
+  fn?: ControllerFunction
+): ControllerRegisterProps {
   let _middlewares: Middleware[] = [];
-  let _fn: ControllerFunction<R> | undefined = undefined;
+  let _fn: ControllerFunction | undefined = undefined;
   if (typeof middlewares === 'function' && !fn) {
     _fn = middlewares;
     _middlewares = [];
