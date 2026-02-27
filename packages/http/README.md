@@ -175,7 +175,7 @@ await http.load('./src/controllers', {
 配合 `hile` 服务容器管理 HTTP 服务的生命周期：
 
 ```typescript
-import { defineService } from 'hile'
+import { defineService } from '@hile/core'
 import { Http } from '@hile/http'
 
 export const httpService = defineService(async (shutdown) => {

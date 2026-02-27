@@ -585,7 +585,7 @@ defineController('GET', [mw1, mw2], fn)
 `@hile/http` 通常通过 `hile` 服务容器进行管理：
 
 ```typescript
-import { defineService, loadService } from 'hile'
+import { defineService, loadService } from '@hile/core'
 import { Http } from '@hile/http'
 
 export const httpService = defineService(async (shutdown) => {

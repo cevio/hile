@@ -5,13 +5,13 @@
 ## 安装
 
 ```bash
-pnpm add hile
+pnpm add @hile/core
 ```
 
 ## 快速开始
 
 ```typescript
-import { defineService, loadService } from 'hile'
+import { defineService, loadService } from '@hile/core'
 
 // 定义服务
 const greeterService = defineService(async (shutdown) => {
@@ -34,7 +34,7 @@ greeter.hello('World') // "Hello, World!"
 使用 `defineService` 注册一个服务。服务函数接收一个 `shutdown` 参数，用于注册资源清理回调。
 
 ```typescript
-import { defineService } from 'hile'
+import { defineService } from '@hile/core'
 
 export const databaseService = defineService(async (shutdown) => {
   const pool = await createPool('postgres://localhost:5432/app')
@@ -48,7 +48,7 @@ export const databaseService = defineService(async (shutdown) => {
 使用 `loadService` 获取服务实例。容器保证服务函数只执行一次，后续调用直接返回缓存结果。
 
 ```typescript
-import { loadService } from 'hile'
+import { loadService } from '@hile/core'
 import { databaseService } from './services/database'
 
 const db = await loadService(databaseService)
@@ -74,7 +74,7 @@ const [r1, r2, r3] = await Promise.all([
 在服务函数内部通过 `loadService` 加载所依赖的其他服务：
 
 ```typescript
-import { defineService, loadService } from 'hile'
+import { defineService, loadService } from '@hile/core'
 import { databaseService } from './database'
 import { cacheService } from './cache'
 
@@ -127,7 +127,7 @@ export const connectionService = defineService(async (shutdown) => {
 除默认容器外，可以创建独立的 `Container` 实例，实现服务作用域隔离：
 
 ```typescript
-import { Container } from 'hile'
+import { Container } from '@hile/core'
 
 const container = new Container()
 

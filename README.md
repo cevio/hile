@@ -6,14 +6,14 @@ Hile monorepo，使用 pnpm workspaces + Lerna 管理。
 
 | 包名 | 说明 | 版本 |
 |------|------|------|
-| [`hile`](./packages/core) | 轻量级异步服务容器，提供单例管理、并发合并和生命周期销毁 | 1.0.0 |
+| [`@hile/core`](./packages/core) | 轻量级异步服务容器，提供单例管理、并发合并和生命周期销毁 | 1.0.0 |
 | [`@hile/http`](./packages/http) | HTTP 服务框架，基于 Koa + find-my-way，支持路由注册、中间件和文件路由加载 | 1.0.0 |
 
 ## 项目结构
 
 ```
 ├── packages/
-│   ├── core/              # hile
+│   ├── core/              # @hile/core
 │   └── http/              # @hile/http
 ├── scripts/
 │   └── create-package.sh  # 新包脚手架脚本
@@ -48,7 +48,7 @@ pnpm run test
 
 ### 单包操作
 
-将 `<pkg>` 替换为包名，如 `hile`、`@hile/http`：
+将 `<pkg>` 替换为包名，如 `@hile/core`、`@hile/http`：
 
 | 命令 | 说明 |
 |------|------|
@@ -79,7 +79,7 @@ pnpm run create utils
 ### 包间依赖
 
 ```bash
-pnpm --filter @hile/utils add hile --workspace
+pnpm --filter @hile/utils add @hile/core --workspace
 ```
 
 ## 发布

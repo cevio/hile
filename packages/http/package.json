@@ -1,7 +1,7 @@
 {
   "name": "@hile/http",
   "description": "Hile http - HTTP service framework",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -11,7 +11,9 @@
     "test": "vitest run"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "SKILL.md"
   ],
   "license": "MIT",
   "publishConfig": {

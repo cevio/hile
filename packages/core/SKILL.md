@@ -46,7 +46,7 @@ interface ServiceRegisterProps<R> {
 **模板：**
 
 ```typescript
-import { defineService } from 'hile'
+import { defineService } from '@hile/core'
 
 export const xxxService = defineService(async (shutdown) => {
   // 1. 初始化资源
@@ -72,7 +72,7 @@ export const xxxService = defineService(async (shutdown) => {
 **模板：**
 
 ```typescript
-import { loadService } from 'hile'
+import { loadService } from '@hile/core'
 import { databaseService } from './services/database'
 
 const db = await loadService(databaseService)
@@ -88,7 +88,7 @@ const db = await loadService(databaseService)
 当一个服务依赖另一个服务时，在服务函数内部通过 `loadService` 加载依赖：
 
 ```typescript
-import { defineService, loadService } from 'hile'
+import { defineService, loadService } from '@hile/core'
 import { databaseService } from './database'
 import { configService } from './config'
 
@@ -167,7 +167,7 @@ src/
 ### services/config.ts
 
 ```typescript
-import { defineService } from 'hile'
+import { defineService } from '@hile/core'
 
 interface AppConfig {
   dbUrl: string
@@ -186,7 +186,7 @@ export const configService = defineService(async (shutdown) => {
 ### services/database.ts
 
 ```typescript
-import { defineService, loadService } from 'hile'
+import { defineService, loadService } from '@hile/core'
 import { configService } from './config'
 
 export const databaseService = defineService(async (shutdown) => {
@@ -200,7 +200,7 @@ export const databaseService = defineService(async (shutdown) => {
 ### services/cache.ts
 
 ```typescript
-import { defineService, loadService } from 'hile'
+import { defineService, loadService } from '@hile/core'
 import { configService } from './config'
 
 export const cacheService = defineService(async (shutdown) => {
@@ -214,7 +214,7 @@ export const cacheService = defineService(async (shutdown) => {
 ### services/user.ts
 
 ```typescript
-import { defineService, loadService } from 'hile'
+import { defineService, loadService } from '@hile/core'
 import { databaseService } from './database'
 import { cacheService } from './cache'
 
@@ -242,7 +242,7 @@ export const userService = defineService(async (shutdown) => {
 ### main.ts
 
 ```typescript
-import { loadService } from 'hile'
+import { loadService } from '@hile/core'
 import { userService } from './services/user'
 
 async function main() {
