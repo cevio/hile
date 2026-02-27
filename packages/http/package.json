@@ -1,0 +1,26 @@
+{
+  "name": "@hile/http",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsc -b --watch",
+    "test": "vitest run"
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/koa": "^3.0.1",
+    "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "find-my-way": "^9.5.0",
+    "glob": "^13.0.6",
+    "koa": "^3.1.2",
+    "koa-compose": "^4.1.0"
+  }
+}
