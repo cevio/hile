@@ -18,7 +18,7 @@ importers:
   packages/cli:
     dependencies:
       '@hile/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       async-exit-hook:
         specifier: ^2.0.1
@@ -87,7 +87,7 @@ importers:
   packages/typeorm:
     dependencies:
       '@hile/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       typeorm:
         specifier: ^0.3.28
