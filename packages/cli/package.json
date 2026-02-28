@@ -11,6 +11,9 @@
   "files": [
     "dist"
   ],
+  "bin": {
+    "hile": "./dist/index.js"
+  },
   "license": "MIT",
   "publishConfig": {
     "access": "public"

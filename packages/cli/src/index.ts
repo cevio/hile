@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 import pkg from '../package.json' with { type: 'json' };
 import exitHook from 'async-exit-hook';
 import { program } from 'commander';
@@ -12,6 +13,7 @@ program.version(pkg.version, '-v, --version', '当前版本号');
  * 启动服务
  * 1. 加载所有后缀为 boot.ts 或 boot.js 的服务
  * 2. 注册退出钩子，在进程退出时销毁所有服务
+ * 3. 如果 HILE_RUNTIME_DIR 环境变量存在，则使用该目录作为运行时目录，否则使用 src 或 dist 目录
  * @param options - 选项
  * @param options.dev - 开发模式
  * @returns - 启动服务
@@ -25,7 +27,7 @@ program
     if (options.dev) await import('tsx/esm');
 
     // 加载所有后缀为 boot.ts 或 boot.js 的服务
-    const directory = resolve(process.cwd(), options.dev ? 'src' : 'dist');
+    const directory = resolve(process.cwd(), process.env.HILE_RUNTIME_DIR || (options.dev ? 'src' : 'dist'));
     const files = await glob(`**/*.boot.{ts,js}`, { cwd: directory });
 
     // 加载所有自启动服务
@@ -45,3 +47,5 @@ program
         .finally(exit);
     })
   })
+
+program.parseAsync(process.argv);
