@@ -1,3 +1,8 @@
+---
+name: hile-typeorm
+description: Code generation and usage rules for @hile/typeorm. Use when using TypeORM DataSource as Hile service, transaction helper, or when the user asks about @hile/typeorm or TypeORM service patterns.
+---
+
 # @hile/typeorm
 
 本文档是面向 AI 编码模型和人类开发者的 **代码生成规范**，阅读后应能正确地使用本库编写符合架构规则的代码。

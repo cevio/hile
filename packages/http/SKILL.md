@@ -1,3 +1,8 @@
+---
+name: hile-http
+description: Code generation and usage rules for @hile/http HTTP service framework. Use when building routes, controllers, middleware, or when the user asks about @hile/http, defineController, Loader, or Koa-based HTTP patterns.
+---
+
 # @hile/http
 
 `@hile/http` 是基于 Koa + find-my-way 的 HTTP 服务框架。本文档是面向 AI 编码模型和人类开发者的 **代码生成规范**，阅读后应能正确地使用本库编写符合架构规则的 HTTP 服务代码。
