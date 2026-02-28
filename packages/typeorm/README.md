@@ -34,8 +34,11 @@ DataSource 从以下环境变量读取配置：
 | `TYPEORM_PASSWORD` | 密码 |
 | `TYPEORM_DATABASE` | 数据库名 |
 | `TYPEORM_PORT` | 端口 |
+| `TYPEORM_CHARSET` | 数据库字符集 |
+| `TYPEORM_ENTITY_PREFIX` | 实体表名前缀 |
+| `TYPEORM_ENTITIES` | 实体目录（单一路径） |
 
-行为：`synchronize: true`；当 `NODE_ENV === 'development'` 时开启 `logging`。连接在进程退出时通过 Hile 的 shutdown 自动销毁。
+行为：`synchronize: true`；当 `NODE_ENV === 'development'` 时开启 `logging`。未设置 `TYPEORM_ENTITIES` 时实体列表为空。连接在进程退出时通过 Hile 的 shutdown 自动销毁。
 
 ## 事务
 

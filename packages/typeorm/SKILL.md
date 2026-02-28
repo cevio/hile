@@ -27,8 +27,11 @@
 | `TYPEORM_PASSWORD` | 密码 |
 | `TYPEORM_DATABASE` | 数据库名 |
 | `TYPEORM_PORT` | 端口（字符串会被转为数字） |
+| `TYPEORM_CHARSET` | 数据库字符集 |
+| `TYPEORM_ENTITY_PREFIX` | 实体表名前缀 |
+| `TYPEORM_ENTITIES` | 实体目录（单一路径，会以单元素数组传入 DataSource.entities） |
 
-DataSource 行为：`synchronize: true`；`logging` 在 `NODE_ENV === 'development'` 时为 `true`。
+DataSource 行为：`synchronize: true`；`logging` 在 `NODE_ENV === 'development'` 时为 `true`。未设置 `TYPEORM_ENTITIES` 时 `entities` 为空数组。
 
 ### 2.2 类型（生成代码时须遵循）
 

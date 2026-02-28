@@ -11,6 +11,9 @@ import { DataSource, DataSourceOptions, QueryRunner } from 'typeorm';
  * - TYPEORM_PASSWORD: 数据库密码
  * - TYPEORM_DATABASE: 数据库名称
  * - TYPEORM_PORT: 数据库端口
+ * - TYPEORM_CHARSET: 数据库字符集
+ * - TYPEORM_ENTITY_PREFIX: 实体前缀
+ * - TYPEORM_ENTITIES: 实体目录
  */
 export default defineService(async (shutdown) => {
   const configs: DataSourceOptions = {
@@ -20,6 +23,9 @@ export default defineService(async (shutdown) => {
     username: process.env.TYPEORM_USERNAME,
     password: process.env.TYPEORM_PASSWORD,
     database: process.env.TYPEORM_DATABASE,
+    charset: process.env.TYPEORM_CHARSET,
+    entityPrefix: process.env.TYPEORM_ENTITY_PREFIX,
+    entities: process.env.TYPEORM_ENTITIES ? [process.env.TYPEORM_ENTITIES] : [],
     port: typeof process.env.TYPEORM_PORT === 'string'
       ? Number(process.env.TYPEORM_PORT)
       : process.env.TYPEORM_PORT,
