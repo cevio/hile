@@ -1,0 +1,29 @@
+{
+  "name": "@hile/cli",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsc -b --watch"
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/async-exit-hook": "^2.0.2",
+    "tsx": "^4.21.0",
+    "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "@hile/core": "workspace:*",
+    "async-exit-hook": "^2.0.1",
+    "commander": "^14.0.3",
+    "glob": "^13.0.6"
+  }
+}

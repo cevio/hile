@@ -30,10 +30,14 @@ type ServiceCutDownHandler = (fn: ServiceCutDownFunction) => void;
 // 服务函数：第一个参数固定为销毁注册器，返回值为同步值或 Promise
 type ServiceFunction<R> = (shutdown: ServiceCutDownHandler) => R | Promise<R>;
 
+// 内部服务标识（Symbol，不可外部构造）
+const sericeFlag: unique symbol;
+
 // 服务注册信息：由 defineService/register 返回，作为 loadService/resolve 的入参
 interface ServiceRegisterProps<R> {
   id: number;
   fn: ServiceFunction<R>;
+  flag: typeof sericeFlag;
 }
 ```
 
@@ -135,6 +139,27 @@ export const connectionService = defineService(async (shutdown) => {
 - 销毁函数可以是 `async`，容器会依次 `await`
 - 同一个函数引用多次传给 `shutdown()` 只会注册一次
 
+### 3.5 手动销毁所有服务
+
+在应用退出或需要优雅关闭时，调用 `container.shutdown()` 手动触发所有已注册的销毁回调：
+
+**模板：**
+
+```typescript
+import container from '@hile/core'
+
+process.on('SIGTERM', async () => {
+  await container.shutdown()
+  process.exit(0)
+})
+```
+
+**规则：**
+- `shutdown()` 返回 `Promise`，**必须** `await`
+- 销毁按 **服务注册逆序** 执行：后注册的服务先销毁
+- 每个服务内部的销毁回调同样按 **逆序（LIFO）** 执行
+- `shutdown()` 执行完毕后，再次调用不会重复执行（销毁队列已被清空）
+
 ---
 
 ## 4. 强制规则（生成代码时必须遵守）
@@ -145,7 +170,7 @@ export const connectionService = defineService(async (shutdown) => {
 | 2 | 服务函数第一个参数**必须**是 `shutdown` | 这是容器注入的销毁注册器，即使不使用也要声明 |
 | 3 | `defineService` 的结果**必须**赋给模块级 `export const` | 服务基于函数引用去重，引用必须稳定 |
 | 4 | **不要**在 `defineService` 内直接写匿名函数再传给另一个函数 | 每次调用会创建新引用，导致重复注册 |
-| 5 | **不要**手动构造 `ServiceRegisterProps` 对象 | 必须通过 `defineService` 或 `container.register` 获取 |
+| 5 | **不要**手动构造 `ServiceRegisterProps` 对象 | 必须通过 `defineService` 或 `container.register` 获取，内部 `flag` 为不可伪造的 Symbol |
 | 6 | **不要**缓存 `loadService` 的结果到模块顶层变量 | 服务可能尚未初始化，应在需要时 `await loadService()` |
 | 7 | 每个外部资源初始化后**立即**注册 `shutdown` | 确保初始化中途失败时已创建的资源能被正确清理 |
 | 8 | 一个文件只定义一个服务 | 保持服务职责单一、依赖清晰 |
@@ -338,6 +363,7 @@ export const goodService = defineService(async (shutdown) => {
 |------|------|------|
 | `defineService` | `<R>(fn: ServiceFunction<R>) => ServiceRegisterProps<R>` | 注册服务，返回注册信息 |
 | `loadService` | `<R>(props: ServiceRegisterProps<R>) => Promise<R>` | 加载服务，返回服务实例 |
+| `isService` | `<R>(props: ServiceRegisterProps<R>) => boolean` | 判断对象是否为合法的服务注册信息（通过内部 Symbol 校验） |
 
 ### Container 类（用于创建隔离容器）
 
@@ -349,6 +375,7 @@ export const goodService = defineService(async (shutdown) => {
 | `hasMeta` | `(id: number) => boolean` | 检查服务是否已运行过 |
 | `getIdByService` | `<R>(fn: ServiceFunction<R>) => number \| undefined` | 根据函数引用查 ID |
 | `getMetaById` | `(id: number) => Paddings \| undefined` | 根据 ID 查运行时元数据 |
+| `shutdown` | `() => Promise<void>` | 手动销毁所有服务，按服务注册逆序执行所有销毁回调 |
 
 ### resolve 状态机
 
@@ -394,7 +421,13 @@ resolve(props)
 
 - **单个服务内**：销毁回调按注册的逆序（LIFO）依次 `await` 执行
 - **全局销毁**：按服务注册顺序的逆序依次销毁
-- **触发时机**：仅在服务函数异步失败（reject）时自动触发；成功时不触发
+- **触发时机**：
+  - 服务函数异步失败（reject）时自动触发该服务的销毁回调
+  - 手动调用 `container.shutdown()` 时触发所有已注册服务的销毁回调（按服务注册逆序）
+
+### 服务标识机制（sericeFlag）
+
+容器内部使用 `const sericeFlag = Symbol('service')` 作为服务注册信息的标识。`register` 返回的对象会携带 `flag: sericeFlag` 字段。`isService()` 通过检查 `flag === sericeFlag` 以及 `id` 和 `fn` 的类型来判断一个对象是否为合法的服务注册信息。由于 Symbol 不可伪造，外部无法手动构造通过 `isService` 校验的对象。
 
 ### 函数去重机制
 

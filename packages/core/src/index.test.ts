@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { Container } from './index'
+import { Container, isService } from './index'
 
 describe('Container', () => {
   let container: Container
@@ -9,10 +9,11 @@ describe('Container', () => {
   })
 
   describe('register - 注册服务到容器', () => {
-    it('应注册服务并返回包含 id 和 fn 的注册信息', () => {
+    it('应注册服务并返回包含 id、fn 和 flag 的注册信息', () => {
       const fn = () => 'hello'
       const result = container.register(fn)
       expect(result).toHaveProperty('id')
+      expect(result).toHaveProperty('flag')
       expect(result.fn).toBe(fn)
     })
 
@@ -252,6 +253,112 @@ describe('Container', () => {
     })
   })
 
+  describe('shutdown (public) - 手动销毁所有服务', () => {
+    it('手动调用 shutdown 后应执行所有已注册的销毁函数', async () => {
+      const teardownA = vi.fn()
+      const teardownB = vi.fn()
+
+      const fnA = async (shutdown: (fn: () => void) => void) => {
+        shutdown(teardownA)
+        return 'A'
+      }
+      const fnB = async (shutdown: (fn: () => void) => void) => {
+        shutdown(teardownB)
+        return 'B'
+      }
+
+      await container.resolve(container.register(fnA))
+      await container.resolve(container.register(fnB))
+
+      expect(teardownA).not.toHaveBeenCalled()
+      expect(teardownB).not.toHaveBeenCalled()
+
+      await container.shutdown()
+
+      expect(teardownA).toHaveBeenCalledOnce()
+      expect(teardownB).toHaveBeenCalledOnce()
+    })
+
+    it('手动 shutdown 按服务注册逆序执行（后注册先销毁）', async () => {
+      const order: string[] = []
+
+      const fnA = async (shutdown: (fn: () => void) => void) => {
+        shutdown(() => order.push('A'))
+        return 'A'
+      }
+      const fnB = async (shutdown: (fn: () => void) => void) => {
+        shutdown(() => order.push('B'))
+        return 'B'
+      }
+      const fnC = async (shutdown: (fn: () => void) => void) => {
+        shutdown(() => order.push('C'))
+        return 'C'
+      }
+
+      await container.resolve(container.register(fnA))
+      await container.resolve(container.register(fnB))
+      await container.resolve(container.register(fnC))
+
+      await container.shutdown()
+
+      expect(order).toEqual(['C', 'B', 'A'])
+    })
+
+    it('单个服务内多个销毁函数也按逆序执行', async () => {
+      const order: number[] = []
+
+      const fn = async (shutdown: (fn: () => void) => void) => {
+        shutdown(() => order.push(1))
+        shutdown(() => order.push(2))
+        shutdown(() => order.push(3))
+        return 'ok'
+      }
+
+      await container.resolve(container.register(fn))
+      await container.shutdown()
+
+      expect(order).toEqual([3, 2, 1])
+    })
+
+    it('shutdown 后重复调用不会再次执行销毁函数', async () => {
+      const teardown = vi.fn()
+      const fn = async (shutdown: (fn: () => void) => void) => {
+        shutdown(teardown)
+        return 'ok'
+      }
+
+      await container.resolve(container.register(fn))
+      await container.shutdown()
+      await container.shutdown()
+
+      expect(teardown).toHaveBeenCalledOnce()
+    })
+
+    it('没有注册销毁函数时调用 shutdown 不报错', async () => {
+      await expect(container.shutdown()).resolves.toBeUndefined()
+    })
+
+    it('shutdown 支持异步销毁函数', async () => {
+      const order: number[] = []
+
+      const fn = async (shutdown: (fn: () => Promise<void>) => void) => {
+        shutdown(async () => {
+          await new Promise(r => setTimeout(r, 10))
+          order.push(1)
+        })
+        shutdown(async () => {
+          order.push(2)
+        })
+        return 'ok'
+      }
+
+      await container.resolve(container.register(fn))
+      await container.shutdown()
+
+      expect(order).toEqual([2, 1])
+    })
+  })
+
   describe('hasService - 检查服务是否已注册', () => {
     it('未注册的服务应返回 false', () => {
       const fn = () => 'hello'
@@ -351,6 +458,46 @@ describe('Container', () => {
 
     it('不存在的 id 应返回 undefined', () => {
       expect(container.getMetaById(99999)).toBeUndefined()
+    })
+  })
+
+  describe('isService - 判断是否为服务', () => {
+    it('通过 register 返回的对象应判定为服务', () => {
+      const fn = () => 'hello'
+      const props = container.register(fn)
+      expect(isService(props)).toBe(true)
+    })
+
+    it('手动构造的对象（缺少正确 flag）应判定为非服务', () => {
+      const fake = { id: 1, fn: () => 'hello', flag: Symbol('fake') }
+      expect(isService(fake as any)).toBe(false)
+    })
+
+    it('缺少 id 字段应判定为非服务', () => {
+      const fn = () => 'hello'
+      const props = container.register(fn)
+      const broken = { ...props, id: undefined }
+      expect(isService(broken as any)).toBe(false)
+    })
+
+    it('缺少 fn 字段应判定为非服务', () => {
+      const fn = () => 'hello'
+      const props = container.register(fn)
+      const broken = { ...props, fn: undefined }
+      expect(isService(broken as any)).toBe(false)
+    })
+
+    it('fn 为非函数类型应判定为非服务', () => {
+      const fn = () => 'hello'
+      const props = container.register(fn)
+      const broken = { ...props, fn: 'not-a-function' }
+      expect(isService(broken as any)).toBe(false)
+    })
+
+    it('完全无关的对象应判定为非服务', () => {
+      expect(isService({} as any)).toBe(false)
+      expect(isService({ id: 1 } as any)).toBe(false)
+      expect(isService({ id: 1, fn: () => {}, flag: 'wrong' } as any)).toBe(false)
     })
   })
 })

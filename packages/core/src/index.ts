@@ -1,9 +1,11 @@
 export type ServiceCutDownFunction = () => unknown | Promise<unknown>;
 export type ServiceCutDownHandler = (fn: ServiceCutDownFunction) => void;
 export type ServiceFunction<R> = (fn: ServiceCutDownHandler) => R | Promise<R>;
+const sericeFlag = Symbol('service');
 export interface ServiceRegisterProps<R> {
   id: number
   fn: ServiceFunction<R>
+  flag: typeof sericeFlag;
 }
 
 interface Paddings<R = any> {
@@ -36,11 +38,11 @@ export class Container {
    */
   public register<R>(fn: ServiceFunction<R>): ServiceRegisterProps<R> {
     if (this.packages.has(fn)) {
-      return { id: this.packages.get(fn)!, fn }
+      return { id: this.packages.get(fn)!, fn, flag: sericeFlag }
     }
     const id = this.getId();
     this.packages.set(fn, id);
-    return { id, fn }
+    return { id, fn, flag: sericeFlag }
   }
 
   /**
@@ -148,7 +150,7 @@ export class Container {
       while (i--) {
         await Promise.resolve(pools[i]());
       }
-      this.shutdownFunctions.clear();
+      this.shutdownFunctions.delete(id);
       this.shutdownQueues.splice(this.shutdownQueues.indexOf(id), 1);
     }
   }
@@ -159,7 +161,7 @@ export class Container {
    * 先注册的后销毁，后注册的先销毁
    * @returns - 销毁结果
    */
-  private async shutdown() {
+  public async shutdown() {
     let i = this.shutdownQueues.length;
     while (i--) {
       await this.shutdownService(this.shutdownQueues[i]);
@@ -212,6 +214,15 @@ export function defineService<R>(fn: ServiceFunction<R>) {
 
 export function loadService<R>(props: ServiceRegisterProps<R>): Promise<R> {
   return container.resolve(props);
+}
+
+/**
+ * 判断是否为服务
+ * @param props - 服务注册信息
+ * @returns - 是否为服务
+ */
+export function isService<R>(props: ServiceRegisterProps<R>) {
+  return props.flag === sericeFlag && typeof props.id === 'number' && typeof props.fn === 'function';
 }
 
 export default container;

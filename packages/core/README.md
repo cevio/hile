@@ -122,6 +122,34 @@ export const connectionService = defineService(async (shutdown) => {
 
 > **注意：** 请使用 `async` 函数定义服务。同步函数中直接 `throw` 的错误无法触发销毁机制。
 
+### 手动销毁（Graceful Shutdown）
+
+调用 `container.shutdown()` 可手动触发所有已注册服务的销毁回调，适用于进程退出时优雅关闭资源：
+
+```typescript
+import container from '@hile/core'
+
+process.on('SIGTERM', async () => {
+  await container.shutdown()
+  process.exit(0)
+})
+```
+
+销毁按 **服务注册逆序** 执行：后注册的服务先销毁。调用后销毁队列清空，重复调用不会再次执行。
+
+### 服务校验（isService）
+
+使用 `isService` 判断一个对象是否为合法的服务注册信息。内部通过不可伪造的 Symbol 标识校验，确保只有通过 `defineService` / `container.register` 创建的对象才会返回 `true`：
+
+```typescript
+import { defineService, isService } from '@hile/core'
+
+const myService = defineService(async (shutdown) => 'hello')
+
+isService(myService)            // true
+isService({ id: 1, fn: () => {} } as any)  // false
+```
+
 ## 隔离容器
 
 除默认容器外，可以创建独立的 `Container` 实例，实现服务作用域隔离：
@@ -146,6 +174,7 @@ const result = await container.resolve(service)
 |------|------|
 | `defineService(fn)` | 注册服务到默认容器，返回 `ServiceRegisterProps` |
 | `loadService(props)` | 从默认容器加载服务，返回 `Promise<R>` |
+| `isService(props)` | 判断对象是否为合法的服务注册信息（通过内部 Symbol 校验） |
 
 ### Container
 
@@ -157,6 +186,7 @@ const result = await container.resolve(service)
 | `hasMeta(id)` | 检查服务是否已运行（存在运行时元数据） |
 | `getIdByService(fn)` | 根据函数引用获取服务 ID |
 | `getMetaById(id)` | 根据服务 ID 获取运行时元数据 |
+| `shutdown()` | 手动销毁所有服务，返回 `Promise<void>`。按服务注册逆序执行所有销毁回调 |
 
 ### 服务状态
 
