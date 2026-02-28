@@ -1,7 +1,7 @@
 import Koa, { Next, Middleware } from 'koa';
-import { Config, HTTPMethod, HTTPVersion } from 'find-my-way';
+import { Config } from 'find-my-way';
 import { randomBytes } from 'node:crypto';
-import FindMyWay, { Instance } from './find-my-way';
+import FindMyWay, { Instance, HTTPMethod, HTTPVersion } from './find-my-way';
 import { createServer, Server } from 'node:http';
 import { Loader, LoaderFromOptions } from './loader';
 

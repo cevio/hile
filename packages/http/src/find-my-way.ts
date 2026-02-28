@@ -5,6 +5,7 @@ import { Middleware, Context, Next } from 'koa';
 
 export {
   HTTPVersion,
+  HTTPMethod,
 }
 
 export interface Instance {
