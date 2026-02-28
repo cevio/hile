@@ -1,0 +1,16 @@
+{
+  "name": "@hile/typeorm",
+  "version": "1.0.0",
+  "description": "Code generation and contribution rules for @hile/typeorm (TypeORM DataSource as Hile service). Use when editing this package or when the user asks about @hile/typeorm, DataSource, or transaction patterns.",
+  "repository": "",
+  "skills": [
+    {
+      "id": "typeorm",
+      "name": "@hile/typeorm 开发指南",
+      "description": "提供 @hile/typeorm 模块的开发与代码生成规范：DataSource 服务、环境变量、事务封装",
+      "path": "SKILL.md"
+    }
+  ],
+  "authors": [],
+  "license": "MIT"
+}

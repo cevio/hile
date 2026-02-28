@@ -1,0 +1,31 @@
+{
+  "name": "@hile/typeorm",
+  "version": "1.0.0",
+  "description": "TypeORM DataSource as Hile service with transaction helper",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsc -b --watch",
+    "test": "vitest run"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "SKILL.md",
+    "skill.json"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "^25.3.1",
+    "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "@hile/core": "workspace:*",
+    "typeorm": "^0.3.28"
+  }
+}

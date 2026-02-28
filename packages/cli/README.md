@@ -26,13 +26,15 @@ pnpm add -g @hile/cli
 若上述两者均未提供任何可加载项，CLI 会输出 `no services to load` 并退出。每个加载项（模块或 boot 文件）的默认导出须通过 `isService` 校验，否则会抛出 `invalid service file`。
 
 ```bash
-hile start          # 生产模式，扫描 dist/ 目录
-hile start --dev    # 开发模式，扫描 src/ 目录（通过 tsx 支持 TypeScript）
+hile start          # 生产模式：NODE_ENV=production，扫描 dist/ 目录
+hile start --dev    # 开发模式：NODE_ENV=development，扫描 src/ 目录（通过 tsx 支持 TypeScript）
 ```
 
 | 选项 | 说明 | 默认值 |
 |------|------|--------|
-| `-d, --dev` | 开发模式，使用 tsx 运行 TypeScript | `false` |
+| `-d, --dev` | 开发模式：设置 `NODE_ENV=development`，使用 tsx 运行 TypeScript，扫描 `src/` | `false` |
+
+未使用 `--dev` 时，CLI 会将 `process.env.NODE_ENV` 设为 `production`；使用 `--dev` 时设为 `development`，便于业务代码区分环境。
 
 ### 其他
 

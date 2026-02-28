@@ -34,7 +34,12 @@ program
   .description('启动服务，加载所有后缀为 boot.ts 或 boot.js 的服务，并注册退出钩子，在进程退出时销毁所有服务')
   .action(async (options: { dev: boolean }) => {
     // 开发模式下，使用 tsx 运行
-    if (options.dev) await import('tsx/esm');
+    if (options.dev) {
+      await import('tsx/esm');
+      process.env.NODE_ENV = 'development';
+    } else {
+      process.env.NODE_ENV = 'production';
+    }
 
     const cwd = process.cwd();
     const files: string[] = [];
