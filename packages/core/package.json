@@ -1,6 +1,6 @@
 {
   "name": "@hile/core",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "Hile core - lightweight async service container",
   "type": "module",
   "main": "./dist/index.js",
