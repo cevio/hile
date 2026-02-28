@@ -23,7 +23,7 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
-    "@hile/core": "workspace:*",
+    "@hile/core": "workspace:^",
     "async-exit-hook": "^2.0.1",
     "commander": "^14.0.3",
     "glob": "^13.0.6",
