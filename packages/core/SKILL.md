@@ -36,7 +36,7 @@ type ServiceCutDownHandler = (fn: ServiceCutDownFunction) => void;
 type ServiceFunction<R> = (shutdown: ServiceCutDownHandler) => R | Promise<R>;
 
 // 内部服务标识（Symbol，不可外部构造）
-const sericeFlag: unique symbol;
+const sericeFlag = Symbol('service');
 
 // 服务注册信息：由 defineService/register 返回，作为 loadService/resolve 的入参
 interface ServiceRegisterProps<R> {

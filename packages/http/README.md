@@ -195,6 +195,8 @@ export const httpService = defineService(async (shutdown) => {
 
 ## API
 
+本包导出：`Http`、`defineController`、`Loader`，以及类型 `HttpProps`、`LoaderCompileOptions`、`LoaderFromOptions`、`ControllerRegisterProps`、`ControllerFunction`。
+
 ### Http
 
 | 方法 | 说明 |

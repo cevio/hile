@@ -37,6 +37,7 @@ description: Code generation and usage rules for @hile/http HTTP service framewo
 
 ```typescript
 import { Context, Middleware } from 'koa'
+// HTTPMethod 来自依赖 find-my-way，本包未再导出；可用字符串字面量 'GET' 等，或从 'find-my-way' 引入类型
 import { HTTPMethod } from 'find-my-way'
 
 // Http 配置（port 必填，其余可选）
