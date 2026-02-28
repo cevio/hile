@@ -6,6 +6,15 @@ import { program } from 'commander';
 import { glob } from 'glob';
 import { resolve } from 'node:path';
 import { container, isService, loadService, ServiceRegisterProps } from '@hile/core';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+
+interface HilePackageJson {
+  hile?: {
+    auto_load_packages?: string[];
+  };
+}
 
 program.version(pkg.version, '-v, --version', '当前版本号');
 
@@ -14,6 +23,7 @@ program.version(pkg.version, '-v, --version', '当前版本号');
  * 1. 加载所有后缀为 boot.ts 或 boot.js 的服务
  * 2. 注册退出钩子，在进程退出时销毁所有服务
  * 3. 如果 HILE_RUNTIME_DIR 环境变量存在，则使用该目录作为运行时目录，否则使用 src 或 dist 目录
+ * 4. 如果 package.json 中存在 hile.auto_load_packages 属性，则加载该属性值中的所有服务
  * @param options - 选项
  * @param options.dev - 开发模式
  * @returns - 启动服务
@@ -26,19 +36,39 @@ program
     // 开发模式下，使用 tsx 运行
     if (options.dev) await import('tsx/esm');
 
+    const cwd = process.cwd();
+    const files: string[] = [];
+
+    // 加载 package.json 文件
+    // 如果 package.json 中存在 hile.auto_load_packages 属性，则加载该属性值中的所有服务
+    // 该属性值中的每个元素必须是模块名称，不能是文件路径
+    const packageJson: HilePackageJson = require(resolve(cwd, 'package.json'));
+    if (packageJson.hile?.auto_load_packages && Array.isArray(packageJson.hile.auto_load_packages)) {
+      for (let i = 0; i < packageJson.hile.auto_load_packages.length; i++) {
+        files.push(packageJson.hile.auto_load_packages[i]);
+      }
+    }
+
     // 加载所有后缀为 boot.ts 或 boot.js 的服务
-    const directory = resolve(process.cwd(), process.env.HILE_RUNTIME_DIR || (options.dev ? 'src' : 'dist'));
-    const files = await glob(`**/*.boot.{ts,js}`, { cwd: directory });
+    const directory = resolve(cwd, process.env.HILE_RUNTIME_DIR || (options.dev ? 'src' : 'dist'));
+    const _files = await glob(`**/*.boot.{ts,js}`, { cwd: directory });
+    files.push(..._files.map(file => resolve(directory, file)));
+
 
     // 加载所有自启动服务
+    // file: 文件路径或者模块名称
     await Promise.all(files.map(async (file) => {
-      const filepath = resolve(directory, file);
-      const target: { default: ServiceRegisterProps<any> } = await import(filepath);
-      const fn = target.default;
-      if (!fn || !isService(fn)) throw new Error(`missing default export in ${file}`);
-      if (!fn.id) throw new Error(`invalid service file: ${file}`);
+      const target: { default: ServiceRegisterProps<any> } = await import(file);
+      const fn = target?.default ?? target;
+      if (!fn || !isService(fn)) throw new Error(`invalid service file: ${file}`);
       await loadService(fn);
     }))
+
+    // 如果没有服务要加载，则提示
+    if (!files.length) {
+      console.warn('no services to load');
+      return;
+    }
 
     // 注册退出钩子，在进程退出时销毁所有服务
     exitHook(exit => {

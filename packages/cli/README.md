@@ -1,6 +1,6 @@
 # @hile/cli
 
-Hile 命令行工具，用于启动基于 `@hile/core` 的服务应用。自动扫描并加载 `*.boot.{ts,js}` 文件，注册退出钩子实现优雅关闭。
+Hile 命令行工具，用于启动基于 `@hile/core` 的服务应用。支持通过 `package.json` 配置和/或自动扫描 `*.boot.{ts,js}` 文件加载服务，并注册退出钩子实现优雅关闭。
 
 ## 安装
 
@@ -18,7 +18,12 @@ pnpm add -g @hile/cli
 
 ### `hile start`
 
-启动服务。扫描运行时目录下所有 `*.boot.ts` / `*.boot.js` 文件，加载其默认导出的服务并启动。
+在**当前工作目录**（通常为项目根，且含 `package.json`）下启动服务。按以下顺序加载服务并启动：
+
+1. **package.json 中的 `hile.auto_load_packages`**（若存在）：按数组顺序加载所列**模块名**的默认导出作为服务。
+2. **运行时目录下的 `*.boot.ts` / `*.boot.js`**：扫描并加载每个文件的默认导出作为服务。
+
+若上述两者均未提供任何可加载项，CLI 会输出 `no services to load` 并退出。每个加载项（模块或 boot 文件）的默认导出须通过 `isService` 校验，否则会抛出 `invalid service file`。
 
 ```bash
 hile start          # 生产模式，扫描 dist/ 目录
@@ -49,6 +54,24 @@ CLI 按以下优先级确定扫描目录：
 ```bash
 HILE_RUNTIME_DIR=./custom hile start
 ```
+
+## package.json 配置（可选）
+
+在项目根目录的 `package.json` 中可增加 `hile.auto_load_packages`，用于在扫描 boot 文件**之前**先加载指定模块的默认导出作为服务：
+
+```json
+{
+  "name": "my-app",
+  "hile": {
+    "auto_load_packages": ["@hile/http", "my-local-service"]
+  }
+}
+```
+
+- **含义**：数组中的每一项为**模块名**（与 `import('模块名')` 一致），不能写文件路径。
+- **顺序**：按数组顺序依次加载，再加载运行时目录下的 `*.boot.{ts,js}`。
+- **要求**：每个模块的默认导出必须是 `defineService` / `container.register` 的返回值（通过 `isService` 校验）。若无 `hile` 或 `auto_load_packages`，则仅通过 boot 文件加载服务。
+- **注意**：`hile` 配置为可选项。若当前工作目录存在 `package.json`，会读取其中可选的 `hile.auto_load_packages` 并优先加载；未配置该项时，仅通过 boot 文件加载服务。
 
 ## Boot 文件规范
 
@@ -86,11 +109,11 @@ my-app/
 │   └── services/
 │       ├── config.ts        # 配置服务（被依赖，不自启动）
 │       └── cache.ts         # 缓存服务（被依赖，不自启动）
-├── package.json
+├── package.json             # 可含 hile.auto_load_packages
 └── tsconfig.json
 ```
 
-只有 `*.boot.ts` 文件会被 CLI 自动加载和启动，其余服务通过 `loadService` 按需加载。
+服务加载来源：先按 `package.json` 的 `hile.auto_load_packages`（若有）加载模块默认导出，再扫描运行时目录下的 `*.boot.{ts,js}`；其余服务通过 `loadService` 按需加载。
 
 ## 开发
 
