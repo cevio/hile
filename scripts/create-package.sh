@@ -36,7 +36,7 @@ cat > "$PKG_DIR/package.json" <<EOF
     "dev": "tsc -b --watch",
     "test": "vitest run"
   },
-  "files": ["dist", "README.md", "SKILL.md", "skill.json"],
+  "files": ["dist", "README.md", "SKILL.md"],
   "license": "MIT",
   "publishConfig": {
     "access": "public"
@@ -93,32 +93,11 @@ description: Code generation and contribution rules for $SCOPE/$PKG_NAME. Use wh
 （在此补充模板、强制规则与反模式。）
 SKILLEOF
 
-# skill.json（参考 packages/core/skill.json）
-cat > "$PKG_DIR/skill.json" <<SKILLJSONEOF
-{
-  "name": "$SCOPE/$PKG_NAME",
-  "version": "1.0.0",
-  "description": "Code generation and contribution rules for $SCOPE/$PKG_NAME",
-  "repository": "https://github.com/cevio/hile/tree/main/packages/$PKG_NAME",
-  "skills": [
-    {
-      "id": "$PKG_NAME",
-      "name": "$SCOPE/$PKG_NAME 开发指南",
-      "description": "提供 $SCOPE/$PKG_NAME 模块的开发与代码生成规范",
-      "path": "SKILL.md"
-    }
-  ],
-  "authors": [],
-  "license": "MIT"
-}
-SKILLJSONEOF
-
 echo "✓ 已创建 packages/$PKG_NAME"
 echo "  - packages/$PKG_NAME/package.json"
 echo "  - packages/$PKG_NAME/tsconfig.json"
 echo "  - packages/$PKG_NAME/src/index.ts"
 echo "  - packages/$PKG_NAME/SKILL.md"
-echo "  - packages/$PKG_NAME/skill.json"
 echo ""
 echo "正在安装依赖 ..."
 

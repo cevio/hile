@@ -12,8 +12,7 @@
   "files": [
     "dist",
     "README.md",
-    "SKILL.md",
-    "skill.json"
+    "SKILL.md"
   ],
   "license": "MIT",
   "publishConfig": {
