@@ -1,7 +1,7 @@
 {
   "name": "@hile/ioredis",
   "version": "1.0.0",
-  "description": "Code generation and contribution rules for @hile/ioredis",
+  "description": "Redis client as Hile service (@hile/ioredis); code generation and contribution rules",
   "repository": "https://github.com/cevio/hile/tree/main/packages/ioredis",
   "skills": [
     {
