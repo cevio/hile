@@ -13,7 +13,8 @@
   "files": [
     "dist",
     "README.md",
-    "SKILL.md"
+    "SKILL.md",
+    "skill.json"
   ],
   "author": "",
   "license": "MIT",

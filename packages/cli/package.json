@@ -9,7 +9,8 @@
     "dev": "tsc -b --watch"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "bin": {
     "hile": "./dist/index.js"
