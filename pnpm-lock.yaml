@@ -80,6 +80,9 @@ importers:
         specifier: ^0.3.28
         version: 0.3.28
     devDependencies:
+      '@types/node':
+        specifier: ^25.3.1
+        version: 25.3.1
       vitest:
         specifier: ^4.0.18
         version: 4.0.18(@types/node@25.3.1)(tsx@4.21.0)(yaml@2.8.2)
