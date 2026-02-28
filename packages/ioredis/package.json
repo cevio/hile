@@ -6,8 +6,7 @@
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc -b",
-    "dev": "tsc -b --watch",
-    "test": "vitest run"
+    "dev": "tsc -b --watch"
   },
   "files": [
     "dist",

@@ -1,5 +1,5 @@
 import compose from 'koa-compose';
-import FindMyWay, { Config, HTTPVersion, HTTPMethod } from 'find-my-way';
+import FindMyWay, { Config, type HTTPVersion, type HTTPMethod } from 'find-my-way';
 import { METHODS } from 'node:http';
 import { Middleware, Context, Next } from 'koa';
 
