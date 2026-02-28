@@ -30,7 +30,6 @@ cat > "$PKG_DIR/package.json" <<EOF
   "version": "1.0.0",
   "type": "module",
   "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc -b",
     "dev": "tsc -b --watch",
