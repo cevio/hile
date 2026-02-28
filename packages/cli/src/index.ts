@@ -10,6 +10,11 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 
+/** 加载 env 文件到 process.env（Node 20.12+ 原生 process.loadEnvFile） */
+function loadEnvFile(filePath: string): void {
+  (process as NodeJS.Process & { loadEnvFile(path: string): void }).loadEnvFile(resolve(process.cwd(), filePath));
+}
+
 interface HilePackageJson {
   hile?: {
     auto_load_packages?: string[];
@@ -31,8 +36,15 @@ program.version(pkg.version, '-v, --version', '当前版本号');
 program
   .command('start')
   .option('-d, --dev', '开发模式', false)
+  .option('-e, --env-file <path>', '加载指定 env 文件（兼容 Node --env-file 语义；可多次指定，先加载的不被后加载覆盖）', (v: string, acc: string[]) => (acc.push(v), acc), [] as string[])
   .description('启动服务，加载所有后缀为 boot.ts 或 boot.js 的服务，并注册退出钩子，在进程退出时销毁所有服务')
-  .action(async (options: { dev: boolean }) => {
+  .action(async (options: { dev: boolean; envFile?: string[] }) => {
+    // 先加载 --env-file（与 Node --env-file 行为一致：先加载的优先，已存在的 key 不被覆盖）
+    const envFiles = options.envFile ?? [];
+    for (const p of envFiles) {
+      loadEnvFile(p);
+    }
+
     // 开发模式下，使用 tsx 运行
     if (options.dev) {
       await import('tsx/esm');

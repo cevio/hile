@@ -33,8 +33,11 @@ hile start --dev    # 开发模式：NODE_ENV=development，扫描 src/ 目录�
 | 选项 | 说明 | 默认值 |
 |------|------|--------|
 | `-d, --dev` | 开发模式：设置 `NODE_ENV=development`，使用 tsx 运行 TypeScript，扫描 `src/` | `false` |
+| `-e, --env-file <path>` | 加载指定 env 文件到 `process.env`（与 Node 原生 `--env-file` 语义一致：先加载的优先，已存在的 key 不覆盖）。可多次指定 | — |
 
 未使用 `--dev` 时，CLI 会将 `process.env.NODE_ENV` 设为 `production`；使用 `--dev` 时设为 `development`，便于业务代码区分环境。
+
+**示例：** `hile start --env-file .env --env-file .env.local` 会先加载 `.env`，再加载 `.env.local`（后者不会覆盖前者已设置的变量）。依赖 Node 20.12+ 原生 `process.loadEnvFile()`。
 
 ### 其他
 
