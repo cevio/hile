@@ -6,15 +6,21 @@ Hile monorepo，使用 pnpm workspaces + Lerna 管理。
 
 | 包名 | 说明 | 版本 |
 |------|------|------|
-| [`@hile/core`](./packages/core) | 轻量级异步服务容器，提供单例管理、并发合并和生命周期销毁 | 1.0.0 |
-| [`@hile/http`](./packages/http) | HTTP 服务框架，基于 Koa + find-my-way，支持路由注册、中间件和文件路由加载 | 1.0.0 |
+| [`@hile/core`](./packages/core) | 轻量级异步服务容器，提供单例管理、并发合并和生命周期销毁 | 1.0.11 |
+| [`@hile/http`](./packages/http) | HTTP 服务框架，基于 Koa + find-my-way，支持路由注册、中间件和文件路由加载 | 1.0.10 |
+| [`@hile/cli`](./packages/cli) | 命令行启动器，支持 `auto_load_packages` 与 `*.boot` 文件加载、优雅退出 | 1.0.4 |
+| [`@hile/typeorm`](./packages/typeorm) | TypeORM DataSource 封装为 Hile 服务，含 `transaction` 事务辅助 | 1.0.2 |
+| [`@hile/ioredis`](./packages/ioredis) | ioredis 客户端封装为 Hile 服务，环境变量配置、退出时断开连接 | 1.0.1 |
 
 ## 项目结构
 
 ```
 ├── packages/
 │   ├── core/              # @hile/core
-│   └── http/              # @hile/http
+│   ├── http/              # @hile/http
+│   ├── cli/               # @hile/cli
+│   ├── typeorm/           # @hile/typeorm
+│   └── ioredis/           # @hile/ioredis
 ├── scripts/
 │   └── create-package.sh  # 新包脚手架脚本
 ├── package.json           # 根配置（workspaces + scripts）
