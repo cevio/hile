@@ -21,10 +21,10 @@
   },
   "devDependencies": {
     "@types/async-exit-hook": "^2.0.2",
-    "tsx": "^4.21.0",
     "vitest": "^4.0.18"
   },
   "dependencies": {
+    "tsx": "^4.21.0",
     "@hile/core": "workspace:*",
     "async-exit-hook": "^2.0.1",
     "commander": "^14.0.3",
