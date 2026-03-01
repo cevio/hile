@@ -359,6 +359,80 @@ describe('Container', () => {
     })
   })
 
+  describe('lifecycle / timeout / graph', () => {
+    it('生命周期应按 init -> ready -> stopping -> stopped 变化', async () => {
+      const fn = async (shutdown: (fn: () => void) => void) => {
+        shutdown(() => { })
+        return 'ok'
+      }
+      const props = container.register(fn)
+      expect(container.getLifecycle(props.id)).toBeUndefined()
+      await container.resolve(props)
+      expect(container.getLifecycle(props.id)).toBe('ready')
+      await container.shutdown()
+      expect(container.getLifecycle(props.id)).toBe('stopped')
+    })
+
+    it('启动超时应抛错', async () => {
+      const c = new Container({ startTimeoutMs: 20 })
+      const fn = async () => {
+        await new Promise(r => setTimeout(r, 50))
+        return 'late'
+      }
+      await expect(c.resolve(c.register(fn))).rejects.toThrow('service startup timeout')
+    })
+
+    it('应可订阅可观测事件', async () => {
+      const c = new Container()
+      const events: string[] = []
+      const off = c.onEvent((e) => events.push(e.type))
+      const fn = async (shutdown: (fn: () => void) => void) => {
+        shutdown(() => { })
+        return 'ok'
+      }
+      await c.resolve(c.register(fn))
+      await c.shutdown()
+      off()
+      expect(events).toContain('service:init')
+      expect(events).toContain('service:ready')
+      expect(events).toContain('container:shutdown:start')
+      expect(events).toContain('container:shutdown:done')
+    })
+
+    it('应记录依赖图与启动顺序', async () => {
+      const dep = container.register(async () => 'dep')
+      const root = container.register(async (shutdown) => {
+        shutdown(() => { })
+        await container.resolve(dep)
+        return 'root'
+      })
+      await container.resolve(root)
+
+      const graph = container.getDependencyGraph()
+      expect(graph.edges).toEqual(expect.arrayContaining([{ from: root.id, to: dep.id }]))
+      expect(container.getStartupOrder()).toEqual(expect.arrayContaining([root.id]))
+    })
+
+    it('应检测循环依赖', async () => {
+      let aProps: any
+      let bProps: any
+
+      const a = async () => {
+        await container.resolve(bProps)
+        return 'a'
+      }
+      const b = async () => {
+        await container.resolve(aProps)
+        return 'b'
+      }
+
+      aProps = container.register(a)
+      bProps = container.register(b)
+
+      await expect(container.resolve(aProps)).rejects.toThrow('circular dependency detected')
+    })
+  })
+
   describe('hasService - 检查服务是否已注册', () => {
     it('未注册的服务应返回 false', () => {
       const fn = () => 'hello'
@@ -395,7 +469,7 @@ describe('Container', () => {
     })
 
     it('运行中的服务也应返回 true', () => {
-      const fn = () => new Promise(() => {})
+      const fn = () => new Promise(() => { })
       const props = container.register(fn)
       container.resolve(props)
       expect(container.hasMeta(props.id)).toBe(true)
@@ -427,7 +501,7 @@ describe('Container', () => {
     })
 
     it('运行中的服务元数据 status 应为 0', () => {
-      const fn = () => new Promise(() => {})
+      const fn = () => new Promise(() => { })
       const props = container.register(fn)
       container.resolve(props)
       const meta = container.getMetaById(props.id)
@@ -449,7 +523,7 @@ describe('Container', () => {
       const error = new Error('oops')
       const fn = () => Promise.reject(error)
       const props = container.register(fn)
-      await container.resolve(props).catch(() => {})
+      await container.resolve(props).catch(() => { })
       const meta = container.getMetaById(props.id)
       expect(meta).toBeDefined()
       expect(meta!.status).toBe(-1)
@@ -497,7 +571,7 @@ describe('Container', () => {
     it('完全无关的对象应判定为非服务', () => {
       expect(isService({} as any)).toBe(false)
       expect(isService({ id: 1 } as any)).toBe(false)
-      expect(isService({ id: 1, fn: () => {}, flag: 'wrong' } as any)).toBe(false)
+      expect(isService({ id: 1, fn: () => { }, flag: 'wrong' } as any)).toBe(false)
     })
   })
 })

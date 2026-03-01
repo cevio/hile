@@ -1,17 +1,18 @@
 ---
 name: hile-cli
-description: @hile/cli 的项目结构与一键启动编排规范。适用于 boot 文件组织、package.json 配置、运行时目录与启动流程相关场景。
+description: @hile/cli 的项目结构与一键启动编排规范。适用于 boot 文件组织、package.json 配置、运行时目录、容器事件日志与启动流程相关场景。
 ---
 
 # @hile/cli SKILL
 
-本文档约束 `@hile/cli` 场景下的项目组织方式，确保应用可通过 `hile start` / `hile start --dev` 一键启动。
+本文档约束 `@hile/cli` 场景下的项目组织方式，确保应用可通过 `hile start` / `hile start --dev` 一键启动，并具备可观测的运行日志。
 
 ## 1. 目标
 
 - 用结构约定替代手写入口聚合
 - 用 `*.boot` 与 `hile.auto_load_packages` 描述启动编排
 - 保证开发与生产路径一致可预期
+- 基于 `@hile/core` 事件输出可观测日志（启动、失败、关闭）
 
 ## 2. 推荐目录结构
 
@@ -86,7 +87,27 @@ export default defineService(async (shutdown) => {
 - 必须有 `default` 导出
 - 默认导出值必须来自 `defineService` 或 `container.register`
 
-## 6. 命令速查
+## 6. 容器事件日志约定（新增）
+
+CLI 启动时应订阅 `container.onEvent`，输出核心事件日志：
+
+- `service:init`
+- `service:ready`（含 `durationMs`）
+- `service:error`（含错误与耗时）
+- `service:shutdown:start`
+- `service:shutdown:done`（含 `durationMs`）
+- `service:shutdown:error`
+- `container:shutdown:start`
+- `container:shutdown:done`（含 `durationMs`）
+- `container:error`
+
+实践规则：
+
+- 退出时必须取消订阅（调用 `offEvent`）
+- 不吞掉错误，应打印原始错误对象以便定位
+- 日志输出应保持稳定前缀（如 `[hile]`）
+
+## 7. 命令速查
 
 | 命令 | 说明 |
 |---|---|
@@ -96,10 +117,23 @@ export default defineService(async (shutdown) => {
 | `hile -v` | 版本 |
 | `hile -h` | 帮助 |
 
-## 7. 编排检查清单
+## 8. 与 @hile/core 新能力联动
+
+在 `@hile/cli` 语境下，默认继承并利用 `@hile/core` 能力：
+
+- 生命周期：`init -> ready -> stopping -> stopped`
+- 启动/销毁超时（由容器配置决定）
+- 依赖图与循环依赖检测
+- 事件流可观测性
+
+因此，CLI 只负责编排与日志，不应重复实现容器语义。
+
+## 9. 编排检查清单
 
 - [ ] boot 文件仅用于进程入口服务
 - [ ] boot 文件位于运行时目录并命名正确
 - [ ] 每个 boot 文件 default 导出合法服务
 - [ ] `auto_load_packages` 仅包含模块名
 - [ ] `dev` / `start` 脚本与 CLI 行为一致
+- [ ] CLI 已订阅并输出关键容器事件日志
+- [ ] 退出时已取消事件订阅

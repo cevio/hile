@@ -120,7 +120,49 @@ export const connectionService = defineService(async (shutdown) => {
 
 > 建议始终使用 `async` 服务函数，确保异常路径可正确触发销毁机制。
 
-### 6) 手动销毁（Graceful Shutdown）
+### 6) 生命周期、超时与可观测事件
+
+容器支持显式生命周期阶段：`init -> ready -> stopping -> stopped`。
+
+可通过构造参数设置超时：
+
+```typescript
+import { Container } from '@hile/core'
+
+const container = new Container({
+  startTimeoutMs: 5_000,
+  shutdownTimeoutMs: 3_000,
+})
+```
+
+订阅事件：
+
+```typescript
+const off = container.onEvent((event) => {
+  if (event.type === 'service:ready') {
+    console.log(`service#${event.id} ready in ${event.durationMs}ms`)
+  }
+})
+
+// later
+off()
+```
+
+### 7) 依赖图与启动顺序
+
+容器会在 `resolve` 过程中自动记录依赖关系，并检测循环依赖。
+
+```typescript
+const graph = container.getDependencyGraph()
+// graph.nodes: number[]
+// graph.edges: Array<{ from: number; to: number }>
+
+const startupOrder = container.getStartupOrder()
+```
+
+若出现循环依赖，会抛出 `circular dependency detected` 错误。
+
+### 8) 手动销毁（Graceful Shutdown）
 
 ```typescript
 import container from '@hile/core'
@@ -131,7 +173,7 @@ process.on('SIGTERM', async () => {
 })
 ```
 
-### 7) 服务校验（isService）
+### 9) 服务校验（isService）
 
 ```typescript
 import { defineService, isService } from '@hile/core'
@@ -172,13 +214,19 @@ const result = await container.resolve(service)
 
 | 方法 | 说明 |
 |------|------|
+| `new Container(options?)` | 创建容器，可配置启动/销毁超时 |
 | `register(fn)` | 注册服务（同函数引用去重） |
 | `resolve(props)` | 加载服务（执行、等待或返回缓存） |
+| `shutdown()` | 销毁所有服务并执行清理回调 |
+| `onEvent(listener)` | 订阅容器事件，返回取消订阅函数 |
+| `offEvent(listener)` | 取消订阅 |
+| `getLifecycle(id)` | 获取服务生命周期阶段 |
+| `getDependencyGraph()` | 获取依赖图 `{ nodes, edges }` |
+| `getStartupOrder()` | 获取服务启动顺序（首次启动顺序） |
 | `hasService(fn)` | 检查函数是否已注册 |
 | `hasMeta(id)` | 检查服务是否已有运行时元数据 |
 | `getIdByService(fn)` | 通过函数获取服务 ID |
 | `getMetaById(id)` | 通过 ID 获取运行时元数据 |
-| `shutdown()` | 销毁所有服务并执行清理回调 |
 
 ### 服务状态
 

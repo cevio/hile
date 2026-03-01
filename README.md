@@ -6,9 +6,9 @@ Hile 是一套面向 Node.js 的轻量级服务化工具集，采用 `pnpm works
 
 | 包名 | 说明 | 版本 |
 |------|------|------|
-| [`@hile/core`](./packages/core) | 轻量级异步服务容器：单例管理、并发合并、生命周期销毁 | 1.0.11 |
+| [`@hile/core`](./packages/core) | 异步服务容器：单例、并发合并、生命周期、依赖图、循环依赖检测 | 1.0.11 |
 | [`@hile/http`](./packages/http) | HTTP 服务框架：Koa + find-my-way，支持中间件和文件路由 | 1.0.10 |
-| [`@hile/cli`](./packages/cli) | 命令行启动器：支持 `auto_load_packages` 与 `*.boot` 自动加载 | 1.0.4 |
+| [`@hile/cli`](./packages/cli) | 命令行启动器：支持 `auto_load_packages` 与 `*.boot` 自动加载，内置容器事件日志 | 1.0.4 |
 | [`@hile/typeorm`](./packages/typeorm) | TypeORM DataSource 的 Hile 服务封装，内置事务辅助 | 1.0.2 |
 | [`@hile/ioredis`](./packages/ioredis) | ioredis 客户端的 Hile 服务封装，支持优雅断连 | 1.0.1 |
 
@@ -41,6 +41,16 @@ pnpm install
 pnpm run build
 pnpm run test
 ```
+
+## 核心特性（第二层落地）
+
+- `@hile/core`
+  - 生命周期：`init -> ready -> stopping -> stopped`
+  - 启动/销毁超时控制（`startTimeoutMs`、`shutdownTimeoutMs`）
+  - 可观测事件（`onEvent`）
+  - 依赖图导出与循环依赖检测
+- `@hile/cli`
+  - 已接入容器事件日志，默认输出启动、失败、关闭阶段信息与耗时
 
 ## 常用命令
 

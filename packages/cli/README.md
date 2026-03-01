@@ -46,6 +46,17 @@ hile start --env-file .env --env-file .env.local
 
 依赖 Node 20.12+ 原生 `process.loadEnvFile()`。
 
+### 启动日志（基于 @hile/core 事件）
+
+CLI 已接入容器事件日志，默认会输出：
+
+- 服务启动：`service:init` / `service:ready`（含耗时）
+- 服务失败：`service:error`
+- 关闭阶段：`service:shutdown:start` / `service:shutdown:done`
+- 容器关闭：`container:shutdown:start` / `container:shutdown:done`
+
+这使得线上启动问题与关闭过程更容易观测。
+
 ### 其他命令
 
 ```bash
