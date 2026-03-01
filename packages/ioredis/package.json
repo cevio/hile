@@ -20,7 +20,7 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
-    "@hile/core": "workspace:*",
+    "@hile/core": "workspace:^",
     "ioredis": "^5.10.0"
   }
 }

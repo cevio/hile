@@ -27,6 +27,12 @@
       "name": "Hile ioredis 优化指南",
       "description": "提供 Hile 开发者使用 ioredis 开发 Hile 应用的指南",
       "path": "packages/ioredis/SKILL.md"
+    },
+    {
+      "id": "hile-cli",
+      "name": "Hile CLI 一键开发指南",
+      "description": "提供 Hile 开发者使用命令行工具组织项目结构、编排 boot 服务并一键启动应用的指南",
+      "path": "packages/cli/SKILL.md"
     }
   ]
 }
