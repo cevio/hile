@@ -216,6 +216,10 @@ export const httpService = defineService(async (shutdown) => {
 | `suffix` | `'controller'` | 文件后缀标记 |
 | `prefix` | — | 路由前缀 |
 | `defaultSuffix` | `'/index'` | 映射到父路径的文件名 |
+| `conflict` | `'error'` | 路由冲突策略：`error` 抛错、`warn` 保留旧路由、`override` 覆盖旧路由 |
+| `onConflict` | — | 冲突回调，接收 `{ routeKey, method, url, strategy, resolution }` |
+
+`from()` 会校验控制器文件的默认导出是否为 `ControllerRegisterProps` 或其数组。若不合法，错误信息会包含文件路径与导出摘要，便于快速定位。
 
 ## License
 

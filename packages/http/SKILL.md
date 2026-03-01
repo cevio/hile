@@ -13,7 +13,7 @@ description: @hile/http 的代码生成与使用规范。适用于路由、控�
 
 - `Http`：封装 Koa 与路由器，负责中间件、路由注册与服务启停
 - `defineController`：将方法、可选中间件与处理函数封装为标准控制器
-- `Loader`：支持手动编译路由与按文件系统自动加载
+- `Loader`：支持手动编译路由与按文件系统自动加载，并提供冲突策略与冲突回调
 
 典型流程：定义控制器 → 加载路由 → 启动服务。
 
@@ -42,9 +42,22 @@ interface ControllerRegisterProps {
   data: Record<string, any>
 }
 
+type LoaderConflictStrategy = 'error' | 'warn' | 'override'
+type LoaderConflictResolution = 'error' | 'keep' | 'override'
+
+type LoaderConflictContext = {
+  routeKey: string
+  method: string
+  url: string
+  strategy: LoaderConflictStrategy
+  resolution: LoaderConflictResolution
+}
+
 interface LoaderCompileOptions {
   defaultSuffix?: string
   prefix?: string
+  conflict?: LoaderConflictStrategy
+  onConflict?: (ctx: LoaderConflictContext) => void
 }
 
 type LoaderFromOptions = {
@@ -126,6 +139,10 @@ await http.load('./src/controllers', {
   suffix: 'controller',
   defaultSuffix: '/index',
   prefix: '/api',
+  conflict: 'warn',
+  onConflict: (ctx) => {
+    console.warn('route conflict', ctx)
+  },
 })
 ```
 
@@ -137,6 +154,16 @@ await http.load('./src/controllers', {
 | `users/index.controller.ts` | `/api/users` |
 | `users/[id].controller.ts` | `/api/users/:id` |
 
+冲突策略说明：
+
+- `error`：同一 `method + path` 冲突时抛错（默认）
+- `warn`：保留旧路由并发出警告
+- `override`：新路由覆盖旧路由
+
+`onConflict` 会在发生冲突时回调，提供 `routeKey/method/url/strategy/resolution`。
+
+`from()` 会校验控制器默认导出类型。若导出不合法，错误信息包含文件路径和导出摘要，便于定位。
+
 ## 4. 强制规则
 
 1. 全局中间件必须在 `listen()` 前注册。
@@ -145,6 +172,7 @@ await http.load('./src/controllers', {
 4. 需要多个 HTTP 方法时，default 导出数组。
 5. 控制器里不要调用 `next()`，需要 `next` 的逻辑放中间件。
 6. `load()` 为异步，必须 `await`。
+7. 大型项目建议显式设置 `conflict` 策略，避免隐式覆盖。
 
 ## 5. 常见反模式
 
@@ -178,6 +206,16 @@ export default defineController('GET', async () => {
 })
 ```
 
+### 不配置冲突策略导致行为不清晰
+
+```typescript
+// ✗ 不清晰：项目多人协作时难以统一预期
+await http.load('./src/controllers')
+
+// ✓ 显式策略：可读且可审计
+await http.load('./src/controllers', { conflict: 'error' })
+```
+
 ## 6. 与 @hile/core 集成
 
 ```typescript
@@ -202,3 +240,5 @@ export const httpService = defineService(async (shutdown) => {
 | `Http` | HTTP 服务实例类 |
 | `defineController` | 控制器定义函数 |
 | `Loader` | 路由加载器 |
+| `compileRoutePath` | 路径编译纯函数 |
+| `toRouterPath` | 参数路径转换纯函数 |

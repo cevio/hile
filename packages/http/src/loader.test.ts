@@ -1,7 +1,10 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { Http } from './http'
-import { Loader } from './loader'
+import { Loader, compileRoutePath, toRouterPath } from './loader'
 import { defineController } from './controller'
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 describe('Loader', () => {
   let closeServer: (() => void) | undefined
@@ -9,6 +12,20 @@ describe('Loader', () => {
   afterEach(() => {
     closeServer?.()
     closeServer = undefined
+  })
+
+  describe('pure utils', () => {
+    it('compileRoutePath: 规范化路径并处理默认后缀与前缀', () => {
+      expect(compileRoutePath('api/index')).toBe('/api')
+      expect(compileRoutePath('/index')).toBe('/')
+      expect(compileRoutePath('/users/home', { defaultSuffix: '/home' })).toBe('/users')
+      expect(compileRoutePath('/users', { prefix: '/api' })).toBe('/api/users')
+    })
+
+    it('toRouterPath: 将 [param] 转为 :param', () => {
+      expect(toRouterPath('/users/[id]')).toBe('/users/:id')
+      expect(toRouterPath('/[category]/[id]')).toBe('/:category/:id')
+    })
   })
 
   describe('compile - 单个路由绑定编译', () => {
@@ -158,6 +175,79 @@ describe('Loader', () => {
       const controller = defineController('GET', () => 'test')
       loader.compile('/users/[id]', controller, { prefix: '/api' })
       expect(controller.data.url).toBe('/api/users/:id')
+    })
+
+    it('冲突策略=error：重复 method+path 时抛错', () => {
+      const http = new Http({ port: 5013 })
+      const loader = new Loader(http)
+      loader.compile('/conflict', defineController('GET', () => 'a'))
+      expect(() => loader.compile('/conflict', defineController('GET', () => 'b')))
+        .toThrow('route conflict: GET:/conflict')
+    })
+
+    it('冲突策略=warn：保留旧路由并输出警告', async () => {
+      const http = new Http({ port: 5014 })
+      const loader = new Loader(http)
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => { })
+
+      loader.compile('/warn', defineController('GET', () => 'old'))
+      loader.compile('/warn', defineController('GET', () => 'new'), { conflict: 'warn' })
+
+      closeServer = await http.listen()
+      const res = await fetch('http://127.0.0.1:5014/warn')
+      expect(await res.text()).toBe('old')
+      expect(warnSpy).toHaveBeenCalledOnce()
+
+      warnSpy.mockRestore()
+    })
+
+    it('冲突策略=override：新路由覆盖旧路由', async () => {
+      const http = new Http({ port: 5015 })
+      const loader = new Loader(http)
+
+      loader.compile('/override', defineController('GET', () => 'old'))
+      loader.compile('/override', defineController('GET', () => 'new'), { conflict: 'override' })
+
+      closeServer = await http.listen()
+      const res = await fetch('http://127.0.0.1:5015/override')
+      expect(await res.text()).toBe('new')
+    })
+
+    it('onConflict 回调可获得冲突上下文', () => {
+      const http = new Http({ port: 5016 })
+      const loader = new Loader(http)
+      const onConflict = vi.fn()
+
+      loader.compile('/hook', defineController('GET', () => 'old'))
+      loader.compile('/hook', defineController('GET', () => 'new'), { conflict: 'warn', onConflict })
+
+      expect(onConflict).toHaveBeenCalledWith({
+        routeKey: 'GET:/hook',
+        method: 'GET',
+        url: '/hook',
+        strategy: 'warn',
+        resolution: 'keep',
+      })
+    })
+  })
+
+  describe('from - 文件系统加载', () => {
+    it('非法默认导出时错误信息包含文件路径与导出摘要', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'hile-http-loader-'))
+      try {
+        await mkdir(join(root, 'bad'), { recursive: true })
+        const file = join(root, 'bad', 'broken.controller.js')
+        await writeFile(file, 'export default 123\n', 'utf8')
+
+        const http = new Http({ port: 5017 })
+        const loader = new Loader(http)
+
+        await expect(loader.from(root)).rejects.toThrow(
+          'invalid service file: bad/broken.controller.js (number) - default export must be ControllerRegisterProps or ControllerRegisterProps[]'
+        )
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
     })
   })
 })

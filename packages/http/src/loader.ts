@@ -3,60 +3,163 @@ import { Http } from './http';
 import { glob } from 'glob';
 import { resolve } from 'node:path';
 
+export type LoaderConflictStrategy = 'error' | 'warn' | 'override';
+
+export type LoaderConflictResolution = 'error' | 'keep' | 'override';
+
+export type LoaderConflictContext = {
+  routeKey: string;
+  method: string;
+  url: string;
+  strategy: LoaderConflictStrategy;
+  resolution: LoaderConflictResolution;
+};
+
 export interface LoaderCompileOptions {
   defaultSuffix?: string; // 默认后缀，解析后将被重置为/或空字符串
   prefix?: string; // 前缀
+  conflict?: LoaderConflictStrategy; // 路由冲突处理策略
+  onConflict?: (ctx: LoaderConflictContext) => void; // 路由冲突回调
 }
 
 export type LoaderFromOptions = {
   suffix?: string; // 标记以什么后缀结尾的文件为路由
 } & LoaderCompileOptions;
 
+/**
+ * 将文件路径编译为标准 URL（不含动态参数转换）
+ */
+export function compileRoutePath(path: string, options: Pick<LoaderCompileOptions, 'defaultSuffix' | 'prefix'> = {}) {
+  const defaultSuffix = options.defaultSuffix || '/index';
+  let url = path.startsWith('/') ? path : '/' + path;
+  if (url.endsWith(defaultSuffix)) {
+    url = url.substring(0, url.length - defaultSuffix.length);
+  }
+  if (!url) url = '/';
+
+  return options.prefix ? options.prefix + url : url;
+}
+
+/**
+ * 将 [param] 格式参数转换为 find-my-way 兼容的 :param
+ */
+export function toRouterPath(path: string) {
+  return path.replace(/\[([^\]]+)\]/g, ':$1');
+}
+
+/**
+ * 判断是否为 ControllerRegisterProps 类型
+ */
+function isControllerRegisterProps(value: any): value is ControllerRegisterProps {
+  return !!value
+    && typeof value === 'object'
+    && typeof value.id === 'number'
+    && typeof value.method === 'string'
+    && Array.isArray(value.middlewares)
+    && !!value.data
+    && typeof value.data === 'object';
+}
+
+/**
+ * 转为标准的数组路由信息格式
+ */
+function normalizeControllers(value: unknown): ControllerRegisterProps[] {
+  if (Array.isArray(value)) {
+    if (!value.length) throw new Error('controller array is empty');
+    if (!value.every(isControllerRegisterProps)) {
+      throw new Error('default export must be ControllerRegisterProps or ControllerRegisterProps[]');
+    }
+    return value;
+  }
+
+  if (!isControllerRegisterProps(value)) {
+    throw new Error('default export must be ControllerRegisterProps or ControllerRegisterProps[]');
+  }
+
+  return [value];
+}
+
+function summarizeExportType(value: unknown) {
+  if (value === undefined) return 'undefined';
+  if (value === null) return 'null';
+  if (Array.isArray(value)) {
+    if (!value.length) return 'array(empty)';
+    const first = value[0];
+    return `array(len=${value.length}, first=${typeof first})`;
+  }
+  if (typeof value === 'object') {
+    const keys = Object.keys(value as Record<string, unknown>);
+    return `object(keys=[${keys.slice(0, 5).join(',')}])`;
+  }
+  return typeof value;
+}
+
 export class Loader {
+  private readonly registeredRoutes = new Map<string, () => void>();
+
   constructor(private readonly http: Http) { }
 
   /**
    * 单个路由绑定编译
-   * @param path 路径
-   * @param controllers 控制器数组或单个控制器
-   * @param options 选项
-   * @returns 注销回调
    */
   public compile(path: string, controllers: ControllerRegisterProps | ControllerRegisterProps[], options: LoaderCompileOptions = {
     defaultSuffix: '/index',
   }) {
     const callbacks: (() => void)[] = [];
+    const normalizedControllers = normalizeControllers(controllers);
+    const routePath = toRouterPath(compileRoutePath(path, options));
+    const strategy = options.conflict || 'error';
 
-    // 格式化路径，去除默认后缀
-    const defaultSuffix = options.defaultSuffix || '/index';
-    let url = path.startsWith('/') ? path : '/' + path;
-    if (url.endsWith(defaultSuffix)) {
-      url = url.substring(0, url.length - defaultSuffix.length);
-    }
-    if (!url) url = '/';
-
-    // 如果导出单个路由，则转化为数组，批量执行
-    if (!Array.isArray(controllers)) {
-      controllers = [controllers];
-    }
-
-    // 添加前缀
-    const _url = options.prefix ? options.prefix + url : url;
-
-    // 将路径中的参数转换为路由参数
-    const router_url = _url.replace(/\[([^\]]+)\]/g, ':$1');
-
-    // 批量注册路由
-    for (let i = 0; i < controllers.length; i++) {
-      const controller = controllers[i];
+    for (let i = 0; i < normalizedControllers.length; i++) {
+      const controller = normalizedControllers[i];
       const { method, middlewares } = controller;
-      controller.data.url = router_url;
-      callbacks.push(
-        this.http.route(method, router_url, ...middlewares)
-      );
+      const routeKey = `${method}:${routePath}`;
+      const exists = this.registeredRoutes.get(routeKey);
+
+      if (exists) {
+        if (strategy === 'error') {
+          options.onConflict?.({
+            routeKey,
+            method,
+            url: routePath,
+            strategy,
+            resolution: 'error',
+          });
+          throw new Error(`route conflict: ${routeKey}`);
+        }
+
+        if (strategy === 'warn') {
+          options.onConflict?.({
+            routeKey,
+            method,
+            url: routePath,
+            strategy,
+            resolution: 'keep',
+          });
+          console.warn(`[hile/http] route conflict: ${routeKey}, keeping existing route`);
+          continue;
+        }
+
+        options.onConflict?.({
+          routeKey,
+          method,
+          url: routePath,
+          strategy,
+          resolution: 'override',
+        });
+        exists();
+        this.registeredRoutes.delete(routeKey);
+      }
+
+      controller.data.url = routePath;
+      const off = this.http.route(method, routePath, ...middlewares);
+      this.registeredRoutes.set(routeKey, off);
+      callbacks.push(() => {
+        off();
+        this.registeredRoutes.delete(routeKey);
+      });
     }
 
-    // 销毁路由绑定的回调
     return () => {
       let j = callbacks.length;
       while (j--) callbacks[j]();
@@ -65,9 +168,6 @@ export class Loader {
 
   /**
    * 文件夹批量路由绑定编译
-   * @param directory 文件夹路径
-   * @param options 选项
-   * @returns 注销回调
    */
   public async from(directory: string, options: LoaderFromOptions = {
     defaultSuffix: '/index',
@@ -75,24 +175,25 @@ export class Loader {
   }) {
     const { suffix = 'controller', ...extras } = options;
 
-    // 获取文件夹下的所有文件
     const files = await glob(`**/*.${suffix}.{ts,js}`, { cwd: directory });
 
-    // 批量注册路由
     const callbacks = await Promise.all(files.map(async (file) => {
-      // 获取文件绝对路径
       const path = resolve(directory, file);
-      // 获取文件地址
       const url = file.substring(0, file.length - suffix.length - 4);
-      // 导入文件
       const controller = await import(path);
-      // 获取文件导出的默认函数
       const { default: fn } = controller;
-      // 注册路由
-      return this.compile(url, fn, extras);
+
+      let normalized: ControllerRegisterProps[];
+      try {
+        normalized = normalizeControllers(fn);
+      } catch (error: any) {
+        const summary = summarizeExportType(fn);
+        throw new Error(`invalid service file: ${file} (${summary}) - ${error?.message || String(error)}`);
+      }
+
+      return this.compile(url, normalized, extras);
     }));
 
-    // 销毁路由绑定的回调
     return () => {
       let i = callbacks.length;
       while (i--) callbacks[i]();
