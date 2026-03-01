@@ -1,6 +1,6 @@
 # @hile/typeorm
 
-基于 `@hile/core` 的 TypeORM 集成：将 TypeORM DataSource 封装为 Hile 服务（单例、随进程退出销毁），并提供事务封装 `transaction`。
+基于 `@hile/core` 的 TypeORM 集成：将 `DataSource` 封装为 Hile 服务（单例、可优雅销毁），并提供事务辅助函数 `transaction`。
 
 ## 安装
 
@@ -8,11 +8,9 @@
 pnpm add @hile/typeorm
 ```
 
-依赖 `@hile/core` 与 `typeorm`，请一并安装。
+同时安装依赖：`@hile/core`、`typeorm`。
 
 ## 快速开始
-
-通过环境变量配置数据库，用 `loadService` 获取 DataSource：
 
 ```typescript
 import { loadService } from '@hile/core'
@@ -24,7 +22,7 @@ const ds = await loadService(typeormService)
 
 ## 环境变量
 
-DataSource 从以下环境变量读取配置：
+默认 DataSource 从以下环境变量读取配置：
 
 | 变量 | 说明 |
 |------|------|
@@ -34,15 +32,20 @@ DataSource 从以下环境变量读取配置：
 | `TYPEORM_PASSWORD` | 密码 |
 | `TYPEORM_DATABASE` | 数据库名 |
 | `TYPEORM_PORT` | 端口 |
-| `TYPEORM_CHARSET` | 数据库字符集 |
+| `TYPEORM_CHARSET` | 字符集 |
 | `TYPEORM_ENTITY_PREFIX` | 实体表名前缀 |
 | `TYPEORM_ENTITIES` | 实体目录（单一路径） |
 
-行为：`synchronize: true`；当 `NODE_ENV === 'development'` 时开启 `logging`。未设置 `TYPEORM_ENTITIES` 时实体列表为空。连接在进程退出时通过 Hile 的 shutdown 自动销毁。
+行为说明：
 
-## 事务
+- `synchronize: true`
+- 当 `NODE_ENV === 'development'` 时启用 `logging`
+- 未配置 `TYPEORM_ENTITIES` 时，实体数组为空
+- 进程退出时通过 Hile 的 shutdown 自动销毁连接
 
-使用 `transaction` 在 DataSource 上执行事务，并在失败时执行已注册的回滚逻辑（LIFO）：
+## 事务辅助
+
+使用 `transaction` 在 DataSource 上执行事务，并注册失败时的回滚逻辑（LIFO）：
 
 ```typescript
 import { loadService } from '@hile/core'
@@ -52,20 +55,21 @@ import typeormService from '@hile/typeorm'
 const ds = await loadService(typeormService)
 
 const result = await transaction(ds, async (runner, rollback) => {
-  // 使用 runner 进行查询/写入
+  // 用 runner 执行数据库操作
   rollback(() => {
-    // 事务失败时执行的清理（如撤销外部副作用）
+    // 事务失败时执行的补偿逻辑
   })
+
   return value
 })
 ```
 
-- 成功：`transaction` 提交并返回回调的返回值。
-- 失败：回滚事务并按后进先出顺序执行所有通过 `rollback(fn)` 注册的函数，再抛出原错误。
+- 成功：提交事务并返回回调结果
+- 失败：回滚事务，并按后进先出顺序执行 `rollback(fn)` 注册函数，最后抛出原错误
 
 ## 与 @hile/cli 一起使用
 
-若使用 `@hile/cli` 启动应用，可在项目根 `package.json` 中配置自动加载本包默认服务：
+可在 `package.json` 配置自动加载：
 
 ```json
 {
@@ -75,15 +79,15 @@ const result = await transaction(ds, async (runner, rollback) => {
 }
 ```
 
-之后在业务中直接 `loadService(typeormService)` 即可，DataSource 会在应用启动时初始化、退出时销毁。
+这样应用启动时会初始化 DataSource，退出时自动销毁。
 
 ## 开发
 
 ```bash
 pnpm install
-pnpm build    # 编译
-pnpm dev      # 监听模式
-pnpm test     # 测试
+pnpm build
+pnpm dev
+pnpm test
 ```
 
 ## License

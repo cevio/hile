@@ -1,48 +1,35 @@
 ---
 name: hile-ioredis
-description: Code generation and usage rules for @hile/ioredis. Use when editing this package or when the user asks about @hile/ioredis, Redis as Hile service, or loadService(ioredisService) patterns.
+description: @hile/ioredis 的代码生成与使用规范。适用于 Redis 服务加载、环境变量配置、及与 @hile/core/@hile/cli 集成场景。
 ---
 
-# @hile/ioredis
+# @hile/ioredis SKILL
 
-本文档是面向 AI 编码模型和人类开发者的 **代码生成规范**，阅读后应能正确地使用本库编写符合架构规则的代码。
+本文档规范 `@hile/ioredis` 的使用方式，确保 Redis 客户端生命周期由 Hile 统一管理。
 
----
+## 1. 架构概览
 
-## 1. 架构总览
+`@hile/ioredis` 提供一个默认导出的 Hile 服务：
 
-`@hile/ioredis` 在 `@hile/core` 之上提供：
+- 使用环境变量构建 ioredis 客户端
+- 首次加载时建立连接并等待 `connect`
+- 进程退出时调用 `client.disconnect()`
 
-- **默认导出**：一个通过 `defineService` 定义的 **ioredis Redis 客户端** 服务，配置来自环境变量；创建后等待 `connect` 事件再 resolve，进程退出时通过 `shutdown` 注册 `client.disconnect()`。
+依赖：`@hile/core`、`ioredis`。
 
-依赖：`@hile/core`、`ioredis`。生成代码时必须遵循 Hile 的服务定义与加载规则，通过 `loadService` 获取 Redis 实例并使用 ioredis 的标准 API。
-
----
-
-## 2. 类型与环境变量
-
-### 2.1 环境变量（默认服务）
+## 2. 环境变量
 
 | 变量 | 说明 |
-|------|------|
+|---|---|
 | `REDIS_HOST` | Redis 主机 |
-| `REDIS_PORT` | Redis 端口（字符串会被转为数字） |
+| `REDIS_PORT` | Redis 端口（字符串转数字） |
 | `REDIS_USERNAME` | Redis 用户名 |
 | `REDIS_PASSWORD` | Redis 密码 |
-| `REDIS_DB` | Redis 数据库编号，未设置时默认为 `0` |
+| `REDIS_DB` | Redis 数据库编号（默认 `0`） |
 
-行为：服务在 `new Redis(options)` 后监听 `connect`，连接成功后才 resolve；`shutdown` 时调用 `client.disconnect()`。
+## 3. 标准模板
 
-### 2.2 类型（生成代码时须遵循）
-
-- 默认服务：`defineService(async (shutdown) => { ... return client; })`，返回值为 ioredis 的 `Redis` 实例。
-- 需要类型时从 `ioredis` 自行引入，例如 `import type { Redis, RedisOptions } from 'ioredis'`；本包仅导出默认服务，不 re-export 类型。
-
----
-
-## 3. 代码生成模板与规则
-
-### 3.1 使用默认服务
+### 3.1 加载默认服务
 
 ```typescript
 import { loadService } from '@hile/core'
@@ -53,8 +40,15 @@ await redis.set('key', 'value')
 const value = await redis.get('key')
 ```
 
-### 3.2 规则与反模式
+## 4. 强制规则
 
-- 不要在本包外再包一层 `defineService` 封装同一个 Redis 连接；直接使用默认服务即可。
-- 不要忽略环境变量：生产环境必须通过 `REDIS_*` 配置，避免硬编码。
-- 需要扩展配置时，应在本包内扩展环境变量或 options 构造方式，保持单例由 Hile 管理。
+1. 统一通过 `loadService(ioredisService)` 获取 Redis 客户端。
+2. 不要再额外封装一个同用途的全局 Redis 单例与本包混用。
+3. 生产环境应通过 `REDIS_*` 变量配置，避免硬编码。
+4. 依赖 Redis 的服务应在服务函数内部加载，不在模块顶层缓存实例。
+
+## 5. API 速查
+
+| 导出 | 说明 |
+|---|---|
+| 默认导出 | Hile 服务化 Redis 客户端 |
