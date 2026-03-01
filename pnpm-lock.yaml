@@ -74,7 +74,7 @@ importers:
   packages/ioredis:
     dependencies:
       '@hile/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       ioredis:
         specifier: ^5.10.0
