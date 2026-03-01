@@ -1,6 +1,6 @@
 ---
 name: hile-http
-description: @hile/http 的代码生成与使用规范。适用于路由、控制器、中间件、文件系统自动路由及与 @hile/core 的集成场景。
+description: `@hile/http` 的代码生成与使用规范。适用于路由、控制器、中间件、文件系统自动路由及与 @hile/core 的集成场景。
 ---
 
 # @hile/http SKILL
