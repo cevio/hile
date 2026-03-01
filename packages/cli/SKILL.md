@@ -1,6 +1,6 @@
 ---
 name: hile-cli
-description: `@hile/cli` 的强约束生成规范。适用于 boot 编排、启动流程、容器事件日志与退出阶段管理。
+description: "@hile/cli 的强约束生成规范。适用于 boot 编排、启动流程、容器事件日志与退出阶段管理。"
 ---
 
 # @hile/cli SKILL

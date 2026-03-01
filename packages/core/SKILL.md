@@ -1,6 +1,6 @@
 ---
 name: hile-core
-description: `@hile/core` 的代码生成与使用规范。适用于定义/加载 Hile 服务、生命周期编排、依赖图与容器事件相关场景。
+description: "@hile/core 的代码生成与使用规范。适用于定义/加载 Hile 服务、生命周期编排、依赖图与容器事件相关场景。"
 ---
 
 # @hile/core SKILL

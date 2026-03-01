@@ -1,6 +1,6 @@
 ---
 name: hile-typeorm
-description: `@hile/typeorm` 的代码生成与使用规范。适用于 DataSource 服务加载、transaction 事务封装、及与 @hile/core/@hile/cli 集成场景。
+description: "@hile/typeorm 的代码生成与使用规范。适用于 DataSource 服务加载、transaction 事务封装、及与 @hile/core/@hile/cli 集成场景。"
 ---
 
 # @hile/typeorm SKILL

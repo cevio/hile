@@ -1,6 +1,6 @@
 ---
 name: hile-ioredis
-description: `@hile/ioredis` 的代码生成与使用规范。适用于 Redis 服务加载、环境变量配置、及与 @hile/core/@hile/cli 集成场景。
+description: "@hile/ioredis 的代码生成与使用规范。适用于 Redis 服务加载、环境变量配置、及与 @hile/core/@hile/cli 集成场景。"
 ---
 
 # @hile/ioredis SKILL
