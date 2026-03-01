@@ -2,6 +2,21 @@
 
 Hile 是一套面向 Node.js 的轻量级服务化工具集，采用 `pnpm workspaces + Lerna` 管理多包仓库。
 
+## 5 分钟跑通
+
+```bash
+pnpm install
+pnpm run build
+pnpm run test
+```
+
+如果你要快速体验一个应用启动流程：
+
+```bash
+# 进入你的应用目录（示例）
+# hile start --dev
+```
+
 ## 包一览
 
 | 包名 | 说明 | 版本 |
@@ -12,102 +27,39 @@ Hile 是一套面向 Node.js 的轻量级服务化工具集，采用 `pnpm works
 | [`@hile/typeorm`](./packages/typeorm) | TypeORM DataSource 的 Hile 服务封装，内置事务辅助 | 1.0.2 |
 | [`@hile/ioredis`](./packages/ioredis) | ioredis 客户端的 Hile 服务封装，支持优雅断连 | 1.0.1 |
 
+## 文档策略
+
+为了降低学习成本并提高协作一致性，仓库采用如下策略：
+
+- `README.md`：面向使用者，强调“快速跑通”和最少必要说明
+- `SKILL.md`：面向代码生成器/规范执行，强调强约束、反模式、边界条件
+- `docs/adr/*`：记录关键架构决策（ADR）及其取舍理由
+
 ## 仓库结构
 
 ```text
 ├── packages/
-│   ├── core/              # @hile/core
-│   ├── http/              # @hile/http
-│   ├── cli/               # @hile/cli
-│   ├── typeorm/           # @hile/typeorm
-│   └── ioredis/           # @hile/ioredis
+│   ├── core/
+│   ├── http/
+│   ├── cli/
+│   ├── typeorm/
+│   └── ioredis/
+├── docs/
+│   └── adr/              # Architecture Decision Records
 ├── scripts/
-│   └── create-package.sh  # 新包脚手架
-├── package.json           # 根配置（workspaces + scripts）
+├── package.json
 ├── pnpm-workspace.yaml
-├── lerna.json             # independent 版本模式
-└── tsconfig.json          # 基础 TypeScript 配置
+├── lerna.json
+└── tsconfig.json
 ```
-
-## 环境要求
-
-- Node.js：建议 `>= 20`
-- pnpm：建议 `>= 8`
-
-## 快速开始
-
-```bash
-pnpm install
-pnpm run build
-pnpm run test
-```
-
-## 核心特性（第二层落地）
-
-- `@hile/core`
-  - 生命周期：`init -> ready -> stopping -> stopped`
-  - 启动/销毁超时控制（`startTimeoutMs`、`shutdownTimeoutMs`）
-  - 可观测事件（`onEvent`）
-  - 依赖图导出与循环依赖检测
-- `@hile/cli`
-  - 已接入容器事件日志，默认输出启动、失败、关闭阶段信息与耗时
 
 ## 常用命令
-
-### 全局操作
 
 | 命令 | 说明 |
 |------|------|
 | `pnpm run build` | 编译所有包 |
 | `pnpm run test` | 运行所有包测试 |
 | `pnpm run dev` | 所有包进入监听模式 |
-
-### 单包操作
-
-将 `<pkg>` 替换为包名（如 `@hile/core`）：
-
-| 命令 | 说明 |
-|------|------|
-| `pnpm --filter <pkg> build` | 编译指定包 |
-| `pnpm --filter <pkg> test` | 测试指定包 |
-| `pnpm --filter <pkg> dev` | 指定包监听开发 |
-
-## 新增包
-
-```bash
-pnpm run create <包名>
-```
-
-例如：
-
-```bash
-pnpm run create utils
-```
-
-脚本会自动完成：
-
-1. 创建 `packages/<name>/` 与 `src/index.ts`
-2. 生成 `package.json`（含 build/dev/test 脚本）
-3. 生成 `tsconfig.json`（继承根配置）
-4. 执行 `pnpm install`
-
-### 添加包间依赖
-
-```bash
-pnpm --filter @hile/utils add @hile/core --workspace
-```
-
-## 发布
-
-Lerna 使用 `independent` 版本策略，各包独立发布。
-
-| 命令 | 说明 |
-|------|------|
-| `npx lerna changed` | 查看有变更的包 |
-| `pnpm run publish` | 交互式发布变更包 |
-| `npx lerna publish patch` | 统一发布补丁版本 |
-| `npx lerna publish minor` | 统一发布次版本 |
-| `npx lerna publish major` | 统一发布主版本 |
 
 ## License
 

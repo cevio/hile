@@ -1,139 +1,77 @@
 ---
 name: hile-cli
-description: @hile/cli 的项目结构与一键启动编排规范。适用于 boot 文件组织、package.json 配置、运行时目录、容器事件日志与启动流程相关场景。
+description: @hile/cli 的强约束生成规范。适用于 boot 编排、启动流程、容器事件日志与退出阶段管理。
 ---
 
 # @hile/cli SKILL
 
-本文档约束 `@hile/cli` 场景下的项目组织方式，确保应用可通过 `hile start` / `hile start --dev` 一键启动，并具备可观测的运行日志。
+本文档面向代码生成器与维护者，强调“可执行约束”，而非入门说明。
 
-## 1. 目标
+## 1. 强约束（必须遵守）
 
-- 用结构约定替代手写入口聚合
-- 用 `*.boot` 与 `hile.auto_load_packages` 描述启动编排
-- 保证开发与生产路径一致可预期
-- 基于 `@hile/core` 事件输出可观测日志（启动、失败、关闭）
+1. `hile.auto_load_packages` 只允许模块名，禁止文件路径。
+2. boot 文件命名必须为 `*.boot.ts` / `*.boot.js`。
+3. boot 文件必须 `export default` 合法 Hile 服务（`defineService` / `register` 结果）。
+4. 加载顺序必须固定：`auto_load_packages` → 扫描 boot。
+5. 运行目录优先级必须固定：`HILE_RUNTIME_DIR` → `src`(dev) → `dist`。
+6. CLI 必须订阅 `container.onEvent` 并输出关键生命周期日志。
+7. 进程退出时必须调用 `container.shutdown()`，并取消事件订阅。
 
-## 2. 推荐目录结构
+## 2. 容器事件日志约束
 
-```text
-<project-root>/
-├── src/
-│   ├── *.boot.ts
-│   └── services/
-├── dist/
-├── package.json
-└── tsconfig.json
-```
+最小事件集：
 
-规则：
-
-- 需要“随进程启动”的服务放在运行时目录并命名为 `*.boot.ts/js`
-- 仅被依赖的服务放在 `services/`，不要加 `.boot`
-
-## 3. 运行时目录优先级
-
-1. `HILE_RUNTIME_DIR`
-2. `hile start --dev` → `src/`
-3. `hile start` → `dist/`
-
-## 4. package.json 约定
-
-### 4.1 `hile.auto_load_packages`
-
-```json
-{
-  "hile": {
-    "auto_load_packages": ["@hile/http", "my-local-service"]
-  }
-}
-```
-
-规则：
-
-- 数组项必须是模块名，不可写文件路径
-- 加载顺序：先 `auto_load_packages`，再扫描 `*.boot.{ts,js}`
-- 模块默认导出必须是合法 Hile 服务（通过 `isService`）
-
-### 4.2 scripts 建议
-
-```json
-{
-  "scripts": {
-    "start": "hile start",
-    "dev": "hile start --dev",
-    "build": "tsc -b"
-  }
-}
-```
-
-## 5. Boot 文件规范
-
-```typescript
-import { defineService, loadService } from '@hile/core'
-import { configService } from './services/config'
-
-export default defineService(async (shutdown) => {
-  const config = await loadService(configService)
-  const app = await createApp(config)
-  shutdown(() => app.close())
-  return app
-})
-```
+- `service:init`
+- `service:ready`
+- `service:error`
+- `service:shutdown:start`
+- `service:shutdown:done`
+- `service:shutdown:error`
+- `container:shutdown:start`
+- `container:shutdown:done`
+- `container:error`
 
 要求：
 
-- 文件名后缀必须是 `.boot.ts` 或 `.boot.js`
-- 必须有 `default` 导出
-- 默认导出值必须来自 `defineService` 或 `container.register`
+- 保留原始错误对象
+- 输出统一日志前缀（如 `[hile]`）
+- 记录可用耗时字段（`durationMs`）
 
-## 6. 容器事件日志约定（新增）
+## 3. 反模式（禁止）
 
-CLI 启动时应订阅 `container.onEvent`，输出核心事件日志：
+### 3.1 在 CLI 中重复实现容器语义
 
-- `service:init`
-- `service:ready`（含 `durationMs`）
-- `service:error`（含错误与耗时）
-- `service:shutdown:start`
-- `service:shutdown:done`（含 `durationMs`）
-- `service:shutdown:error`
-- `container:shutdown:start`
-- `container:shutdown:done`（含 `durationMs`）
-- `container:error`
+```typescript
+// ✗ 不要在 CLI 内自建另一套生命周期/依赖管理
 
-实践规则：
+// ✓ 复用 @hile/core 的 onEvent、shutdown、resolve 语义
+```
 
-- 退出时必须取消订阅（调用 `offEvent`）
-- 不吞掉错误，应打印原始错误对象以便定位
-- 日志输出应保持稳定前缀（如 `[hile]`）
+### 3.2 boot 文件导出普通函数或配置
 
-## 7. 命令速查
+```typescript
+// ✗
+export default function main() {}
 
-| 命令 | 说明 |
-|---|---|
-| `hile start` | 生产模式，`NODE_ENV=production` |
-| `hile start --dev` | 开发模式，`NODE_ENV=development`，扫描 `src/` |
-| `hile start -e .env -e .env.local` | 按顺序加载 env 文件 |
-| `hile -v` | 版本 |
-| `hile -h` | 帮助 |
+// ✓
+export default defineService(async (shutdown) => {
+  // ...
+})
+```
 
-## 8. 与 @hile/core 新能力联动
+### 3.3 忘记取消事件订阅
 
-在 `@hile/cli` 语境下，默认继承并利用 `@hile/core` 能力：
+```typescript
+// ✗ 只订阅不释放
+const off = container.onEvent(listener)
 
-- 生命周期：`init -> ready -> stopping -> stopped`
-- 启动/销毁超时（由容器配置决定）
-- 依赖图与循环依赖检测
-- 事件流可观测性
+// ✓ 退出时调用 off()
+```
 
-因此，CLI 只负责编排与日志，不应重复实现容器语义。
+## 4. 边界条件清单
 
-## 9. 编排检查清单
-
-- [ ] boot 文件仅用于进程入口服务
-- [ ] boot 文件位于运行时目录并命名正确
-- [ ] 每个 boot 文件 default 导出合法服务
-- [ ] `auto_load_packages` 仅包含模块名
-- [ ] `dev` / `start` 脚本与 CLI 行为一致
-- [ ] CLI 已订阅并输出关键容器事件日志
-- [ ] 退出时已取消事件订阅
+- [ ] 无可加载服务时打印 `no services to load` 并退出
+- [ ] 非法默认导出时报错包含目标文件或模块标识
+- [ ] `--dev` 与非 dev 的 `NODE_ENV` 行为一致
+- [ ] 多个 `--env-file` 加载顺序可预测
+- [ ] shutdown 期间异常不会吞掉主错误

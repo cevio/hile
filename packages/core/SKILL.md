@@ -1,180 +1,112 @@
 ---
 name: hile-core
-description: @hile/core 的代码生成与使用规范。适用于定义/加载 Hile 服务、生命周期 shutdown 编排、或涉及 defineService、loadService、Container 等话题。
+description: @hile/core 的代码生成与使用规范。适用于定义/加载 Hile 服务、生命周期编排、依赖图与容器事件相关场景。
 ---
 
 # @hile/core SKILL
 
-本文档用于约束 AI 与开发者在使用 `@hile/core` 时的代码生成方式，目标是保证服务定义、依赖加载与资源销毁行为一致且可维护。
+本文档面向代码生成器与维护者，目标是确保生成代码严格符合容器语义。
 
-## 1. 架构概览
+## 1. 强约束（必须遵守）
 
-Hile 以 `Container` 为核心，服务遵循“定义 → 加载”两阶段：
+1. 服务必须使用 `async (shutdown)` 形态定义。
+2. 只能通过 `defineService` / `container.register` 产出服务对象。
+3. 只能通过 `loadService` / `container.resolve` 获取服务实例。
+4. 外部资源创建后必须立即注册 `shutdown`。
+5. 禁止在模块顶层缓存 `await loadService(...)` 结果。
+6. 依赖服务必须在服务函数内部加载。
+7. 多个 teardown 默认按 LIFO 顺序执行。
 
-- 单例：同一服务函数仅初始化一次
-- 并发合并：并发加载同一服务时共享同一初始化过程
-- 失败回收：初始化失败时自动执行已注册的清理回调
+## 2. 生命周期与超时约束
 
-模块默认导出全局容器，并提供 `defineService` / `loadService` 便捷函数。
+容器生命周期：`init -> ready -> stopping -> stopped`。
 
-## 2. 关键类型
+- 启动超时：`new Container({ startTimeoutMs })`
+- 销毁超时：`new Container({ shutdownTimeoutMs })`
 
-```typescript
-type ServiceCutDownFunction = () => unknown | Promise<unknown>;
-type ServiceCutDownHandler = (fn: ServiceCutDownFunction) => void;
-type ServiceFunction<R> = (shutdown: ServiceCutDownHandler) => R | Promise<R>;
+生成代码时：
 
-const sericeFlag = Symbol('service');
+- 不要吞掉启动超时错误。
+- 不要假设 teardown 一定成功；应允许 `service:shutdown:error` 事件出现。
 
-interface ServiceRegisterProps<R> {
-  id: number;
-  fn: ServiceFunction<R>;
-  flag: typeof sericeFlag;
-}
-```
+## 3. 可观测事件约束
 
-## 3. 标准模板
+允许订阅：`container.onEvent(listener)`。
 
-### 3.1 定义服务
+关键事件：
 
-```typescript
-import { defineService } from '@hile/core'
-
-export const xxxService = defineService(async (shutdown) => {
-  const resource = await createResource()
-  shutdown(() => resource.close())
-  return resource
-})
-```
+- `service:init`
+- `service:ready`
+- `service:error`
+- `service:shutdown:start`
+- `service:shutdown:done`
+- `service:shutdown:error`
+- `container:shutdown:start`
+- `container:shutdown:done`
+- `container:error`
 
 规则：
 
-- 服务函数第一个参数固定为 `shutdown`
-- 推荐必须使用 `async`
-- `defineService` 结果需使用模块级 `export const` 暴露
-- 命名建议以 `Service` 结尾
+- 订阅后必须在生命周期结束时取消订阅。
+- 记录错误时保留原始 error 对象。
 
-### 3.2 加载服务
+## 4. 依赖图与循环依赖
 
-```typescript
-import { loadService } from '@hile/core'
-import { databaseService } from './services/database'
+容器会自动记录服务依赖并检测循环依赖：
 
-const db = await loadService(databaseService)
-```
+- `getDependencyGraph()`
+- `getStartupOrder()`
 
 规则：
 
-- 始终通过 `loadService` 获取实例
-- `loadService` 返回 Promise，必须 `await`
+- 不要绕开容器手动构建“隐式全局单例依赖”。
+- 出现 `circular dependency detected` 时应通过拆分服务职责或引入中间层服务解决。
 
-### 3.3 服务依赖服务
+## 5. 反模式（禁止）
 
-```typescript
-import { defineService, loadService } from '@hile/core'
-import { databaseService } from './database'
-
-export const userService = defineService(async (shutdown) => {
-  const db = await loadService(databaseService)
-  return new UserRepository(db)
-})
-```
-
-规则：
-
-- 在服务函数内部加载依赖
-- 不在模块顶层缓存 `loadService` 结果
-
-### 3.4 注册清理回调
-
-```typescript
-export const connectionService = defineService(async (shutdown) => {
-  const a = await connectA()
-  shutdown(() => a.close())
-
-  const b = await connectB()
-  shutdown(() => b.close())
-
-  return { a, b }
-})
-```
-
-规则：
-
-- 资源创建后立即注册清理
-- 回调按 LIFO 执行
-- 支持异步回调
-
-### 3.5 全局优雅关闭
-
-```typescript
-import container from '@hile/core'
-
-process.on('SIGTERM', async () => {
-  await container.shutdown()
-  process.exit(0)
-})
-```
-
-## 4. 强制规则
-
-1. 服务函数必须使用 `async`，避免同步 `throw` 破坏销毁机制。
-2. 不要手动构造 `ServiceRegisterProps`。
-3. 不要在工厂函数里动态调用 `defineService` 生成新引用。
-4. 不要在模块顶层 `await loadService(...)`。
-5. 每个外部资源都应对应一次 `shutdown` 注册。
-
-## 5. 常见反模式
-
-### 同步 throw
+### 5.1 顶层缓存实例
 
 ```typescript
 // ✗
-export const bad = defineService((shutdown) => {
-  const r = createSync()
-  shutdown(() => r.close())
-  throw new Error('boom')
-})
-
-// ✓
-export const good = defineService(async (shutdown) => {
-  const r = await createAsync()
-  shutdown(() => r.close())
-  throw new Error('boom')
-})
-```
-
-### 顶层缓存服务实例
-
-```typescript
-// ✗
-const db = await loadService(databaseService)
+const db = await loadService(dbService)
 
 // ✓
 export async function query(sql: string) {
-  const db = await loadService(databaseService)
+  const db = await loadService(dbService)
   return db.query(sql)
 }
 ```
 
-## 6. API 速查
+### 5.2 手动伪造服务对象
 
-### 便捷函数
+```typescript
+// ✗
+const fake = { id: 1, fn: async () => 1 }
 
-| 函数 | 说明 |
-|---|---|
-| `defineService(fn)` | 注册服务到默认容器 |
-| `loadService(props)` | 加载服务实例 |
-| `isService(props)` | 判断是否为合法服务注册对象 |
+// ✓
+const real = defineService(async () => 1)
+```
 
-### Container
+### 5.3 不注册资源清理
 
-| 方法 | 说明 |
-|---|---|
-| `register(fn)` | 注册服务 |
-| `resolve(props)` | 解析服务 |
-| `hasService(fn)` | 检查函数是否已注册 |
-| `hasMeta(id)` | 检查运行时元数据 |
-| `getIdByService(fn)` | 通过函数获取 ID |
-| `getMetaById(id)` | 通过 ID 获取元数据 |
-| `shutdown()` | 销毁所有服务 |
+```typescript
+// ✗
+export const bad = defineService(async () => {
+  return await createPool()
+})
+
+// ✓
+export const good = defineService(async (shutdown) => {
+  const pool = await createPool()
+  shutdown(() => pool.end())
+  return pool
+})
+```
+
+## 6. 边界条件清单
+
+- [ ] 服务同步抛错路径是否可观测
+- [ ] 异步 reject 路径是否会触发 teardown
+- [ ] teardown 抛错是否不覆盖原始业务错误
+- [ ] 并发 resolve 同一服务是否只初始化一次
+- [ ] shutdown 重复调用是否幂等
