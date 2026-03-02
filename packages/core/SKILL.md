@@ -31,7 +31,7 @@ description: "@hile/core 的代码生成与使用规范。适用于定义/加载
 
 ## 3. 可观测事件约束
 
-允许订阅：`container.onEvent(listener)`。
+允许订阅：`container.on(listener)`。
 
 关键事件：
 

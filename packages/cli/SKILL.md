@@ -63,7 +63,7 @@ export default defineService(async (shutdown) => {
 
 ```typescript
 // ✗ 只订阅不释放
-const off = container.onEvent(listener)
+const off = container.on(listener)
 
 // ✓ 退出时调用 off()
 ```

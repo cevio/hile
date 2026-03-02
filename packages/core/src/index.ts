@@ -125,12 +125,12 @@ export class Container {
     }
   }
 
-  public onEvent(listener: (event: ContainerEvent) => void) {
+  public on(listener: (event: ContainerEvent) => void) {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  public offEvent(listener: (event: ContainerEvent) => void) {
+  public off(listener: (event: ContainerEvent) => void) {
     this.listeners.delete(listener);
   }
 

@@ -138,7 +138,7 @@ const container = new Container({
 订阅事件：
 
 ```typescript
-const off = container.onEvent((event) => {
+const off = container.on((event) => {
   if (event.type === 'service:ready') {
     console.log(`service#${event.id} ready in ${event.durationMs}ms`)
   }
@@ -218,8 +218,8 @@ const result = await container.resolve(service)
 | `register(fn)` | 注册服务（同函数引用去重） |
 | `resolve(props)` | 加载服务（执行、等待或返回缓存） |
 | `shutdown()` | 销毁所有服务并执行清理回调 |
-| `onEvent(listener)` | 订阅容器事件，返回取消订阅函数 |
-| `offEvent(listener)` | 取消订阅 |
+| `on(listener)` | 订阅容器事件，返回取消订阅函数 |
+| `off(listener)` | 取消订阅 |
 | `getLifecycle(id)` | 获取服务生命周期阶段 |
 | `getDependencyGraph()` | 获取依赖图 `{ nodes, edges }` |
 | `getStartupOrder()` | 获取服务启动顺序（首次启动顺序） |

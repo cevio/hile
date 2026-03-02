@@ -71,8 +71,6 @@ program
   .option('-e, --env-file <path>', '加载指定 env 文件（兼容 Node --env-file 语义；可多次指定，先加载的不被后加载覆盖）', (v: string, acc: string[]) => (acc.push(v), acc), [] as string[])
   .description('启动服务，加载所有后缀为 boot.ts 或 boot.js 的服务，并注册退出钩子，在进程退出时销毁所有服务')
   .action(async (options: { dev: boolean; envFile?: string[] }) => {
-    const offEvent = container.onEvent(logContainerEvent);
-
     // 先加载 --env-file（与 Node --env-file 行为一致：先加载的优先，已存在的 key 不被覆盖）
     const envFiles = options.envFile ?? [];
     for (const p of envFiles) {
@@ -86,6 +84,10 @@ program
     } else {
       process.env.NODE_ENV = 'production';
     }
+
+    const offEvent = process.env.NODE_ENV === 'development'
+      ? container.on(logContainerEvent)
+      : () => { };
 
     const cwd = process.cwd();
     const files: string[] = [];

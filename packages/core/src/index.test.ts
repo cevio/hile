@@ -385,7 +385,7 @@ describe('Container', () => {
     it('应可订阅可观测事件', async () => {
       const c = new Container()
       const events: string[] = []
-      const off = c.onEvent((e) => events.push(e.type))
+      const off = c.on((e) => events.push(e.type))
       const fn = async (shutdown: (fn: () => void) => void) => {
         shutdown(() => { })
         return 'ok'
