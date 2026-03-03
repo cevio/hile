@@ -1,7 +1,7 @@
 import { ControllerRegisterProps } from './controller';
 import { Http } from './http';
 import { glob } from 'glob';
-import { resolve } from 'node:path';
+import { resolve, extname } from 'node:path';
 
 export type LoaderConflictStrategy = 'error' | 'warn' | 'override';
 
@@ -175,11 +175,12 @@ export class Loader {
   }) {
     const { suffix = 'controller', ...extras } = options;
 
-    const files = await glob(`**/*.${suffix}.{ts,js}`, { cwd: directory });
+    const files = await glob(`**/*.${suffix}.{ts,js,tsx,jsx}`, { cwd: directory });
 
     const callbacks = await Promise.all(files.map(async (file) => {
       const path = resolve(directory, file);
-      const url = file.substring(0, file.length - suffix.length - 4);
+      const ext = extname(path);
+      const url = file.substring(0, file.length - suffix.length - ext.length - 1);
       const controller = await import(path);
       const { default: fn } = controller;
 
