@@ -1,6 +1,6 @@
 {
   "name": "@hile/cli",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
@@ -19,8 +19,8 @@
     "access": "public"
   },
   "devDependencies": {
-    "fix-esm-import-path": "^1.10.3",
     "@types/async-exit-hook": "^2.0.2",
+    "fix-esm-import-path": "^1.10.3",
     "vitest": "^4.0.18"
   },
   "dependencies": {
