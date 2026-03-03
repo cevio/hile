@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
     "dev": "tsc -b --watch"
   },
   "files": [
@@ -19,6 +19,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.3.1",
+    "fix-esm-import-path": "^1.10.3",
     "vitest": "^4.0.18"
   },
   "dependencies": {

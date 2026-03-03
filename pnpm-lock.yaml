@@ -36,6 +36,9 @@ importers:
       '@types/async-exit-hook':
         specifier: ^2.0.2
         version: 2.0.2
+      fix-esm-import-path:
+        specifier: ^1.10.3
+        version: 1.10.3
       vitest:
         specifier: ^4.0.18
         version: 4.0.18(@types/node@25.3.1)(tsx@4.21.0)(yaml@2.8.2)
@@ -45,6 +48,9 @@ importers:
       '@types/node':
         specifier: ^25.3.1
         version: 25.3.1
+      fix-esm-import-path:
+        specifier: ^1.10.3
+        version: 1.10.3
       vitest:
         specifier: ^4.0.18
         version: 4.0.18(@types/node@25.3.1)(tsx@4.21.0)(yaml@2.8.2)
@@ -67,6 +73,9 @@ importers:
       '@types/koa':
         specifier: ^3.0.1
         version: 3.0.1
+      fix-esm-import-path:
+        specifier: ^1.10.3
+        version: 1.10.3
       vitest:
         specifier: ^4.0.18
         version: 4.0.18(@types/node@25.3.1)(tsx@4.21.0)(yaml@2.8.2)
@@ -80,6 +89,9 @@ importers:
         specifier: ^5.10.0
         version: 5.10.0
     devDependencies:
+      fix-esm-import-path:
+        specifier: ^1.10.3
+        version: 1.10.3
       vitest:
         specifier: ^4.0.18
         version: 4.0.18(@types/node@25.3.1)(tsx@4.21.0)(yaml@2.8.2)
@@ -96,6 +108,9 @@ importers:
       '@types/node':
         specifier: ^25.3.1
         version: 25.3.1
+      fix-esm-import-path:
+        specifier: ^1.10.3
+        version: 1.10.3
       vitest:
         specifier: ^4.0.18
         version: 4.0.18(@types/node@25.3.1)(tsx@4.21.0)(yaml@2.8.2)
@@ -1394,6 +1409,10 @@ packages:
   find-up@4.1.0:
     resolution: {integrity: sha512-PpOwAdQ/YlXQ2vj8a3h8IipDuYRi3wceVQQGYWxNINccq40Anw7BlsEXCMbt1Zt+OLA6Fq9suIpIWD0OsnISlw==}
     engines: {node: '>=8'}
+
+  fix-esm-import-path@1.10.3:
+    resolution: {integrity: sha512-mX98PYCWpLwJD7tuMvBXWJtQ5Se6eEiwC77VDP0s3xFvtNgixLGm95ebvEK16cbffV2doO5Vs9Jjg9RuNvhXYQ==}
+    hasBin: true
 
   flat@5.0.2:
     resolution: {integrity: sha512-b6suED+5/3rTpUBdG1gupIl8MPFCAMA0QXwmljLhvCUKcUvdE4gWky9zpuGCcXHOsz4J9wPGNWq6OKpmIzz3hQ==}
@@ -4346,6 +4365,12 @@ snapshots:
     dependencies:
       locate-path: 5.0.0
       path-exists: 4.0.0
+
+  fix-esm-import-path@1.10.3:
+    dependencies:
+      debug: 4.4.3
+    transitivePeerDependencies:
+      - supports-color
 
   flat@5.0.2: {}
 

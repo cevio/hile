@@ -31,7 +31,7 @@ cat > "$PKG_DIR/package.json" <<EOF
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
     "dev": "tsc -b --watch",
     "test": "vitest run"
   },
@@ -41,6 +41,7 @@ cat > "$PKG_DIR/package.json" <<EOF
     "access": "public"
   },
   "devDependencies": {
+    "fix-esm-import-path": "^1.10.3",
     "vitest": "^4.0.18"
   }
 }
