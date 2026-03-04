@@ -63,6 +63,16 @@ cat > "$PKG_DIR/src/index.ts" <<EOF
 export {}
 EOF
 
+cat > "$PKG_DIR/src/index.test.ts" <<EOF
+import { describe, it, expect } from 'vitest'
+
+describe('$SCOPE/$PKG_NAME', () => {
+  it('should work', () => {
+    expect(true).toBe(true)
+  })
+})
+EOF
+
 # SKILL.md（参考 packages/core/SKILL.md：frontmatter + 最小正文）
 cat > "$PKG_DIR/SKILL.md" <<SKILLEOF
 ---
@@ -97,6 +107,7 @@ echo "✓ 已创建 packages/$PKG_NAME"
 echo "  - packages/$PKG_NAME/package.json"
 echo "  - packages/$PKG_NAME/tsconfig.json"
 echo "  - packages/$PKG_NAME/src/index.ts"
+echo "  - packages/$PKG_NAME/src/index.test.ts"
 echo "  - packages/$PKG_NAME/SKILL.md"
 echo ""
 echo "正在安装依赖 ..."

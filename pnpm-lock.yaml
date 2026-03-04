@@ -80,6 +80,15 @@ importers:
         specifier: ^4.0.18
         version: 4.0.18(@types/node@25.3.1)(tsx@4.21.0)(yaml@2.8.2)
 
+  packages/http-react-rsc:
+    devDependencies:
+      fix-esm-import-path:
+        specifier: ^1.10.3
+        version: 1.10.3
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@types/node@25.3.1)(tsx@4.21.0)(yaml@2.8.2)
+
   packages/ioredis:
     dependencies:
       '@hile/core':
