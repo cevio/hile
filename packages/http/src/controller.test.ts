@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { defineController } from './controller'
+import { defineController, defineResponsePlugin } from './controller'
 
 describe('defineController - 定义路由控制器', () => {
   it('传入 method 和 controller 函数时，正确返回注册信息', () => {
@@ -31,7 +31,7 @@ describe('defineController - 定义路由控制器', () => {
     const fn = () => ({ message: 'ok' })
     const result = defineController('GET', fn)
     const ctx: any = {}
-    await result.middlewares[0](ctx, async () => {})
+    await result.middlewares[0](ctx, async () => { })
     expect(ctx.body).toEqual({ message: 'ok' })
   })
 
@@ -39,7 +39,7 @@ describe('defineController - 定义路由控制器', () => {
     const fn = () => undefined
     const result = defineController('GET', fn)
     const ctx: any = {}
-    await result.middlewares[0](ctx, async () => {})
+    await result.middlewares[0](ctx, async () => { })
     expect(ctx.body).toBeUndefined()
   })
 
@@ -47,7 +47,7 @@ describe('defineController - 定义路由控制器', () => {
     const fn = async () => 'async result'
     const result = defineController('GET', fn)
     const ctx: any = {}
-    await result.middlewares[0](ctx, async () => {})
+    await result.middlewares[0](ctx, async () => { })
     expect(ctx.body).toBe('async result')
   })
 
@@ -79,8 +79,20 @@ describe('defineController - 定义路由控制器', () => {
 
     const ctx: any = {}
     for (const middleware of result.middlewares) {
-      await middleware(ctx, async () => {})
+      await middleware(ctx, async () => { })
     }
     expect(order).toEqual([1, 2])
+  })
+
+  it('response plugin 可以修改最终 ctx.body', async () => {
+    defineResponsePlugin(async (_ctx, result, next) => {
+      return await next({ wrapped: result })
+    })
+
+    const result = defineController('GET', () => ({ message: 'ok' }))
+    const ctx: any = {}
+    await result.middlewares[0](ctx, async () => { })
+
+    expect(ctx.body).toEqual({ wrapped: { message: 'ok' } })
   })
 })

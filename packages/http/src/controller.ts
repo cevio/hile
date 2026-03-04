@@ -82,7 +82,7 @@ export function defineController(
     const result = await _fn(ctx);
     await composeResponsePlugin(ctx, result, async r => {
       if (r !== undefined) {
-        ctx.body = result;
+        ctx.body = r;
       }
     })
   });

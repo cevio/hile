@@ -185,7 +185,7 @@ export const httpService = defineService(async (shutdown) => {
 
 ## API
 
-导出：`Http`、`defineController`、`Loader` 以及类型 `HttpProps`、`LoaderCompileOptions`、`LoaderFromOptions`、`ControllerRegisterProps`、`ControllerFunction`。
+导出：`Http`、`defineController`、`defineResponsePlugin`、`Loader` 以及类型 `HttpProps`、`LoaderCompileOptions`、`LoaderFromOptions`、`ControllerRegisterProps`、`ControllerFunction`、`ResponsePluginFunction`。
 
 ### `Http`
 
@@ -206,8 +206,24 @@ export const httpService = defineService(async (shutdown) => {
 | `defineController(method, fn)` | 无中间件 |
 | `defineController(method, [mw...], fn)` | 带中间件 |
 
-- 控制器返回值非 `undefined` 时自动赋值给 `ctx.body`
+- 控制器返回值会先经过响应插件链处理
+- 插件链最终结果非 `undefined` 时自动赋值给 `ctx.body`
 - 控制器文件必须 `export default`
+
+### `defineResponsePlugin`
+
+用于注册“控制器执行后”的响应结果处理插件，支持按顺序对结果做包装、转换或过滤。
+
+```typescript
+import { defineResponsePlugin } from '@hile/http'
+
+defineResponsePlugin(async (ctx, result, next) => {
+  if (ctx.path.endsWith('.json')) {
+    return await next({ data: result })
+  }
+  return await next(result)
+})
+```
 
 ### `load` 选项
 
