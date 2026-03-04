@@ -9,6 +9,48 @@ export interface ControllerRegisterProps {
 }
 
 let _id = 1;
+const plugins: ResponsePluginFunction[] = [];
+
+/**
+ * 插件构造函数
+ * @example
+ * const _fn = async (res: any) => 'dhshdfa';
+ * const _newResponse: ResponsePluginFunction = async (ctx, res, next) => {
+ *  if (res && typeof res.$$typeof === 'symbol' && ctx.url.endsWith('.rsc')) {
+ *    const html = await _fn(res);
+ *    return await next(html)
+ *  }
+ *  return await next(res);
+ * }
+ */
+export type ResponsePluginFunction = (ctx: Context, result: any, next: (r: any) => Promise<void>) => Promise<any>;
+
+/**
+ * 加入最终结果处理插件
+ * @param fn 
+ * @returns 
+ * @example `defineResponsePlugin(_newResponse);`
+ */
+export const defineResponsePlugin = (fn: ResponsePluginFunction) => plugins.push(fn);
+
+/**
+ * 插件化最终结果处理
+ * 使得 HTTP 路由处理完成的结果可以被插件修改
+ * @param ctx 
+ * @param res 
+ * @param last
+ * @returns 
+ */
+function composeResponsePlugin(ctx: Context, res: any, last: (result: any) => Promise<any>) {
+  const dispatch = async (i: number, current: any): Promise<any> => {
+    if (i === plugins.length) return await last(current);
+    const fn = plugins[i];
+    if (!fn) return await last(current);
+    return await fn(ctx, current, _res => dispatch(i + 1, _res));
+  };
+
+  return dispatch(0, res);
+}
 
 /**
  * 定义路由控制器
@@ -38,9 +80,11 @@ export function defineController(
 
   _middlewares.push(async (ctx) => {
     const result = await _fn(ctx);
-    if (result !== undefined) {
-      ctx.body = result;
-    }
+    await composeResponsePlugin(ctx, result, async r => {
+      if (r !== undefined) {
+        ctx.body = result;
+      }
+    })
   });
 
   return {
