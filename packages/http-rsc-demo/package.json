@@ -1,0 +1,50 @@
+{
+  "name": "@hile/http-rsc-demo",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "SKILL.md"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "pnpm run build:rsc-client && tsc -b --force",
+    "build:rsc-client": "cross-env NODE_ENV=production webpack --config webpack.client.cjs",
+    "dev": "pnpm run build:rsc-client:dev && tsc -b --watch",
+    "dev:server": "node --conditions react-server ./dist/bootstrap.js",
+    "build:rsc-client:dev": "cross-env NODE_ENV=development webpack --config webpack.client.cjs",
+    "watch:rsc-client": "cross-env NODE_ENV=development webpack --watch --config webpack.client.cjs",
+    "test": "vitest run",
+    "smoke": "pnpm run build && node ./smoke.mjs"
+  },
+  "devDependencies": {
+    "@hile/cli": "workspace:^",
+    "cross-env": "^7.0.3",
+    "css-loader": "^7.1.4",
+    "fix-esm-import-path": "^1.10.3",
+    "less": "^4.5.1",
+    "less-loader": "^12.3.1",
+    "mini-css-extract-plugin": "^2.9.2",
+    "style-loader": "^4.0.0",
+    "ts-loader": "^9.5.4",
+    "vitest": "^4.0.18",
+    "webpack": "^5.102.1",
+    "webpack-cli": "^6.0.1",
+    "webpack-dev-server": "^5.1.0"
+  },
+  "dependencies": {
+    "@hile/core": "workspace:*",
+    "@hile/http": "workspace:*",
+    "@hile/http-rsc": "workspace:*",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-server-dom-webpack": "19.2.0"
+  }
+}
