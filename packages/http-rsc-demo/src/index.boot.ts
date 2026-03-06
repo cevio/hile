@@ -11,7 +11,10 @@ const controllers = resolve(__dirname, 'controllers');
 export default defineService(async (shutdown) => {
   const port = Number(process.env.PORT || 3000);
   const http = new Http({ port });
-  http.use(createRSCMiddleware());
+  http.use(createRSCMiddleware({
+    static: resolve(__dirname, '../build'),
+    scripts: ['/main.js']
+  }));
   const close = await http.listen();
   await http.load(controllers, { conflict: 'warn', suffix: 'controller' });
 

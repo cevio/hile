@@ -3,7 +3,17 @@ import { createRequire } from 'node:module';
 import { defineResponsePlugin } from '@hile/http';
 import { type Middleware } from 'koa';
 import { createRSCPlugin } from './html-render';
-import { createWebpackMiddleware } from './webpack-middleware';
+import Static from 'koa-static';
+const require = createRequire(import.meta.url);
+const register = require('react-server-dom-webpack/node-register');
+register();
+const babelRegister = require('@babel/register');
+
+babelRegister({
+  ignore: [/[\\\/](build|server|node_modules)[\\\/]/],
+  presets: [['@babel/preset-react', { runtime: 'automatic' }]],
+  plugins: ['@babel/transform-modules-auto'],
+});
 
 declare module 'koa' {
   interface DefaultContext {
@@ -22,8 +32,8 @@ export interface RSCMiddlewareOptions {
   styles?: string[];
   /** 额外的 link 标签 */
   links?: string[];
-  /** 客户端组件目录（用于 webpack 配置） */
-  clientComponentsDir?: string;
+  /** 静态资源目录 */
+  static?: string,
 }
 
 let rscNodeRegisterInstalled = false;
@@ -45,7 +55,7 @@ export function createRSCMiddleware(options: RSCMiddlewareOptions = {}): Middlew
   // 创建响应插件
   defineResponsePlugin(createRSCPlugin({
     title: options.title || 'React Server Component',
-    scripts: ['/bundle.js', ...(options.scripts || [])],
+    scripts: [...(options.scripts || [])],
     styles: options.styles,
     links: options.links,
   }));
@@ -61,19 +71,20 @@ export function createRSCMiddleware(options: RSCMiddlewareOptions = {}): Middlew
     await next();
   }
 
+  const StaticMiddleware: Middleware = Static(options.static || 'public');
+
   // 创建中间件
-  const middlewares: Middleware[] = [FlightMiddleware];
+  const middlewares: Middleware[] = [StaticMiddleware, FlightMiddleware];
 
   // 开发环境才启用 webpack 中间件
-  if (isDev) {
-    middlewares.push(createWebpackMiddleware({
-      clientComponentsDir: options.clientComponentsDir,
-    }));
-  }
+  // if (isDev) {
+  //   middlewares.push(createWebpackMiddleware({
+  //     clientComponentsDir: options.clientComponentsDir,
+  //   }));
+  // }
 
   // 组合中间件
   return compose(middlewares);
 }
 
 export { createRSCPlugin } from './html-render';
-export { createWebpackMiddleware } from './webpack-middleware';

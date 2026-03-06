@@ -4,3 +4,4 @@ dist
 .lerna
 lerna-debug.log
 public
+build

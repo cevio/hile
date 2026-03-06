@@ -1,9 +1,8 @@
 import { type ResponsePluginFunction } from '@hile/http';
-import { createElement, isValidElement } from 'react'
+import { isValidElement } from 'react'
 import { Context } from 'koa';
 // @ts-ignore
 import { renderToPipeableStream } from 'react-server-dom-webpack/server.node';
-import { HtmlShell } from './html-shell';
 
 interface HTMLSSRProps {
   title?: string,
@@ -19,7 +18,7 @@ export function createRSCPlugin(props: HTMLSSRProps): ResponsePluginFunction {
     if (ctx.rsc) {
       createRSCRender(ctx, result);
     } else {
-      createSSRRender(ctx, props, result);
+      await next(createSSRRender(ctx, props, result));
     }
   }
 }
@@ -46,20 +45,19 @@ function createSSRRender(ctx: Context, props: HTMLSSRProps, result: any) {
   // ctx.type = 'text/html; charset=utf-8';
 
   // pipe(ctx.res);
-  const html = `
+  return `
   <!doctype html>
   <html>
     <head>
       <meta charset="utf-8" />
       <title>${props.title ?? ''}</title>
-      ${props.links?.map(link => `<link rel="stylesheet" href="${link}" />`).join('')}
-      ${props.styles?.map(style => `<style>${style}</style>`).join('')}
-      ${props.scripts?.map(script => `<script src="${script}"></script>`).join('')}
+      ${props.links?.map(link => `<link rel="stylesheet" href="${link}" />`).join('') ?? ''}
+      ${props.styles?.map(style => `<style>${style}</style>`).join('') ?? ''}
+      ${props.scripts?.map(script => `<script src="${script}"></script>`).join('') ?? ''}
     </head>
     <body>
       <div id="root"></div>
     </body>
   </html>
   `;
-  ctx.body = html;
 }

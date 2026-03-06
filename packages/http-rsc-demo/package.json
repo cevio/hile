@@ -14,6 +14,8 @@
   },
   "scripts": {
     "build": "tsc -b --force",
+    "build:dev": "NODE_ENV=development node -- scripts/build.cjs",
+    "build:prod": "NODE_ENV=production node -- scripts/build.cjs",
     "dev": "NODE_OPTIONS='--conditions react-server' hile start --dev"
   },
   "devDependencies": {
@@ -28,6 +30,7 @@
     "less": "^4.5.1",
     "less-loader": "^12.3.1",
     "mini-css-extract-plugin": "^2.9.2",
+    "rimraf": "^6.1.3",
     "style-loader": "^4.0.0",
     "ts-loader": "^9.5.4",
     "vitest": "^4.0.18",

@@ -1,6 +1,6 @@
 'use client'
-import './index.css';
-import styles from './index.module.less';
+// import './index.css';
+// import styles from './index.module.less';
 import React, { type PropsWithChildren } from 'react'
 
 export const Name = (props: PropsWithChildren<{ name: string }>) => {
@@ -12,7 +12,7 @@ export const Name = (props: PropsWithChildren<{ name: string }>) => {
   }
 
   return (
-    <div className={styles.red} style={{
+    <div style={{
       color: 'white',
       padding: '10px',
       borderRadius: '5px',

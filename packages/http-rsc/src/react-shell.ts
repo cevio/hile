@@ -16,5 +16,5 @@ function App() {
   const content = createFromFetch(
     fetch('/~' + window.location.pathname + window.location.search)
   );
-  return use(content) as any;
+  return use(content);
 }
