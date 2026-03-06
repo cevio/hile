@@ -18,15 +18,22 @@
     "access": "public"
   },
   "devDependencies": {
+    "@types/koa": "^3.0.1",
+    "@types/koa-compose": "^3.2.9",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "fix-esm-import-path": "^1.10.3",
     "vitest": "^4.0.18"
   },
   "dependencies": {
-    "@hile/http": "workspace:*",
+    "@hile/http": "workspace:^",
+    "koa": "^3.1.2",
+    "koa-compose": "^4.1.0",
+    "koa-connect": "^2.1.1",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "react-server-dom-webpack": "19.2.0"
+    "react-server-dom-webpack": "19.2.0",
+    "webpack": "^5.105.4",
+    "webpack-dev-middleware": "^7.4.5"
   }
 }

@@ -83,8 +83,17 @@ importers:
   packages/http-rsc:
     dependencies:
       '@hile/http':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../http
+      koa:
+        specifier: ^3.1.2
+        version: 3.1.2
+      koa-compose:
+        specifier: ^4.1.0
+        version: 4.1.0
+      koa-connect:
+        specifier: ^2.1.1
+        version: 2.1.1
       react:
         specifier: ^19.2.0
         version: 19.2.4
@@ -94,7 +103,19 @@ importers:
       react-server-dom-webpack:
         specifier: 19.2.0
         version: 19.2.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)(webpack@5.105.4)
+      webpack:
+        specifier: ^5.105.4
+        version: 5.105.4(webpack-cli@6.0.1)
+      webpack-dev-middleware:
+        specifier: ^7.4.5
+        version: 7.4.5(tslib@2.8.1)(webpack@5.105.4)
     devDependencies:
+      '@types/koa':
+        specifier: ^3.0.1
+        version: 3.0.1
+      '@types/koa-compose':
+        specifier: ^3.2.9
+        version: 3.2.9
       '@types/react':
         specifier: ^19.2.14
         version: 19.2.14
@@ -173,7 +194,7 @@ importers:
         version: 6.0.1(webpack-dev-server@5.2.3)(webpack@5.105.4)
       webpack-dev-server:
         specifier: ^5.1.0
-        version: 5.2.3(tslib@2.8.1)(webpack-cli@6.0.1)(webpack@5.105.4)
+        version: 5.2.3(webpack-cli@6.0.1)(webpack@5.105.4)
 
   packages/ioredis:
     dependencies:
@@ -2606,6 +2627,9 @@ packages:
 
   koa-compose@4.1.0:
     resolution: {integrity: sha512-8ODW8TrDuMYvXRwra/Kh7/rJo9BtOfPc6qO8eAfC80CnCvSjSl0bkRM24X6/XBBEyj0v1nRUQ1LyOy3dbqOWXw==}
+
+  koa-connect@2.1.1:
+    resolution: {integrity: sha512-ejvbGKYS6di4LUSS+6E+Z5ZVev9RqThLm3NfZjb9QHZMASLvnr4eDTImKcGlQXFrtVpMTyTovZ+Hcl6JbBuFNA==}
 
   koa@3.1.2:
     resolution: {integrity: sha512-2LOQnFKu3m0VxpE+5sb5+BRTSKrXmNxGgxVRiKwD9s5KQB1zID/FRXhtzeV7RT1L2GVpdEEAfVuclFOMGl1ikA==}
@@ -5414,7 +5438,7 @@ snapshots:
       webpack: 5.105.4(webpack-cli@6.0.1)
       webpack-cli: 6.0.1(webpack-dev-server@5.2.3)(webpack@5.105.4)
     optionalDependencies:
-      webpack-dev-server: 5.2.3(tslib@2.8.1)(webpack-cli@6.0.1)(webpack@5.105.4)
+      webpack-dev-server: 5.2.3(webpack-cli@6.0.1)(webpack@5.105.4)
 
   '@xtuc/ieee754@1.2.0': {}
 
@@ -6802,6 +6826,8 @@ snapshots:
   kind-of@6.0.3: {}
 
   koa-compose@4.1.0: {}
+
+  koa-connect@2.1.1: {}
 
   koa@3.1.2:
     dependencies:
@@ -8480,7 +8506,7 @@ snapshots:
       webpack: 5.105.4(webpack-cli@6.0.1)
       webpack-merge: 6.0.1
     optionalDependencies:
-      webpack-dev-server: 5.2.3(tslib@2.8.1)(webpack-cli@6.0.1)(webpack@5.105.4)
+      webpack-dev-server: 5.2.3(webpack-cli@6.0.1)(webpack@5.105.4)
 
   webpack-dev-middleware@7.4.5(tslib@2.8.1)(webpack@5.105.4):
     dependencies:
@@ -8495,7 +8521,7 @@ snapshots:
     transitivePeerDependencies:
       - tslib
 
-  webpack-dev-server@5.2.3(tslib@2.8.1)(webpack-cli@6.0.1)(webpack@5.105.4):
+  webpack-dev-server@5.2.3(webpack-cli@6.0.1)(webpack@5.105.4):
     dependencies:
       '@types/bonjour': 3.5.13
       '@types/connect-history-api-fallback': 1.5.4
