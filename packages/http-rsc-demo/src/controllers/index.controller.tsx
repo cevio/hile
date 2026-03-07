@@ -1,6 +1,6 @@
 import { defineController } from '@hile/http'
 import { payload } from '../datasource.js'
-import { Name } from '../client/name'
+import { Name } from '../client/name.js'
 
 export default defineController('GET', async (ctx) => {
   const data = await payload();

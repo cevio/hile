@@ -1,20 +1,9 @@
-import compose from 'koa-compose';
+import Compose from 'koa-compose';
+import Static from 'koa-static';
 import { createRequire } from 'node:module';
 import { defineResponsePlugin } from '@hile/http';
 import { type Middleware } from 'koa';
-import { createRSCPlugin } from './html-render';
-import Static from 'koa-static';
-const require = createRequire(import.meta.url);
-const register = require('react-server-dom-webpack/node-register');
-register();
-const babelRegister = require('@babel/register');
-
-babelRegister({
-  ignore: [/[\\\/](build|server|node_modules)[\\\/]/],
-  presets: [['@babel/preset-react', { runtime: 'automatic' }]],
-  plugins: ['@babel/transform-modules-auto'],
-});
-
+import { createRSCPlugin } from './render';
 declare module 'koa' {
   interface DefaultContext {
     rsc: boolean;
@@ -84,7 +73,7 @@ export function createRSCMiddleware(options: RSCMiddlewareOptions = {}): Middlew
   // }
 
   // 组合中间件
-  return compose(middlewares);
+  return Compose(middlewares);
 }
 
-export { createRSCPlugin } from './html-render';
+export { createRSCPlugin } from './render';

@@ -1,10 +1,8 @@
 import { loadService, container } from '@hile/core';
+import Service from './index.boot.js';
 
 async function main() {
-
-  // loader 注册完成后再加载 service，确保 controller import client 组件时可被正确代理。
-  const { default: service } = await import('./index.boot.js');
-  await loadService(service);
+  await loadService(Service);
 
   const shutdown = async () => {
     await container.shutdown();
