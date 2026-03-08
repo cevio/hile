@@ -1,0 +1,40 @@
+{
+  "name": "@hile/http-next-demo",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -b ",
+    "dev": "pnpm run build:next && hile start --dev",
+    "start": "pnpm run build:full && hile start",
+    "test": "vitest run",
+    "build:next": "next build",
+    "build:full": "pnpm run build && pnpm exec next build"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "SKILL.md"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "fix-esm-import-path": "^1.10.3",
+    "tsx": "^4.21.0",
+    "vitest": "^4.0.18",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.6"
+  },
+  "dependencies": {
+    "@hile/cli": "workspace:*",
+    "@hile/core": "workspace:*",
+    "@hile/http-next": "workspace:*",
+    "next": "^16.1.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  }
+}
