@@ -24,6 +24,7 @@ pnpm run test
 | [`@hile/message-ipc`](./packages/message-ipc) | Node.js IPC 通信实现，基于 message-modem，用于父子进程请求/响应 | 1.0.0 |
 | [`@hile/message-worker-thread`](./packages/message-worker-thread) | Worker Threads 通信实现，基于 message-modem，用于主线程与 Worker 请求/响应 | 1.0.0 |
 | [`@hile/message-ws`](./packages/message-ws) | WebSocket 通信实现，基于 message-modem + ws，用于客户端/服务端请求/响应 | 1.0.0 |
+| [`@hile/message-loader`](./packages/message-loader) | 基于文件系统的消息路由加载器，将目录结构映射为路由表，适配各种 message 通信模块 | 1.0.0 |
 | [`create-hile-http-next`](./packages/create-hile-http-next) | 项目脚手架：一键创建 Hile + Next.js 应用 | 1.0.4 |
 
 ### 快速创建项目
@@ -51,6 +52,9 @@ pnpm run dev
   ├── @hile/message-worker-thread  （Worker Threads 实现，依赖 message-modem）
   └── @hile/message-ws             （WebSocket 实现，依赖 message-modem + ws）
 
+@hile/message-loader    （独立模块，文件系统消息路由加载器）
+  └── 可搭配 message-ipc / message-worker-thread / message-ws 使用
+
 create-hile-http-next   （脚手架，生成的项目依赖上述所有包）
 ```
 
@@ -68,6 +72,7 @@ create-hile-http-next   （脚手架，生成的项目依赖上述所有包）
 │   ├── message-ipc/    # IPC 通信实现
 │   ├── message-worker-thread/  # Worker Threads 通信实现
 │   ├── message-ws/             # WebSocket 通信实现
+│   ├── message-loader/         # 文件系统消息路由加载器
 │   └── create-hile-http-next/  # 项目脚手架
 ├── docs/               # Mintlify 文档
 ├── scripts/

@@ -60,7 +60,8 @@
         "packages/message-modem",
         "packages/message-ipc",
         "packages/message-worker-thread",
-        "packages/message-ws"
+        "packages/message-ws",
+        "packages/message-loader"
       ]
     },
     {

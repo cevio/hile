@@ -49,8 +49,9 @@ Hile 按职责分为三层，每一层都是可选的，你可以按需引入：
     - `@hile/message-ipc` — 基于 message-modem 的 Node.js IPC 实现，用于 fork 父子进程间通信
     - `@hile/message-worker-thread` — 基于 message-modem 的 Worker Threads 实现，用于主线程与 Worker 线程间通信
     - `@hile/message-ws` — 基于 message-modem + ws 的 WebSocket 实现，用于客户端与服务端间通信
+    - `@hile/message-loader` — 基于文件系统的消息路由加载器，将目录结构映射为路由表，可搭配上述 message 模块使用
 
-    其中 `@hile/http`、`@hile/typeorm`、`@hile/ioredis` 通过 `defineService` 注册到容器，生命周期由容器统一管理。`@hile/message-modem`、`@hile/message-ipc`、`@hile/message-worker-thread`、`@hile/message-ws` 是独立模块，不依赖容器，可在任何 Node.js 环境中使用。
+    其中 `@hile/http`、`@hile/typeorm`、`@hile/ioredis` 通过 `defineService` 注册到容器，生命周期由容器统一管理。`@hile/message-modem`、`@hile/message-ipc`、`@hile/message-worker-thread`、`@hile/message-ws`、`@hile/message-loader` 是独立模块，不依赖容器，可在任何 Node.js 环境中使用。
   </Accordion>
   <Accordion title="编排层：@hile/cli、@hile/http-next">
     **职责：** 编排服务启动与请求分流。
