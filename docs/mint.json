@@ -58,7 +58,8 @@
         "packages/typeorm",
         "packages/ioredis",
         "packages/message-modem",
-        "packages/message-ipc"
+        "packages/message-ipc",
+        "packages/message-worker-thread"
       ]
     },
     {

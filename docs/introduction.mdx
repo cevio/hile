@@ -44,6 +44,7 @@ Hile 提供了从**服务容器**、**HTTP 框架**、**SSR 渲染**到**数据�
 | `@hile/ioredis` | ioredis 集成 | 1.0.12 | `pnpm add @hile/ioredis` |
 | `@hile/message-modem` | 消息通信抽象层 | 1.0.0 | `pnpm add @hile/message-modem` |
 | `@hile/message-ipc` | Node.js IPC 通信实现 | 1.0.0 | `pnpm add @hile/message-ipc` |
+| `@hile/message-worker-thread` | Worker Threads 通信实现 | 1.0.0 | `pnpm add @hile/message-worker-thread` |
 | `create-hile-http-next` | 项目脚手架 | 1.0.4 | `npx create-hile-http-next` |
 
 ## 依赖关系
@@ -60,7 +61,8 @@ Hile 提供了从**服务容器**、**HTTP 框架**、**SSR 渲染**到**数据�
   └── @hile/http-next ← Next.js 桥接层，依赖 HTTP 框架
 
 @hile/message-modem ← 消息通信抽象层（独立，无外部依赖）
-  └── @hile/message-ipc ← Node.js IPC 实现，依赖 message-modem
+  ├── @hile/message-ipc ← Node.js IPC 实现，依赖 message-modem
+  └── @hile/message-worker-thread ← Worker Threads 实现，依赖 message-modem
 
 create-hile-http-next ← 脚手架工具
   └── 生成的项目依赖上述所有包

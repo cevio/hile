@@ -22,6 +22,7 @@ pnpm run test
 | [`@hile/ioredis`](./packages/ioredis) | ioredis 客户端的 Hile 服务封装，支持优雅断连 | 1.0.12 |
 | [`@hile/message-modem`](./packages/message-modem) | 传输无关的请求/响应消息通信抽象层，支持超时、中止、错误传播 | 1.0.0 |
 | [`@hile/message-ipc`](./packages/message-ipc) | Node.js IPC 通信实现，基于 message-modem，用于父子进程请求/响应 | 1.0.0 |
+| [`@hile/message-worker-thread`](./packages/message-worker-thread) | Worker Threads 通信实现，基于 message-modem，用于主线程与 Worker 请求/响应 | 1.0.0 |
 | [`create-hile-http-next`](./packages/create-hile-http-next) | 项目脚手架：一键创建 Hile + Next.js 应用 | 1.0.4 |
 
 ### 快速创建项目
@@ -45,7 +46,8 @@ pnpm run dev
   └── @hile/http-next   （桥接层依赖 HTTP 框架）
 
 @hile/message-modem     （独立模块，无外部依赖）
-  └── @hile/message-ipc  （IPC 实现，依赖 message-modem）
+  ├── @hile/message-ipc            （IPC 实现，依赖 message-modem）
+  └── @hile/message-worker-thread  （Worker Threads 实现，依赖 message-modem）
 
 create-hile-http-next   （脚手架，生成的项目依赖上述所有包）
 ```
@@ -62,6 +64,7 @@ create-hile-http-next   （脚手架，生成的项目依赖上述所有包）
 │   ├── ioredis/        # ioredis 服务封装
 │   ├── message-modem/  # 消息通信抽象层
 │   ├── message-ipc/    # IPC 通信实现
+│   ├── message-worker-thread/  # Worker Threads 通信实现
 │   └── create-hile-http-next/  # 项目脚手架
 ├── docs/               # Mintlify 文档
 ├── scripts/

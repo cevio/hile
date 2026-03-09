@@ -1,5 +1,5 @@
 {
-  "name": "@hile/message-ipc",
+  "name": "@hile/message-worker-thread",
   "version": "1.0.0",
   "type": "module",
   "main": "./dist/index.js",
@@ -8,11 +8,7 @@
     "dev": "tsc -b --watch",
     "test": "vitest run"
   },
-  "files": [
-    "dist",
-    "README.md",
-    "SKILL.md"
-  ],
+  "files": ["dist", "README.md", "SKILL.md"],
   "license": "MIT",
   "publishConfig": {
     "access": "public"
