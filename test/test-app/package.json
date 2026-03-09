@@ -1,0 +1,29 @@
+{
+  "name": "test-app",
+  "description": "Hile Http Next Example",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "tsc -b && npm run build:next",
+    "build:next": "next build",
+    "dev": "npm run build:next && hile start --dev",
+    "start": "hile start"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.6"
+  },
+  "dependencies": {
+    "@hile/cli": "^1.0.18",
+    "@hile/core": "^1.0.20",
+    "@hile/http": "^1.0.24",
+    "@hile/http-next": "^1.0.1",
+    "next": "^16.1.6",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  }
+}
