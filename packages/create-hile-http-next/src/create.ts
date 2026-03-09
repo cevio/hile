@@ -8,7 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 export async function CreateHileHttpNextProject(projectName: string) {
-  const cwd = '/Users/evioshen/code/pulian/shenyunjie/artuctor/test';
+  const cwd = process.cwd();
   const targetDir = resolve(cwd, projectName);
 
   if (existsSync(targetDir)) {
