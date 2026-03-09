@@ -1,5 +1,5 @@
 import { AbortException, Exception, TimeoutException } from "./exception";
-
+export * from './exception';
 export enum MESSAGE_MODEM_TYPE {
   REQUEST,
   RESPONSE,

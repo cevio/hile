@@ -9,7 +9,19 @@ description: "传输无关的请求/响应消息通信抽象层，支持超时�
 pnpm add @hile/message-modem
 ```
 
-无外部依赖，零 peer dependency。
+无外部依赖，零 peer dependency。所有类型和异常类均从主入口统一导出：
+
+```typescript
+import {
+  MessageModem,
+  Exception,
+  AbortException,
+  TimeoutException,
+  MESSAGE_MODEM_TYPE,
+  type MessageTransferFormat,
+  type MessageReturnFormat,
+} from '@hile/message-modem';
+```
 
 ---
 

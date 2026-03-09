@@ -62,15 +62,21 @@ console.log(user);
 abort();
 ```
 
-### 第三步：处理超时
+### 第三步：处理超时与异常
+
+所有异常类均从主入口导出，无需单独引入：
 
 ```typescript
+import { AbortException, Exception } from '@hile/message-modem';
+
 try {
   // 5 秒超时
   const result = await modem.request(data, 5000).response();
 } catch (e) {
   if (e instanceof AbortException) {
     console.log('请求超时或被中止');
+  } else if (e instanceof Exception) {
+    console.log(`远端错误 [${e.status}]: ${e.message}`);
   }
 }
 ```

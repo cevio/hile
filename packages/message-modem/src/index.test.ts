@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { MessageModem, MESSAGE_MODEM_TYPE, type MessageTransferFormat } from './index'
-import { Exception, AbortException, TimeoutException } from './exception'
+import {
+  MessageModem,
+  MESSAGE_MODEM_TYPE,
+  type MessageTransferFormat,
+  Exception,
+  AbortException,
+  TimeoutException,
+} from './index'
 
 class TestModem extends MessageModem {
   public peer?: TestModem;

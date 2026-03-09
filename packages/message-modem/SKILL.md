@@ -21,6 +21,14 @@ description: Code generation and contribution rules for @hile/message-modem. Use
 - 主动中止（abort）：发送方可中止等待，接收方可取消正在执行的任务
 - 错误传播：`Exception` 携带 `status`；非 `Exception` 错误映射为 500
 
+导出方式：
+
+主入口 `index.ts` 通过 `export * from './exception'` 重新导出所有异常类，因此使用者可以从 `@hile/message-modem` 统一导入所有类型：
+
+```typescript
+import { MessageModem, Exception, AbortException, TimeoutException, MESSAGE_MODEM_TYPE } from '@hile/message-modem';
+```
+
 继承关系：
 
 ```
