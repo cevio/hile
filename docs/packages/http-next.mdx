@@ -92,7 +92,7 @@ export default defineService(async (shutdown) => {
 **关键规则：**
 - 所有 API 控制器路由强制使用 `/-` 前缀
 - Next.js handler 是最后一个中间件，处理所有未被前面层匹配的请求
-- 如果 Next.js 尚未 `prepare()` 完成，返回 `503 Next.js not ready`
+- Next.js handler 在 `prepare()` 完成后才注册为中间件，因此不存在未就绪的问题
 
 ---
 
@@ -351,7 +351,4 @@ export default nextConfig;
 
 | 属性/方法 | 类型 | 说明 |
 |----------|------|------|
-| `isDevelopment` | `boolean` | `NODE_ENV === 'development'` |
-| `cwd` | `string` | 项目根目录 |
-| `nextRequestHandler` | `RequestHandler \| undefined` | Next.js 请求处理函数（`start()` 后可用） |
 | `start()` | `Promise<() => void>` | 启动服务，返回关闭函数 |

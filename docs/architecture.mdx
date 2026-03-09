@@ -196,7 +196,7 @@ Next.js handler              ← 页面渲染（SSR/RSC）
 关键设计：
 - API 路由强制使用 `/-` 前缀，与 Next.js 的 `/about`、`/users` 等页面路由在路径层面完全隔离
 - Next.js handler 作为最后一个 Koa 中间件，Koa 设置 `ctx.respond = false` 让 Next.js 直接操作原生 `req/res`
-- 如果 Next.js 尚未就绪（`prepare()` 未完成），返回 503
+- Next.js handler 在 `prepare()` 完成后才注册为中间件，确保就绪后才接收请求
 
 ---
 

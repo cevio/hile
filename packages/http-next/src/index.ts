@@ -13,10 +13,8 @@ export type HttpNextProps = HttpProps & {
 
 export class HttpNext {
   private readonly http: Http;
-  public readonly isDevelopment: boolean;
-  // next 请求处理函数
-  public nextRequestHandler?: RequestHandler;
-  public readonly cwd: string;
+  private readonly isDevelopment: boolean;
+  private readonly cwd: string;
   constructor(options: HttpNextProps) {
     const { cwd, publicPath, ...httpOptions } = options;
     this.isDevelopment = process.env.NODE_ENV === "development";
@@ -31,19 +29,15 @@ export class HttpNext {
     }
   }
 
-  private createForwardToNextMiddleware(): Middleware {
+  private createForwardToNextMiddleware(handler: RequestHandler): Middleware {
     return async (ctx) => {
-      // 如果 next 请求处理函数不存在，则返回 503 错误
-      if (!this.nextRequestHandler) {
-        return ctx.throw(503, "Next.js not ready");
-      }
       // 设置 ctx.respond 为 false，表示不响应
       ctx.respond = false;
       // 设置 ctx.status 为 200
       // 原因是 koa 默认状态为 404，而 next 会处理 404 错误
       ctx.status = 200;
       // 调用 next 请求处理函数
-      await this.nextRequestHandler(ctx.req, ctx.res);
+      await handler(ctx.req, ctx.res);
     };
   }
 
@@ -61,9 +55,9 @@ export class HttpNext {
       // 准备 next 应用
       await app.prepare();
       // 设置 next 请求处理函数
-      this.nextRequestHandler = app.getRequestHandler();
+      const handler = app.getRequestHandler();
       // 使用 forwardToNextMiddleware 中间件
-      this.http.use(this.createForwardToNextMiddleware());
+      this.http.use(this.createForwardToNextMiddleware(handler));
     });
     // 加载项目路由
     await this.http.load(

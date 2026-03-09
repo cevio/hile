@@ -46,10 +46,6 @@ export type HttpNextProps = HttpProps & {
 };
 
 export class HttpNext {
-  readonly isDevelopment: boolean;
-  readonly cwd: string;
-  nextRequestHandler?: RequestHandler;
-
   constructor(options: HttpNextProps);
   start(): Promise<() => void>;  // 返回关闭函数
 }

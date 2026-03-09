@@ -96,9 +96,6 @@ export default defineController("GET", async (ctx) => {
 
 | 属性 / 方法 | 说明 |
 |------------|------|
-| `isDevelopment` | 是否开发模式（`NODE_ENV === 'development'`） |
-| `cwd` | 项目根目录 |
-| `nextRequestHandler` | Next.js 请求处理函数（`start()` 后可用） |
 | `start()` | 启动服务，返回 `Promise<() => void>` 关闭函数 |
 
 ### `start()` 执行流程
