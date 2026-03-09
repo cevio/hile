@@ -2,6 +2,16 @@
   "name": "hile-monorepo",
   "private": true,
   "type": "module",
+  "homepage": "https://pulian.mintlify.app",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cevio/hile.git"
+  },
+  "author": "cevio",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/cevio/hile/issues"
+  },
   "scripts": {
     "build": "lerna run build",
     "test": "lerna run test",
