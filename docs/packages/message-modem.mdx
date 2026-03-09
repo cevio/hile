@@ -1,0 +1,333 @@
+---
+title: "@hile/message-modem"
+description: "传输无关的请求/响应消息通信抽象层，支持超时、中止、错误传播"
+---
+
+## 安装
+
+```bash
+pnpm add @hile/message-modem
+```
+
+无外部依赖，零 peer dependency。
+
+---
+
+## 它做了什么？
+
+`@hile/message-modem` 提供了一个 **抽象基类 `MessageModem`**，将底层传输机制（WebSocket、postMessage、IPC、child_process 等）与业务逻辑完全解耦。
+
+你只需实现两个方法：
+
+1. **`post(data)`** — 怎么把消息发出去
+2. **`exec(data)`** — 收到请求后怎么处理
+
+框架帮你搞定：
+
+- 请求/响应自动配对（自增 ID + Promise 栈）
+- 超时控制（默认 30 秒，可覆盖）
+- 主动中止（发送方 abort → 接收方取消执行）
+- 错误传播（`Exception` 携带 status 码透传，普通 Error 映射为 500）
+- ID 溢出保护（超过 `Number.MAX_SAFE_INTEGER` 时自动归零）
+
+---
+
+## 消息流转
+
+```
+发送方                        接收方
+  │                             │
+  │  send(data)                 │
+  │──── REQUEST ───────────────►│
+  │                             │ exec(data)
+  │                             │
+  │◄──── RESPONSE ──────────────│
+  │  resolve(data)              │
+  │                             │
+  │  abort()                    │
+  │──── ABORT ─────────────────►│
+  │                             │ 取消 exec
+```
+
+<Steps>
+  <Step title="发送方调用 send(data)">
+    框架生成自增 ID，构造 `REQUEST` 消息，通过 `post()` 发出。返回 `{ abort, response }` 对象。
+  </Step>
+  <Step title="接收方 receive 分发">
+    接收方通过 `receive(msg)` 入口收到消息，根据 `mode` 分发到 `onRequest` / `onResponse` / `onAbort`。
+  </Step>
+  <Step title="接收方执行 exec">
+    `onRequest` 调用子类实现的 `exec(data)` 方法处理业务逻辑。使用 `Promise.race` 同时监听 abort 信号。
+  </Step>
+  <Step title="结果返回">
+    执行成功：发送 `RESPONSE`（status=200 + data）。
+    执行失败：发送 `RESPONSE`（status=错误码 + message）。
+    被中止：不发送响应。
+  </Step>
+  <Step title="发送方收到响应">
+    `onResponse` 根据 ID 匹配 Promise 栈，status=200 时 resolve，否则 reject。
+  </Step>
+</Steps>
+
+---
+
+## 快速开始
+
+### 场景一：WebSocket 通信
+
+```typescript
+import { MessageModem, type MessageTransferFormat } from '@hile/message-modem';
+
+class WebSocketModem extends MessageModem {
+  constructor(private ws: WebSocket) {
+    super();
+    // 绑定 receive 入口
+    ws.addEventListener('message', (e) => {
+      this.receive(JSON.parse(e.data));
+    });
+  }
+
+  // 如何发送消息
+  protected post<T>(data: MessageTransferFormat<T>): void {
+    this.ws.send(JSON.stringify(data));
+  }
+
+  // 如何处理收到的请求
+  protected async exec(data: any): Promise<any> {
+    return handleRequest(data);
+  }
+
+  // 对外暴露发送方法
+  public request<T>(data: T, timeout?: number) {
+    return this.send(data, timeout);
+  }
+}
+```
+
+使用：
+
+```typescript
+const modem = new WebSocketModem(ws);
+
+// 发送请求并等待响应
+const user = await modem.request({ action: 'getUser', id: 1 }).response();
+
+// 发送请求并设置超时
+const result = await modem.request(data, 5000).response();
+
+// 发送请求并支持中止
+const req = modem.request(data);
+setTimeout(() => req.abort(), 3000); // 3 秒后中止
+const res = await req.response();
+```
+
+### 场景二：iframe postMessage
+
+```typescript
+class IframeModem extends MessageModem {
+  constructor(private target: Window, private origin: string) {
+    super();
+    window.addEventListener('message', (e) => {
+      if (e.origin === origin) this.receive(e.data);
+    });
+  }
+
+  protected post<T>(data: MessageTransferFormat<T>): void {
+    this.target.postMessage(data, this.origin);
+  }
+
+  protected async exec(data: any): Promise<any> {
+    return handleIframeRequest(data);
+  }
+}
+```
+
+### 场景三：Node.js Worker Threads
+
+```typescript
+import { parentPort, Worker } from 'node:worker_threads';
+
+// 主线程
+class WorkerModem extends MessageModem {
+  constructor(private worker: Worker) {
+    super();
+    worker.on('message', (msg) => this.receive(msg));
+  }
+
+  protected post<T>(data: MessageTransferFormat<T>): void {
+    this.worker.postMessage(data);
+  }
+
+  protected async exec(data: any): Promise<any> {
+    return handleInWorkerThread(data);
+  }
+}
+
+// Worker 线程
+class ParentModem extends MessageModem {
+  constructor() {
+    super();
+    parentPort!.on('message', (msg) => this.receive(msg));
+  }
+
+  protected post<T>(data: MessageTransferFormat<T>): void {
+    parentPort!.postMessage(data);
+  }
+
+  protected async exec(data: any): Promise<any> {
+    return heavyComputation(data);
+  }
+}
+```
+
+---
+
+## 异常处理
+
+### 异常类型
+
+| 类 | `status` | 默认 `message` | 触发时机 |
+|------|----------|------|------|
+| `Exception` | 自定义 | 自定义 | `exec` 中主动抛出 |
+| `TimeoutException` | `ETIMEDOUT` | `Timeout` | 超过指定超时时间 |
+| `AbortException` | `ECONNABORTED` | `Abort` | 调用 `abort()` 或被远端中止 |
+
+### exec 中抛出异常
+
+```typescript
+import { Exception } from '@hile/message-modem';
+
+protected async exec(data: any): Promise<any> {
+  if (!data.token) {
+    // status 码会透传到发送方
+    throw new Exception(401, 'Unauthorized');
+  }
+
+  // 普通 Error 会被映射为 status 500
+  throw new Error('Something went wrong');
+}
+```
+
+### 发送方捕获异常
+
+```typescript
+import { Exception, AbortException } from '@hile/message-modem';
+
+try {
+  const result = await modem.request(data, 5000).response();
+} catch (e) {
+  if (e instanceof AbortException) {
+    console.log('请求被中止或超时');
+  } else if (e instanceof Exception) {
+    console.log(`远端返回错误 [${e.status}]: ${e.message}`);
+  }
+}
+```
+
+---
+
+## API 参考
+
+### `MessageModem`（抽象类）
+
+| 方法 | 可见性 | 签名 | 说明 |
+|------|--------|------|------|
+| `post` | `protected abstract` | `post<T>(data: MessageTransferFormat<T>): void` | 子类实现：如何将消息发送到远端 |
+| `exec` | `protected abstract` | `exec(data: any): Promise<any>` | 子类实现：如何处理收到的请求 |
+| `send` | `protected` | `send<T>(data: T, timeout?: number): { abort, response }` | 发送请求。timeout 默认 30000ms |
+| `receive` | `public` | `receive(msg: MessageTransferFormat): void` | 接收消息入口，根据 mode 分发处理 |
+
+### `send` 返回值
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `abort` | `() => void` | 中止本次请求。发送方 reject `AbortException`，同时向远端发送 `ABORT` 消息 |
+| `response` | `<U = any>() => Promise<U>` | 返回 Promise，resolve 远端 `exec` 的返回值，reject 远端错误或本地超时/中止 |
+
+### 消息类型枚举 `MESSAGE_MODEM_TYPE`
+
+| 值 | 说明 |
+|------|------|
+| `REQUEST` | 请求消息。`twoway: true`，期待对端回复 |
+| `RESPONSE` | 响应消息。`twoway: false` |
+| `ABORT` | 中止消息。`twoway: false`，data 为要中止的请求 ID |
+
+### 消息格式
+
+```typescript
+interface MessageTransferFormat<T = any> {
+  id: number;               // 自增消息 ID
+  mode: MESSAGE_MODEM_TYPE; // 消息类型
+  twoway: boolean;          // 是否需要响应
+  data?: T;                 // 消息数据
+}
+
+interface MessageReturnFormat<T = any> {
+  status: string | number;  // 200 成功，其他为错误码
+  data: T;                  // 响应数据
+  message: string;          // 错误消息（成功时可能为空）
+}
+```
+
+---
+
+## 适用场景
+
+<CardGroup cols={2}>
+  <Card title="iframe 通信" icon="window-restore">
+    父子页面通过 `postMessage` 双向通信，替代事件回调。
+  </Card>
+  <Card title="WebSocket" icon="plug">
+    客户端与服务端的请求/响应配对，无需自己管理消息 ID。
+  </Card>
+  <Card title="Web Worker" icon="gears">
+    主线程与 Worker 之间的 RPC 调用，支持超时和中止。
+  </Card>
+  <Card title="Electron IPC" icon="desktop">
+    主进程与渲染进程之间结构化通信。
+  </Card>
+  <Card title="Node.js 子进程" icon="terminal">
+    `child_process` 或 `worker_threads` 双向 RPC。
+  </Card>
+  <Card title="自定义传输" icon="shuffle">
+    任何可以双向传递 JSON 的通道均可使用。
+  </Card>
+</CardGroup>
+
+---
+
+## 注意事项
+
+<Warning>
+  `post` 方法应保持同步。如果底层传输是异步的（如需要 await），应在 `post` 内部缓冲，不要将 `post` 声明为 `async`。
+</Warning>
+
+<Warning>
+  `send` 方法是 `protected` 的。子类应自行决定如何暴露（方法名、参数签名），而不是直接把 `send` 改为 public。
+</Warning>
+
+<Note>
+  消息 ID 在同一实例内自增。两端各自维护独立的 ID 序列，不会冲突，因为 ID 只在 `stacks`（本地发出的请求追踪）和 `aborts`（本地收到的请求取消追踪）中各自使用。
+</Note>
+
+---
+
+## 常见问题
+
+<AccordionGroup>
+  <Accordion title="如何处理大量并发请求？">
+    每个请求通过唯一 ID 追踪，并发请求互不影响。ID 超过 `Number.MAX_SAFE_INTEGER` 时自动归零。在极端场景下，如果旧请求的 ID 仍未清理而新 ID 重复，可能导致冲突，但在实际使用中几乎不会发生。
+  </Accordion>
+  <Accordion title="远端无响应会怎样？">
+    默认 30 秒后触发超时。超时会先触发 abort（发送 ABORT 消息到远端），然后 reject AbortException。你可以通过 `send(data, ms)` 自定义超时时间。
+  </Accordion>
+  <Accordion title="可以发送单向消息吗？">
+    当前 `send` 创建的 REQUEST 默认 `twoway: true`。如果需要单向消息（fire-and-forget），可以在子类中直接调用 `post` 发送自定义格式，或调用 `send` 后不 await `response()`。
+  </Accordion>
+  <Accordion title="支持 TypeScript 类型推导吗？">
+    `response<U>()` 支持泛型，你可以这样使用：
+    ```typescript
+    const user = await modem.request(data).response<User>();
+    ```
+  </Accordion>
+</AccordionGroup>

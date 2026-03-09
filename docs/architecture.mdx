@@ -15,8 +15,8 @@ Hile 按职责分为三层，每一层都是可选的，你可以按需引入：
 │   @hile/cli     │   @hile/http   │  @hile/http-next   │
 │   命令行启动器   │   HTTP 框架    │   Next.js 桥接     │
 ├─────────────────┼────────────────┼────────────────────┤
-│  @hile/typeorm  │  @hile/ioredis │                    │
-│  数据库集成      │  Redis 集成    │                    │
+│  @hile/typeorm  │  @hile/ioredis │ @hile/message-modem│
+│  数据库集成      │  Redis 集成    │  消息通信抽象       │
 ├─────────────────┴────────────────┴────────────────────┤
 │                     @hile/core                         │
 │          异步服务容器 · 生命周期 · 依赖图               │
@@ -39,14 +39,15 @@ Hile 按职责分为三层，每一层都是可选的，你可以按需引入：
 
     容器使用 `AsyncLocalStorage` 追踪服务间的调用关系，自动构建依赖图。
   </Accordion>
-  <Accordion title="服务层：@hile/http、@hile/typeorm、@hile/ioredis">
+  <Accordion title="服务层：@hile/http、@hile/typeorm、@hile/ioredis、@hile/message-modem">
     **职责：** 提供具体的基础设施服务。
 
     - `@hile/http` — 封装 Koa + find-my-way，提供路由注册、中间件、文件系统自动路由
     - `@hile/typeorm` — 将 TypeORM DataSource 封装为 Hile 服务，提供事务辅助
     - `@hile/ioredis` — 将 ioredis 客户端封装为 Hile 服务
+    - `@hile/message-modem` — 传输无关的请求/响应消息通信抽象层，支持超时、中止、错误传播
 
-    这些包都通过 `defineService` 注册到容器，生命周期由容器统一管理。
+    其中 `@hile/http`、`@hile/typeorm`、`@hile/ioredis` 通过 `defineService` 注册到容器，生命周期由容器统一管理。`@hile/message-modem` 是独立模块，不依赖容器，可在任何 JavaScript 环境中使用。
   </Accordion>
   <Accordion title="编排层：@hile/cli、@hile/http-next">
     **职责：** 编排服务启动与请求分流。

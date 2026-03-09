@@ -56,7 +56,8 @@
       "group": "集成包",
       "pages": [
         "packages/typeorm",
-        "packages/ioredis"
+        "packages/ioredis",
+        "packages/message-modem"
       ]
     },
     {

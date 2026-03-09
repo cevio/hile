@@ -20,6 +20,7 @@ pnpm run test
 | [`@hile/cli`](./packages/cli) | 命令行启动器：支持 `auto_load_packages` 与 `*.boot` 自动加载，内置容器事件日志 | 1.0.18 |
 | [`@hile/typeorm`](./packages/typeorm) | TypeORM DataSource 的 Hile 服务封装，内置事务辅助 | 1.0.12 |
 | [`@hile/ioredis`](./packages/ioredis) | ioredis 客户端的 Hile 服务封装，支持优雅断连 | 1.0.12 |
+| [`@hile/message-modem`](./packages/message-modem) | 传输无关的请求/响应消息通信抽象层，支持超时、中止、错误传播 | 1.0.0 |
 | [`create-hile-http-next`](./packages/create-hile-http-next) | 项目脚手架：一键创建 Hile + Next.js 应用 | 1.0.4 |
 
 ### 快速创建项目
@@ -42,6 +43,8 @@ pnpm run dev
 @hile/http
   └── @hile/http-next   （桥接层依赖 HTTP 框架）
 
+@hile/message-modem     （独立模块，无外部依赖）
+
 create-hile-http-next   （脚手架，生成的项目依赖上述所有包）
 ```
 
@@ -55,9 +58,9 @@ create-hile-http-next   （脚手架，生成的项目依赖上述所有包）
 │   ├── cli/            # 命令行启动器
 │   ├── typeorm/        # TypeORM 服务封装
 │   ├── ioredis/        # ioredis 服务封装
+│   ├── message-modem/  # 消息通信抽象层
 │   └── create-hile-http-next/  # 项目脚手架
-├── docs/
-│   └── adr/            # Architecture Decision Records
+├── docs/               # Mintlify 文档
 ├── scripts/
 ├── package.json
 ├── pnpm-workspace.yaml
@@ -71,7 +74,7 @@ create-hile-http-next   （脚手架，生成的项目依赖上述所有包）
 | ------------ | ---------------------- | ---------------------------------- |
 | `README.md`  | 使用者                 | 快速跑通、最少必要说明             |
 | `SKILL.md`   | AI 编码模型 / 规范执行 | 强约束、类型签名、代码模板、反模式 |
-| `docs/adr/*` | 架构讨论               | 关键决策及取舍理由                 |
+| `docs/*.mdx` | 使用者（线上文档）     | 完整使用指南、API 参考、常见问题   |
 
 ## 常用命令
 
