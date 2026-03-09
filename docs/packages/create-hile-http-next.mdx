@@ -1,15 +1,48 @@
 ---
 title: "create-hile-http-next"
-description: "一键创建 Hile + Next.js 项目的脚手架"
+description: "一键创建 Hile + Next.js 项目的脚手架工具"
+---
+
+## 概述
+
+`create-hile-http-next` 是一个项目脚手架 CLI 工具。它从内置模板复制完整的项目结构，帮你跳过从零配置的过程，直接开始开发。
+
 ---
 
 ## 使用方式
 
+### 方式一：npx（推荐）
+
+无需安装，直接运行：
+
+```bash
+npx create-hile-http-next create my-app
+```
+
+### 方式二：全局安装
+
+```bash
+npm i -g create-hile-http-next
+create-hile-http-next create my-app
+```
+
+---
+
+## 创建流程
+
 <Steps>
-  <Step title="创建项目">
+  <Step title="运行命令">
     ```bash
     npx create-hile-http-next create my-app
     ```
+
+    脚手架会执行以下操作：
+
+    1. 检查 `my-app` 目录是否已存在（如存在则报错）
+    2. 创建目录
+    3. 从内置模板复制所有文件到目标目录
+    4. 将 `package.json` 的 `name` 字段改为 `my-app`
+    5. 输出后续操作提示
   </Step>
   <Step title="安装依赖">
     ```bash
@@ -21,67 +54,188 @@ description: "一键创建 Hile + Next.js 项目的脚手架"
     ```bash
     pnpm run dev
     ```
+
+    这条命令内部执行：
+
+    1. `next build` — 构建 Next.js 应用
+    2. `hile start --dev` — 以开发模式启动 Hile 服务
+
+    浏览器打开 `http://localhost:3000` 即可看到页面。
+  </Step>
+  <Step title="验证 API">
+    ```bash
+    curl http://localhost:3000/-/post
+    ```
+
+    返回示例控制器的 JSON 响应。
   </Step>
 </Steps>
 
-也可以全局安装后使用：
-
-```bash
-npm i -g create-hile-http-next
-create-hile-http-next create my-app
-```
+---
 
 ## 生成的项目结构
 
 ```
 my-app/
-├── public/
-│   ├── next.svg
-│   ├── vercel.svg
-│   └── ...
+├── public/                      # 静态资源
+│   ├── next.svg                 # Next.js logo
+│   ├── vercel.svg               # Vercel logo
+│   ├── globe.svg                # 地球图标
+│   ├── file.svg                 # 文件图标
+│   └── window.svg               # 窗口图标
 ├── src/
-│   ├── app/
-│   │   ├── layout.tsx
-│   │   ├── page.tsx
-│   │   ├── page.module.css
-│   │   ├── globals.css
-│   │   ├── click.tsx
-│   │   └── post.controller.ts
-│   └── index.boot.ts
-├── next.config.ts
-├── tsconfig.json
-├── tsconfig.next.json
-├── eslint.config.mjs
+│   ├── app/                     # Next.js App Router + 控制器
+│   │   ├── layout.tsx           # 根布局（HTML 骨架、全局样式）
+│   │   ├── page.tsx             # 首页
+│   │   ├── page.module.css      # 首页 CSS Module
+│   │   ├── globals.css          # 全局 CSS
+│   │   ├── favicon.ico          # 网站图标
+│   │   ├── click.tsx            # Client 组件示例（按钮 + 弹出层）
+│   │   ├── post.controller.ts   # API 控制器示例 → GET /-/post
+│   │   └── tsconfig.json        # app 目录专用 tsconfig
+│   └── index.boot.ts            # Hile 服务启动入口
+├── next.config.ts               # Next.js 配置
+├── tsconfig.json                # TypeScript 配置（Node.js）
+├── tsconfig.next.json           # TypeScript 配置（Next.js）
+├── eslint.config.mjs            # ESLint 配置
+├── .gitignore
 └── package.json
 ```
 
-## 可用命令
+### 关键文件说明
 
-| 命令 | 说明 |
-|------|------|
-| `pnpm run dev` | 构建 Next.js 并以开发模式启动 |
-| `pnpm run build` | TypeScript + Next.js 生产构建 |
-| `pnpm run start` | 生产模式启动 |
+<AccordionGroup>
+  <Accordion title="src/index.boot.ts — 服务入口">
+    创建 `HttpNext` 实例，配置端口、项目根目录和静态资源路径，然后调用 `start()` 启动服务。CLI 会自动扫描并加载这个文件。
+
+    ```typescript
+    import HttpNext from "@hile/http-next";
+    import { defineService } from "@hile/core";
+
+    export default defineService(async (shutdown) => {
+      const httpNext = new HttpNext({
+        port: 3000,
+        cwd: resolve(__dirname, ".."),
+        publicPath: "public",
+      });
+      shutdown(await httpNext.start());
+      return httpNext;
+    });
+    ```
+  </Accordion>
+  <Accordion title="src/app/post.controller.ts — API 控制器示例">
+    演示如何创建一个 API 控制器，它会被自动映射到 `GET /-/post`。
+
+    ```typescript
+    import { defineController } from "@hile/http";
+
+    export default defineController("GET", async (ctx) => {
+      return {
+        id: 1,
+        title: "Hile Http Next Demo",
+        url: ctx.url,
+        content: "基于 Koa + find-my-way 的 HTTP 服务框架...",
+      };
+    });
+    ```
+  </Accordion>
+  <Accordion title="src/app/click.tsx — Client 组件示例">
+    演示 Next.js 的 Client Component，包含一个按钮点击后调用 API 并展示结果的弹出层。展示了前后端如何通过 `/-` 前缀的 API 路由交互。
+  </Accordion>
+  <Accordion title="next.config.ts — Next.js 配置">
+    指定 `tsconfig.next.json` 作为 TypeScript 配置，让 Next.js 使用独立的编译配置。
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## 生成项目的可用命令
+
+| 命令 | 内部执行 | 说明 |
+|------|---------|------|
+| `pnpm run dev` | `next build && hile start --dev` | 构建 Next.js + 开发模式启动 |
+| `pnpm run build` | `tsc -b && next build` | 编译 TypeScript + 生产构建 |
+| `pnpm run start` | `hile start` | 生产模式启动 |
+
+---
 
 ## 技术栈
 
-<CardGroup cols={3}>
-  <Card title="@hile/core" icon="cube">
-    异步服务容器
-  </Card>
-  <Card title="@hile/http" icon="server">
-    Koa + find-my-way HTTP 框架
-  </Card>
-  <Card title="@hile/http-next" icon="bridge">
-    Next.js 桥接层
-  </Card>
-  <Card title="@hile/cli" icon="terminal">
-    命令行启动器
-  </Card>
-  <Card title="Next.js 16" icon="react">
-    App Router + RSC
-  </Card>
-  <Card title="React 19" icon="code">
-    UI 渲染
-  </Card>
-</CardGroup>
+生成的项目依赖以下包：
+
+| 包名 | 作用 |
+|------|------|
+| `@hile/core` | 异步服务容器，管理服务生命周期 |
+| `@hile/http` | Koa + find-my-way HTTP 框架 |
+| `@hile/http-next` | Next.js 桥接层，API 与 SSR 共存 |
+| `@hile/cli` | 命令行启动器（`hile start`） |
+| `next` | Next.js 16，App Router + RSC |
+| `react` / `react-dom` | React 19 |
+| `eslint` + `eslint-config-next` | 代码检查 |
+
+---
+
+## 如何扩展
+
+### 添加新页面
+
+在 `src/app/` 下创建目录和 `page.tsx`：
+
+```typescript
+// src/app/about/page.tsx
+export default function About() {
+  return <h1>About</h1>;
+}
+```
+
+访问 `http://localhost:3000/about`。
+
+### 添加新 API
+
+创建 `*.controller.ts` 文件：
+
+```typescript
+// src/app/users.controller.ts
+import { defineController } from "@hile/http";
+
+export default defineController("GET", async () => {
+  return { users: [] };
+});
+```
+
+访问 `http://localhost:3000/-/users`。
+
+### 添加数据库
+
+```bash
+pnpm add @hile/typeorm typeorm mysql2
+```
+
+配置环境变量后在控制器中 `loadService(typeormService)` 即可使用。
+
+### 添加 Redis
+
+```bash
+pnpm add @hile/ioredis ioredis
+```
+
+在 `package.json` 添加自动加载或在 boot 文件中手动加载。
+
+---
+
+## CLI 命令参考
+
+```bash
+create-hile-http-next create <project-name>
+```
+
+| 参数 | 说明 |
+|------|------|
+| `project-name` | 项目名称，也是目标目录名和 `package.json` 的 `name` |
+
+```bash
+create-hile-http-next -V    # 查看版本
+create-hile-http-next -h    # 查看帮助
+```
+
+<Warning>如果目标目录已存在，命令会报错 `目录 xxx 已存在`。</Warning>

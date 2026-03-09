@@ -1,6 +1,6 @@
 ---
 title: "@hile/typeorm"
-description: "TypeORM DataSource 的 Hile 服务封装，内置事务辅助"
+description: "TypeORM DataSource 的 Hile 服务封装，内置事务辅助函数"
 ---
 
 ## 安装
@@ -9,57 +9,207 @@ description: "TypeORM DataSource 的 Hile 服务封装，内置事务辅助"
 pnpm add @hile/typeorm
 ```
 
-同时安装依赖：`@hile/core`、`typeorm`。
+同时确保安装了 peer 依赖：
+
+```bash
+pnpm add @hile/core typeorm
+```
+
+还需要安装数据库驱动（按你使用的数据库选择）：
+
+```bash
+# MySQL
+pnpm add mysql2
+
+# PostgreSQL
+pnpm add pg
+
+# SQLite
+pnpm add better-sqlite3
+```
+
+---
+
+## 它做了什么？
+
+`@hile/typeorm` 将 TypeORM 的 `DataSource` 封装为 Hile 服务：
+
+1. 从环境变量读取数据库配置
+2. 创建 `DataSource` 并调用 `initialize()`
+3. 注册 `shutdown(() => connection.destroy())` — 进程退出时自动关闭连接
+4. 返回初始化后的 `DataSource` 实例
+
+你只需要配置环境变量，然后 `loadService` 即可获得可用的数据库连接。
+
+---
 
 ## 快速开始
+
+### 第一步：配置环境变量
+
+创建 `.env` 文件：
+
+```env
+TYPEORM_TYPE=mysql
+TYPEORM_HOST=localhost
+TYPEORM_PORT=3306
+TYPEORM_USERNAME=root
+TYPEORM_PASSWORD=secret
+TYPEORM_DATABASE=myapp
+TYPEORM_CHARSET=utf8mb4
+TYPEORM_ENTITY_PREFIX=app_
+TYPEORM_ENTITIES=dist/entities/*.js
+```
+
+### 第二步：加载服务
 
 ```typescript
 import { loadService } from '@hile/core'
 import typeormService from '@hile/typeorm'
 
 const ds = await loadService(typeormService)
+
+// 现在可以使用 TypeORM 的全部 API
+const users = await ds.query('SELECT * FROM users')
+const repo = ds.getRepository(UserEntity)
+const manager = ds.manager
 ```
 
-## 环境变量
-
-| 变量 | 说明 |
-|------|------|
-| `TYPEORM_TYPE` | 数据库类型（如 `mysql`、`postgres`） |
-| `TYPEORM_HOST` | 主机 |
-| `TYPEORM_USERNAME` | 用户名 |
-| `TYPEORM_PASSWORD` | 密码 |
-| `TYPEORM_DATABASE` | 数据库名 |
-| `TYPEORM_PORT` | 端口 |
-| `TYPEORM_CHARSET` | 字符集 |
-| `TYPEORM_ENTITY_PREFIX` | 实体表名前缀 |
-| `TYPEORM_ENTITIES` | 实体目录（单一路径） |
-
-行为：
-
-- `synchronize: true`
-- `NODE_ENV === 'development'` 时启用 `logging`
-- 未配置 `TYPEORM_ENTITIES` 时实体为空数组
-- 进程退出时通过 shutdown 自动销毁连接
-
-## 事务辅助
+### 第三步：在控制器中使用
 
 ```typescript
-import { transaction } from '@hile/typeorm'
+// src/controllers/users/index.controller.ts
+import { defineController } from '@hile/http'
+import { loadService } from '@hile/core'
+import typeormService from '@hile/typeorm'
 
-const result = await transaction(ds, async (runner, rollback) => {
-  rollback(() => {
-    // 事务失败时执行的补偿逻辑
-  })
-
-  // 使用 runner 执行数据库操作
-  return value
+export default defineController('GET', async (ctx) => {
+  const ds = await loadService(typeormService)
+  const users = await ds.query('SELECT id, name, email FROM users LIMIT 20')
+  return { users }
 })
 ```
 
-- 成功：提交事务并返回结果
-- 失败：回滚事务，按 LIFO 顺序执行 `rollback(fn)` 注册函数，抛出原错误
+---
+
+## 环境变量详解
+
+| 变量 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `TYPEORM_TYPE` | `string` | 是 | 数据库类型：`mysql`、`postgres`、`sqlite`、`mariadb` 等 |
+| `TYPEORM_HOST` | `string` | 是 | 数据库主机地址 |
+| `TYPEORM_PORT` | `string` | 是 | 数据库端口（会自动转为 number） |
+| `TYPEORM_USERNAME` | `string` | 是 | 用户名 |
+| `TYPEORM_PASSWORD` | `string` | 是 | 密码 |
+| `TYPEORM_DATABASE` | `string` | 是 | 数据库名 |
+| `TYPEORM_CHARSET` | `string` | 否 | 字符集（如 `utf8mb4`） |
+| `TYPEORM_ENTITY_PREFIX` | `string` | 否 | 表名前缀（如 `app_`） |
+| `TYPEORM_ENTITIES` | `string` | 否 | 实体文件路径（glob 格式，如 `dist/entities/*.js`） |
+
+### 自动行为
+
+| 特性 | 说明 |
+|------|------|
+| `synchronize` | 始终为 `true`（自动同步表结构） |
+| `logging` | `NODE_ENV === 'development'` 时为 `true`（输出 SQL 日志） |
+| `entities` | 未配置 `TYPEORM_ENTITIES` 时为空数组 |
+| `shutdown` | 进程退出时自动调用 `connection.destroy()` |
+
+<Warning>
+  `synchronize: true` 会自动修改数据库表结构以匹配实体定义。在生产环境中使用时请确保你了解这一行为。如果需要更安全的迁移策略，建议使用 TypeORM 的 migration 功能。
+</Warning>
+
+---
+
+## 事务辅助
+
+`transaction` 函数提供了一种安全的事务执行方式，支持失败时的补偿回调。
+
+### 基本用法
+
+```typescript
+import { loadService } from '@hile/core'
+import typeormService, { transaction } from '@hile/typeorm'
+
+const ds = await loadService(typeormService)
+
+const result = await transaction(ds, async (runner, rollback) => {
+  // runner 是 TypeORM 的 QueryRunner，已开启事务
+
+  // 执行数据库操作
+  await runner.query('INSERT INTO users (name) VALUES (?)', ['Alice'])
+  await runner.query('INSERT INTO logs (action) VALUES (?)', ['create_user'])
+
+  return { success: true }
+})
+
+// result = { success: true }
+```
+
+### 带补偿回调
+
+当事务中还涉及外部操作（如发邮件、调用第三方 API）时，可以注册补偿回调：
+
+```typescript
+const result = await transaction(ds, async (runner, rollback) => {
+  // 1. 数据库操作
+  await runner.query('INSERT INTO orders (amount) VALUES (?)', [100])
+
+  // 2. 调用支付 API
+  const paymentId = await paymentApi.charge(100)
+
+  // 注册补偿：如果后续步骤失败，退款
+  rollback(async () => {
+    await paymentApi.refund(paymentId)
+    console.log(`已退款: ${paymentId}`)
+  })
+
+  // 3. 发送通知
+  await notificationApi.send('订单创建成功')
+
+  // 注册补偿：如果后续步骤失败，撤回通知
+  rollback(async () => {
+    await notificationApi.revoke()
+  })
+
+  return { orderId: 1, paymentId }
+})
+```
+
+### 失败时的行为
+
+```
+事务操作抛出异常
+    │
+    ▼
+① runner.rollbackTransaction()     ← TypeORM 回滚数据库事务
+    │
+    ▼
+② 按 LIFO 顺序执行 rollback 回调    ← 补偿外部操作
+    │  ├── 撤回通知
+    │  └── 退款
+    │
+    ▼
+③ runner.release()                  ← 释放 QueryRunner
+    │
+    ▼
+④ throw 原始错误                    ← 将原始错误抛给调用者
+```
+
+补偿回调的规则：
+
+| 规则 | 说明 |
+|------|------|
+| LIFO 顺序 | 后注册的先执行 |
+| 支持异步 | 回调可以是 `async` 函数 |
+| 错误隔离 | 如果某个补偿回调抛错，不会阻止其他回调执行 |
+| 只在失败时执行 | 事务成功提交后不会执行补偿回调 |
+
+---
 
 ## 与 @hile/cli 集成
+
+方式一：通过 `package.json` 自动加载：
 
 ```json
 {
@@ -69,13 +219,80 @@ const result = await transaction(ds, async (runner, rollback) => {
 }
 ```
 
+方式二：在 boot 文件中手动加载：
+
+```typescript
+// src/database.boot.ts
+import { loadService } from '@hile/core'
+import typeormService from '@hile/typeorm'
+
+import { defineService } from '@hile/core'
+
+export default defineService(async () => {
+  const ds = await loadService(typeormService)
+  console.log(`数据库已连接: ${ds.options.database}`)
+  return ds
+})
+```
+
+---
+
+## 在服务中使用
+
+```typescript
+import { defineService, loadService } from '@hile/core'
+import typeormService, { transaction } from '@hile/typeorm'
+
+export const orderService = defineService(async () => {
+  return {
+    async createOrder(userId: number, amount: number) {
+      const ds = await loadService(typeormService)
+
+      return await transaction(ds, async (runner, rollback) => {
+        const result = await runner.query(
+          'INSERT INTO orders (user_id, amount, status) VALUES (?, ?, ?)',
+          [userId, amount, 'pending']
+        )
+
+        rollback(async () => {
+          await runner.query('DELETE FROM orders WHERE id = ?', [result.insertId])
+        })
+
+        return { orderId: result.insertId }
+      })
+    },
+
+    async getOrders(userId: number) {
+      const ds = await loadService(typeormService)
+      return ds.query('SELECT * FROM orders WHERE user_id = ?', [userId])
+    }
+  }
+})
+```
+
+---
+
 ## API 参考
 
-| 导出 | 说明 |
-|------|------|
-| 默认导出 | Hile 服务化 DataSource |
-| `transaction(datasource, callback)` | 事务封装，失败时执行 rollback 队列 |
+| 导出 | 类型 | 说明 |
+|------|------|------|
+| 默认导出 | `ServiceRegisterProps<DataSource>` | 服务化的 TypeORM DataSource |
+| `transaction(ds, callback)` | `function` | 事务执行函数 |
 
-<Warning>
-  统一通过 `loadService(typeormService)` 获取 DataSource，不要自行 new 全局 DataSource 与本包混用。
-</Warning>
+### transaction 签名
+
+```typescript
+function transaction<T>(
+  datasource: DataSource,
+  callback: (
+    runner: QueryRunner,
+    rollback: (fn: () => unknown | Promise<unknown>) => number
+  ) => Promise<T>
+): Promise<T>
+```
+
+| 参数 | 说明 |
+|------|------|
+| `datasource` | TypeORM DataSource 实例 |
+| `callback` | 事务回调，接收 `runner`（QueryRunner）和 `rollback`（补偿注册函数） |
+| 返回值 | 事务成功时返回 callback 的返回值 |

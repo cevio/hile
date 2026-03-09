@@ -1,6 +1,6 @@
 ---
 title: "@hile/cli"
-description: "Hile 命令行启动器，支持 *.boot 自动加载与容器事件日志"
+description: "Hile 命令行启动器：自动扫描 *.boot 文件，内置容器事件日志，优雅关闭"
 ---
 
 ## 安装
@@ -12,104 +12,252 @@ pnpm add @hile/cli
 pnpm add -g @hile/cli
 ```
 
-## 命令
+安装后可使用 `hile` 命令。
+
+---
+
+## 它做了什么？
+
+`@hile/cli` 是 Hile 应用的启动入口。运行 `hile start` 时，它会：
+
+1. 加载 `.env` 文件（如果指定了 `--env-file`）
+2. 设置 `NODE_ENV`（`--dev` 时为 `development`，否则为 `production`）
+3. 在开发模式下加载 `tsx`（直接运行 TypeScript，无需预编译）
+4. 在开发模式下订阅容器事件并输出日志
+5. 读取 `package.json` 的 `hile.auto_load_packages`，加载指定模块
+6. 扫描运行时目录下的 `*.boot.{ts,js}` 文件
+7. 加载所有找到的服务（`await loadService()`）
+8. 注册进程退出钩子，确保优雅关闭
+
+---
+
+## 命令详解
 
 ### hile start
 
-在当前目录启动服务。加载顺序：
-
-1. `package.json` 中的 `hile.auto_load_packages`（如存在）
-2. 运行时目录下的 `*.boot.ts` / `*.boot.js`
-
 ```bash
-hile start
-hile start --dev
+hile start [options]
 ```
 
-| 选项 | 说明 | 默认值 |
-|------|------|--------|
-| `-d, --dev` | 开发模式 | `false` |
-| `-e, --env-file <path>` | 加载 env 文件，可多次指定 | — |
+| 选项 | 缩写 | 说明 | 默认值 |
+|------|------|------|--------|
+| `--dev` | `-d` | 开发模式 | `false` |
+| `--env-file <path>` | `-e` | 加载 env 文件（可多次指定） | — |
+
+#### 开发模式 vs 生产模式
+
+| 特性 | `--dev` | 生产模式 |
+|------|---------|---------|
+| `NODE_ENV` | `development` | `production` |
+| TypeScript | 使用 tsx 直接运行 | 需要预编译 |
+| 扫描目录 | `src/` | `dist/` |
+| 容器事件日志 | 自动输出 | 不输出 |
+
+#### 加载 env 文件
 
 ```bash
+# 加载单个 env 文件
+hile start --env-file .env
+
+# 加载多个（先加载的优先，已存在的 key 不被覆盖）
 hile start --env-file .env --env-file .env.local
+
+# 开发模式 + env 文件
+hile start --dev --env-file .env.development
 ```
 
-<Note>env 文件依赖 Node 20.12+ 原生 `process.loadEnvFile()`。</Note>
+<Note>env 文件加载依赖 Node.js 20.12+ 原生 `process.loadEnvFile()` API。</Note>
 
-### 其他
+#### 启动日志示例
 
-```bash
-hile -v  # 查看版本
-hile -h  # 查看帮助
+开发模式下的典型输出：
+
+```
+[hile] service#1 init
+[hile] service#2 init
+[hile] service#2 ready (45ms)
+[hile] service#1 ready (1203ms)
 ```
 
-## 启动日志
+按 Ctrl+C 关闭时：
 
-CLI 接入容器事件，默认输出：
+```
+[hile] container shutdown start
+[hile] service#1 stopping
+[hile] service#1 stopped (12ms)
+[hile] service#2 stopping
+[hile] service#2 stopped (3ms)
+[hile] container shutdown done (15ms)
+```
 
-| 事件 | 说明 |
-|------|------|
-| `service:init` / `service:ready` | 服务启动（含耗时） |
-| `service:error` | 服务失败 |
-| `service:shutdown:start` / `done` | 服务关闭 |
-| `container:shutdown:start` / `done` | 容器关闭 |
+### hile -v
 
-## 运行时目录
+查看版本号。
 
-扫描优先级：
+### hile -h
 
-1. `HILE_RUNTIME_DIR` 环境变量
-2. `--dev` 模式：`src/`
-3. 生产模式：`dist/`
+查看帮助信息。
 
-## Boot 文件规范
+---
 
-每个 `*.boot.ts` 文件必须默认导出一个服务：
+## Boot 文件
+
+Boot 文件是 Hile 应用的服务入口点。CLI 会扫描运行时目录下的所有 `*.boot.{ts,js}` 文件并加载。
+
+### 编写 Boot 文件
 
 ```typescript
-// src/database.boot.ts
-import { defineService, loadService } from '@hile/core'
+// src/http.boot.ts
+import { defineService } from '@hile/core'
+import { Http } from '@hile/http'
 
 export default defineService(async (shutdown) => {
-  const pool = await createPool(config.dbUrl)
-  shutdown(() => pool.end())
-  return pool
+  const http = new Http({ port: 3000 })
+
+  await http.load('./src/controllers', {
+    suffix: 'controller',
+    prefix: '/api',
+  })
+
+  const close = await http.listen()
+  shutdown(close)
+
+  return http
 })
 ```
 
-<Warning>
-  - 文件名后缀必须为 `.boot.ts` 或 `.boot.js`
-  - 必须存在 `default` 导出
-  - 导出值必须为 `defineService` 返回值
-</Warning>
+### 规则
+
+| 规则 | 说明 |
+|------|------|
+| 文件名 | 必须以 `.boot.ts` 或 `.boot.js` 结尾 |
+| 导出 | 必须有 `export default`（或 `module.exports`） |
+| 导出类型 | 必须是 `defineService()` 的返回值 |
+| 校验 | CLI 使用 `isService()` 校验，不合法则抛出 `invalid service file` |
+
+### 多个 Boot 文件
+
+可以有多个 boot 文件，它们会被 `Promise.all` 并发加载：
+
+```
+src/
+├── http.boot.ts        # HTTP 服务
+├── database.boot.ts    # 数据库连接
+├── scheduler.boot.ts   # 定时任务
+└── services/
+    └── ...
+```
+
+每个 boot 文件是一个独立的服务入口。它们内部可以通过 `loadService` 相互依赖。
+
+---
 
 ## package.json 配置
 
+### auto_load_packages
+
+在 boot 文件扫描**之前**，CLI 会先加载 `hile.auto_load_packages` 中指定的模块：
+
 ```json
 {
+  "name": "my-app",
   "hile": {
     "auto_load_packages": ["@hile/typeorm", "@hile/ioredis"]
   }
 }
 ```
 
-按数组顺序加载，再扫描 `*.boot.{ts,js}`。每个模块默认导出必须通过 `isService` 校验。
+| 特性 | 说明 |
+|------|------|
+| 加载顺序 | 按数组顺序加载，早于 boot 文件 |
+| 模块名 | 与 `import('module')` 语义一致 |
+| 校验 | 模块默认导出必须通过 `isService()` 校验 |
+| 用途 | 适合加载框架级服务（如数据库、缓存） |
+
+完整加载顺序：
+
+```
+1. auto_load_packages[0]
+2. auto_load_packages[1]
+3. ...
+4. *.boot.ts (并发加载)
+```
+
+---
+
+## 运行时目录
+
+CLI 按以下优先级确定扫描哪个目录：
+
+| 优先级 | 来源 | 目录 |
+|--------|------|------|
+| 1 | `HILE_RUNTIME_DIR` 环境变量 | 环境变量值 |
+| 2 | `--dev` 模式 | `src/` |
+| 3 | 生产模式 | `dist/` |
+
+```bash
+# 自定义运行时目录
+HILE_RUNTIME_DIR=./custom hile start
+```
+
+---
 
 ## 优雅关闭
 
-收到 `SIGTERM`、`SIGINT` 等信号时自动调用 `container.shutdown()`，按逆序销毁已启动服务。
+CLI 使用 `async-exit-hook` 注册进程退出钩子。当收到 `SIGTERM`、`SIGINT` 等信号时：
 
-## 项目结构
+1. 触发 `container.shutdown()`
+2. 容器按 LIFO 顺序执行所有服务的 shutdown 回调
+3. 取消容器事件订阅
+4. 进程退出
+
+```
+SIGTERM/SIGINT → exitHook → container.shutdown() → 执行所有 shutdown 回调 → exit
+```
+
+<Warning>
+  如果没有任何服务可加载（`auto_load_packages` 为空且无 boot 文件），CLI 会输出 `no services to load` 并直接退出。
+</Warning>
+
+---
+
+## 完整项目示例
 
 ```
 my-app/
 ├── src/
-│   ├── database.boot.ts
-│   ├── http.boot.ts
+│   ├── http.boot.ts          # HTTP 服务入口
+│   ├── database.boot.ts      # 数据库服务入口
+│   ├── controllers/
+│   │   ├── users/
+│   │   │   └── index.controller.ts
+│   │   └── hello.controller.ts
 │   └── services/
-│       ├── config.ts
+│       ├── config.ts          # 普通服务（通过 loadService 按需加载）
 │       └── cache.ts
+├── .env                       # 环境变量
 ├── package.json
 └── tsconfig.json
+```
+
+```json
+// package.json
+{
+  "name": "my-app",
+  "type": "module",
+  "scripts": {
+    "dev": "hile start --dev --env-file .env",
+    "build": "tsc -b",
+    "start": "hile start --env-file .env"
+  },
+  "hile": {
+    "auto_load_packages": ["@hile/ioredis"]
+  },
+  "dependencies": {
+    "@hile/core": "^1.0.20",
+    "@hile/http": "^1.0.24",
+    "@hile/cli": "^1.0.18",
+    "@hile/ioredis": "^1.0.12"
+  }
+}
 ```

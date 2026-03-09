@@ -1,6 +1,6 @@
 ---
 title: "@hile/ioredis"
-description: "ioredis 客户端的 Hile 服务封装，支持优雅断连"
+description: "ioredis 客户端的 Hile 服务封装，环境变量配置，自动连接/断连"
 ---
 
 ## 安装
@@ -9,35 +9,186 @@ description: "ioredis 客户端的 Hile 服务封装，支持优雅断连"
 pnpm add @hile/ioredis
 ```
 
-同时安装依赖：`@hile/core`、`ioredis`。
+同时确保安装了 peer 依赖：
+
+```bash
+pnpm add @hile/core ioredis
+```
+
+---
+
+## 它做了什么？
+
+`@hile/ioredis` 将 ioredis 客户端封装为 Hile 服务：
+
+1. 从环境变量读取 Redis 配置
+2. 创建 ioredis 客户端
+3. 等待 `connect` 事件（确保连接就绪后才返回）
+4. 注册 `shutdown(() => client.disconnect())` — 进程退出时自动断连
+5. 返回可用的 Redis 客户端实例
+
+---
 
 ## 快速开始
+
+### 第一步：配置环境变量
+
+创建 `.env` 文件：
+
+```env
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_USERNAME=
+REDIS_PASSWORD=
+REDIS_DB=0
+```
+
+### 第二步：加载服务
 
 ```typescript
 import { loadService } from '@hile/core'
 import ioredisService from '@hile/ioredis'
 
 const redis = await loadService(ioredisService)
+
+// 现在可以使用 ioredis 的全部 API
 await redis.set('key', 'value')
 const value = await redis.get('key')
+console.log(value) // 'value'
 ```
 
-## 环境变量
+### 第三步：在控制器中使用
 
-| 变量 | 说明 |
-|------|------|
-| `REDIS_HOST` | Redis 主机 |
-| `REDIS_PORT` | Redis 端口 |
-| `REDIS_USERNAME` | Redis 用户名 |
-| `REDIS_PASSWORD` | Redis 密码 |
-| `REDIS_DB` | Redis 数据库编号，默认 `0` |
+```typescript
+// src/controllers/cache.controller.ts
+import { defineController } from '@hile/http'
+import { loadService } from '@hile/core'
+import ioredisService from '@hile/ioredis'
 
-行为：
+export default defineController('GET', async (ctx) => {
+  const redis = await loadService(ioredisService)
 
-- 首次加载时创建连接并等待 `connect` 事件
-- 进程退出时通过 shutdown 调用 `client.disconnect()`
+  const key = ctx.query.key as string
+  if (!key) return { error: 'key is required' }
+
+  const value = await redis.get(key)
+  return { key, value, exists: value !== null }
+})
+```
+
+---
+
+## 环境变量详解
+
+| 变量 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `REDIS_HOST` | `string` | 否 | `localhost` | Redis 服务器地址 |
+| `REDIS_PORT` | `string` | 否 | `6379` | Redis 端口（会自动转为 number） |
+| `REDIS_USERNAME` | `string` | 否 | — | Redis 用户名（Redis 6+ ACL） |
+| `REDIS_PASSWORD` | `string` | 否 | — | Redis 密码 |
+| `REDIS_DB` | `string` | 否 | `0` | Redis 数据库编号（会自动转为 number） |
+
+---
+
+## 连接行为
+
+### 初始化流程
+
+```
+创建 ioredis 客户端
+    │
+    ├── 监听 'error' 事件
+    ├── 监听 'connect' 事件
+    │
+    ▼
+等待 connect 或 error
+    │
+    ├── connect → 移除 error 监听 → 返回客户端
+    └── error → reject → 服务初始化失败
+```
+
+这意味着 `loadService(ioredisService)` 只有在 Redis 连接成功后才会 resolve。如果连接失败，会抛出错误并触发服务的 shutdown 流程。
+
+### 断连行为
+
+进程退出时，容器调用 `client.disconnect()`，ioredis 会：
+
+1. 停止自动重连
+2. 关闭当前连接
+3. 清理内部状态
+
+---
+
+## 常见用法
+
+### 缓存
+
+```typescript
+import { loadService } from '@hile/core'
+import ioredisService from '@hile/ioredis'
+
+async function getWithCache<T>(key: string, ttl: number, fetcher: () => Promise<T>): Promise<T> {
+  const redis = await loadService(ioredisService)
+
+  const cached = await redis.get(key)
+  if (cached) return JSON.parse(cached)
+
+  const data = await fetcher()
+  await redis.set(key, JSON.stringify(data), 'EX', ttl)
+  return data
+}
+
+// 使用
+const users = await getWithCache('users:list', 60, async () => {
+  const ds = await loadService(typeormService)
+  return ds.query('SELECT * FROM users')
+})
+```
+
+### 分布式锁
+
+```typescript
+async function withLock<T>(key: string, ttlMs: number, fn: () => Promise<T>): Promise<T | null> {
+  const redis = await loadService(ioredisService)
+
+  const lockKey = `lock:${key}`
+  const acquired = await redis.set(lockKey, '1', 'PX', ttlMs, 'NX')
+
+  if (!acquired) return null
+
+  try {
+    return await fn()
+  } finally {
+    await redis.del(lockKey)
+  }
+}
+```
+
+### Pub/Sub
+
+```typescript
+const redis = await loadService(ioredisService)
+
+// 注意：pub/sub 需要独立的连接
+const subscriber = redis.duplicate()
+
+subscriber.subscribe('events', (err) => {
+  if (err) console.error('Subscribe error:', err)
+})
+
+subscriber.on('message', (channel, message) => {
+  console.log(`[${channel}] ${message}`)
+})
+
+// 发布消息
+await redis.publish('events', JSON.stringify({ type: 'user_created', id: 1 }))
+```
+
+---
 
 ## 与 @hile/cli 集成
+
+方式一：`package.json` 自动加载：
 
 ```json
 {
@@ -47,12 +198,72 @@ const value = await redis.get('key')
 }
 ```
 
+方式二：boot 文件手动加载：
+
+```typescript
+// src/redis.boot.ts
+import { defineService, loadService } from '@hile/core'
+import ioredisService from '@hile/ioredis'
+
+export default defineService(async () => {
+  const redis = await loadService(ioredisService)
+  console.log('Redis 已连接')
+  return redis
+})
+```
+
+---
+
 ## API 参考
 
-| 导出 | 说明 |
-|------|------|
-| 默认导出 | Hile 服务化 Redis 客户端 |
+| 导出 | 类型 | 说明 |
+|------|------|------|
+| 默认导出 | `ServiceRegisterProps<Redis>` | 服务化的 ioredis 客户端 |
 
-<Warning>
-  统一通过 `loadService(ioredisService)` 获取客户端，不要自行创建全局 Redis 单例与本包混用。生产环境应通过 `REDIS_*` 变量配置。
-</Warning>
+返回的客户端是标准的 ioredis `Redis` 实例，支持所有 ioredis API。详细 API 参考 [ioredis 文档](https://github.com/redis/ioredis)。
+
+---
+
+## 常见问题
+
+<AccordionGroup>
+  <Accordion title="连接超时怎么办？">
+    检查 `REDIS_HOST` 和 `REDIS_PORT` 是否正确，Redis 服务是否正在运行。可以用 `redis-cli ping` 测试连接。
+
+    如果需要配置连接超时，目前需要自定义服务而非使用默认导出。
+  </Accordion>
+  <Accordion title="如何使用 Redis Cluster？">
+    默认导出只支持单节点模式。如需 Cluster 模式，建议自定义一个 Hile 服务：
+
+    ```typescript
+    import { defineService } from '@hile/core'
+    import Redis from 'ioredis'
+
+    export const clusterService = defineService(async (shutdown) => {
+      const cluster = new Redis.Cluster([
+        { host: 'node1', port: 6379 },
+        { host: 'node2', port: 6379 },
+      ])
+      shutdown(() => cluster.disconnect())
+      return cluster
+    })
+    ```
+  </Accordion>
+  <Accordion title="可以同时使用多个 Redis 实例吗？">
+    默认导出是单例。如需多个实例，自定义额外的服务：
+
+    ```typescript
+    export const cacheRedis = defineService(async (shutdown) => {
+      const client = new Redis({ host: 'cache-host', port: 6379 })
+      shutdown(() => client.disconnect())
+      return client
+    })
+
+    export const sessionRedis = defineService(async (shutdown) => {
+      const client = new Redis({ host: 'session-host', port: 6380 })
+      shutdown(() => client.disconnect())
+      return client
+    })
+    ```
+  </Accordion>
+</AccordionGroup>

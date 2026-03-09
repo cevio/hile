@@ -26,10 +26,6 @@
       "name": "API 参考",
       "url": "packages"
     },
-    {
-      "name": "架构决策",
-      "url": "adr"
-    }
   ],
   "anchors": [
     {
@@ -67,16 +63,6 @@
       "group": "工具",
       "pages": [
         "packages/create-hile-http-next"
-      ]
-    },
-    {
-      "group": "架构决策记录",
-      "pages": [
-        "adr/0001-readme-skill-separation",
-        "adr/0002-core-orchestration-kernel",
-        "adr/0003-cli-observability-events",
-        "adr/0004-http-response-plugin-strategy",
-        "adr/0005-http-next-koa-nextjs-bridge"
       ]
     }
   ],

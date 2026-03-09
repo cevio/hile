@@ -3,46 +3,104 @@ title: 简介
 description: "Hile — 面向 Node.js 的轻量级服务化工具集"
 ---
 
-# Hile
+# 什么是 Hile？
 
-Hile 是一套面向 Node.js 的轻量级服务化工具集，提供从服务容器、HTTP 框架、SSR 渲染到数据库/缓存集成的完整解决方案。
+Hile 是一套面向 Node.js 的**轻量级服务化工具集**。它的核心理念是：用最简单的 API 管理复杂的服务依赖关系，让你专注于业务逻辑而不是基础设施。
+
+Hile 提供了从**服务容器**、**HTTP 框架**、**SSR 渲染**到**数据库/缓存集成**的完整解决方案，所有模块通过统一的服务容器协作。
+
+## 核心特性
+
+<CardGroup cols={2}>
+  <Card title="异步服务容器" icon="cube">
+    全局单例、并发请求合并、依赖图追踪、循环依赖检测、优雅关闭。纯 TypeScript 实现，零运行时依赖。
+  </Card>
+  <Card title="HTTP 服务框架" icon="server">
+    基于 Koa + find-my-way，支持全局中间件、手动路由注册、文件系统自动路由加载、响应插件链。
+  </Card>
+  <Card title="Next.js 集成" icon="react">
+    将 Next.js 作为渲染引擎嵌入 Koa 服务，共享同一端口。API 路由与页面路由互不冲突。
+  </Card>
+  <Card title="命令行启动器" icon="terminal">
+    一条命令启动所有服务，自动扫描 *.boot 文件，内置容器事件日志，支持优雅关闭。
+  </Card>
+  <Card title="数据库集成" icon="database">
+    TypeORM DataSource 服务化封装，内置事务辅助函数，支持失败时 LIFO 补偿回调。
+  </Card>
+  <Card title="Redis 集成" icon="bolt">
+    ioredis 客户端服务化封装，环境变量配置，自动连接/断连。
+  </Card>
+</CardGroup>
 
 ## 包一览
 
-| 包名 | 说明 | 版本 |
-|------|------|------|
-| `@hile/core` | 异步服务容器：单例、并发合并、生命周期、依赖图、循环依赖检测 | 1.0.20 |
-| `@hile/http` | HTTP 服务框架：Koa + find-my-way，支持中间件和文件系统路由 | 1.0.24 |
-| `@hile/http-next` | Next.js 桥接层：将 Next.js 作为渲染引擎嵌入 Koa 服务 | 1.0.1 |
-| `@hile/cli` | 命令行启动器：`*.boot` 自动加载，内置容器事件日志 | 1.0.18 |
-| `@hile/typeorm` | TypeORM DataSource 的 Hile 服务封装，内置事务辅助 | 1.0.12 |
-| `@hile/ioredis` | ioredis 客户端的 Hile 服务封装，支持优雅断连 | 1.0.12 |
-| `create-hile-http-next` | 项目脚手架：一键创建 Hile + Next.js 应用 | 1.0.4 |
+| 包名 | 说明 | 版本 | 安装 |
+|------|------|------|------|
+| `@hile/core` | 异步服务容器 | 1.0.20 | `pnpm add @hile/core` |
+| `@hile/http` | HTTP 服务框架 | 1.0.24 | `pnpm add @hile/http` |
+| `@hile/http-next` | Next.js 桥接层 | 1.0.1 | `pnpm add @hile/http-next` |
+| `@hile/cli` | 命令行启动器 | 1.0.18 | `pnpm add @hile/cli` |
+| `@hile/typeorm` | TypeORM 集成 | 1.0.12 | `pnpm add @hile/typeorm` |
+| `@hile/ioredis` | ioredis 集成 | 1.0.12 | `pnpm add @hile/ioredis` |
+| `create-hile-http-next` | 项目脚手架 | 1.0.4 | `npx create-hile-http-next` |
 
 ## 依赖关系
 
+以下是各包之间的依赖关系。箭头方向表示"依赖于"：
+
 ```
-@hile/core
-  ├── @hile/cli        （启动器依赖核心容器）
-  ├── @hile/typeorm     （服务封装依赖核心容器）
-  └── @hile/ioredis     （服务封装依赖核心容器）
+@hile/core          ← 所有包的基础
+  ├── @hile/cli     ← 启动器，依赖核心容器
+  ├── @hile/typeorm  ← 数据库集成，依赖核心容器
+  └── @hile/ioredis  ← Redis 集成，依赖核心容器
 
-@hile/http
-  └── @hile/http-next   （桥接层依赖 HTTP 框架）
+@hile/http          ← HTTP 框架
+  └── @hile/http-next ← Next.js 桥接层，依赖 HTTP 框架
 
-create-hile-http-next   （脚手架，生成的项目依赖上述所有包）
+create-hile-http-next ← 脚手架工具
+  └── 生成的项目依赖上述所有包
 ```
 
-## 文档策略
+## 典型技术栈组合
 
-<CardGroup cols={3}>
-  <Card title="README" icon="book">
-    面向使用者，强调快速跑通
+根据你的项目类型，选择不同的包组合：
+
+<AccordionGroup>
+  <Accordion title="纯 API 服务">
+    ```bash
+    pnpm add @hile/core @hile/http @hile/cli
+    ```
+    适合：REST API、微服务后端。使用 `@hile/http` 的文件系统路由和中间件能力。
+  </Accordion>
+  <Accordion title="全栈应用（API + SSR）">
+    ```bash
+    npx create-hile-http-next create my-app
+    ```
+    适合：需要服务端渲染的全栈应用。Koa API 路由 + Next.js 页面共享同一端口。
+  </Accordion>
+  <Accordion title="API + 数据库 + 缓存">
+    ```bash
+    pnpm add @hile/core @hile/http @hile/cli @hile/typeorm @hile/ioredis
+    ```
+    适合：需要数据库和 Redis 的后端服务。所有资源通过容器统一管理生命周期。
+  </Accordion>
+</AccordionGroup>
+
+## 设计哲学
+
+1. **服务即单例**：通过 `defineService` 定义的服务由容器保证全局唯一，并发加载自动合并
+2. **约定优于配置**：文件系统路由、`*.boot.ts` 自动加载、环境变量配置，减少样板代码
+3. **优雅关闭**：每个服务注册清理回调，进程退出时容器按逆序执行，确保资源正确释放
+4. **可观测性**：容器事件流覆盖服务全生命周期，CLI 自动订阅并输出日志
+5. **渐进式采用**：可以只用 `@hile/core`，也可以组合所有包构建完整应用
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="快速开始" icon="rocket" href="/quickstart">
+    5 分钟创建并运行你的第一个 Hile 项目
   </Card>
-  <Card title="SKILL" icon="robot">
-    面向 AI 编码模型，强调约束与模板
-  </Card>
-  <Card title="ADR" icon="scale-balanced">
-    记录关键架构决策与取舍
+  <Card title="架构概览" icon="sitemap" href="/architecture">
+    深入了解 Hile 的分层架构和请求处理流程
   </Card>
 </CardGroup>
