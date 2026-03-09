@@ -1,0 +1,32 @@
+{
+  "name": "create-hile-http-next",
+  "description": "Create a new Hile HTTP Next project",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": {
+    "create-hile-http-next": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "template"
+  ],
+  "scripts": {
+    "build": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
+    "dev": "node --loader ts-node/esm ./src/index.ts -- create test-project"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
+    "fix-esm-import-path": "^1.10.3",
+    "ts-node": "^10.9.2"
+  },
+  "dependencies": {
+    "commander": "^14.0.3",
+    "fs-extra": "^11.3.4",
+    "ora": "^9.3.0"
+  }
+}
