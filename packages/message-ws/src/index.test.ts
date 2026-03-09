@@ -1,0 +1,273 @@
+import { describe, it, expect, afterEach, beforeEach } from 'vitest'
+import WebSocket, { WebSocketServer } from 'ws'
+import { MessageWs } from './index'
+import { Exception } from '@hile/message-modem'
+
+class EchoWs extends MessageWs {
+  protected exec(data: any): Promise<any> {
+    return Promise.resolve(data);
+  }
+}
+
+class CustomWs extends MessageWs {
+  public execFn: (data: any) => Promise<any> = async (d) => d;
+  protected exec(data: any): Promise<any> {
+    return this.execFn(data);
+  }
+}
+
+function waitForOpen(ws: WebSocket): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (ws.readyState === WebSocket.OPEN) return resolve();
+    ws.once('open', resolve);
+    ws.once('error', reject);
+  });
+}
+
+describe('@hile/message-ws', () => {
+  let wss: WebSocketServer;
+  let port: number;
+
+  beforeEach(async () => {
+    wss = new WebSocketServer({ port: 0 });
+    await new Promise<void>((r) => wss.once('listening', r));
+    const addr = wss.address();
+    port = typeof addr === 'object' ? addr!.port : 0;
+  });
+
+  afterEach(async () => {
+    wss.clients.forEach((c) => c.close());
+    await new Promise<void>((r) => wss.close(() => r()));
+  });
+
+  function connectPair(): Promise<{ client: WebSocket; server: WebSocket }> {
+    return new Promise((resolve) => {
+      const client = new WebSocket(`ws://127.0.0.1:${port}`);
+      wss.once('connection', (server) => {
+        resolve({ client, server });
+      });
+    });
+  }
+
+  describe('post guard', () => {
+    it('throws if WebSocket is not open', async () => {
+      const { client } = await connectPair();
+      await waitForOpen(client);
+      const modem = new EchoWs(client);
+      client.close();
+      await new Promise<void>((r) => client.once('close', r));
+
+      expect(() => {
+        (modem as any).post({ id: 0, mode: 0, twoway: true, data: null });
+      }).toThrow('WebSocket is not open');
+      modem.dispose();
+    });
+  });
+
+  describe('request / response', () => {
+    it('echo round trip', async () => {
+      const { client, server } = await connectPair();
+      await waitForOpen(client);
+
+      const clientModem = new EchoWs(client);
+      const serverModem = new EchoWs(server);
+
+      const result = await clientModem.request('hello').response();
+      expect(result).toBe('hello');
+
+      clientModem.dispose();
+      serverModem.dispose();
+    });
+
+    it('handles complex data', async () => {
+      const { client, server } = await connectPair();
+      await waitForOpen(client);
+
+      const clientModem = new EchoWs(client);
+      const serverModem = new EchoWs(server);
+
+      const payload = { users: [{ id: 1, name: 'Alice' }], total: 1 };
+      const result = await clientModem.request(payload).response();
+      expect(result).toEqual(payload);
+
+      clientModem.dispose();
+      serverModem.dispose();
+    });
+
+    it('transforms data in exec', async () => {
+      const { client, server } = await connectPair();
+      await waitForOpen(client);
+
+      const clientModem = new EchoWs(client);
+      const serverModem = new CustomWs(server);
+      serverModem.execFn = async (n) => n * 2;
+
+      const result = await clientModem.request(21).response();
+      expect(result).toBe(42);
+
+      clientModem.dispose();
+      serverModem.dispose();
+    });
+
+    it('multiple sequential requests', async () => {
+      const { client, server } = await connectPair();
+      await waitForOpen(client);
+
+      const clientModem = new EchoWs(client);
+      const serverModem = new EchoWs(server);
+
+      expect(await clientModem.request(1).response()).toBe(1);
+      expect(await clientModem.request(2).response()).toBe(2);
+      expect(await clientModem.request(3).response()).toBe(3);
+
+      clientModem.dispose();
+      serverModem.dispose();
+    });
+
+    it('multiple concurrent requests', async () => {
+      const { client, server } = await connectPair();
+      await waitForOpen(client);
+
+      const clientModem = new EchoWs(client);
+      const serverModem = new EchoWs(server);
+
+      const [a, b, c] = await Promise.all([
+        clientModem.request('a').response(),
+        clientModem.request('b').response(),
+        clientModem.request('c').response(),
+      ]);
+      expect(a).toBe('a');
+      expect(b).toBe('b');
+      expect(c).toBe('c');
+
+      clientModem.dispose();
+      serverModem.dispose();
+    });
+
+    it('server can also send requests to client', async () => {
+      const { client, server } = await connectPair();
+      await waitForOpen(client);
+
+      const clientModem = new CustomWs(client);
+      clientModem.execFn = async (data) => `client got: ${data}`;
+      const serverModem = new EchoWs(server);
+
+      const result = await serverModem.request('ping').response();
+      expect(result).toBe('client got: ping');
+
+      clientModem.dispose();
+      serverModem.dispose();
+    });
+
+    it('supports typed response generic', async () => {
+      const { client, server } = await connectPair();
+      await waitForOpen(client);
+
+      const clientModem = new EchoWs(client);
+      const serverModem = new CustomWs(server);
+      serverModem.execFn = async () => ({ id: 1, name: 'test' });
+
+      const result = await clientModem.request(null).response<{ id: number; name: string }>();
+      expect(result.id).toBe(1);
+      expect(result.name).toBe('test');
+
+      clientModem.dispose();
+      serverModem.dispose();
+    });
+  });
+
+  describe('error handling', () => {
+    it('Exception in exec preserves status', async () => {
+      const { client, server } = await connectPair();
+      await waitForOpen(client);
+
+      const clientModem = new EchoWs(client);
+      const serverModem = new CustomWs(server);
+      serverModem.execFn = async () => { throw new Exception(403, 'forbidden'); };
+
+      try {
+        await clientModem.request('x').response();
+        expect.unreachable();
+      } catch (e) {
+        expect(e).toBeInstanceOf(Exception);
+        expect((e as Exception).status).toBe(403);
+        expect((e as Exception).message).toBe('forbidden');
+      }
+
+      clientModem.dispose();
+      serverModem.dispose();
+    });
+
+    it('generic Error maps to status 500', async () => {
+      const { client, server } = await connectPair();
+      await waitForOpen(client);
+
+      const clientModem = new EchoWs(client);
+      const serverModem = new CustomWs(server);
+      serverModem.execFn = async () => { throw new Error('oops'); };
+
+      try {
+        await clientModem.request('x').response();
+        expect.unreachable();
+      } catch (e) {
+        expect(e).toBeInstanceOf(Exception);
+        expect((e as Exception).status).toBe(500);
+        expect((e as Exception).message).toBe('oops');
+      }
+
+      clientModem.dispose();
+      serverModem.dispose();
+    });
+  });
+
+  describe('abort', () => {
+    it('abort rejects with AbortException', async () => {
+      const { client, server } = await connectPair();
+      await waitForOpen(client);
+
+      const clientModem = new EchoWs(client);
+      const serverModem = new CustomWs(server);
+      serverModem.execFn = () => new Promise((r) => setTimeout(() => r('slow'), 10000));
+
+      const req = clientModem.request('data');
+      const promise = req.response();
+      req.abort();
+      await expect(promise).rejects.toThrow('Abort');
+
+      clientModem.dispose();
+      serverModem.dispose();
+    });
+  });
+
+  describe('timeout', () => {
+    it('times out if no response', async () => {
+      const { client, server } = await connectPair();
+      await waitForOpen(client);
+
+      const clientModem = new EchoWs(client);
+      const serverModem = new CustomWs(server);
+      serverModem.execFn = () => new Promise((r) => setTimeout(() => r('late'), 10000));
+
+      await expect(
+        clientModem.request('data', 100).response()
+      ).rejects.toThrow();
+
+      clientModem.dispose();
+      serverModem.dispose();
+    });
+  });
+
+  describe('dispose', () => {
+    it('removes message listener from ws', async () => {
+      const { client, server } = await connectPair();
+      await waitForOpen(client);
+
+      const before = client.listenerCount('message');
+      const modem = new EchoWs(client);
+      expect(client.listenerCount('message')).toBe(before + 1);
+
+      modem.dispose();
+      expect(client.listenerCount('message')).toBe(before);
+    });
+  });
+});

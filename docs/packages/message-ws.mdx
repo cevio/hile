@@ -1,0 +1,324 @@
+---
+title: "@hile/message-ws"
+description: "基于 @hile/message-modem 和 ws 模块的 WebSocket 通信抽象实现"
+---
+
+## 安装
+
+```bash
+pnpm add @hile/message-ws
+```
+
+自动安装依赖 `@hile/message-modem` 和 `ws`。
+
+---
+
+## 它做了什么？
+
+`@hile/message-ws` 是 `@hile/message-modem` 的 **WebSocket 抽象实现**，基于 Node.js 的 `ws` 模块。它将 WebSocket 的事件驱动通信封装为请求/响应模式，你只需继承 `MessageWs` 并实现 `exec` 方法。
+
+继承链：
+
+```
+MessageModem (abstract)     ← post + exec 均抽象
+  └── MessageWs (abstract)  ← 实现 post（JSON + ws.send），exec 仍抽象
+        └── 用户子类         ← 实现 exec
+```
+
+核心能力：
+
+- **客户端/服务端通用** — 两端各自包装 `WebSocket` 实例
+- **JSON 传输** — 消息自动 `JSON.stringify` / `JSON.parse`
+- **连接状态检查** — 发送前检查 `readyState`，未连接时抛出明确错误
+- **继承 MessageModem** — 超时、中止、错误传播全部支持
+- **资源清理** — `dispose()` 移除监听
+
+---
+
+## 通信模型
+
+```
+客户端                            服务端
+  │                                 │
+  │  modem.request(data)            │
+  │───── REQUEST ──────────────────►│
+  │                                 │ exec(data)
+  │                                 │
+  │◄───── RESPONSE ─────────────────│
+  │  resolve(result)                │
+  │                                 │
+  │  modem.abort()                  │
+  │───── ABORT ────────────────────►│
+  │                                 │ 取消 exec
+```
+
+<Note>
+  通信是双向对称的。服务端也可以主动向客户端发请求，前提是客户端的子类也实现了 `exec`。
+</Note>
+
+---
+
+## 快速开始
+
+### 第一步：定义子类
+
+`MessageWs` 是抽象类，必须继承并实现 `exec`：
+
+```typescript
+import { MessageWs } from '@hile/message-ws';
+import { Exception } from '@hile/message-modem';
+
+class AppWs extends MessageWs {
+  protected async exec(data: any): Promise<any> {
+    switch (data?.action) {
+      case 'getUser':
+        return { id: data.id, name: 'Alice' };
+      case 'restricted':
+        throw new Exception(403, 'not allowed');
+      default:
+        return data;
+    }
+  }
+}
+```
+
+### 第二步：服务端
+
+```typescript
+import { WebSocketServer } from 'ws';
+
+const wss = new WebSocketServer({ port: 8080 });
+
+wss.on('connection', (ws) => {
+  const modem = new AppWs(ws);
+  // 自动监听客户端请求并通过 exec 处理
+
+  ws.on('close', () => modem.dispose());
+});
+```
+
+### 第三步：客户端
+
+```typescript
+import WebSocket from 'ws';
+
+const ws = new WebSocket('ws://localhost:8080');
+
+ws.on('open', async () => {
+  const modem = new AppWs(ws);
+
+  const user = await modem.request({ action: 'getUser', id: 1 }).response();
+  console.log(user); // { id: 1, name: 'Alice' }
+
+  modem.dispose();
+  ws.close();
+});
+```
+
+---
+
+## 服务端推送
+
+服务端可以主动向客户端发请求：
+
+```typescript
+// 服务端
+wss.on('connection', (ws) => {
+  const modem = new ServerWs(ws);
+
+  // 主动推送通知
+  modem.request({ type: 'notification', message: 'hello!' }).response()
+    .then(ack => console.log('客户端确认:', ack));
+});
+```
+
+```typescript
+// 客户端
+class ClientWs extends MessageWs {
+  protected async exec(data: any): Promise<any> {
+    if (data.type === 'notification') {
+      showNotification(data.message);
+      return { ack: true };
+    }
+    return data;
+  }
+}
+```
+
+---
+
+## 超时与中止
+
+### 设置超时
+
+```typescript
+try {
+  const result = await modem.request(data, 5000).response();
+} catch (e) {
+  // 超时后触发 abort → AbortException
+}
+```
+
+### 主动中止
+
+```typescript
+const req = modem.request(data);
+const promise = req.response();
+
+setTimeout(() => req.abort(), 3000);
+
+try {
+  await promise;
+} catch (e) {
+  // AbortException
+}
+```
+
+---
+
+## 错误处理
+
+### exec 中抛出异常
+
+```typescript
+import { Exception } from '@hile/message-modem';
+
+class MyWs extends MessageWs {
+  protected async exec(data: any): Promise<any> {
+    if (!data.token) {
+      throw new Exception(401, 'Unauthorized');
+      // status 401 透传到对端
+    }
+    throw new Error('Something went wrong');
+    // 普通 Error → status 500
+  }
+}
+```
+
+### 对端捕获异常
+
+```typescript
+import { Exception, AbortException } from '@hile/message-modem';
+
+try {
+  await modem.request(data).response();
+} catch (e) {
+  if (e instanceof AbortException) {
+    console.log('请求被中止或超时');
+  } else if (e instanceof Exception) {
+    console.log(`远端错误 [${e.status}]: ${e.message}`);
+  }
+}
+```
+
+---
+
+## API 参考
+
+### `MessageWs`（抽象类）
+
+继承自 `MessageModem`。
+
+| 方法 | 签名 | 说明 |
+|------|------|------|
+| `constructor` | `new SubClass(ws: WebSocket)` | 传入已连接的 WebSocket 实例 |
+| `exec` | `protected abstract exec(data: any): Promise<any>` | 子类必须实现：处理对端请求 |
+| `request` | `request<T>(data: T, timeout?: number)` | 向对端发送请求，返回 `{ abort, response }` |
+| `dispose` | `dispose(): void` | 移除消息监听，释放资源 |
+
+### `request` 返回值
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `abort` | `() => void` | 中止本次请求 |
+| `response` | `<U = any>() => Promise<U>` | 等待对端响应，支持泛型 |
+
+---
+
+## 与其他模块的关系
+
+```
+@hile/message-modem              ← 抽象基类（传输无关）
+  ├── @hile/message-ipc          ← Node.js IPC（fork 父子进程）
+  ├── @hile/message-worker-thread ← Worker Threads（worker_threads）
+  └── @hile/message-ws           ← WebSocket（ws 模块）
+```
+
+---
+
+## 与其他实现的对比
+
+| 特性 | message-ipc | message-worker-thread | message-ws |
+|------|-------------|----------------------|------------|
+| 底层 API | `process.send` | `port.postMessage` | `ws.send` |
+| 序列化 | 自动（V8） | 自动（structured clone） | JSON |
+| 网络 | 同机器 | 同进程 | 跨网络 |
+| 依赖 | 无 | 无 | `ws` |
+| 传输通道 | `ChildProcess` | `Worker` / `MessagePort` | `WebSocket` |
+
+---
+
+## 注意事项
+
+<Warning>
+  `MessageWs` 是抽象类，不能直接实例化。必须继承并实现 `exec` 方法。
+</Warning>
+
+<Warning>
+  必须在 WebSocket 连接建立后（`open` 事件触发后）再发送请求。`readyState` 不是 `OPEN` 时调用 `request()` 会抛出错误。
+</Warning>
+
+<Warning>
+  消息通过 JSON 序列化传输。Buffer、Date、Map、Set 等非 JSON 安全类型会丢失类型信息。只传递 plain object、array、string、number、boolean、null。
+</Warning>
+
+<Warning>
+  使用完毕后务必 `dispose()` + `ws.close()`。服务端应在 `ws.on('close')` 中调用 `modem.dispose()` 清理资源。
+</Warning>
+
+---
+
+## 常见问题
+
+<AccordionGroup>
+  <Accordion title="报错 'WebSocket is not open' 怎么办？">
+    确保在 `open` 事件触发后再创建 modem 或发送请求：
+
+    ```typescript
+    const ws = new WebSocket('ws://...');
+    ws.on('open', () => {
+      const modem = new MyWs(ws);
+      modem.request(data); // ✅ 连接已建立
+    });
+    ```
+  </Accordion>
+  <Accordion title="服务端可以主动推送消息吗？">
+    可以。双方都是 `MessageWs` 实例，都可以调用 `request()` 发起请求。只要对端实现了 `exec`，就能响应请求。
+  </Accordion>
+  <Accordion title="如何管理多个 WebSocket 连接？">
+    服务端每个连接创建独立的 modem 实例：
+
+    ```typescript
+    const modems = new Set<MyWs>();
+    wss.on('connection', (ws) => {
+      const modem = new MyWs(ws);
+      modems.add(modem);
+      ws.on('close', () => {
+        modem.dispose();
+        modems.delete(modem);
+      });
+    });
+
+    // 广播
+    for (const modem of modems) {
+      modem.request({ type: 'broadcast', message: 'hello' });
+    }
+    ```
+  </Accordion>
+  <Accordion title="可以用于浏览器端吗？">
+    `@hile/message-ws` 基于 Node.js 的 `ws` 模块，专为服务端设计。浏览器端可以基于 `@hile/message-modem` 自行封装原生 `WebSocket` API，模式完全相同。
+  </Accordion>
+  <Accordion title="连接断开时正在等待的请求会怎样？">
+    正在等待响应的请求会一直挂起直到超时。建议监听 `ws.on('close')` 或 `ws.on('error')` 事件，主动清理或 abort 未完成的请求。
+  </Accordion>
+</AccordionGroup>

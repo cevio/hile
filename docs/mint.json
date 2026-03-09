@@ -59,7 +59,8 @@
         "packages/ioredis",
         "packages/message-modem",
         "packages/message-ipc",
-        "packages/message-worker-thread"
+        "packages/message-worker-thread",
+        "packages/message-ws"
       ]
     },
     {
