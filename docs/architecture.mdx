@@ -46,8 +46,9 @@ Hile 按职责分为三层，每一层都是可选的，你可以按需引入：
     - `@hile/typeorm` — 将 TypeORM DataSource 封装为 Hile 服务，提供事务辅助
     - `@hile/ioredis` — 将 ioredis 客户端封装为 Hile 服务
     - `@hile/message-modem` — 传输无关的请求/响应消息通信抽象层，支持超时、中止、错误传播
+    - `@hile/message-ipc` — 基于 message-modem 的 Node.js IPC 实现，用于父子进程间的请求/响应通信
 
-    其中 `@hile/http`、`@hile/typeorm`、`@hile/ioredis` 通过 `defineService` 注册到容器，生命周期由容器统一管理。`@hile/message-modem` 是独立模块，不依赖容器，可在任何 JavaScript 环境中使用。
+    其中 `@hile/http`、`@hile/typeorm`、`@hile/ioredis` 通过 `defineService` 注册到容器，生命周期由容器统一管理。`@hile/message-modem` 和 `@hile/message-ipc` 是独立模块，不依赖容器，可在任何 Node.js 环境中使用。
   </Accordion>
   <Accordion title="编排层：@hile/cli、@hile/http-next">
     **职责：** 编排服务启动与请求分流。

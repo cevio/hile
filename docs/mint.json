@@ -57,7 +57,8 @@
       "pages": [
         "packages/typeorm",
         "packages/ioredis",
-        "packages/message-modem"
+        "packages/message-modem",
+        "packages/message-ipc"
       ]
     },
     {

@@ -1,0 +1,275 @@
+---
+title: "@hile/message-ipc"
+description: "基于 @hile/message-modem 的 Node.js IPC 通信抽象实现，用于父子进程间的请求/响应通信"
+---
+
+## 安装
+
+```bash
+pnpm add @hile/message-ipc
+```
+
+自动安装依赖 `@hile/message-modem`。
+
+---
+
+## 它做了什么？
+
+`@hile/message-ipc` 是 `@hile/message-modem` 的 **Node.js IPC 抽象实现**。它封装了 `process.on('message')` / `process.send()` 和 `child.on('message')` / `child.send()` 的细节，你只需继承 `MessageIpc` 并实现 `exec` 方法即可。
+
+继承链：
+
+```
+MessageModem (abstract)        ← post + exec 均抽象
+  └── MessageIpc (abstract)    ← 实现 post，exec 仍抽象
+        └── 用户子类            ← 实现 exec
+```
+
+核心能力：
+
+- **双端支持** — 父进程端传入 `ChildProcess`，子进程端零配置
+- **继承模式** — 子类实现 `exec` 定义请求处理逻辑
+- **请求/响应** — 继承 `MessageModem` 的全部能力（超时、中止、错误传播）
+- **资源清理** — `dispose()` 移除监听，避免内存泄漏
+
+---
+
+## 通信模型
+
+```
+父进程                            子进程
+  │                                 │
+  │  ipc.request(data)              │
+  │───── REQUEST ──────────────────►│
+  │                                 │ exec(data)
+  │                                 │
+  │◄───── RESPONSE ─────────────────│
+  │  resolve(result)                │
+  │                                 │
+  │  ipc.abort()                    │
+  │───── ABORT ────────────────────►│
+  │                                 │ 取消 exec
+```
+
+<Note>
+  通信是双向对称的。子进程也可以向父进程发请求，前提是父进程的子类也实现了 `exec`。
+</Note>
+
+---
+
+## 快速开始
+
+### 第一步：定义子类
+
+`MessageIpc` 是抽象类，必须继承并实现 `exec` 方法：
+
+```typescript
+import { MessageIpc } from '@hile/message-ipc';
+import { Exception } from '@hile/message-modem';
+
+class WorkerIpc extends MessageIpc {
+  protected async exec(data: any): Promise<any> {
+    switch (data?.action) {
+      case 'compute':
+        return data.value * 2;
+      case 'restricted':
+        throw new Exception(403, 'not allowed');
+      default:
+        return data; // echo
+    }
+  }
+}
+```
+
+### 第二步：父进程
+
+```typescript
+import { fork } from 'node:child_process';
+
+class ParentIpc extends MessageIpc {
+  protected async exec(data: any): Promise<any> {
+    // 处理子进程发来的请求（可选）
+    return { reply: 'from parent', query: data };
+  }
+}
+
+const child = fork('./worker.js');
+const ipc = new ParentIpc(child);
+
+// 向子进程发请求
+const result = await ipc.request({ action: 'compute', value: 42 }).response();
+console.log(result); // 84
+
+// 清理
+ipc.dispose();
+child.kill();
+```
+
+### 第三步：子进程（worker.js）
+
+```typescript
+// 不传参数 → 自动使用 process
+const ipc = new WorkerIpc();
+```
+
+---
+
+## 超时与中止
+
+### 设置超时
+
+```typescript
+// 5 秒超时
+try {
+  const result = await ipc.request(data, 5000).response();
+} catch (e) {
+  // 超时后会触发 abort → AbortException
+}
+```
+
+### 主动中止
+
+```typescript
+const req = ipc.request(data);
+const promise = req.response();
+
+setTimeout(() => req.abort(), 3000);
+
+try {
+  await promise;
+} catch (e) {
+  // AbortException
+}
+```
+
+---
+
+## 错误处理
+
+### exec 中抛出异常
+
+```typescript
+import { Exception } from '@hile/message-modem';
+
+class MyIpc extends MessageIpc {
+  protected async exec(data: any): Promise<any> {
+    if (!data.token) {
+      throw new Exception(401, 'Unauthorized');
+      // status 401 会透传到对端
+    }
+
+    throw new Error('Something went wrong');
+    // 普通 Error → status 500
+  }
+}
+```
+
+### 对端捕获异常
+
+```typescript
+import { Exception, AbortException } from '@hile/message-modem';
+
+try {
+  await ipc.request(data).response();
+} catch (e) {
+  if (e instanceof AbortException) {
+    console.log('请求被中止或超时');
+  } else if (e instanceof Exception) {
+    console.log(`远端错误 [${e.status}]: ${e.message}`);
+  }
+}
+```
+
+---
+
+## API 参考
+
+### `MessageIpc`（抽象类）
+
+继承自 `MessageModem`。
+
+| 方法 | 签名 | 说明 |
+|------|------|------|
+| `constructor` | `new SubClass(channel?: ChildProcess)` | 父进程传 `fork()` 返回值；子进程不传参数 |
+| `exec` | `protected abstract exec(data: any): Promise<any>` | 子类必须实现：处理对端请求 |
+| `request` | `request<T>(data: T, timeout?: number)` | 向对端发送请求，返回 `{ abort, response }` |
+| `dispose` | `dispose(): void` | 移除消息监听，释放资源 |
+
+### `request` 返回值
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `abort` | `() => void` | 中止本次请求 |
+| `response` | `<U = any>() => Promise<U>` | 等待对端响应，支持泛型 |
+
+### 类型导出
+
+```typescript
+export type IpcExecHandler = (data: any) => Promise<any>;
+export abstract class MessageIpc extends MessageModem { ... }
+```
+
+---
+
+## 与其他模块的关系
+
+```
+@hile/message-modem        ← 抽象基类（传输无关）
+  └── @hile/message-ipc    ← Node.js IPC 抽象实现
+        └── 用户子类        ← 实现 exec
+```
+
+`@hile/message-ipc` 不依赖 `@hile/core` 容器，可以独立于 Hile 体系使用。
+
+---
+
+## 注意事项
+
+<Warning>
+  `MessageIpc` 是抽象类，不能直接实例化。必须继承并实现 `exec` 方法。
+</Warning>
+
+<Warning>
+  子进程必须通过 `fork()` 启动。`spawn()` 不创建 IPC 通道，调用 `request()` 会抛出 `"IPC channel is not available"` 错误。
+</Warning>
+
+<Warning>
+  使用完毕后务必调用 `dispose()` 移除消息监听器。如果是父进程端，还需要 `child.kill()` 关闭子进程。
+</Warning>
+
+---
+
+## 常见问题
+
+<AccordionGroup>
+  <Accordion title="报错 'IPC channel is not available' 怎么办？">
+    确保子进程是通过 `child_process.fork()` 启动的，而不是 `spawn()` 或 `exec()`。
+
+    ```typescript
+    // ✅ 正确
+    const child = fork('./worker.js');
+
+    // ❌ 错误
+    const child = spawn('node', ['./worker.js']);
+    ```
+  </Accordion>
+  <Accordion title="子进程可以主动向父进程发请求吗？">
+    可以。通信是双向对称的。只要父进程端的子类也实现了 `exec`，子进程就可以通过 `request()` 向父进程发请求。
+  </Accordion>
+  <Accordion title="如何同时管理多个子进程？">
+    为每个 `fork()` 创建独立的子类实例：
+
+    ```typescript
+    const workers = [fork('./w1.js'), fork('./w2.js'), fork('./w3.js')];
+    const ipcs = workers.map(w => new MyIpc(w));
+
+    await Promise.all(ipcs.map(ipc => ipc.request('ping').response()));
+    ```
+  </Accordion>
+  <Accordion title="可以传递 Buffer 或复杂对象吗？">
+    IPC 通道通过 JSON 序列化传输数据。Buffer、Date、Map、Set 等会在序列化时丢失类型信息。建议只传递 JSON 安全的数据。
+  </Accordion>
+  <Accordion title="为什么不用组合模式（onExec）而用继承？">
+    继承模式让 `exec` 成为类契约的一部分，TypeScript 编译期就能检查是否实现。同时子类可以拥有自己的状态和依赖注入，更适合复杂场景。
+  </Accordion>
+</AccordionGroup>
