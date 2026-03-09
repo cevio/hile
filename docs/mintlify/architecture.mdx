@@ -1,0 +1,76 @@
+---
+title: 架构概览
+description: "Hile 各模块的职责、分层与协作关系"
+---
+
+## 分层架构
+
+Hile 按职责分为三层：
+
+```
+┌─────────────────────────────────────────────────┐
+│                  应用层 (App)                     │
+│   *.boot.ts  ·  controllers  ·  pages            │
+├────────────────┬───────────────┬─────────────────┤
+│   @hile/cli    │  @hile/http   │ @hile/http-next │
+│   命令行启动器  │  HTTP 框架    │  Next.js 桥接    │
+├────────────────┼───────────────┼─────────────────┤
+│   @hile/typeorm │ @hile/ioredis │                 │
+│   数据库集成    │  Redis 集成   │                 │
+├────────────────┴───────────────┴─────────────────┤
+│                 @hile/core                        │
+│        异步服务容器 · 生命周期 · 依赖图            │
+└─────────────────────────────────────────────────┘
+```
+
+## 核心设计原则
+
+<AccordionGroup>
+  <Accordion title="服务即单例">
+    通过 `defineService` 定义的服务由容器保证全局单例。并发加载同一服务时，初始化只执行一次，后续调用者共享结果。
+  </Accordion>
+  <Accordion title="优雅关闭">
+    每个服务通过 `shutdown(fn)` 注册清理回调。进程退出时，容器按 LIFO 顺序执行所有回调，确保资源正确释放。
+  </Accordion>
+  <Accordion title="文件系统路由">
+    `@hile/http` 支持从目录自动加载 `*.controller.ts` 文件，路径映射为 HTTP 路由。`[param]` 自动转为 `:param`。
+  </Accordion>
+  <Accordion title="Koa + Next.js 共存">
+    `@hile/http-next` 将 Next.js 嵌入 Koa 服务，共享同一端口。控制器路由挂载到 `/-` 前缀，与 Next.js App Router 互不冲突。
+  </Accordion>
+</AccordionGroup>
+
+## 请求处理流程
+
+### 纯 API 模式（@hile/http）
+
+```
+Request → Koa 全局中间件 → find-my-way 路由匹配 → 控制器 → 响应插件链 → ctx.body
+```
+
+### SSR 模式（@hile/http-next）
+
+```
+Request → koa-static(public)
+        → koa-static(.next/static)
+        → hile-http 路由(/-*)
+        → Next.js handler（兜底）
+```
+
+## 服务生命周期
+
+```
+init → ready → stopping → stopped
+```
+
+容器事件流覆盖每个阶段，CLI 自动订阅并输出日志：
+
+| 事件 | 阶段 |
+|------|------|
+| `service:init` | 服务开始初始化 |
+| `service:ready` | 服务初始化完成（含耗时） |
+| `service:error` | 服务初始化失败 |
+| `service:shutdown:start` | 服务开始关闭 |
+| `service:shutdown:done` | 服务关闭完成 |
+| `container:shutdown:start` | 容器开始关闭 |
+| `container:shutdown:done` | 容器关闭完成 |

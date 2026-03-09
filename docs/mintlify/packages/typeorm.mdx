@@ -1,0 +1,81 @@
+---
+title: "@hile/typeorm"
+description: "TypeORM DataSource 的 Hile 服务封装，内置事务辅助"
+---
+
+## 安装
+
+```bash
+pnpm add @hile/typeorm
+```
+
+同时安装依赖：`@hile/core`、`typeorm`。
+
+## 快速开始
+
+```typescript
+import { loadService } from '@hile/core'
+import typeormService from '@hile/typeorm'
+
+const ds = await loadService(typeormService)
+```
+
+## 环境变量
+
+| 变量 | 说明 |
+|------|------|
+| `TYPEORM_TYPE` | 数据库类型（如 `mysql`、`postgres`） |
+| `TYPEORM_HOST` | 主机 |
+| `TYPEORM_USERNAME` | 用户名 |
+| `TYPEORM_PASSWORD` | 密码 |
+| `TYPEORM_DATABASE` | 数据库名 |
+| `TYPEORM_PORT` | 端口 |
+| `TYPEORM_CHARSET` | 字符集 |
+| `TYPEORM_ENTITY_PREFIX` | 实体表名前缀 |
+| `TYPEORM_ENTITIES` | 实体目录（单一路径） |
+
+行为：
+
+- `synchronize: true`
+- `NODE_ENV === 'development'` 时启用 `logging`
+- 未配置 `TYPEORM_ENTITIES` 时实体为空数组
+- 进程退出时通过 shutdown 自动销毁连接
+
+## 事务辅助
+
+```typescript
+import { transaction } from '@hile/typeorm'
+
+const result = await transaction(ds, async (runner, rollback) => {
+  rollback(() => {
+    // 事务失败时执行的补偿逻辑
+  })
+
+  // 使用 runner 执行数据库操作
+  return value
+})
+```
+
+- 成功：提交事务并返回结果
+- 失败：回滚事务，按 LIFO 顺序执行 `rollback(fn)` 注册函数，抛出原错误
+
+## 与 @hile/cli 集成
+
+```json
+{
+  "hile": {
+    "auto_load_packages": ["@hile/typeorm"]
+  }
+}
+```
+
+## API 参考
+
+| 导出 | 说明 |
+|------|------|
+| 默认导出 | Hile 服务化 DataSource |
+| `transaction(datasource, callback)` | 事务封装，失败时执行 rollback 队列 |
+
+<Warning>
+  统一通过 `loadService(typeormService)` 获取 DataSource，不要自行 new 全局 DataSource 与本包混用。
+</Warning>

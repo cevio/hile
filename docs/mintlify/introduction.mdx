@@ -1,0 +1,48 @@
+---
+title: 简介
+description: "Hile — 面向 Node.js 的轻量级服务化工具集"
+---
+
+# Hile
+
+Hile 是一套面向 Node.js 的轻量级服务化工具集，提供从服务容器、HTTP 框架、SSR 渲染到数据库/缓存集成的完整解决方案。
+
+## 包一览
+
+| 包名 | 说明 | 版本 |
+|------|------|------|
+| `@hile/core` | 异步服务容器：单例、并发合并、生命周期、依赖图、循环依赖检测 | 1.0.20 |
+| `@hile/http` | HTTP 服务框架：Koa + find-my-way，支持中间件和文件系统路由 | 1.0.24 |
+| `@hile/http-next` | Next.js 桥接层：将 Next.js 作为渲染引擎嵌入 Koa 服务 | 1.0.1 |
+| `@hile/cli` | 命令行启动器：`*.boot` 自动加载，内置容器事件日志 | 1.0.18 |
+| `@hile/typeorm` | TypeORM DataSource 的 Hile 服务封装，内置事务辅助 | 1.0.12 |
+| `@hile/ioredis` | ioredis 客户端的 Hile 服务封装，支持优雅断连 | 1.0.12 |
+| `create-hile-http-next` | 项目脚手架：一键创建 Hile + Next.js 应用 | 1.0.4 |
+
+## 依赖关系
+
+```
+@hile/core
+  ├── @hile/cli        （启动器依赖核心容器）
+  ├── @hile/typeorm     （服务封装依赖核心容器）
+  └── @hile/ioredis     （服务封装依赖核心容器）
+
+@hile/http
+  └── @hile/http-next   （桥接层依赖 HTTP 框架）
+
+create-hile-http-next   （脚手架，生成的项目依赖上述所有包）
+```
+
+## 文档策略
+
+<CardGroup cols={3}>
+  <Card title="README" icon="book">
+    面向使用者，强调快速跑通
+  </Card>
+  <Card title="SKILL" icon="robot">
+    面向 AI 编码模型，强调约束与模板
+  </Card>
+  <Card title="ADR" icon="scale-balanced">
+    记录关键架构决策与取舍
+  </Card>
+</CardGroup>

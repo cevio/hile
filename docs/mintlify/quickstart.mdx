@@ -1,0 +1,81 @@
+---
+title: 快速开始
+description: "5 分钟跑通 Hile 项目"
+---
+
+## 从零搭建
+
+### 方式一：使用脚手架（推荐）
+
+<Steps>
+  <Step title="创建项目">
+    ```bash
+    npx create-hile-http-next create my-app
+    ```
+  </Step>
+  <Step title="安装依赖">
+    ```bash
+    cd my-app
+    pnpm install
+    ```
+  </Step>
+  <Step title="启动开发">
+    ```bash
+    pnpm run dev
+    ```
+    浏览器打开 `http://localhost:3000` 即可看到 Next.js 页面。
+  </Step>
+</Steps>
+
+### 方式二：手动搭建
+
+<Steps>
+  <Step title="安装核心依赖">
+    ```bash
+    pnpm add @hile/core @hile/http @hile/cli
+    ```
+  </Step>
+  <Step title="创建服务入口">
+    ```typescript src/http.boot.ts
+    import { defineService } from '@hile/core'
+    import { Http } from '@hile/http'
+
+    export default defineService(async (shutdown) => {
+      const http = new Http({ port: 3000 })
+
+      http.get('/hello', async (ctx) => {
+        ctx.body = { message: 'Hello, Hile!' }
+      })
+
+      const close = await http.listen()
+      shutdown(close)
+      return http
+    })
+    ```
+  </Step>
+  <Step title="启动服务">
+    ```bash
+    hile start --dev
+    ```
+  </Step>
+</Steps>
+
+## 从 Monorepo 开发
+
+如果你在 Hile monorepo 内开发：
+
+```bash
+pnpm install
+pnpm run build
+pnpm run test
+```
+
+## 常用命令
+
+| 命令 | 说明 |
+|------|------|
+| `pnpm run build` | 编译所有包 |
+| `pnpm run test` | 运行所有包测试 |
+| `pnpm run dev` | 所有包进入监听模式 |
+| `hile start` | 生产模式启动 |
+| `hile start --dev` | 开发模式启动 |

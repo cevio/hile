@@ -1,0 +1,115 @@
+---
+title: "@hile/cli"
+description: "Hile 命令行启动器，支持 *.boot 自动加载与容器事件日志"
+---
+
+## 安装
+
+```bash
+pnpm add @hile/cli
+
+# 或全局安装
+pnpm add -g @hile/cli
+```
+
+## 命令
+
+### hile start
+
+在当前目录启动服务。加载顺序：
+
+1. `package.json` 中的 `hile.auto_load_packages`（如存在）
+2. 运行时目录下的 `*.boot.ts` / `*.boot.js`
+
+```bash
+hile start
+hile start --dev
+```
+
+| 选项 | 说明 | 默认值 |
+|------|------|--------|
+| `-d, --dev` | 开发模式 | `false` |
+| `-e, --env-file <path>` | 加载 env 文件，可多次指定 | — |
+
+```bash
+hile start --env-file .env --env-file .env.local
+```
+
+<Note>env 文件依赖 Node 20.12+ 原生 `process.loadEnvFile()`。</Note>
+
+### 其他
+
+```bash
+hile -v  # 查看版本
+hile -h  # 查看帮助
+```
+
+## 启动日志
+
+CLI 接入容器事件，默认输出：
+
+| 事件 | 说明 |
+|------|------|
+| `service:init` / `service:ready` | 服务启动（含耗时） |
+| `service:error` | 服务失败 |
+| `service:shutdown:start` / `done` | 服务关闭 |
+| `container:shutdown:start` / `done` | 容器关闭 |
+
+## 运行时目录
+
+扫描优先级：
+
+1. `HILE_RUNTIME_DIR` 环境变量
+2. `--dev` 模式：`src/`
+3. 生产模式：`dist/`
+
+## Boot 文件规范
+
+每个 `*.boot.ts` 文件必须默认导出一个服务：
+
+```typescript
+// src/database.boot.ts
+import { defineService, loadService } from '@hile/core'
+
+export default defineService(async (shutdown) => {
+  const pool = await createPool(config.dbUrl)
+  shutdown(() => pool.end())
+  return pool
+})
+```
+
+<Warning>
+  - 文件名后缀必须为 `.boot.ts` 或 `.boot.js`
+  - 必须存在 `default` 导出
+  - 导出值必须为 `defineService` 返回值
+</Warning>
+
+## package.json 配置
+
+```json
+{
+  "hile": {
+    "auto_load_packages": ["@hile/typeorm", "@hile/ioredis"]
+  }
+}
+```
+
+按数组顺序加载，再扫描 `*.boot.{ts,js}`。每个模块默认导出必须通过 `isService` 校验。
+
+## 优雅关闭
+
+收到 `SIGTERM`、`SIGINT` 等信号时自动调用 `container.shutdown()`，按逆序销毁已启动服务。
+
+## 项目结构
+
+```
+my-app/
+├── src/
+│   ├── database.boot.ts
+│   ├── http.boot.ts
+│   └── services/
+│       ├── config.ts
+│       └── cache.ts
+├── package.json
+└── tsconfig.json
+```

@@ -1,0 +1,82 @@
+---
+title: "ADR-0005: @hile/http-next Koa ↔ Next.js 桥接架构"
+description: "将 Next.js 嵌入 Koa 服务的架构决策"
+---
+
+## 背景
+
+`@hile/http` 提供了基于 Koa + find-my-way 的 HTTP 服务框架。当项目需要 SSR/RSC 渲染时，面临两个选择：独立运行两个服务，或将 Next.js 嵌入现有 Koa 服务。
+
+独立运行的问题：
+
+- 需要两个端口或额外反向代理
+- API 与页面路由无法共享中间件
+- 端口管理和进程编排增加运维成本
+
+## 决策
+
+创建 `@hile/http-next` 作为桥接层，共享同一 HTTP Server。
+
+### 1. 共享 httpServer
+
+通过 `NextServer({ httpServer: server })` 传递 Koa 创建的 HTTP Server。
+
+### 2. 请求分流
+
+```
+Request → koa-static(public)
+        → koa-static(.next/static)
+        → hile-http 路由(/-*)
+        → Next.js handler（兜底）
+```
+
+### 3. 控制器路由 `/-` 前缀
+
+所有 `*.controller.ts` 统一挂载到 `/-` 前缀下，从路径层面隔离冲突。
+
+### 4. Next.js 转发中间件
+
+- `ctx.respond = false`，Koa 不写响应
+- `ctx.status = 200`，覆盖 Koa 默认 404
+- 调用 `nextRequestHandler(ctx.req, ctx.res)`
+
+### 5. 启动时序
+
+```
+constructor → 注册 public 静态资源
+start()     → .next/static → http.listen() → Next.prepare() → 挂载 handler → load controllers
+```
+
+### 6. 脚手架
+
+`npx create-hile-http-next create <name>` 从模板复制项目结构。
+
+## 影响
+
+**正向：**
+
+- 单端口、单进程，开发与部署体验统一
+- API 与页面可共享 Koa 中间件
+- `/-` 前缀从路径层面隔离冲突
+- 脚手架使新项目创建降到一条命令
+
+**代价：**
+
+- 共享进程，一方异常可能影响另一方
+- `ctx.respond = false` 绕过 Koa 响应处理
+- `/-` 前缀是硬约束
+- 开发模式下 HMR WebSocket 与 Koa 共用 server
+
+## 约束
+
+1. 控制器文件必须用 `*.controller.ts` 后缀
+2. 路由前缀固定 `/-`，禁止修改
+3. 页面文件与控制器文件在同一目录共存
+4. 需维护两份 tsconfig
+5. `start()` 只调用一次
+
+## 备选方案
+
+1. **反向代理分流**：进程隔离但需额外配置
+2. **全用 Next.js Route Handlers**：失去 hile-http 能力
+3. **Next.js Custom Server 官方模式**：本质一致，但缺少 `/-` 隔离和自动控制器加载

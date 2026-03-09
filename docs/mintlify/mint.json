@@ -1,0 +1,86 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "Hile",
+  "logo": {
+    "dark": "/logo/dark.svg",
+    "light": "/logo/light.svg"
+  },
+  "favicon": "/favicon.svg",
+  "colors": {
+    "primary": "#0D9373",
+    "light": "#07C983",
+    "dark": "#0D9373",
+    "anchors": {
+      "from": "#0D9373",
+      "to": "#07C983"
+    }
+  },
+  "topbarLinks": [
+    {
+      "name": "GitHub",
+      "url": "https://github.com/cevio/hile"
+    }
+  ],
+  "tabs": [
+    {
+      "name": "API 参考",
+      "url": "packages"
+    },
+    {
+      "name": "架构决策",
+      "url": "adr"
+    }
+  ],
+  "anchors": [
+    {
+      "name": "NPM",
+      "icon": "npm",
+      "url": "https://www.npmjs.com/hile"
+    }
+  ],
+  "navigation": [
+    {
+      "group": "开始使用",
+      "pages": [
+        "introduction",
+        "quickstart",
+        "architecture"
+      ]
+    },
+    {
+      "group": "核心包",
+      "pages": [
+        "packages/core",
+        "packages/http",
+        "packages/http-next",
+        "packages/cli"
+      ]
+    },
+    {
+      "group": "集成包",
+      "pages": [
+        "packages/typeorm",
+        "packages/ioredis"
+      ]
+    },
+    {
+      "group": "工具",
+      "pages": [
+        "packages/create-hile-http-next"
+      ]
+    },
+    {
+      "group": "架构决策记录",
+      "pages": [
+        "adr/0001-readme-skill-separation",
+        "adr/0002-core-orchestration-kernel",
+        "adr/0003-cli-observability-events",
+        "adr/0004-http-response-plugin-strategy",
+        "adr/0005-http-next-koa-nextjs-bridge"
+      ]
+    }
+  ],
+  "footerSocials": {
+    "github": "https://github.com/cevio/hile"
+  }
+}

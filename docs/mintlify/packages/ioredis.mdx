@@ -1,0 +1,58 @@
+---
+title: "@hile/ioredis"
+description: "ioredis 客户端的 Hile 服务封装，支持优雅断连"
+---
+
+## 安装
+
+```bash
+pnpm add @hile/ioredis
+```
+
+同时安装依赖：`@hile/core`、`ioredis`。
+
+## 快速开始
+
+```typescript
+import { loadService } from '@hile/core'
+import ioredisService from '@hile/ioredis'
+
+const redis = await loadService(ioredisService)
+await redis.set('key', 'value')
+const value = await redis.get('key')
+```
+
+## 环境变量
+
+| 变量 | 说明 |
+|------|------|
+| `REDIS_HOST` | Redis 主机 |
+| `REDIS_PORT` | Redis 端口 |
+| `REDIS_USERNAME` | Redis 用户名 |
+| `REDIS_PASSWORD` | Redis 密码 |
+| `REDIS_DB` | Redis 数据库编号，默认 `0` |
+
+行为：
+
+- 首次加载时创建连接并等待 `connect` 事件
+- 进程退出时通过 shutdown 调用 `client.disconnect()`
+
+## 与 @hile/cli 集成
+
+```json
+{
+  "hile": {
+    "auto_load_packages": ["@hile/ioredis"]
+  }
+}
+```
+
+## API 参考
+
+| 导出 | 说明 |
+|------|------|
+| 默认导出 | Hile 服务化 Redis 客户端 |
+
+<Warning>
+  统一通过 `loadService(ioredisService)` 获取客户端，不要自行创建全局 Redis 单例与本包混用。生产环境应通过 `REDIS_*` 变量配置。
+</Warning>

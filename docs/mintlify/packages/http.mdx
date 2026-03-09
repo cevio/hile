@@ -1,0 +1,204 @@
+---
+title: "@hile/http"
+description: "基于 Koa + find-my-way 的 HTTP 服务框架，支持中间件、路由注册与文件系统自动路由加载"
+---
+
+## 安装
+
+```bash
+pnpm add @hile/http
+```
+
+## 快速开始
+
+```typescript
+import { Http } from '@hile/http'
+
+const http = new Http({ port: 3000 })
+
+http.get('/hello', async (ctx) => {
+  ctx.body = 'Hello, World!'
+})
+
+const close = await http.listen(() => {
+  console.log('Server running on http://localhost:3000')
+})
+```
+
+## 核心能力
+
+### 创建服务
+
+```typescript
+const http = new Http({
+  port: 3000,
+  keys: ['secret1', 'secret2'],
+})
+```
+
+### 全局中间件
+
+<Note>中间件请在 `listen()` 之前注册。</Note>
+
+```typescript
+http
+  .use(async (ctx, next) => {
+    const start = Date.now()
+    await next()
+    ctx.set('X-Response-Time', `${Date.now() - start}ms`)
+  })
+  .use(async (ctx, next) => {
+    console.log(`${ctx.method} ${ctx.url}`)
+    await next()
+  })
+```
+
+### 手动路由
+
+```typescript
+http.get('/users', async (ctx) => {
+  ctx.body = [{ id: 1, name: 'Alice' }]
+})
+
+http.post('/users', authMiddleware, async (ctx) => {
+  ctx.body = { created: true }
+})
+```
+
+所有路由注册函数都返回注销函数：
+
+```typescript
+const off = http.get('/temporary', async (ctx) => {
+  ctx.body = 'gone soon'
+})
+off()
+```
+
+快捷方法：`get`、`post`、`put`、`delete`、`trace`，或使用 `route(method, url, ...mw)`。
+
+## 文件系统路由
+
+### 定义控制器
+
+```typescript
+// controllers/users/index.controller.ts
+import { defineController } from '@hile/http'
+
+export default defineController('GET', async (ctx) => {
+  return { users: [] }
+})
+```
+
+带中间件：
+
+```typescript
+export default defineController('POST', [auth], async (ctx) => {
+  return { created: true }
+})
+```
+
+同文件多控制器：
+
+```typescript
+const getUser = defineController('GET', async (ctx) => {
+  return { id: ctx.params.id }
+})
+
+const updateUser = defineController('PUT', [auth], async (ctx) => {
+  return { updated: true }
+})
+
+export default [getUser, updateUser]
+```
+
+### 加载路由
+
+```typescript
+await http.load('./src/controllers', {
+  suffix: 'controller',
+  prefix: '/api',
+  defaultSuffix: '/index',
+  conflict: 'warn',
+})
+```
+
+### 路径映射
+
+| 文件路径 | 路由路径 |
+|---------|---------|
+| `index.controller.ts` | `/api` |
+| `users/index.controller.ts` | `/api/users` |
+| `users/list.controller.ts` | `/api/users/list` |
+| `users/[id].controller.ts` | `/api/users/:id` |
+
+`[param]` 会自动转换为 `:param`。
+
+## 响应插件
+
+用于注册"控制器执行后"的响应结果处理插件：
+
+```typescript
+import { defineResponsePlugin } from '@hile/http'
+
+defineResponsePlugin(async (ctx, result, next) => {
+  if (ctx.path.endsWith('.json')) {
+    return await next({ data: result })
+  }
+  return await next(result)
+})
+```
+
+插件按注册顺序串行执行，最终结果非 `undefined` 时自动写入 `ctx.body`。
+
+## 与 @hile/core 集成
+
+```typescript
+import { defineService } from '@hile/core'
+import { Http } from '@hile/http'
+
+export const httpService = defineService(async (shutdown) => {
+  const http = new Http({ port: 3000 })
+  await http.load('./src/controllers', {
+    suffix: 'controller',
+    prefix: '/api',
+  })
+  const close = await http.listen()
+  shutdown(close)
+  return http
+})
+```
+
+## API 参考
+
+### Http
+
+| 方法 | 说明 |
+|------|------|
+| `new Http(props)` | 创建实例，`port` 必填 |
+| `port` | 获取端口号 |
+| `use(middleware)` | 注册全局中间件 |
+| `listen(onListen?)` | 启动服务，返回关闭函数 |
+| `get/post/put/delete/trace(url, ...mw)` | 注册路由，返回注销函数 |
+| `route(method, url, ...mw)` | 注册任意方法路由 |
+| `load(dir, options?)` | 加载文件系统路由 |
+
+### defineController
+
+| 调用形式 | 说明 |
+|---------|------|
+| `defineController(method, fn)` | 无中间件 |
+| `defineController(method, [mw...], fn)` | 带中间件 |
+
+### load 选项
+
+| 选项 | 默认值 | 说明 |
+|------|-------|------|
+| `suffix` | `'controller'` | 文件后缀标记 |
+| `prefix` | — | 路由前缀 |
+| `defaultSuffix` | `'/index'` | 映射到父路径的文件名 |
+| `conflict` | `'error'` | 冲突策略：`error`、`warn`、`override` |
+| `onConflict` | — | 冲突回调 |
+
+<Warning>
+  控制器函数签名为 `(ctx)`，不要调用 `next()`。需要 `next` 的逻辑放中间件里。
+</Warning>

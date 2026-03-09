@@ -1,0 +1,87 @@
+---
+title: "create-hile-http-next"
+description: "一键创建 Hile + Next.js 项目的脚手架"
+---
+
+## 使用方式
+
+<Steps>
+  <Step title="创建项目">
+    ```bash
+    npx create-hile-http-next create my-app
+    ```
+  </Step>
+  <Step title="安装依赖">
+    ```bash
+    cd my-app
+    pnpm install
+    ```
+  </Step>
+  <Step title="启动开发">
+    ```bash
+    pnpm run dev
+    ```
+  </Step>
+</Steps>
+
+也可以全局安装后使用：
+
+```bash
+npm i -g create-hile-http-next
+create-hile-http-next create my-app
+```
+
+## 生成的项目结构
+
+```
+my-app/
+├── public/
+│   ├── next.svg
+│   ├── vercel.svg
+│   └── ...
+├── src/
+│   ├── app/
+│   │   ├── layout.tsx
+│   │   ├── page.tsx
+│   │   ├── page.module.css
+│   │   ├── globals.css
+│   │   ├── click.tsx
+│   │   └── post.controller.ts
+│   └── index.boot.ts
+├── next.config.ts
+├── tsconfig.json
+├── tsconfig.next.json
+├── eslint.config.mjs
+└── package.json
+```
+
+## 可用命令
+
+| 命令 | 说明 |
+|------|------|
+| `pnpm run dev` | 构建 Next.js 并以开发模式启动 |
+| `pnpm run build` | TypeScript + Next.js 生产构建 |
+| `pnpm run start` | 生产模式启动 |
+
+## 技术栈
+
+<CardGroup cols={3}>
+  <Card title="@hile/core" icon="cube">
+    异步服务容器
+  </Card>
+  <Card title="@hile/http" icon="server">
+    Koa + find-my-way HTTP 框架
+  </Card>
+  <Card title="@hile/http-next" icon="bridge">
+    Next.js 桥接层
+  </Card>
+  <Card title="@hile/cli" icon="terminal">
+    命令行启动器
+  </Card>
+  <Card title="Next.js 16" icon="react">
+    App Router + RSC
+  </Card>
+  <Card title="React 19" icon="code">
+    UI 渲染
+  </Card>
+</CardGroup>

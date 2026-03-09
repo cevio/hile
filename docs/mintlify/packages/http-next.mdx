@@ -1,0 +1,148 @@
+---
+title: "@hile/http-next"
+description: "将 Next.js 作为渲染引擎嵌入 @hile/http 的桥接层"
+---
+
+## 安装
+
+```bash
+pnpm add @hile/http-next
+```
+
+## 快速开始
+
+```typescript
+import HttpNext from "@hile/http-next";
+
+const httpNext = new HttpNext({
+  port: 3000,
+  cwd: __dirname,
+  publicPath: "public",
+});
+
+const close = await httpNext.start();
+```
+
+### 与 @hile/core 集成
+
+```typescript
+import HttpNext from "@hile/http-next";
+import { defineService } from "@hile/core";
+import { fileURLToPath } from "node:url";
+import { dirname, resolve } from "node:path";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+export default defineService(async (shutdown) => {
+  const httpNext = new HttpNext({
+    port: 3000,
+    cwd: resolve(__dirname, ".."),
+    publicPath: "public",
+  });
+  shutdown(await httpNext.start());
+  return httpNext;
+});
+```
+
+## 工作原理
+
+`HttpNext` 在同一 HTTP 服务上同时运行 Koa 路由和 Next.js：
+
+```
+Request → koa-static(public)
+        → koa-static(.next/static)
+        → hile-http 路由(/-*)
+        → Next.js handler（兜底）
+```
+
+- **Next.js App Router**：处理页面渲染（`page.tsx`、`layout.tsx` 等）
+- **hile-http 控制器**：处理 API 路由，前缀固定为 `/-`
+
+## API 路由（控制器）
+
+在 `src/app/` 下创建 `*.controller.ts` 文件：
+
+```typescript
+// src/app/post.controller.ts → GET /-/post
+import { defineController } from "@hile/http";
+
+export default defineController("GET", async (ctx) => {
+  return { id: 1, title: "Hello" };
+});
+```
+
+### 路径映射
+
+| 文件路径 | HTTP 路由 |
+|---------|----------|
+| `src/app/post.controller.ts` | `/-/post` |
+| `src/app/users/index.controller.ts` | `/-/users` |
+| `src/app/users/[id].controller.ts` | `/-/users/:id` |
+
+<Warning>
+  所有控制器路由强制挂载到 `/-` 前缀下，避免与 Next.js 文件路由冲突。
+</Warning>
+
+## API 参考
+
+### HttpNextProps
+
+| 属性 | 类型 | 默认值 | 说明 |
+|------|------|-------|------|
+| `port` | `number` | — | 监听端口（必填） |
+| `cwd` | `string` | `process.cwd()` | 项目根目录 |
+| `publicPath` | `string` | — | 静态资源目录（相对于 cwd） |
+| `keys` | `string[]` | — | Koa 签名密钥 |
+
+### HttpNext
+
+| 属性 / 方法 | 说明 |
+|------------|------|
+| `isDevelopment` | 是否开发模式 |
+| `cwd` | 项目根目录 |
+| `nextRequestHandler` | Next.js 请求处理函数（`start()` 后可用） |
+| `start()` | 启动服务，返回关闭函数 |
+
+### start() 执行流程
+
+<Steps>
+  <Step title="注册静态资源">
+    注册 `.next/static` 目录到 koa-static
+  </Step>
+  <Step title="启动 HTTP 服务">
+    调用 `http.listen()` 启动 Koa 服务
+  </Step>
+  <Step title="准备 Next.js">
+    创建并 `prepare()` Next.js 应用
+  </Step>
+  <Step title="挂载中间件">
+    挂载 Next.js 转发中间件
+  </Step>
+  <Step title="加载控制器">
+    加载 `src/app/` 下的 `*.controller.ts` 路由
+  </Step>
+</Steps>
+
+## 项目结构
+
+```
+my-app/
+├── public/
+├── src/
+│   ├── app/
+│   │   ├── layout.tsx
+│   │   ├── page.tsx
+│   │   └── post.controller.ts
+│   └── index.boot.ts
+├── next.config.mjs
+├── tsconfig.json
+└── tsconfig.next.json
+```
+
+## tsconfig 约定
+
+项目需两份 tsconfig：
+
+- `tsconfig.json`：Node.js 编译，`exclude` 不应包含 `src/app`
+- `tsconfig.next.json`：Next.js 编译，`include` 为 `src/app/**/*`
