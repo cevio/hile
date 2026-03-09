@@ -3,6 +3,5 @@ dist
 *.tsbuildinfo
 .lerna
 lerna-debug.log
-public
 build
 .next

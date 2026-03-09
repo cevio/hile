@@ -1,0 +1,33 @@
+{
+  "name": "@hile/http-next",
+  "description": "Hile http-next - HTTP service framework with Next.js",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
+    "dev": "tsc -b --watch",
+    "test": "vitest run"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "SKILL.md"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/koa": "^3.0.1",
+    "@types/koa-static": "^4.0.4",
+    "fix-esm-import-path": "^1.10.3",
+    "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "@hile/http": "workspace:^",
+    "koa": "^3.1.2",
+    "koa-static": "^5.0.0",
+    "next": "^16.1.6"
+  }
+}
