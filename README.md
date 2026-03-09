@@ -12,14 +12,24 @@ pnpm run test
 
 ## 包一览
 
-| 包名                                      | 说明                                                                           | 版本   |
-| ----------------------------------------- | ------------------------------------------------------------------------------ | ------ |
-| [`@hile/core`](./packages/core)           | 异步服务容器：单例、并发合并、生命周期、依赖图、循环依赖检测                   | 1.0.20 |
-| [`@hile/http`](./packages/http)           | HTTP 服务框架：Koa + find-my-way，支持中间件和文件系统路由                     | 1.0.24 |
-| [`@hile/http-next`](./packages/http-next) | Next.js 桥接层：将 Next.js 作为渲染引擎嵌入 `@hile/http`，共享同一 HTTP 服务   | 1.0.1  |
-| [`@hile/cli`](./packages/cli)             | 命令行启动器：支持 `auto_load_packages` 与 `*.boot` 自动加载，内置容器事件日志 | 1.0.18 |
-| [`@hile/typeorm`](./packages/typeorm)     | TypeORM DataSource 的 Hile 服务封装，内置事务辅助                              | 1.0.12 |
-| [`@hile/ioredis`](./packages/ioredis)     | ioredis 客户端的 Hile 服务封装，支持优雅断连                                   | 1.0.12 |
+| 包名 | 说明 | 版本 |
+|------|------|------|
+| [`@hile/core`](./packages/core) | 异步服务容器：单例、并发合并、生命周期、依赖图、循环依赖检测 | 1.0.20 |
+| [`@hile/http`](./packages/http) | HTTP 服务框架：Koa + find-my-way，支持中间件和文件系统路由 | 1.0.24 |
+| [`@hile/http-next`](./packages/http-next) | Next.js 桥接层：将 Next.js 作为渲染引擎嵌入 `@hile/http`，共享同一 HTTP 服务 | 1.0.1 |
+| [`@hile/cli`](./packages/cli) | 命令行启动器：支持 `auto_load_packages` 与 `*.boot` 自动加载，内置容器事件日志 | 1.0.18 |
+| [`@hile/typeorm`](./packages/typeorm) | TypeORM DataSource 的 Hile 服务封装，内置事务辅助 | 1.0.12 |
+| [`@hile/ioredis`](./packages/ioredis) | ioredis 客户端的 Hile 服务封装，支持优雅断连 | 1.0.12 |
+| [`create-hile-http-next`](./packages/create-hile-http-next) | 项目脚手架：一键创建 Hile + Next.js 应用 | 1.0.4 |
+
+### 快速创建项目
+
+```bash
+npx create-hile-http-next create my-app
+cd my-app
+pnpm install
+pnpm run dev
+```
 
 ### 依赖关系
 
@@ -31,6 +41,8 @@ pnpm run test
 
 @hile/http
   └── @hile/http-next   （桥接层依赖 HTTP 框架）
+
+create-hile-http-next   （脚手架，生成的项目依赖上述所有包）
 ```
 
 ## 仓库结构
@@ -42,7 +54,8 @@ pnpm run test
 │   ├── http-next/      # Next.js 桥接层
 │   ├── cli/            # 命令行启动器
 │   ├── typeorm/        # TypeORM 服务封装
-│   └── ioredis/        # ioredis 服务封装
+│   ├── ioredis/        # ioredis 服务封装
+│   └── create-hile-http-next/  # 项目脚手架
 ├── docs/
 │   └── adr/            # Architecture Decision Records
 ├── scripts/
