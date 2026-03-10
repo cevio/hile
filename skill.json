@@ -33,6 +33,42 @@
       "name": "Hile CLI 一键开发指南",
       "description": "提供 Hile 开发者使用命令行工具组织项目结构、编排 boot 服务并一键启动应用的指南",
       "path": "packages/cli/SKILL.md"
+    },
+    {
+      "id": "hile-http-next",
+      "name": "Hile Next.js 桥接层指南",
+      "description": "提供 Hile 开发者将 Next.js 作为渲染引擎嵌入 @hile/http，实现 API 与 SSR 共存的开发指南",
+      "path": "packages/http-next/SKILL.md"
+    },
+    {
+      "id": "hile-message-modem",
+      "name": "Hile 消息通信抽象层指南",
+      "description": "提供 Hile 开发者使用传输无关的请求/响应消息通信抽象层，支持超时、中止、错误传播的开发指南",
+      "path": "packages/message-modem/SKILL.md"
+    },
+    {
+      "id": "hile-message-ipc",
+      "name": "Hile IPC 通信指南",
+      "description": "提供 Hile 开发者基于 message-modem 实现 Node.js IPC 父子进程间请求/响应通信的开发指南",
+      "path": "packages/message-ipc/SKILL.md"
+    },
+    {
+      "id": "hile-message-worker-thread",
+      "name": "Hile Worker Threads 通信指南",
+      "description": "提供 Hile 开发者基于 message-modem 实现主线程与 Worker 线程间请求/响应通信的开发指南",
+      "path": "packages/message-worker-thread/SKILL.md"
+    },
+    {
+      "id": "hile-message-ws",
+      "name": "Hile WebSocket 通信指南",
+      "description": "提供 Hile 开发者基于 message-modem 和 ws 模块实现 WebSocket 客户端/服务端请求/响应通信的开发指南",
+      "path": "packages/message-ws/SKILL.md"
+    },
+    {
+      "id": "hile-message-loader",
+      "name": "Hile 消息路由加载器指南",
+      "description": "提供 Hile 开发者使用基于文件系统的消息路由加载器，将目录结构映射为路由表，搭配 message-ws/ipc/worker-thread 等模块进行消息通信开发的指南",
+      "path": "packages/message-loader/SKILL.md"
     }
   ]
 }
