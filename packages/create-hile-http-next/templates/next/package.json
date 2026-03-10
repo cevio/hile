@@ -7,8 +7,8 @@
   "scripts": {
     "build": "tsc -b && npm run build:next",
     "build:next": "next build",
-    "dev": "npm run build:next && hile start --dev",
-    "start": "hile start"
+    "dev": "npm run build:next && hile start --dev --env-file .env",
+    "start": "hile start --env-file .env"
   },
   "license": "MIT",
   "devDependencies": {
