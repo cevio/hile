@@ -7,6 +7,8 @@ program
   .version('1.0.0')
   .command('create <project-name>')
   .description('创建新项目')
-  .action((projectName) => CreateHileHttpNextProject(projectName));
+  .action(async (projectName) => {
+    await CreateHileHttpNextProject(projectName);
+  });
 
 program.parseAsync(process.argv);
