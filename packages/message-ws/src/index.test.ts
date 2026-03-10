@@ -7,12 +7,20 @@ class EchoWs extends MessageWs {
   protected exec(data: any): Promise<any> {
     return Promise.resolve(data);
   }
+
+  public request<T = any>(data: T, timeout?: number) {
+    return this._send(data, timeout);
+  }
 }
 
 class CustomWs extends MessageWs {
   public execFn: (data: any) => Promise<any> = async (d) => d;
   protected exec(data: any): Promise<any> {
     return this.execFn(data);
+  }
+
+  public request<T = any>(data: T, timeout?: number) {
+    return this._send(data, timeout);
   }
 }
 

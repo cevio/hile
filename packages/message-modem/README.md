@@ -1,6 +1,6 @@
 # @hile/message-modem
 
-传输无关的请求/响应消息通信抽象层。将底层传输机制（WebSocket、postMessage、IPC 等）与业务逻辑解耦，提供统一的 send/receive 语义。
+传输无关的请求/响应消息通信抽象层。将底层传输机制（WebSocket、postMessage、IPC 等）与业务逻辑解耦，提供统一的 _send/receive 语义。
 
 ## 安装
 
@@ -11,6 +11,8 @@ pnpm add @hile/message-modem
 ## 核心特性
 
 - **传输无关** — 子类只需实现 `post`（如何发送）和 `exec`（如何处理），即可运行于任何通信通道
+- **双向请求/响应** — `_send` 发送请求并等待对端响应（`twoway: true`）
+- **单向推送** — `_push` 发送消息无需对端响应（`twoway: false`）
 - **请求/响应配对** — 自增 ID + Promise 栈，自动配对请求与响应
 - **超时控制** — 默认 30 秒，可按请求自定义
 - **主动中止** — 发送方可 abort 等待，接收方可取消正在执行的任务
@@ -42,7 +44,7 @@ class WebSocketModem extends MessageModem {
 
   // 暴露发送方法
   public request<T>(data: T, timeout?: number) {
-    return this.send(data, timeout);
+    return this._send(data, timeout);
   }
 }
 ```
@@ -89,10 +91,11 @@ try {
 |------|--------|------|
 | `post(data)` | `protected abstract` | 子类实现：如何将消息发送到远端 |
 | `exec(data)` | `protected abstract` | 子类实现：如何处理收到的请求，返回 Promise |
-| `send(data, timeout?)` | `protected` | 发送请求，返回 `{ abort, response }` |
+| `_send(data, timeout?)` | `protected` | 发送双向请求（`twoway: true`），返回 `{ abort, response }` |
+| `_push(data, timeout?)` | `protected` | 发送单向推送（`twoway: false`），接收方不回复 RESPONSE |
 | `receive(msg)` | `public` | 接收消息入口，根据 mode 分发处理 |
 
-### `send` 返回值
+### `_send` 返回值
 
 | 属性 | 类型 | 说明 |
 |------|------|------|
@@ -136,11 +139,13 @@ interface MessageReturnFormat<T = any> {
 
 ## 消息流转
 
+### 双向模式（`_send`）
+
 ```
 发送方                        接收方
   │                             │
-  │  send(data)                 │
-  │──── REQUEST ───────────────►│
+  │  _send(data)                │
+  │──── REQUEST (twoway) ──────►│
   │                             │ exec(data)
   │                             │
   │◄──── RESPONSE ──────────────│
@@ -149,6 +154,17 @@ interface MessageReturnFormat<T = any> {
   │  abort()                    │
   │──── ABORT ─────────────────►│
   │                             │ 取消 exec
+```
+
+### 单向模式（`_push`）
+
+```
+发送方                        接收方
+  │                             │
+  │  _push(data)                │
+  │──── REQUEST (!twoway) ─────►│
+  │                             │ exec(data)
+  │                             │ （不回复 RESPONSE）
 ```
 
 ## 适用场景

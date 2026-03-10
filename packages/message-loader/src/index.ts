@@ -33,7 +33,7 @@ export interface MessageLoaderProps {
  *     return result;
  *   }
  *   public request(url: string, data: any, timeout?: number) {
- *     return super.request({ url, data }, timeout);
+ *     return this._send({ url, data }, timeout);
  *   }
  * }
  * const ws = new WebSocket('ws://localhost:8080');
@@ -55,7 +55,7 @@ export interface MessageLoaderProps {
  *     return result;
  *   }
  *   public request(url: string, data: any, timeout?: number) {
- *     return super.request({ url, data }, timeout);
+ *     return this._send({ url, data }, timeout);
  *   }
  * }
  * const worker = new Worker('./worker.js');
@@ -72,7 +72,7 @@ export interface MessageLoaderProps {
  *     return result;
  *   }
  *   public request(url: string, data: any, timeout?: number) {
- *     return super.request({ url, data }, timeout);
+ *     return this._send({ url, data }, timeout);
  *   }
  * }
  * const ipc = new MyIpc();

@@ -24,7 +24,11 @@ class TestModem extends MessageModem {
   }
 
   public send<T>(data: T, timeout?: number) {
-    return super.send(data, timeout);
+    return super._send(data, timeout);
+  }
+
+  public push<T>(data: T, timeout?: number) {
+    return super._push(data, timeout);
   }
 }
 
@@ -204,6 +208,42 @@ describe('@hile/message-modem', () => {
     it('times out if no response within timeout period', async () => {
       const modem = new TestModem();
       await expect(modem.send('data', 50).response()).rejects.toThrow();
+    });
+  });
+
+  describe('push (one-way)', () => {
+    it('push sends REQUEST with twoway=false', () => {
+      const modem = new TestModem();
+      modem.push('fire-and-forget');
+      const msg = modem.posted[0];
+      expect(msg.mode).toBe(MESSAGE_MODEM_TYPE.REQUEST);
+      expect(msg.twoway).toBe(false);
+      expect(msg.data).toBe('fire-and-forget');
+    });
+
+    it('push triggers exec on peer but peer does not send RESPONSE', async () => {
+      const a = new TestModem();
+      const b = new TestModem();
+      a.peer = b;
+      b.peer = a;
+
+      let execCalled = false;
+      b['exec'] = async (data: any) => { execCalled = true; return data; };
+
+      a.push('notify');
+      await new Promise(r => setTimeout(r, 50));
+      expect(execCalled).toBe(true);
+
+      const responseMsgs = a.posted.filter(m => m.mode === MESSAGE_MODEM_TYPE.RESPONSE);
+      const bResponseMsgs = b.posted.filter(m => m.mode === MESSAGE_MODEM_TYPE.RESPONSE);
+      expect(bResponseMsgs.length).toBe(0);
+    });
+
+    it('send sends REQUEST with twoway=true', () => {
+      const modem = new TestModem();
+      modem.send('request');
+      const msg = modem.posted[0];
+      expect(msg.twoway).toBe(true);
     });
   });
 

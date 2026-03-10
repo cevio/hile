@@ -32,7 +32,7 @@ export abstract class MessageWs extends MessageModem {
       try {
         const msg = JSON.parse(raw.toString());
         this.receive(msg);
-      } catch {}
+      } catch { }
     };
     this.ws.on('message', this.listener);
   }
@@ -42,13 +42,6 @@ export abstract class MessageWs extends MessageModem {
       throw new Error('WebSocket is not open. Current readyState: ' + this.ws.readyState);
     }
     this.ws.send(JSON.stringify(data));
-  }
-
-  /**
-   * 向对端发送请求
-   */
-  public request<T = any>(data: T, timeout?: number) {
-    return this.send(data, timeout);
   }
 
   /**

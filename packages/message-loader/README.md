@@ -78,7 +78,7 @@ class AppWs extends MessageWs {
   }
 
   public request(url: string, data: any, timeout?: number) {
-    return super.request({ url, data }, timeout);
+    return this._send({ url, data }, timeout);
   }
 }
 ```
@@ -94,7 +94,7 @@ class AppWorker extends MessageWorkerThread {
   }
 
   public request(url: string, data: any, timeout?: number) {
-    return super.request({ url, data }, timeout);
+    return this._send({ url, data }, timeout);
   }
 }
 ```
@@ -110,7 +110,7 @@ class AppIpc extends MessageIpc {
   }
 
   public request(url: string, data: any, timeout?: number) {
-    return super.request({ url, data }, timeout);
+    return this._send({ url, data }, timeout);
   }
 }
 ```

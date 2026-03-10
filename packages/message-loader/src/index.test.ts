@@ -147,7 +147,7 @@ describe('MessageLoader', () => {
 
       off()
 
-      expect(() => loader.dispatch('/temp', {})).toThrow('message not found: /temp')
+      await expect(loader.dispatch('/temp', {})).rejects.toThrow('message not found: /temp')
     })
 
     it('空目录不会报错', async () => {
@@ -158,9 +158,9 @@ describe('MessageLoader', () => {
   })
 
   describe('dispatch - 消息分发', () => {
-    it('路径不存在时抛出错误', () => {
+    it('路径不存在时抛出错误', async () => {
       const loader = new MessageLoader({ suffix: 'msg' })
-      expect(() => loader.dispatch('/nonexistent', {})).toThrow('message not found: /nonexistent')
+      await expect(loader.dispatch('/nonexistent', {})).rejects.toThrow('message not found: /nonexistent')
     })
 
     it('传递 data 参数到处理器', async () => {

@@ -42,8 +42,14 @@ abstract class MessageWorkerThread extends MessageModem {
   // 子类必须实现
   protected abstract exec(data: any): Promise<any>;
 
-  // 向对端发送请求
-  public request<T = any>(data: T, timeout?: number): {
+  // 发送双向请求（protected，子类自行暴露）
+  protected _send<T = any>(data: T, timeout?: number): {
+    abort: () => void;
+    response: <U = any>() => Promise<U>;
+  };
+
+  // 发送单向推送（protected，子类自行暴露）
+  protected _push<T = any>(data: T, timeout?: number): {
     abort: () => void;
     response: <U = any>() => Promise<U>;
   };
@@ -71,6 +77,10 @@ class MyWorkerThread extends MessageWorkerThread {
         return data;
     }
   }
+
+  public request<T = any>(data: T, timeout?: number) {
+    return this._send(data, timeout);
+  }
 }
 ```
 
@@ -82,6 +92,10 @@ import { Worker } from 'node:worker_threads';
 class MainThread extends MessageWorkerThread {
   protected async exec(data: any): Promise<any> {
     return { reply: 'from main', query: data };
+  }
+
+  public request<T = any>(data: T, timeout?: number) {
+    return this._send(data, timeout);
   }
 }
 
@@ -107,6 +121,10 @@ class WorkerThread extends MessageWorkerThread {
     if (data.action === 'compute') return data.value * 2;
     if (data.action === 'restricted') throw new Exception(403, 'not allowed');
     return data;
+  }
+
+  public request<T = any>(data: T, timeout?: number) {
+    return this._send(data, timeout);
   }
 }
 
@@ -142,9 +160,10 @@ const res = await side1.request('hello').response();
 // ❌ 不能直接实例化
 const wt = new MessageWorkerThread(worker); // abstract
 
-// ✅ 继承并实现 exec
+// ✅ 继承并实现 exec，自行暴露 _send
 class MyWT extends MessageWorkerThread {
   protected async exec(data: any) { return data; }
+  public request<T = any>(data: T, timeout?: number) { return this._send(data, timeout); }
 }
 
 // ❌ Worker 线程里传入 Worker 实例没有意义

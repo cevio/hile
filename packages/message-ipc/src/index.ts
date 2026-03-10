@@ -43,13 +43,6 @@ export abstract class MessageIpc extends MessageModem {
   }
 
   /**
-   * 向对端发送请求
-   */
-  public request<T = any>(data: T, timeout?: number) {
-    return this.send(data, timeout);
-  }
-
-  /**
    * 移除消息监听，释放资源
    */
   public dispose(): void {

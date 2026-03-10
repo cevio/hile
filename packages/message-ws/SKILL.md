@@ -38,7 +38,14 @@ abstract class MessageWs extends MessageModem {
 
   protected abstract exec(data: any): Promise<any>;
 
-  public request<T = any>(data: T, timeout?: number): {
+  // 发送双向请求（protected，子类自行暴露）
+  protected _send<T = any>(data: T, timeout?: number): {
+    abort: () => void;
+    response: <U = any>() => Promise<U>;
+  };
+
+  // 发送单向推送（protected，子类自行暴露）
+  protected _push<T = any>(data: T, timeout?: number): {
     abort: () => void;
     response: <U = any>() => Promise<U>;
   };
@@ -62,6 +69,10 @@ class MyWs extends MessageWs {
       case 'ping': return 'pong';
       default: return data;
     }
+  }
+
+  public request<T = any>(data: T, timeout?: number) {
+    return this._send(data, timeout);
   }
 }
 ```
@@ -120,8 +131,11 @@ ws.on('open', () => {
 // ❌ 不能直接实例化
 const modem = new MessageWs(ws); // abstract
 
-// ✅ 继承并实现 exec
-class MyWs extends MessageWs { ... }
+// ✅ 继承并实现 exec，自行暴露 _send
+class MyWs extends MessageWs {
+  protected async exec(data: any) { return data; }
+  public request<T = any>(data: T, timeout?: number) { return this._send(data, timeout); }
+}
 
 // ❌ 传输非 JSON 安全的数据
 modem.request(new Map()); // Map 序列化会丢失

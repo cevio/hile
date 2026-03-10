@@ -39,6 +39,10 @@ class AppWs extends MessageWs {
         return data;
     }
   }
+
+  public request<T = any>(data: T, timeout?: number) {
+    return this._send(data, timeout);
+  }
 }
 ```
 
@@ -79,10 +83,11 @@ ws.on('open', () => {
 |------|------|------|
 | `constructor` | `new SubClass(ws: WebSocket)` | 传入已连接的 WebSocket 实例 |
 | `exec` | `protected abstract exec(data: any): Promise<any>` | 子类实现：处理对端请求 |
-| `request` | `request<T>(data: T, timeout?: number)` | 向对端发送请求，返回 `{ abort, response }` |
+| `_send` | `protected _send<T>(data: T, timeout?: number)` | 发送双向请求（`twoway: true`），返回 `{ abort, response }`。子类自行暴露为 public |
+| `_push` | `protected _push<T>(data: T, timeout?: number)` | 发送单向推送（`twoway: false`），接收方不回复 RESPONSE |
 | `dispose` | `dispose(): void` | 移除消息监听，释放资源 |
 
-### `request` 返回值
+### `_send` 返回值
 
 | 属性 | 类型 | 说明 |
 |------|------|------|

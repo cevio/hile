@@ -39,8 +39,14 @@ abstract class MessageIpc extends MessageModem {
   // 子类必须实现
   protected abstract exec(data: any): Promise<any>;
 
-  // 向对端发送请求
-  public request<T = any>(data: T, timeout?: number): {
+  // 发送双向请求（protected，子类自行暴露）
+  protected _send<T = any>(data: T, timeout?: number): {
+    abort: () => void;
+    response: <U = any>() => Promise<U>;
+  };
+
+  // 发送单向推送（protected，子类自行暴露）
+  protected _push<T = any>(data: T, timeout?: number): {
     abort: () => void;
     response: <U = any>() => Promise<U>;
   };
@@ -69,6 +75,11 @@ class MyIpc extends MessageIpc {
         return data;
     }
   }
+
+  // 自行暴露发送方法
+  public request<T = any>(data: T, timeout?: number) {
+    return this._send(data, timeout);
+  }
 }
 ```
 
@@ -81,6 +92,10 @@ class ParentIpc extends MessageIpc {
   protected async exec(data: any): Promise<any> {
     // 处理子进程发来的请求
     return { reply: 'from parent', query: data };
+  }
+
+  public request<T = any>(data: T, timeout?: number) {
+    return this._send(data, timeout);
   }
 }
 
@@ -107,6 +122,10 @@ class WorkerIpc extends MessageIpc {
     if (data.action === 'restricted') throw new Exception(403, 'not allowed');
     return data;
   }
+
+  public request<T = any>(data: T, timeout?: number) {
+    return this._send(data, timeout);
+  }
 }
 
 const ipc = new WorkerIpc(); // 无参数 → 使用 process
@@ -120,7 +139,8 @@ const ipc = new WorkerIpc(); // 无参数 → 使用 process
 | **父进程端必须传入 `ChildProcess`** | `fork()` 返回值 |
 | **子进程端不传参数** | 自动使用 `process`，要求进程通过 `fork()` 启动 |
 | **用完必须 `dispose()`** | 避免内存泄漏 |
-| **`request` 返回 `{ abort, response }`** | 继承 `send` 语义 |
+| **`_send` 是 `protected`** | 子类需自行暴露为 public 方法（如 `request`） |
+| **`_push` 是 `protected`** | 单向推送，接收方不回复 RESPONSE。子类自行暴露 |
 
 ### 3.5 反模式
 
@@ -128,9 +148,10 @@ const ipc = new WorkerIpc(); // 无参数 → 使用 process
 // ❌ 不能直接实例化 MessageIpc
 const ipc = new MessageIpc(child); // TypeError: Cannot construct abstract class
 
-// ✅ 继承并实现 exec
+// ✅ 继承并实现 exec，自行暴露 _send
 class MyIpc extends MessageIpc {
   protected async exec(data: any) { return data; }
+  public request<T = any>(data: T, timeout?: number) { return this._send(data, timeout); }
 }
 const ipc = new MyIpc(child);
 

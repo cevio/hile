@@ -11,7 +11,7 @@ description: Code generation and contribution rules for @hile/message-modem. Use
 
 ## 1. 架构总览
 
-`@hile/message-modem` 是一个 **传输无关的请求/响应消息通信抽象层**。它将底层传输（WebSocket、postMessage、IPC 等）与业务逻辑解耦，提供统一的 send/receive 语义。
+`@hile/message-modem` 是一个 **传输无关的请求/响应消息通信抽象层**。它将底层传输（WebSocket、postMessage、IPC 等）与业务逻辑解耦，提供统一的 _send/receive 语义。
 
 核心职责：
 
@@ -84,7 +84,11 @@ class AbortException extends Exception {
 abstract class MessageModem {
   protected abstract post<T>(data: MessageTransferFormat<T>): void;
   protected abstract exec(data: any): Promise<any>;
-  protected send<T>(data: T, timeout?: number): {
+  protected _send<T>(data: T, timeout?: number): {
+    abort: () => void;
+    response: <U = any>() => Promise<U>;
+  };
+  protected _push<T>(data: T, timeout?: number): {
     abort: () => void;
     response: <U = any>() => Promise<U>;
   };
@@ -118,9 +122,9 @@ class WebSocketModem extends MessageModem {
     return handleRequest(data);
   }
 
-  // 暴露 send 为 public
-  public request<T, U>(data: T, timeout?: number) {
-    return this.send(data, timeout);
+  // 暴露 _send 为 public
+  public request<T>(data: T, timeout?: number) {
+    return this._send(data, timeout);
   }
 }
 ```
@@ -151,11 +155,12 @@ class IframeModem extends MessageModem {
 | 规则 | 说明 |
 |------|------|
 | **必须实现 `post` 和 `exec`** | 两个 abstract 方法缺一不可 |
-| **`send` 是 `protected`** | 子类应自行决定暴露方式和命名 |
+| **`_send` 是 `protected`** | 子类应自行决定暴露方式和命名 |
+| **`_push` 是 `protected`** | 单向推送（`twoway: false`），接收方不回复 RESPONSE |
 | **`receive` 是 `public`** | 必须由外部消息源（事件监听器）调用 |
 | **传输格式必须保持原样** | `post` 发送的对象结构不可修改，对端的 `receive` 依赖完整的 `MessageTransferFormat` |
 | **`exec` 抛出 `Exception` 时 status 会透传** | 其他 Error 一律映射为 500 |
-| **timeout 默认 30s** | 可通过 `send(data, ms)` 覆盖 |
+| **timeout 默认 30s** | 可通过 `_send(data, ms)` 覆盖 |
 | **abort 后 promise reject `AbortException`** | 不要 catch 后吞掉，保持语义清晰 |
 
 ### 3.4 反模式

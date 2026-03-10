@@ -60,10 +60,10 @@ export abstract class MessageModem {
    * @param data - 消息数据
    * @returns 消息数据
    */
-  private createPostData<T = any>(mode: MESSAGE_MODEM_TYPE, data?: T) {
+  private createPostData<T = any>(mode: MESSAGE_MODEM_TYPE, data?: T, twoway = true) {
     const id = this.createIncrementId();
     const state: MessageTransferFormat<T> = {
-      id, twoway: true, data, mode,
+      id, twoway, data, mode,
     }
     if (mode === MESSAGE_MODEM_TYPE.ABORT) {
       state.twoway = false;
@@ -77,10 +77,30 @@ export abstract class MessageModem {
    * @param timeout - 超时时间
    * @returns 消息响应
    */
-  protected send<T = any>(data: T, timeout = 30000) {
+  protected _send<T = any>(data: T, timeout = 30000) {
+    return this._write(data, timeout, true);
+  }
+
+  /**
+   * 推送消息
+   * @param data - 消息数据
+   * @param timeout - 超时时间
+   * @returns 消息响应
+   */
+  protected _push<T = any>(data: T, timeout = 30000) {
+    return this._write(data, timeout, false);
+  }
+
+  /**
+   * 写入消息
+   * @param data - 消息数据
+   * @param timeout - 超时时间
+   * @returns 消息响应
+   */
+  private _write<T = any>(data: T, timeout = 30000, twoway = false) {
     const controller = new AbortController();
     // 创建请求消息数据
-    const state = this.createPostData(MESSAGE_MODEM_TYPE.REQUEST, data);
+    const state = this.createPostData(MESSAGE_MODEM_TYPE.REQUEST, data, twoway);
     // 发送消息
     this.post(state);
     return {
