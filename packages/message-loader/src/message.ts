@@ -1,17 +1,17 @@
 let _id = 1;
 
-export interface MessageRegisterProps {
+export interface MessageRegisterProps<T = any> {
   id: number;
-  fn: MessageFunction;
+  fn: MessageFunction<T>;
 }
 
-export type MessageFunction = (data: {
+export type MessageFunction<T = any> = (data: {
   params?: Record<string, string>;
-  data: any,
+  data: T,
   url: string,
 }) => any;
 
-export function defineMessage(fn: MessageFunction): MessageRegisterProps {
+export function defineMessage<T = any>(fn: MessageFunction<T>): MessageRegisterProps<T> {
   const id = _id++;
   return {
     id,

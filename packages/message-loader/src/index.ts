@@ -82,14 +82,22 @@ export interface MessageLoaderProps {
 export class MessageLoader {
   private readonly router: RouterContext;
   private readonly props: MessageLoaderProps;
+  private readonly METHOD = 'GET';
   constructor(props: MessageLoaderProps) {
     this.router = createRouter();
     this.props = props;
+
+    // 默认值
     if (!this.props.suffix) this.props.suffix = 'msg';
     if (!this.props.defaultSuffix) this.props.defaultSuffix = '/index';
     if (!this.props.prefix) this.props.prefix = '';
   }
 
+  /**
+   * 将路径编译为标准 URL（不含动态参数转换）
+   * @param path 路径
+   * @returns 编译后的路径
+   */
   private compileRoutePath(path: string) {
     const defaultSuffix = this.props.defaultSuffix!;
     let url = path.startsWith('/') ? path : '/' + path;
@@ -103,24 +111,44 @@ export class MessageLoader {
       : url;
   }
 
+  /**
+   * 从目录加载消息处理器
+   * @param directory 目录路径
+   * @returns 注销函数
+   */
   public async load(directory: string) {
     const files = await glob(`**/*.${this.props.suffix}.{ts,js,tsx,jsx}`, { cwd: directory });
-    const messages = await Promise.all(files.map(async (file) => {
+    const callbacks: (() => void)[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
       const path = resolve(directory, file);
       const ext = extname(path);
       const url = file.substring(0, file.length - this.props.suffix!.length - ext.length - 1);
-      const controller = await import(path);
-      if (!controller.default) return;
+      // 导入消息处理器
+      const controller: {default: MessageRegisterProps} = await import(path);
+      if (!controller.default) continue;
+      // 获取消息处理器
       const { default: metadata } = controller;
+      // 编译路径
       const routePath = toRouterPath(this.compileRoutePath(url));
-      addRoute(this.router, 'GET', routePath, metadata);
-      return () => removeRoute(this.router, 'GET', routePath);
-    }).filter(Boolean));
-    return () => messages.forEach(message => message?.());
+      // 添加路由
+      addRoute(this.router, this.METHOD, routePath, metadata);
+      // 返回注销函数
+      callbacks.push(() => removeRoute(this.router, this.METHOD, routePath));
+    }
+
+    return () => callbacks.forEach(callback => callback());
   }
 
-  public dispatch(path: string, data: any) {
-    const matched = findRoute(this.router, 'GET', path, {
+  /**
+   * 分发消息
+   * @param path 路径
+   * @param data 数据
+   * @returns 结果
+   */
+  public async dispatch(path: string, data: any) {
+    const matched = findRoute(this.router, this.METHOD, path, {
       params: true,
       normalize: true,
     });
@@ -128,7 +156,7 @@ export class MessageLoader {
       throw new Error(`message not found: ${path}`);
     }
     const handler = matched.data as MessageRegisterProps;
-    return Promise.resolve(handler.fn({
+    return await Promise.resolve(handler.fn({
       params: matched.params ?? {},
       data,
       url: path,
