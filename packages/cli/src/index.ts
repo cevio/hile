@@ -29,9 +29,6 @@ const c = {
 const colorize = process.stdout.isTTY;
 
 function logContainerEvent(event: ContainerEvent) {
-  const pad = (s: string, n: number) => s.padEnd(n);
-  const padNum = (n: number, width: number) => n.toString().padStart(width);
-
   const tag = colorize ? `${c.dim}${c.cyan}${TAG}${c.reset}` : TAG;
   const target = (s: string) => (colorize ? `${c.cyan}${s}${c.reset}` : s);
   const ok = (s: string) => (colorize ? `${c.green}${s}${c.reset}` : s);
@@ -39,40 +36,35 @@ function logContainerEvent(event: ContainerEvent) {
   const err = (s: string) => (colorize ? `${c.red}${s}${c.reset}` : s);
   const dim = (s: string) => (colorize ? `${c.dim}${s}${c.reset}` : s);
 
-  const fmt = (t: string, status: string, durationMs?: number) =>
-    durationMs !== undefined
-      ? `${tag}  ${target(pad(t, 14))}  ${status}  ${dim(padNum(durationMs, 5) + 'ms')}`
-      : `${tag}  ${target(pad(t, 14))}  ${status}`;
-
   switch (event.type) {
     case 'service:init':
-      console.info(fmt(`service#${event.id}`, dim('init')));
+      console.info(`${tag} ${target(`service#${event.id}`)} ${dim('init')}`);
       break;
     case 'service:ready':
-      console.info(fmt(`service#${event.id}`, ok(pad('ready', 14)), event.durationMs));
+      console.info(`${tag} ${target(`service#${event.id}`)} ${ok('ready')} ${dim(`(${event.durationMs}ms)`)}`);
       break;
     case 'service:error':
-      console.error(fmt(`service#${event.id}`, err(`failed (${event.durationMs}ms)`)));
+      console.error(`${tag} ${target(`service#${event.id}`)} ${err('failed')} ${dim(`(${event.durationMs}ms)`)}`);
       console.error(event.error);
       break;
     case 'service:shutdown:start':
-      console.info(fmt(`service#${event.id}`, warn('stopping')));
+      console.info(`${tag} ${target(`service#${event.id}`)} ${warn('stopping')}`);
       break;
     case 'service:shutdown:done':
-      console.info(fmt(`service#${event.id}`, dim(pad('stopped', 14)), event.durationMs));
+      console.info(`${tag} ${target(`service#${event.id}`)} ${dim('stopped')} ${dim(`(${event.durationMs}ms)`)}`);
       break;
     case 'service:shutdown:error':
-      console.error(fmt(`service#${event.id}`, err('shutdown error')));
+      console.error(`${tag} ${target(`service#${event.id}`)} ${err('shutdown error')}`);
       console.error(event.error);
       break;
     case 'container:shutdown:start':
-      console.info(fmt('container', dim('shutdown start')));
+      console.info(`${tag} ${target('container')} ${dim('shutdown start')}`);
       break;
     case 'container:shutdown:done':
-      console.info(fmt('container', ok(pad('shutdown done', 14)), event.durationMs));
+      console.info(`${tag} ${target('container')} ${ok('shutdown done')} ${dim(`(${event.durationMs}ms)`)}`);
       break;
     case 'container:error':
-      console.error(fmt('container', err('error')));
+      console.error(`${tag} ${target('container')} ${err('error')}`);
       console.error(event.error);
       break;
   }

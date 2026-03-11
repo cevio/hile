@@ -70,24 +70,24 @@ hile start --dev --env-file .env.development
 
 #### 启动日志示例
 
-开发模式下的典型输出（列对齐；在终端中会带颜色：成功绿、错误红、警告黄等）：
+开发模式下的典型输出（在终端中会带颜色：成功绿、错误红、警告黄等）：
 
 ```
-[hile]  service#1       init
-[hile]  service#2       init
-[hile]  service#2       ready              45ms
-[hile]  service#1       ready            1203ms
+[hile] service#1 init
+[hile] service#2 init
+[hile] service#2 ready (45ms)
+[hile] service#1 ready (1203ms)
 ```
 
 按 Ctrl+C 关闭时：
 
 ```
-[hile]  container       shutdown start
-[hile]  service#1       stopping
-[hile]  service#1       stopped            12ms
-[hile]  service#2       stopping
-[hile]  service#2       stopped             3ms
-[hile]  container       shutdown done      15ms
+[hile] container shutdown start
+[hile] service#1 stopping
+[hile] service#1 stopped (12ms)
+[hile] service#2 stopping
+[hile] service#2 stopped (3ms)
+[hile] container shutdown done (15ms)
 ```
 
 <Note>非 TTY（如重定向到文件或管道）时自动禁用颜色，输出为纯文本便于日志采集。</Note>

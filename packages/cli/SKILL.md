@@ -34,8 +34,8 @@ description: "@hile/cli 的强约束生成规范。适用于 boot 编排、启�
 要求：
 
 - 保留原始错误对象（错误单独一行输出，便于堆栈阅读）
-- 输出统一日志前缀 `[hile]`，目标（service#id / container）与状态列对齐
-- 记录可用耗时字段（`durationMs`），时长右对齐固定宽度
+- 输出统一日志前缀 `[hile]`，目标与状态自然拼接
+- 记录可用耗时字段（`durationMs`），如 `ready (12ms)`
 - 仅在 TTY 时启用 ANSI 颜色（成功绿、错误红、警告黄、中性 dim），非 TTY 不输出转义码
 
 ## 3. 反模式（禁止）

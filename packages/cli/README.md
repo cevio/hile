@@ -48,7 +48,7 @@ hile start --env-file .env --env-file .env.local
 
 ### 启动日志（基于 @hile/core 事件）
 
-CLI 已接入容器事件日志（仅开发模式输出），格式统一、列对齐：
+CLI 已接入容器事件日志（仅开发模式输出）：
 
 - 服务启动：`service:init` / `service:ready`（含耗时）
 - 服务失败：`service:error`（错误对象单独一行）
