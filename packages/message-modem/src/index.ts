@@ -87,8 +87,8 @@ export abstract class MessageModem {
    * @param timeout - 超时时间
    * @returns 消息响应
    */
-  protected _push<T = any>(data: T, timeout = 30000) {
-    return this._write(data, timeout, false);
+  protected _push<T = any>(data: T, timeout = 30000): void {
+    this._write(data, timeout, false);
   }
 
   /**
@@ -98,11 +98,15 @@ export abstract class MessageModem {
    * @returns 消息响应
    */
   private _write<T = any>(data: T, timeout = 30000, twoway = false) {
-    const controller = new AbortController();
     // 创建请求消息数据
     const state = this.createPostData(MESSAGE_MODEM_TYPE.REQUEST, data, twoway);
     // 发送消息
     this.post(state);
+
+    // 如果消息是单向的，则直接返回
+    if (!twoway) return;
+
+    const controller = new AbortController();
     return {
       // 终止请求
       abort: () => controller.abort(),

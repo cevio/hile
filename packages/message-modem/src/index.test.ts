@@ -27,8 +27,8 @@ class TestModem extends MessageModem {
     return super._send(data, timeout);
   }
 
-  public push<T>(data: T, timeout?: number) {
-    return super._push(data, timeout);
+  public push<T>(data: T, timeout?: number): void {
+    super._push(data, timeout);
   }
 }
 

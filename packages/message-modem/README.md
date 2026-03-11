@@ -92,7 +92,7 @@ try {
 | `post(data)` | `protected abstract` | 子类实现：如何将消息发送到远端 |
 | `exec(data)` | `protected abstract` | 子类实现：如何处理收到的请求，返回 Promise |
 | `_send(data, timeout?)` | `protected` | 发送双向请求（`twoway: true`），返回 `{ abort, response }` |
-| `_push(data, timeout?)` | `protected` | 发送单向推送（`twoway: false`），接收方不回复 RESPONSE |
+| `_push(data, timeout?)` | `protected` | 发送单向推送（`twoway: false`），无返回值，接收方不回复 RESPONSE |
 | `receive(msg)` | `public` | 接收消息入口，根据 mode 分发处理 |
 
 ### `_send` 返回值

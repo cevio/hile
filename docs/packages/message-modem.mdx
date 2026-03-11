@@ -260,7 +260,7 @@ try {
 | `post` | `protected abstract` | `post<T>(data: MessageTransferFormat<T>): void` | 子类实现：如何将消息发送到远端 |
 | `exec` | `protected abstract` | `exec(data: any): Promise<any>` | 子类实现：如何处理收到的请求 |
 | `_send` | `protected` | `_send<T>(data: T, timeout?: number): { abort, response }` | 发送双向请求（`twoway: true`）。timeout 默认 30000ms |
-| `_push` | `protected` | `_push<T>(data: T, timeout?: number): { abort, response }` | 发送单向推送（`twoway: false`），接收方不回复 RESPONSE |
+| `_push` | `protected` | `_push<T>(data: T, timeout?: number): void` | 发送单向推送（`twoway: false`），无返回值，接收方不回复 RESPONSE |
 | `receive` | `public` | `receive(msg: MessageTransferFormat): void` | 接收消息入口，根据 mode 分发处理 |
 
 ### `_send` 返回值

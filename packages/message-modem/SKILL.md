@@ -88,10 +88,7 @@ abstract class MessageModem {
     abort: () => void;
     response: <U = any>() => Promise<U>;
   };
-  protected _push<T>(data: T, timeout?: number): {
-    abort: () => void;
-    response: <U = any>() => Promise<U>;
-  };
+  protected _push<T>(data: T, timeout?: number): void;
   public receive(msg: MessageTransferFormat): void;
 }
 ```
