@@ -311,9 +311,14 @@ export class Container {
     const startedAt = Date.now();
     this.emit({ type: 'container:shutdown:start' });
 
-    let i = this.shutdownQueues.length;
-    while (i--) {
-      await this.shutdownService(this.shutdownQueues[i]);
+    // 循环直到队列清空；再让出一次事件循环，处理「shutdown 期间才调用 curDown」的晚注册 teardown
+    while (true) {
+      while (this.shutdownQueues.length > 0) {
+        const id = this.shutdownQueues[this.shutdownQueues.length - 1];
+        await this.shutdownService(id);
+      }
+      await new Promise<void>(r => setImmediate(r));
+      if (this.shutdownQueues.length === 0) break;
     }
     this.shutdownFunctions.clear();
     this.shutdownQueues.length = 0;

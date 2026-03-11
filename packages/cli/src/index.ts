@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import pkg from '../package.json' with { type: 'json' };
-import exitHook from 'async-exit-hook';
 import { program } from 'commander';
+import { registerExitHook } from './exitHook.js';
 import { glob } from 'glob';
 import { resolve } from 'node:path';
 import { container, isService, loadService, ServiceRegisterProps, ContainerEvent } from '@hile/core';
@@ -15,34 +15,65 @@ function loadEnvFile(filePath: string): void {
   (process as NodeJS.Process & { loadEnvFile(path: string): void }).loadEnvFile(resolve(process.cwd(), filePath));
 }
 
+const TAG = '[hile]';
+
+const c = {
+  reset: '\x1b[0m',
+  dim: '\x1b[2m',
+  red: '\x1b[31m',
+  green: '\x1b[32m',
+  yellow: '\x1b[33m',
+  cyan: '\x1b[36m',
+};
+
+const colorize = process.stdout.isTTY;
+
 function logContainerEvent(event: ContainerEvent) {
+  const pad = (s: string, n: number) => s.padEnd(n);
+  const padNum = (n: number, width: number) => n.toString().padStart(width);
+
+  const tag = colorize ? `${c.dim}${c.cyan}${TAG}${c.reset}` : TAG;
+  const target = (s: string) => (colorize ? `${c.cyan}${s}${c.reset}` : s);
+  const ok = (s: string) => (colorize ? `${c.green}${s}${c.reset}` : s);
+  const warn = (s: string) => (colorize ? `${c.yellow}${s}${c.reset}` : s);
+  const err = (s: string) => (colorize ? `${c.red}${s}${c.reset}` : s);
+  const dim = (s: string) => (colorize ? `${c.dim}${s}${c.reset}` : s);
+
+  const fmt = (t: string, status: string, durationMs?: number) =>
+    durationMs !== undefined
+      ? `${tag}  ${target(pad(t, 14))}  ${status}  ${dim(padNum(durationMs, 5) + 'ms')}`
+      : `${tag}  ${target(pad(t, 14))}  ${status}`;
+
   switch (event.type) {
     case 'service:init':
-      console.info(`[hile] service#${event.id} init`);
+      console.info(fmt(`service#${event.id}`, dim('init')));
       break;
     case 'service:ready':
-      console.info(`[hile] service#${event.id} ready (${event.durationMs}ms)`);
+      console.info(fmt(`service#${event.id}`, ok(pad('ready', 14)), event.durationMs));
       break;
     case 'service:error':
-      console.error(`[hile] service#${event.id} failed (${event.durationMs}ms):`, event.error);
+      console.error(fmt(`service#${event.id}`, err(`failed (${event.durationMs}ms)`)));
+      console.error(event.error);
       break;
     case 'service:shutdown:start':
-      console.info(`[hile] service#${event.id} stopping`);
+      console.info(fmt(`service#${event.id}`, warn('stopping')));
       break;
     case 'service:shutdown:done':
-      console.info(`[hile] service#${event.id} stopped (${event.durationMs}ms)`);
+      console.info(fmt(`service#${event.id}`, dim(pad('stopped', 14)), event.durationMs));
       break;
     case 'service:shutdown:error':
-      console.error(`[hile] service#${event.id} shutdown error:`, event.error);
+      console.error(fmt(`service#${event.id}`, err('shutdown error')));
+      console.error(event.error);
       break;
     case 'container:shutdown:start':
-      console.info('[hile] container shutdown start');
+      console.info(fmt('container', dim('shutdown start')));
       break;
     case 'container:shutdown:done':
-      console.info(`[hile] container shutdown done (${event.durationMs}ms)`);
+      console.info(fmt('container', ok(pad('shutdown done', 14)), event.durationMs));
       break;
     case 'container:error':
-      console.error('[hile] container error:', event.error);
+      console.error(fmt('container', err('error')));
+      console.error(event.error);
       break;
   }
 }
@@ -124,14 +155,7 @@ program
     }
 
     // 注册退出钩子，在进程退出时销毁所有服务
-    exitHook(exit => {
-      container.shutdown()
-        .catch(e => console.error(e))
-        .finally(() => {
-          offEvent();
-          exit();
-        });
-    })
+    registerExitHook(container, offEvent);
   })
 
 program.parseAsync(process.argv);

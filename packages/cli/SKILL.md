@@ -14,8 +14,8 @@ description: "@hile/cli 的强约束生成规范。适用于 boot 编排、启�
 3. boot 文件必须 `export default` 合法 Hile 服务（`defineService` / `register` 结果）。
 4. 加载顺序必须固定：`auto_load_packages` → 扫描 boot。
 5. 运行目录优先级必须固定：`HILE_RUNTIME_DIR` → `src`(dev) → `dist`。
-6. CLI 必须订阅 `container.onEvent` 并输出关键生命周期日志。
-7. 进程退出时必须调用 `container.shutdown()`，并取消事件订阅。
+6. CLI 必须订阅 `container.on` 并输出关键生命周期日志。
+7. 进程退出时必须通过 `registerExitHook(container, offEvent)` 注册退出钩子；钩子内必须 **await** `container.shutdown()` 完成后再执行 `offEvent()` 与 `exit()`，未完成时进程挂起不退出。
 
 ## 2. 容器事件日志约束
 
@@ -33,9 +33,10 @@ description: "@hile/cli 的强约束生成规范。适用于 boot 编排、启�
 
 要求：
 
-- 保留原始错误对象
-- 输出统一日志前缀（如 `[hile]`）
-- 记录可用耗时字段（`durationMs`）
+- 保留原始错误对象（错误单独一行输出，便于堆栈阅读）
+- 输出统一日志前缀 `[hile]`，目标（service#id / container）与状态列对齐
+- 记录可用耗时字段（`durationMs`），时长右对齐固定宽度
+- 仅在 TTY 时启用 ANSI 颜色（成功绿、错误红、警告黄、中性 dim），非 TTY 不输出转义码
 
 ## 3. 反模式（禁止）
 
@@ -65,7 +66,16 @@ export default defineService(async (shutdown) => {
 // ✗ 只订阅不释放
 const off = container.on(listener)
 
-// ✓ 退出时调用 off()
+// ✓ 退出时在 registerExitHook 的 finally 中调用 off()
+```
+
+### 3.4 退出钩子不调用 container.shutdown
+
+```typescript
+// ✗ 直接 exit 不关闭容器
+exitHook(exit => exit())
+
+// ✓ 使用 registerExitHook(container, offEvent)，内部会 shutdown 再 exit
 ```
 
 ## 4. 边界条件清单
@@ -75,3 +85,4 @@ const off = container.on(listener)
 - [ ] `--dev` 与非 dev 的 `NODE_ENV` 行为一致
 - [ ] 多个 `--env-file` 加载顺序可预测
 - [ ] shutdown 期间异常不会吞掉主错误
+- [ ] 退出钩子：`exit()` 仅在 `container.shutdown()` 完成后调用；shutdown 未完成时进程挂起（见 exitHook 单测）

@@ -70,25 +70,27 @@ hile start --dev --env-file .env.development
 
 #### 启动日志示例
 
-开发模式下的典型输出：
+开发模式下的典型输出（列对齐；在终端中会带颜色：成功绿、错误红、警告黄等）：
 
 ```
-[hile] service#1 init
-[hile] service#2 init
-[hile] service#2 ready (45ms)
-[hile] service#1 ready (1203ms)
+[hile]  service#1       init
+[hile]  service#2       init
+[hile]  service#2       ready              45ms
+[hile]  service#1       ready            1203ms
 ```
 
 按 Ctrl+C 关闭时：
 
 ```
-[hile] container shutdown start
-[hile] service#1 stopping
-[hile] service#1 stopped (12ms)
-[hile] service#2 stopping
-[hile] service#2 stopped (3ms)
-[hile] container shutdown done (15ms)
+[hile]  container       shutdown start
+[hile]  service#1       stopping
+[hile]  service#1       stopped            12ms
+[hile]  service#2       stopping
+[hile]  service#2       stopped             3ms
+[hile]  container       shutdown done      15ms
 ```
+
+<Note>非 TTY（如重定向到文件或管道）时自动禁用颜色，输出为纯文本便于日志采集。</Note>
 
 ### hile -v
 
@@ -204,15 +206,16 @@ HILE_RUNTIME_DIR=./custom hile start
 
 ## 优雅关闭
 
-CLI 使用 `async-exit-hook` 注册进程退出钩子。当收到 `SIGTERM`、`SIGINT` 等信号时：
+CLI 通过 `registerExitHook(container, offEvent)` 注册进程退出钩子（内部使用 `async-exit-hook`）。当收到 `SIGTERM`、`SIGINT` 等信号时：
 
-1. 触发 `container.shutdown()`
-2. 容器按 LIFO 顺序执行所有服务的 shutdown 回调
-3. 取消容器事件订阅
-4. 进程退出
+1. **await** `container.shutdown()`（容器按 LIFO 顺序执行所有在 defineService 中注册的 shutdown 回调，含晚注册回调）
+2. **仅在其完成后**执行 `offEvent()` 取消容器事件订阅
+3. 调用 `exit()` 退出进程
+
+若 `shutdown()` 未完成，进程会挂起不退出；强制退出超时被设为极大值，等效于「等 shutdown 完成再退出」。
 
 ```
-SIGTERM/SIGINT → exitHook → container.shutdown() → 执行所有 shutdown 回调 → exit
+SIGTERM/SIGINT → exitHook → await container.shutdown() → 执行所有 shutdown 回调 → offEvent() → exit
 ```
 
 <Warning>

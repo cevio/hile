@@ -254,6 +254,26 @@ describe('Container', () => {
   })
 
   describe('shutdown (public) - 手动销毁所有服务', () => {
+    it('container.shutdown 时每个 defineService 中注册的 shutdown 都必须被执行', async () => {
+      const teardowns = Array.from({ length: 5 }, () => vi.fn())
+      const services = teardowns.map((teardown, i) =>
+        async (shutdown: (fn: () => void) => void) => {
+          shutdown(teardown)
+          return `s${i}`
+        }
+      )
+
+      for (const fn of services) {
+        await container.resolve(container.register(fn))
+      }
+
+      await container.shutdown()
+
+      for (const t of teardowns) {
+        expect(t).toHaveBeenCalledTimes(1)
+      }
+    })
+
     it('手动调用 shutdown 后应执行所有已注册的销毁函数', async () => {
       const teardownA = vi.fn()
       const teardownB = vi.fn()
@@ -318,6 +338,31 @@ describe('Container', () => {
       await container.shutdown()
 
       expect(order).toEqual([3, 2, 1])
+    })
+
+    it('shutdown 期间才完成启动并注册 teardown 的服务也会被关掉（竞态覆盖）', async () => {
+      const teardownFast = vi.fn()
+      const teardownSlow = vi.fn()
+      const fnFast = (shutdown: (fn: () => void) => void) => {
+        shutdown(teardownFast)
+        return 'fast'
+      }
+      const fnSlow = async (shutdown: (fn: () => void) => void) => {
+        await new Promise<void>(r => setImmediate(r))
+        shutdown(teardownSlow)
+        return 'slow'
+      }
+
+      const pFast = container.resolve(container.register(fnFast))
+      const pSlow = container.resolve(container.register(fnSlow))
+      await pFast
+      // pSlow 尚未 resolve；shutdown 先处理 fast，再 yield 一次，slow 在 setImmediate 里注册 teardown，应被下一轮循环处理
+      const shutdownPromise = container.shutdown()
+      await pSlow
+      await shutdownPromise
+
+      expect(teardownFast).toHaveBeenCalledOnce()
+      expect(teardownSlow).toHaveBeenCalledOnce()
     })
 
     it('shutdown 后重复调用不会再次执行销毁函数', async () => {

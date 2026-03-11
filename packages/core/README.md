@@ -94,7 +94,7 @@ export const userService = defineService(async (shutdown) => {
 
 ### 5) 资源销毁（Shutdown）
 
-当服务初始化失败或手动执行全局关闭时，容器会按规则执行已注册的清理回调。
+当服务初始化失败或手动执行全局关闭时，容器会按规则执行已注册的清理回调。`container.shutdown()` 会循环处理队列直到清空，并让出一次事件循环（`setImmediate`），确保在 shutdown 进行中才完成启动并注册的 teardown 也会被执行。
 
 ```typescript
 export const connectionService = defineService(async (shutdown) => {
@@ -168,10 +168,12 @@ const startupOrder = container.getStartupOrder()
 import container from '@hile/core'
 
 process.on('SIGTERM', async () => {
-  await container.shutdown()
+  await container.shutdown()  // 执行所有已注册的 teardown，含晚注册的
   process.exit(0)
 })
 ```
+
+保证：每个在 defineService 中通过 `shutdown(fn)` 注册的回调都会在 `shutdown()` 时被执行；若某服务在 shutdown 期间才完成启动并调用 `shutdown(fn)`，也会在下一轮事件循环中被关掉。
 
 ### 9) 服务校验（isService）
 

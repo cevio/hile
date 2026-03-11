@@ -48,14 +48,14 @@ hile start --env-file .env --env-file .env.local
 
 ### 启动日志（基于 @hile/core 事件）
 
-CLI 已接入容器事件日志，默认会输出：
+CLI 已接入容器事件日志（仅开发模式输出），格式统一、列对齐：
 
 - 服务启动：`service:init` / `service:ready`（含耗时）
-- 服务失败：`service:error`
+- 服务失败：`service:error`（错误对象单独一行）
 - 关闭阶段：`service:shutdown:start` / `service:shutdown:done`
 - 容器关闭：`container:shutdown:start` / `container:shutdown:done`
 
-这使得线上启动问题与关闭过程更容易观测。
+在 TTY 环境下会使用颜色（成功绿、错误红、警告黄等）；重定向或管道时自动禁用颜色，便于日志采集。
 
 ### 其他命令
 
@@ -120,7 +120,12 @@ export default defineService(async (shutdown) => {
 
 ## 优雅关闭
 
-进程收到 `SIGTERM`、`SIGINT` 等信号时，CLI 会自动调用 `container.shutdown()`，按逆序销毁已启动服务。
+进程收到 `SIGTERM`、`SIGINT` 等信号时，CLI 通过 `registerExitHook` 注册的退出钩子会：
+
+1. 先 **await** `container.shutdown()`（确保所有在 defineService 中注册的 shutdown 回调被执行）
+2. **仅在其完成后**再取消事件订阅并调用 exit 退出进程
+
+若 `shutdown()` 未完成，进程会挂起不退出；内部将 async-exit-hook 的强制退出超时设为极大值，等效于「等 shutdown 完成再退出」。
 
 ## 项目结构示例
 
@@ -144,6 +149,7 @@ my-app/
 pnpm install
 pnpm build
 pnpm dev
+pnpm test
 ```
 
 ## License
