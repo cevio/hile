@@ -12,6 +12,13 @@ export interface MessageLoaderProps {
   prefix?: string;
 }
 
+export class NotFoundException extends Error {
+  public readonly status = 'NOT_FOUND';
+  constructor(path: string) {
+    super(path);
+  }
+}
+
 /**
  * 消息加载器，用于加载消息并将其注册到路由器中
  * 
@@ -106,8 +113,8 @@ export class MessageLoader {
     }
     if (!url) url = '/';
 
-    return this.props.prefix 
-      ? this.props.prefix + url 
+    return this.props.prefix
+      ? this.props.prefix + url
       : url;
   }
 
@@ -126,7 +133,7 @@ export class MessageLoader {
       const ext = extname(path);
       const url = file.substring(0, file.length - this.props.suffix!.length - ext.length - 1);
       // 导入消息处理器
-      const controller: {default: MessageRegisterProps} = await import(path);
+      const controller: { default: MessageRegisterProps } = await import(path);
       if (!controller.default) continue;
       // 获取消息处理器
       const { default: metadata } = controller;
@@ -153,7 +160,7 @@ export class MessageLoader {
       normalize: true,
     });
     if (!matched) {
-      throw new Error(`message not found: ${path}`);
+      throw new NotFoundException(path);
     }
     const handler = matched.data as MessageRegisterProps;
     return await Promise.resolve(handler.fn({

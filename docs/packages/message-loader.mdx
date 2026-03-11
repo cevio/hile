@@ -268,7 +268,7 @@ interface MessageRegisterProps {
 </Warning>
 
 <Warning>
-  `dispatch` 在路径未匹配时抛出 `Error: message not found: <path>`。调用方应做好 try-catch 处理。
+  `dispatch` 在路径未匹配时抛出 `NotFoundException`（包含 `status: 'NOT_FOUND'`）。调用方应做好 try-catch 处理。
 </Warning>
 
 <Warning>
@@ -284,7 +284,7 @@ interface MessageRegisterProps {
 ## 常见问题
 
 <AccordionGroup>
-  <Accordion title="dispatch 报错 'message not found' 怎么办？">
+  <Accordion title="dispatch 抛出 NotFoundException 怎么办？">
     检查以下几点：
     1. 文件是否放在正确的目录下，且命名符合 `*.msg.{ts,js,tsx,jsx}` 格式
     2. 文件是否有 `export default`

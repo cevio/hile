@@ -160,7 +160,7 @@ type MessageFunction = (data: {
 ## 注意事项
 
 - 消息处理器文件必须有 `export default`，缺少默认导出的文件会被静默跳过
-- `dispatch` 在路径未匹配时会抛出 `Error: message not found: <path>`
+- `dispatch` 在路径未匹配时会抛出 `NotFoundException`（包含 `status: 'NOT_FOUND'`）
 - `dispatch` 返回 Promise，即使处理器是同步函数
 - `load()` 返回的注销函数调用后，已注册的路由会被全部移除
 

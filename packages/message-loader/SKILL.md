@@ -42,7 +42,7 @@ description: Code generation and contribution rules for @hile/message-loader. Us
 ## 2. 类型签名
 
 ```typescript
-import { MessageLoader, defineMessage, type MessageLoaderProps, type MessageRegisterProps, type MessageFunction } from '@hile/message-loader';
+import { MessageLoader, defineMessage, NotFoundException, type MessageLoaderProps, type MessageRegisterProps, type MessageFunction } from '@hile/message-loader';
 
 interface MessageLoaderProps {
   suffix?: string;         // 文件后缀标记，默认 'msg'
@@ -138,7 +138,7 @@ class AppWs extends MessageWs {
 | **默认导出必须是 `MessageRegisterProps`** | 推荐使用 `defineMessage()` 创建 |
 | **`fn` 接收 `{ params, data, url }` 参数** | `params` 来自路由匹配，`data` 来自调用方 |
 | **`dispatch` 返回 Promise** | 即使 `fn` 是同步函数也会被 `Promise.resolve` 包装 |
-| **路径未匹配时 `dispatch` 抛出错误** | `Error: message not found: <path>` |
+| **路径未匹配时 `dispatch` 抛出错误** | `NotFoundException`（`status: 'NOT_FOUND'`） |
 | **`load` 返回注销函数** | 调用后移除所有已注册路由 |
 
 ### 3.6 反模式

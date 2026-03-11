@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { MessageLoader, defineMessage } from './index'
+import { MessageLoader, defineMessage, NotFoundException } from './index'
 import { toRouterPath } from './utils'
 
 describe('toRouterPath', () => {
@@ -147,7 +147,7 @@ describe('MessageLoader', () => {
 
       off()
 
-      await expect(loader.dispatch('/temp', {})).rejects.toThrow('message not found: /temp')
+      await expect(loader.dispatch('/temp', {})).rejects.toThrow(NotFoundException)
     })
 
     it('空目录不会报错', async () => {
@@ -160,7 +160,7 @@ describe('MessageLoader', () => {
   describe('dispatch - 消息分发', () => {
     it('路径不存在时抛出错误', async () => {
       const loader = new MessageLoader({ suffix: 'msg' })
-      await expect(loader.dispatch('/nonexistent', {})).rejects.toThrow('message not found: /nonexistent')
+      await expect(loader.dispatch('/nonexistent', {})).rejects.toThrow(NotFoundException)
     })
 
     it('传递 data 参数到处理器', async () => {
