@@ -1,6 +1,6 @@
 {
   "name": "@hile/ioredis",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
