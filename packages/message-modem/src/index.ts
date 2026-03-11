@@ -77,8 +77,11 @@ export abstract class MessageModem {
    * @param timeout - 超时时间
    * @returns 消息响应
    */
-  protected _send<T = any>(data: T, timeout = 30000) {
-    return this._write(data, timeout, true);
+  protected _send<T = any>(data: T, timeout = 30000): {
+    abort: () => void;
+    response: <U = any>() => Promise<U>;
+  } {
+    return this._write(data, timeout, true)!;
   }
 
   /**
