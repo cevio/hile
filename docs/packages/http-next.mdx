@@ -58,6 +58,9 @@ export default defineService(async (shutdown) => {
     publicPath: "public",
   });
 
+  // 可选：在 start() 前注册全局中间件（如请求日志、CORS 等）
+  // httpNext.use(async (ctx, next) => { ... await next(); });
+
   // start() 返回关闭函数，注册到 shutdown
   shutdown(await httpNext.start());
 
@@ -351,4 +354,5 @@ export default nextConfig;
 
 | 属性/方法 | 类型 | 说明 |
 |----------|------|------|
+| `use(middleware)` | `(middleware: Middleware) => HttpNext` | 注册 Koa 中间件，返回当前实例以支持链式调用 |
 | `start()` | `Promise<() => void>` | 启动服务，返回关闭函数 |

@@ -41,6 +41,16 @@ export class HttpNext {
     };
   }
 
+  /**
+   * 注册中间件
+   * @param middleware - 中间件函数
+   * @returns - 当前实例
+   */
+  public use(middleware: Middleware) {
+    this.http.use(middleware);
+    return this;
+  }
+
   public async start() {
     // 绑定项目静态资源目录到 http 服务
     this.http.use(ServerStatic(resolve(this.cwd, ".next", "static")));

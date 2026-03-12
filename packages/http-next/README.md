@@ -96,6 +96,7 @@ export default defineController("GET", async (ctx) => {
 
 | 属性 / 方法 | 说明 |
 |------------|------|
+| `use(middleware)` | 注册 Koa 中间件，返回当前实例以支持链式调用 |
 | `start()` | 启动服务，返回 `Promise<() => void>` 关闭函数 |
 
 ### `start()` 执行流程
