@@ -1,11 +1,11 @@
 ---
-title: "create-hile-http-next"
+title: "create-hile"
 description: "一键创建 Hile + Next.js 项目的脚手架工具"
 ---
 
 ## 概述
 
-`create-hile-http-next` 是一个项目脚手架 CLI 工具。它从内置模板复制完整的项目结构，帮你跳过从零配置的过程，直接开始开发。
+`create-hile` 是一个项目脚手架 CLI 工具。它从内置模板复制完整的项目结构，帮你跳过从零配置的过程，直接开始开发。
 
 ---
 
@@ -16,14 +16,14 @@ description: "一键创建 Hile + Next.js 项目的脚手架工具"
 无需安装，直接运行：
 
 ```bash
-npx create-hile-http-next create my-app
+npx create-hile create my-app
 ```
 
 ### 方式二：全局安装
 
 ```bash
-npm i -g create-hile-http-next
-create-hile-http-next create my-app
+npm i -g create-hile
+create-hile create my-app
 ```
 
 ---
@@ -33,7 +33,7 @@ create-hile-http-next create my-app
 <Steps>
   <Step title="运行命令">
     ```bash
-    npx create-hile-http-next create my-app
+    npx create-hile create my-app
     ```
 
     脚手架会执行以下操作：
@@ -226,7 +226,7 @@ pnpm add @hile/ioredis ioredis
 ## CLI 命令参考
 
 ```bash
-create-hile-http-next create <project-name>
+create-hile create <project-name>
 ```
 
 | 参数 | 说明 |
@@ -234,8 +234,8 @@ create-hile-http-next create <project-name>
 | `project-name` | 项目名称，也是目标目录名和 `package.json` 的 `name` |
 
 ```bash
-create-hile-http-next -V    # 查看版本
-create-hile-http-next -h    # 查看帮助
+create-hile -V    # 查看版本
+create-hile -h    # 查看帮助
 ```
 
 <Warning>如果目标目录已存在，命令会报错 `目录 xxx 已存在`。</Warning>

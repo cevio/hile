@@ -1,4 +1,4 @@
-# create-hile-http-next
+# create-hile
 
 基于 `@hile/http-next` 的项目脚手架，一条命令创建开箱即用的 Hile + Next.js 项目。
 
@@ -6,11 +6,11 @@
 
 ```bash
 # 推荐：通过 npx 直接运行
-npx create-hile-http-next create my-app
+npx create-hile create my-app
 
 # 或全局安装后使用
-npm i -g create-hile-http-next
-create-hile-http-next create my-app
+npm i -g create-hile
+create-hile create my-app
 ```
 
 创建完成后：

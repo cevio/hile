@@ -67,7 +67,7 @@
     {
       "group": "工具",
       "pages": [
-        "packages/create-hile-http-next"
+        "packages/create-hile"
       ]
     }
   ],

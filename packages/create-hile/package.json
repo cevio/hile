@@ -1,10 +1,10 @@
 {
-  "name": "create-hile-http-next",
-  "description": "Create a new Hile HTTP Next project",
-  "version": "1.0.7",
+  "name": "create-hile",
+  "description": "Create a new Hile project",
+  "version": "1.0.0",
   "type": "module",
   "bin": {
-    "create-hile-http-next": "./dist/index.js"
+    "create-hile": "./dist/index.js"
   },
   "files": [
     "dist",

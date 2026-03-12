@@ -46,7 +46,7 @@ Hile 提供了从**服务容器**、**HTTP 框架**、**SSR 渲染**到**数据�
 | `@hile/message-ipc` | Node.js IPC 通信实现 | 1.0.0 | `pnpm add @hile/message-ipc` |
 | `@hile/message-worker-thread` | Worker Threads 通信实现 | 1.0.0 | `pnpm add @hile/message-worker-thread` |
 | `@hile/message-ws` | WebSocket 通信实现 | 1.0.0 | `pnpm add @hile/message-ws` |
-| `create-hile-http-next` | 项目脚手架 | 1.0.4 | `npx create-hile-http-next` |
+| `create-hile` | 项目脚手架 | 1.0.4 | `npx create-hile` |
 
 ## 依赖关系
 
@@ -66,7 +66,7 @@ Hile 提供了从**服务容器**、**HTTP 框架**、**SSR 渲染**到**数据�
   ├── @hile/message-worker-thread ← Worker Threads 实现，依赖 message-modem
   └── @hile/message-ws ← WebSocket 实现，依赖 message-modem + ws
 
-create-hile-http-next ← 脚手架工具
+create-hile ← 脚手架工具
   └── 生成的项目依赖上述所有包
 ```
 
@@ -83,7 +83,7 @@ create-hile-http-next ← 脚手架工具
   </Accordion>
   <Accordion title="全栈应用（API + SSR）">
     ```bash
-    npx create-hile-http-next create my-app
+    npx create-hile create my-app
     ```
     适合：需要服务端渲染的全栈应用。Koa API 路由 + Next.js 页面共享同一端口。
   </Accordion>
