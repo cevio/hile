@@ -54,21 +54,6 @@ export class HttpNext {
   public async start() {
     // 绑定项目静态资源目录到 http 服务
     this.http.use(ServerStatic(resolve(this.cwd, ".next", "static")));
-    // 启动 http 服务
-    const stop = await this.http.listen(async (server) => {
-      // 创建 next 应用
-      const app = NextServer({
-        dev: this.isDevelopment,
-        webpack: this.isDevelopment,
-        httpServer: server,
-      });
-      // 准备 next 应用
-      await app.prepare();
-      // 设置 next 请求处理函数
-      const handler = app.getRequestHandler();
-      // 使用 forwardToNextMiddleware 中间件
-      this.http.use(this.createForwardToNextMiddleware(handler));
-    });
     // 加载项目路由
     await this.http.load(
       resolve(this.cwd, this.isDevelopment ? "src" : "dist", "app"),
@@ -84,6 +69,21 @@ export class HttpNext {
         },
       },
     );
+    // 启动 http 服务
+    const stop = await this.http.listen(async (server) => {
+      // 创建 next 应用
+      const app = NextServer({
+        dev: this.isDevelopment,
+        webpack: this.isDevelopment,
+        httpServer: server,
+      });
+      // 准备 next 应用
+      await app.prepare();
+      // 设置 next 请求处理函数
+      const handler = app.getRequestHandler();
+      // 使用 forwardToNextMiddleware 中间件
+      this.http.use(this.createForwardToNextMiddleware(handler));
+    });
     return stop;
   }
 }
