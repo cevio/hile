@@ -101,11 +101,10 @@ export default defineController("GET", async (ctx) => {
 
 ### `start()` 执行流程
 
-1. 注册 `.next/static` 静态资源
-2. 启动 HTTP 服务
-3. 创建并 `prepare()` Next.js 应用
-4. 挂载 Next.js 转发中间件
-5. 加载 `src/app/` 下的 `*.controller.ts` 路由
+1. 注册 `publicPath` 与 `.next/static` 静态资源（构造函数与 start 内）
+2. 加载 `src/app/`（开发）或 `dist/app/`（生产）下的 `*.controller.ts` 路由，挂载到 `/-` 前缀
+3. 启动 HTTP 服务（`http.listen()`）
+4. 在 `onListen` 回调中：创建 Next 应用并 `prepare()`，挂载 Next.js 转发中间件
 
 ## 项目结构
 

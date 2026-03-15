@@ -320,6 +320,9 @@ export default nextConfig;
   <Step title="注册构建产物静态资源">
     注册 `koa-static(.next/static/)` — 提供 Next.js 构建的 JS/CSS chunk
   </Step>
+  <Step title="加载 API 控制器">
+    扫描 `src/app/`（开发模式）或 `dist/app/`（生产模式）下的 `*.controller.ts` 文件，挂载到 `/-` 前缀下（在 `listen()` 之前完成）
+  </Step>
   <Step title="启动 HTTP 服务">
     调用 `http.listen()` 启动 Koa，传入 `onListen` 回调
   </Step>
@@ -327,11 +330,8 @@ export default nextConfig;
     在 `onListen` 回调中：
     - 创建 `NextServer({ dev, webpack, httpServer })` — 共享 Koa 的 HTTP Server
     - 调用 `app.prepare()` — Next.js 编译页面、启动 HMR 等
-    - 获取 `app.getRequestHandler()` — 保存为 `nextRequestHandler`
-    - 注册 Next.js 转发中间件
-  </Step>
-  <Step title="加载 API 控制器">
-    扫描 `src/app/`（开发模式）或 `dist/app/`（生产模式）下的 `*.controller.ts` 文件，挂载到 `/-` 前缀下
+    - 获取 `app.getRequestHandler()` — 保存为 Next 请求处理函数
+    - 注册 Next.js 转发中间件（此后未匹配请求由 Next.js 处理）
   </Step>
 </Steps>
 

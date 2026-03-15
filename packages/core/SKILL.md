@@ -16,7 +16,7 @@ description: "@hile/core 的代码生成与使用规范。适用于定义/加载
 5. 禁止在模块顶层缓存 `await loadService(...)` 结果。
 6. 依赖服务必须在服务函数内部加载。
 7. 多个 teardown 默认按 LIFO 顺序执行。
-8. `container.shutdown()` 必须执行所有已通过 `shutdown(fn)` 注册的回调；在 shutdown 进行中才完成启动并调用 `curDown` 的服务，也会在让出一次事件循环后被关掉（避免竞态漏关）。
+8. `container.shutdown()` 必须执行所有已通过 `shutdown(fn)` 注册的回调；在 shutdown 进行中才完成启动并调用 `shutdown` 的服务，也会在让出一次事件循环后被关掉（避免竞态漏关）。
 
 ## 2. 生命周期与超时约束
 
@@ -111,4 +111,4 @@ export const good = defineService(async (shutdown) => {
 - [ ] teardown 抛错是否不覆盖原始业务错误
 - [ ] 并发 resolve 同一服务是否只初始化一次
 - [ ] shutdown 重复调用是否幂等
-- [ ] shutdown 期间才注册的 teardown 是否在一次 setImmediate 让出后被正确执行
+- [ ] shutdown 期间才注册的 teardown 是否在一次 setImmediate 让出后被正确执行（避免竞态漏关）

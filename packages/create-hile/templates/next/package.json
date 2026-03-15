@@ -5,17 +5,20 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "tsc -b && npm run build:next",
+    "build": "npm run build:base && npm run build:next",
+    "build:base": "rm -rf dist && tsc -b && tsc -p tsconfig.controllers.json && npm run build:fix",
     "build:next": "next build",
+    "build:fix": "fix-esm-import-path --preserve-import-type ./dist ",
     "dev": "npm run build:next && hile start --dev --env-file .env",
-    "start": "hile start --env-file .env"
+    "start": "hile start --env-file .env.prod"
   },
   "license": "MIT",
   "devDependencies": {
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "eslint": "^9",
-    "eslint-config-next": "16.1.6"
+    "eslint-config-next": "16.1.6",
+    "fix-esm-import-path": "^1.10.3"
   },
   "dependencies": {
     "@hile/cli": "^1.0.18",
