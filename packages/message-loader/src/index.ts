@@ -134,7 +134,7 @@ export class MessageLoader {
       const ext = extname(path);
       const url = file.substring(0, file.length - this.props.suffix!.length - ext.length - 1);
       // 导入消息处理器
-      const _file = pathToFileURL(url).href;
+      const _file = pathToFileURL(path).href;
       const controller: { default: MessageRegisterProps } = await import(_file);
       if (!controller.default) continue;
       // 获取消息处理器
