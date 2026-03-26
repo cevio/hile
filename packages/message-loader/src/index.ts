@@ -3,6 +3,7 @@ import { resolve, extname } from 'node:path';
 import { createRouter, addRoute, RouterContext, removeRoute, findRoute } from "rou3";
 import { toRouterPath } from './utils';
 import { MessageRegisterProps } from './message';
+import { pathToFileURL } from 'node:url';
 
 export * from './message';
 
@@ -133,7 +134,8 @@ export class MessageLoader {
       const ext = extname(path);
       const url = file.substring(0, file.length - this.props.suffix!.length - ext.length - 1);
       // 导入消息处理器
-      const controller: { default: MessageRegisterProps } = await import(path);
+      const _file = pathToFileURL(url).href;
+      const controller: { default: MessageRegisterProps } = await import(_file);
       if (!controller.default) continue;
       // 获取消息处理器
       const { default: metadata } = controller;

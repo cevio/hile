@@ -1,3 +1,4 @@
+import { pathToFileURL } from 'node:url';
 import { ControllerRegisterProps } from './controller';
 import { Http } from './http';
 import { glob } from 'glob';
@@ -181,7 +182,8 @@ export class Loader {
       const path = resolve(directory, file);
       const ext = extname(path);
       const url = file.substring(0, file.length - suffix.length - ext.length - 1);
-      const controller = await import(path);
+      const _file = pathToFileURL(url).href;
+      const controller = await import(_file);
       const { default: fn } = controller;
 
       let normalized: ControllerRegisterProps[];

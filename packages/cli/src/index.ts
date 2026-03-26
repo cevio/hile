@@ -7,6 +7,7 @@ import { glob } from 'glob';
 import { resolve } from 'node:path';
 import { container, isService, loadService, ServiceRegisterProps, ContainerEvent } from '@hile/core';
 import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
 
@@ -133,7 +134,8 @@ program
     // 加载所有自启动服务
     // file: 文件路径或者模块名称
     await Promise.all(files.map(async (file) => {
-      const target: { default: ServiceRegisterProps<any> } = await import(file);
+      const _file = pathToFileURL(file).href;
+      const target: { default: ServiceRegisterProps<any> } = await import(_file);
       const fn = target?.default ?? target;
       if (!fn || !isService(fn)) throw new Error(`invalid service file: ${file}`);
       await loadService(fn);
