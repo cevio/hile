@@ -107,6 +107,7 @@ export class MessageLoader {
    * @returns 编译后的路径
    */
   private compileRoutePath(path: string) {
+    path = path.replace(/\\/g, '/');
     const defaultSuffix = this.props.defaultSuffix!;
     let url = path.startsWith('/') ? path : '/' + path;
     if (url.endsWith(defaultSuffix)) {

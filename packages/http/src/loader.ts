@@ -194,7 +194,7 @@ export class Loader {
         throw new Error(`invalid service file: ${file} (${summary}) - ${error?.message || String(error)}`);
       }
 
-      return this.compile(url, normalized, extras);
+      return this.compile(url.replace(/\\/g, '/'), normalized, extras);
     }));
 
     return () => {
