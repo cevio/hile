@@ -5,6 +5,7 @@ import { RequestHandler } from "next/dist/server/next";
 import type { HttpProps } from "@hile/http";
 import type { Middleware } from "koa";
 import { resolve } from "node:path";
+import type { Server } from "http";
 
 export type HttpNextProps = HttpProps & {
   cwd?: string; // 绑定项目根目录
@@ -51,7 +52,7 @@ export class HttpNext {
     return this;
   }
 
-  public async start() {
+  public async start(onListen?: (server: Server) => void | Promise<void>) {
     // 绑定项目静态资源目录到 http 服务
     this.http.use(ServerStatic(resolve(this.cwd, ".next", "static")));
     // 加载项目路由
@@ -71,6 +72,7 @@ export class HttpNext {
     );
     // 启动 http 服务
     const stop = await this.http.listen(async (server) => {
+      if (onListen) await onListen(server);
       // 创建 next 应用
       const app = NextServer({
         dev: this.isDevelopment,

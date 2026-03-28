@@ -194,7 +194,7 @@ export class Loader {
         throw new Error(`invalid service file: ${file} (${summary}) - ${error?.message || String(error)}`);
       }
 
-      return this.compile(url.replace(/\\/g, '/'), normalized, extras);
+      return this.compile(formatRouterWithIgnoreDuplicateSlashes(url), normalized, extras);
     }));
 
     return () => {
@@ -202,4 +202,11 @@ export class Loader {
       while (i--) callbacks[i]();
     }
   }
+}
+
+
+function formatRouterWithIgnoreDuplicateSlashes(path: string) {
+  let id = path.replace(/\\/g, '/');
+  id = id.replace(/\([^\)]+\)/g, '').replace('//', '/');
+  return id;
 }

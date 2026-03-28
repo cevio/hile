@@ -107,7 +107,7 @@ export class MessageLoader {
    * @returns 编译后的路径
    */
   private compileRoutePath(path: string) {
-    path = path.replace(/\\/g, '/');
+    path = formatRouterWithIgnoreDuplicateSlashes(path);
     const defaultSuffix = this.props.defaultSuffix!;
     let url = path.startsWith('/') ? path : '/' + path;
     if (url.endsWith(defaultSuffix)) {
@@ -172,4 +172,10 @@ export class MessageLoader {
       url: path,
     }));
   }
+}
+
+function formatRouterWithIgnoreDuplicateSlashes(path: string) {
+  let id = path.replace(/\\/g, '/');
+  id = id.replace(/\([^\)]+\)/g, '').replace('//', '/');
+  return id;
 }
