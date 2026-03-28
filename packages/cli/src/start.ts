@@ -77,6 +77,7 @@ interface HilePackageJson {
 export async function start(options: {
   dev: boolean,
   envFile?: string[],
+  silent?: boolean
 }) {
   // 先加载 --env-file（与 Node --env-file 行为一致：先加载的优先，已存在的 key 不被覆盖）
   const envFiles = options.envFile ?? [];
@@ -92,7 +93,7 @@ export async function start(options: {
     process.env.NODE_ENV = 'production';
   }
 
-  const offEvent = process.env.NODE_ENV === 'development'
+  const offEvent = !options.silent && process.env.NODE_ENV === 'development'
     ? container.on(logContainerEvent)
     : () => { };
 

@@ -19,9 +19,18 @@ program.version(pkg.version, '-v, --version', '当前版本号');
 program
   .command('start')
   .option('-d, --dev', '开发模式', false)
+  .option('-s, --silent', '静默模式', false)
   .option('-e, --env-file <path>', '加载指定 env 文件（兼容 Node --env-file 语义；可多次指定，先加载的不被后加载覆盖）', (v: string, acc: string[]) => (acc.push(v), acc), [] as string[])
   .description('启动服务，加载所有后缀为 boot.ts 或 boot.js 的服务，并注册退出钩子，在进程退出时销毁所有服务')
-  .action((options: { dev: boolean; envFile?: string[] }) => start({ dev: options.dev, envFile: options.envFile }));
+  .action((options: {
+    dev: boolean;
+    envFile?: string[],
+    silent?: boolean
+  }) => start({
+    dev: options.dev,
+    envFile: options.envFile,
+    silent: options.silent
+  }));
 
 program.parseAsync(process.argv);
 
