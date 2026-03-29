@@ -16,16 +16,16 @@
   "devDependencies": {
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "eslint": "^9",
-    "eslint-config-next": "16.1.6",
+    "eslint": "^10.1.0",
+    "eslint-config-next": "16.2.1",
     "fix-esm-import-path": "^1.10.3"
   },
   "dependencies": {
-    "@hile/cli": "^1.0.18",
-    "@hile/core": "^1.0.20",
-    "@hile/http": "^1.0.24",
-    "@hile/http-next": "^1.0.1",
-    "next": "^16.1.6",
+    "@hile/cli": "^1.0.23",
+    "@hile/core": "^1.0.22",
+    "@hile/http": "^1.0.28",
+    "@hile/http-next": "^1.0.8",
+    "next": "^16.2.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   }
