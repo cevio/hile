@@ -9,7 +9,7 @@ description: "@hile/core 的代码生成与使用规范。适用于定义/加载
 
 ## 1. 强约束（必须遵守）
 
-1. 服务必须使用 `async (shutdown)` 形态定义。
+1. 服务必须使用 `defineService(key, async (shutdown) => ...)` 形态：`key` 为 `ServiceKey`（`string | symbol`），在容器内唯一标识该服务槽位；同一 key 共享单例。
 2. 只能通过 `defineService` / `container.register` 产出服务对象。
 3. 只能通过 `loadService` / `container.resolve` 获取服务实例。
 4. 外部资源创建后必须立即注册 `shutdown`。
@@ -34,7 +34,7 @@ description: "@hile/core 的代码生成与使用规范。适用于定义/加载
 
 允许订阅：`container.on(listener)`。
 
-关键事件：
+关键事件（服务相关事件携带 `key: ServiceKey`）：
 
 - `service:init`
 - `service:ready`
@@ -50,13 +50,14 @@ description: "@hile/core 的代码生成与使用规范。适用于定义/加载
 
 - 订阅后必须在生命周期结束时取消订阅。
 - 记录错误时保留原始 error 对象。
+- 日志展示 key 时使用 `formatServiceKey(event.key)`。
 
 ## 4. 依赖图与循环依赖
 
 容器会自动记录服务依赖并检测循环依赖：
 
-- `getDependencyGraph()`
-- `getStartupOrder()`
+- `getDependencyGraph()`（`nodes` / `edges` 使用 `ServiceKey`）
+- `getStartupOrder()` 返回 `ServiceKey[]`
 
 规则：
 
@@ -82,22 +83,22 @@ export async function query(sql: string) {
 
 ```typescript
 // ✗
-const fake = { id: 1, fn: async () => 1 }
+const fake = { key: 'x', fn: async () => 1 }
 
 // ✓
-const real = defineService(async () => 1)
+const real = defineService('real', async () => 1)
 ```
 
 ### 5.3 不注册资源清理
 
 ```typescript
 // ✗
-export const bad = defineService(async () => {
+export const bad = defineService('bad', async () => {
   return await createPool()
 })
 
 // ✓
-export const good = defineService(async (shutdown) => {
+export const good = defineService('good', async (shutdown) => {
   const pool = await createPool()
   shutdown(() => pool.end())
   return pool

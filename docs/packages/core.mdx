@@ -15,9 +15,9 @@ pnpm add @hile/core
 
 ## 核心概念
 
-`@hile/core` 提供一个**异步服务容器**，负责管理服务的注册、加载、缓存和销毁。它解决的核心问题是：
+`@hile/core` 提供一个**异步服务容器**，负责管理服务的注册、加载、缓存和销毁。默认容器挂在 `globalThis.HILE_GLOBAL_CONTAINER` 上，同一进程内各模块共享。它解决的核心问题是：
 
-1. **全局单例** — 同一个服务无论在哪里加载，返回同一个实例
+1. **全局单例（按 key）** — 同一 **服务 key** 无论在哪里加载，返回同一个实例；不同 key 彼此独立
 2. **并发安全** — 多处同时加载同一服务时，只初始化一次
 3. **资源管理** — 每个服务注册清理回调，进程退出时统一销毁
 4. **依赖追踪** — 自动构建服务间依赖图，检测循环依赖
@@ -33,7 +33,7 @@ pnpm add @hile/core
 ```typescript
 import { defineService } from '@hile/core'
 
-export const databaseService = defineService(async (shutdown) => {
+export const databaseService = defineService('database', async (shutdown) => {
   // 创建资源
   const pool = await createPool({
     host: 'localhost',
@@ -51,10 +51,12 @@ export const databaseService = defineService(async (shutdown) => {
 
 `defineService` 做了什么：
 
-1. 为服务分配一个唯一 ID
+1. 使用你传入的 **服务 key**（`string` 或 `symbol`）在容器内标识该服务槽位；同一 key 多次 `defineService`/`register` 指向同一单例槽（可更新工厂函数）
 2. 将服务函数注册到默认容器
-3. 返回一个 `ServiceRegisterProps` 对象（包含 `id`、`fn`、`flag`）
+3. 返回一个 `ServiceRegisterProps` 对象（包含 `key`、`fn`、`flag`）
 4. **此时服务函数并未执行**，只有 `loadService` 时才会执行
+
+集成包常用 `Symbol.for('包名')` 作为 key，避免与用户字符串冲突；应用内可用 `'http'`、`'database'` 等可读字符串。
 
 <Warning>
   服务函数必须是 `async` 函数（或返回 Promise）。同步函数可能无法正确触发错误路径的清理机制。
@@ -107,7 +109,7 @@ import { defineService, loadService } from '@hile/core'
 import { databaseService } from './database'
 import { cacheService } from './cache'
 
-export const userService = defineService(async (shutdown) => {
+export const userService = defineService('user', async (shutdown) => {
   // 加载依赖的服务 — 容器自动记录 userService → databaseService
   const db = await loadService(databaseService)
   // 容器自动记录 userService → cacheService
@@ -141,7 +143,7 @@ export const userService = defineService(async (shutdown) => {
 每个服务通过 `shutdown(fn)` 注册清理回调。当容器关闭或服务初始化失败时，这些回调会被执行。
 
 ```typescript
-export const connectionService = defineService(async (shutdown) => {
+export const connectionService = defineService('connection', async (shutdown) => {
   const primary = await connectPrimary()
   shutdown(() => primary.disconnect())
 
@@ -183,7 +185,7 @@ const testContainer = new Container({
 })
 
 // 在隔离容器中注册和加载服务
-const service = testContainer.register(async (shutdown) => {
+const service = testContainer.register('test', async (shutdown) => {
   const conn = await createConnection()
   shutdown(() => conn.close())
   return conn
@@ -208,32 +210,32 @@ const container = new Container({
 })
 ```
 
-超时后会抛出类似 `service startup timeout: 1 exceeded 5000ms` 的错误，进入错误处理流程（执行已注册的 shutdown 回调）。
+超时后会抛出类似 `service startup timeout: <key> exceeded 5000ms` 的错误（`<key>` 为 `formatServiceKey(key)` 的文本），进入错误处理流程（执行已注册的 shutdown 回调）。
 
 ### 事件订阅
 
 ```typescript
-import container from '@hile/core'
+import container, { formatServiceKey } from '@hile/core'
 
 const off = container.on((event) => {
   switch (event.type) {
     case 'service:init':
-      console.log(`[init] 服务 #${event.id} 开始初始化`)
+      console.log(`[init] 服务 ${formatServiceKey(event.key)} 开始初始化`)
       break
     case 'service:ready':
-      console.log(`[ready] 服务 #${event.id} 就绪，耗时 ${event.durationMs}ms`)
+      console.log(`[ready] 服务 ${formatServiceKey(event.key)} 就绪，耗时 ${event.durationMs}ms`)
       break
     case 'service:error':
-      console.error(`[error] 服务 #${event.id} 失败 (${event.durationMs}ms):`, event.error)
+      console.error(`[error] 服务 ${formatServiceKey(event.key)} 失败 (${event.durationMs}ms):`, event.error)
       break
     case 'service:shutdown:start':
-      console.log(`[shutdown] 服务 #${event.id} 开始关闭`)
+      console.log(`[shutdown] 服务 ${formatServiceKey(event.key)} 开始关闭`)
       break
     case 'service:shutdown:done':
-      console.log(`[shutdown] 服务 #${event.id} 已关闭 (${event.durationMs}ms)`)
+      console.log(`[shutdown] 服务 ${formatServiceKey(event.key)} 已关闭 (${event.durationMs}ms)`)
       break
     case 'service:shutdown:error':
-      console.error(`[shutdown] 服务 #${event.id} 关闭失败:`, event.error)
+      console.error(`[shutdown] 服务 ${formatServiceKey(event.key)} 关闭失败:`, event.error)
       break
     case 'container:shutdown:start':
       console.log('[container] 容器开始关闭')
@@ -258,12 +260,12 @@ container.off(listener)
 ```typescript
 // 获取完整依赖图
 const graph = container.getDependencyGraph()
-console.log(graph.nodes)  // [1, 2, 3, 4] — 所有服务 ID
-console.log(graph.edges)  // [{ from: 1, to: 2 }, { from: 1, to: 3 }] — 依赖边
+console.log(graph.nodes)  // 所有已注册服务的 key（按首次 register 的序号排序）
+console.log(graph.edges)  // [{ from: 'a', to: 'b' }, ...] — 依赖边（from/to 均为 ServiceKey）
 
-// 获取启动顺序（按首次启动的顺序）
+// 获取启动顺序（按首次 resolve 启动的顺序）
 const order = container.getStartupOrder()
-console.log(order)  // [1, 2, 3, 4]
+console.log(order)  // 例如 ['database', 'cache', 'user']
 ```
 
 ### 服务校验
@@ -271,17 +273,14 @@ console.log(order)  // [1, 2, 3, 4]
 ```typescript
 import { defineService, isService } from '@hile/core'
 
-const myService = defineService(async () => 'hello')
+const myService = defineService('demo', async () => 'hello')
 
 isService(myService) // true
-isService({ id: 1, fn: () => {} } as any) // false — 缺少内部标记
+isService({ key: 'x', fn: () => {} } as any) // false — 缺少内部 flag
 isService(null) // false
 ```
 
-`isService` 检查三个条件：
-1. `flag` 等于内部 Symbol（防止伪造）
-2. `id` 是 number
-3. `fn` 是 function
+`isService` 检查：`flag` 为内部标记、`fn` 为函数、`key` 为 `string` 或 `symbol`。
 
 ### 手动关闭
 
@@ -305,28 +304,28 @@ process.on('SIGTERM', async () => {
 
 | 导出 | 类型 | 说明 |
 |------|------|------|
-| `container` | `Container` | 默认容器实例（也是 default export） |
-| `defineService(fn)` | `function` | 向默认容器注册服务，返回 `ServiceRegisterProps` |
+| `container` | `Container` | 默认容器实例（也是 default export），进程内单例 |
+| `defineService(key, fn)` | `function` | 向默认容器注册服务，返回 `ServiceRegisterProps` |
 | `loadService(props)` | `function` | 从默认容器加载服务，返回 `Promise<R>` |
 | `isService(props)` | `function` | 校验对象是否为合法服务注册信息 |
+| `formatServiceKey(key)` | `function` | 将 `ServiceKey` 格式化为可读字符串（日志用） |
 | `Container` | `class` | 容器类，用于创建隔离容器 |
 
 ### Container 实例方法
 
 | 方法 | 返回值 | 说明 |
 |------|--------|------|
-| `register(fn)` | `ServiceRegisterProps<R>` | 注册服务（同一函数引用去重） |
+| `register(key, fn)` | `ServiceRegisterProps<R>` | 注册服务（同一 key 共享槽位） |
 | `resolve(props)` | `Promise<R>` | 加载服务 |
 | `shutdown()` | `Promise<void>` | 关闭所有服务，执行清理回调 |
 | `on(listener)` | `() => void` | 订阅事件，返回取消订阅函数 |
 | `off(listener)` | `void` | 取消订阅 |
-| `getLifecycle(id)` | `ServiceLifecycleStage \| undefined` | 获取服务当前生命周期阶段 |
-| `getDependencyGraph()` | `{ nodes, edges }` | 获取依赖图 |
-| `getStartupOrder()` | `number[]` | 获取服务启动顺序 |
-| `hasService(fn)` | `boolean` | 检查函数是否已注册 |
-| `hasMeta(id)` | `boolean` | 检查服务是否已有运行时元数据 |
-| `getIdByService(fn)` | `number \| undefined` | 通过函数获取服务 ID |
-| `getMetaById(id)` | `Paddings \| undefined` | 通过 ID 获取运行时元数据 |
+| `getLifecycle(key)` | `ServiceLifecycleStage \| undefined` | 按服务 key 获取当前生命周期阶段 |
+| `getDependencyGraph()` | `{ nodes, edges }` | `nodes` 为 `ServiceKey[]`，`edges` 为 `{ from, to }` |
+| `getStartupOrder()` | `ServiceKey[]` | 获取服务启动顺序（首次启动顺序） |
+| `hasService(key)` | `boolean` | 是否已对该 key 执行过 `register` |
+| `hasMeta(key)` | `boolean` | 该 key 是否已有运行时元数据（已触发过 resolve） |
+| `getMetaByKey(key)` | `Paddings \| undefined` | 按 key 获取运行时元数据 |
 
 ### ContainerOptions
 
@@ -347,15 +346,16 @@ process.on('SIGTERM', async () => {
 ### 类型定义
 
 ```typescript
+type ServiceKey = string | symbol;
 type ServiceCutDownFunction = () => unknown | Promise<unknown>;
 type ServiceCutDownHandler = (fn: ServiceCutDownFunction) => void;
 type ServiceFunction<R> = (fn: ServiceCutDownHandler) => R | Promise<R>;
 type ServiceLifecycleStage = 'init' | 'ready' | 'stopping' | 'stopped';
 
 interface ServiceRegisterProps<R> {
-  id: number;
+  key: ServiceKey;
   fn: ServiceFunction<R>;
-  flag: symbol;
+  flag: symbol; // 内部标记，勿手造
 }
 
 interface ContainerOptions {
@@ -364,12 +364,12 @@ interface ContainerOptions {
 }
 
 type ContainerEvent =
-  | { type: 'service:init'; id: number }
-  | { type: 'service:ready'; id: number; durationMs: number }
-  | { type: 'service:error'; id: number; error: any; durationMs: number }
-  | { type: 'service:shutdown:start'; id: number }
-  | { type: 'service:shutdown:done'; id: number; durationMs: number }
-  | { type: 'service:shutdown:error'; id: number; error: any }
+  | { type: 'service:init'; key: ServiceKey }
+  | { type: 'service:ready'; key: ServiceKey; durationMs: number }
+  | { type: 'service:error'; key: ServiceKey; error: any; durationMs: number }
+  | { type: 'service:shutdown:start'; key: ServiceKey }
+  | { type: 'service:shutdown:done'; key: ServiceKey; durationMs: number }
+  | { type: 'service:shutdown:error'; key: ServiceKey; error: any }
   | { type: 'container:shutdown:start' }
   | { type: 'container:shutdown:done'; durationMs: number }
   | { type: 'container:error'; error: any };
@@ -425,22 +425,22 @@ export async function query(sql: string) {
 
 ```typescript
 // ❌ 错误：绕过容器，isService 校验会失败
-const fake = { id: 1, fn: async () => 1 } as any
+const fake = { key: 'x', fn: async () => 1 } as any
 
 // ✅ 正确：通过 defineService 创建
-const real = defineService(async () => 1)
+const real = defineService('real', async () => 1)
 ```
 
 ### 不注册资源清理
 
 ```typescript
 // ❌ 错误：连接池永远不会被关闭
-export const bad = defineService(async () => {
+export const bad = defineService('bad', async () => {
   return await createPool()
 })
 
 // ✅ 正确：注册 shutdown 回调
-export const good = defineService(async (shutdown) => {
+export const good = defineService('good', async (shutdown) => {
   const pool = await createPool()
   shutdown(() => pool.end())
   return pool

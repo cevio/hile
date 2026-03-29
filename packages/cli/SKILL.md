@@ -55,7 +55,7 @@ description: "@hile/cli 的强约束生成规范。适用于 boot 编排、启�
 export default function main() {}
 
 // ✓
-export default defineService(async (shutdown) => {
+export default defineService('http', async (shutdown) => {
   // ...
 })
 ```

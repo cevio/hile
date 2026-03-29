@@ -1,7 +1,7 @@
 import { registerExitHook } from './exitHook.js';
 import { glob } from 'glob';
 import { resolve } from 'node:path';
-import { container, isService, loadService, ServiceRegisterProps, ContainerEvent } from '@hile/core';
+import { container, formatServiceKey, isService, loadService, ServiceRegisterProps, ContainerEvent } from '@hile/core';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
@@ -36,23 +36,23 @@ function logContainerEvent(event: ContainerEvent) {
 
   switch (event.type) {
     case 'service:init':
-      console.info(`${tag} ${target(`service#${event.id}`)} ${dim('init')}`);
+      console.info(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${dim('init')}`);
       break;
     case 'service:ready':
-      console.info(`${tag} ${target(`service#${event.id}`)} ${ok('ready')} ${dim(`(${event.durationMs}ms)`)}`);
+      console.info(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${ok('ready')} ${dim(`(${event.durationMs}ms)`)}`);
       break;
     case 'service:error':
-      console.error(`${tag} ${target(`service#${event.id}`)} ${err('failed')} ${dim(`(${event.durationMs}ms)`)}`);
+      console.error(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${err('failed')} ${dim(`(${event.durationMs}ms)`)}`);
       console.error(event.error);
       break;
     case 'service:shutdown:start':
-      console.info(`${tag} ${target(`service#${event.id}`)} ${warn('stopping')}`);
+      console.info(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${warn('stopping')}`);
       break;
     case 'service:shutdown:done':
-      console.info(`${tag} ${target(`service#${event.id}`)} ${dim('stopped')} ${dim(`(${event.durationMs}ms)`)}`);
+      console.info(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${dim('stopped')} ${dim(`(${event.durationMs}ms)`)}`);
       break;
     case 'service:shutdown:error':
-      console.error(`${tag} ${target(`service#${event.id}`)} ${err('shutdown error')}`);
+      console.error(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${err('shutdown error')}`);
       console.error(event.error);
       break;
     case 'container:shutdown:start':

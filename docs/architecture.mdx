@@ -30,7 +30,7 @@ Hile 按职责分为三层，每一层都是可选的，你可以按需引入：
     **职责：** 管理所有服务的创建、缓存、依赖追踪与销毁。
 
     核心能力：
-    - `defineService(fn)` — 向容器注册一个异步服务
+    - `defineService(key, fn)` — 向容器注册一个异步服务（`key` 为 `string | symbol`，标识全局单例槽位）
     - `loadService(props)` — 按需加载服务（首次执行，后续返回缓存）
     - 并发请求合并 — 多处同时加载同一服务，只初始化一次
     - 依赖图追踪 — 自动记录服务间依赖关系
@@ -73,7 +73,7 @@ Hile 按职责分为三层，每一层都是可选的，你可以按需引入：
                 ▼                           ▼
   ┌──────────────────────┐     ┌──────────────────────┐
   │   注册到容器          │     │   容器检查状态        │
-  │   分配唯一 ID         │     │                      │
+  │   绑定服务 key        │     │                      │
   └──────────┬───────────┘     └──────────┬───────────┘
              │                            │
              │              ┌─────────────┼─────────────┐
@@ -210,15 +210,17 @@ Next.js handler              ← 页面渲染（SSR/RSC）
 容器使用 `AsyncLocalStorage` 在服务函数执行期间追踪调用栈。当服务 A 内部 `loadService(B)` 时，容器自动记录 `A → B` 的依赖边。
 
 ```typescript
-const serviceA = defineService(async (shutdown) => {
+const serviceC = defineService('c', async () => ({}))
+
+const serviceB = defineService('b', async (shutdown) => {
+  const c = await loadService(serviceC)  // 记录 B → C
+  return { c }
+})
+
+const serviceA = defineService('a', async (shutdown) => {
   const b = await loadService(serviceB)  // 记录 A → B
   const c = await loadService(serviceC)  // 记录 A → C
   return { b, c }
-})
-
-const serviceB = defineService(async (shutdown) => {
-  const c = await loadService(serviceC)  // 记录 B → C
-  return { c }
 })
 ```
 
@@ -232,17 +234,17 @@ A → C
 如果 `serviceC` 内部又 `loadService(serviceA)`，容器会检测到 `C → A` 形成环路，立即抛出：
 
 ```
-Error: circular dependency detected: 3 -> 1
+Error: circular dependency detected: <keyA> -> <keyB>（具体为服务 key 的字符串形式）
 ```
 
 你可以随时查看依赖图：
 
 ```typescript
 const graph = container.getDependencyGraph()
-// { nodes: [1, 2, 3], edges: [{ from: 1, to: 2 }, { from: 1, to: 3 }, { from: 2, to: 3 }] }
+// { nodes: ['a', 'b', 'c'], edges: [{ from: 'a', to: 'b' }, ...] } — nodes/edges 均为 ServiceKey
 
 const order = container.getStartupOrder()
-// [1, 2, 3]  — 按首次启动的顺序
+// ['a', 'b', 'c']  — 按首次启动的顺序
 ```
 
 ---
@@ -253,12 +255,12 @@ const order = container.getStartupOrder()
 
 | 事件类型 | 触发时机 | 携带数据 |
 |---------|---------|---------|
-| `service:init` | 服务开始初始化 | `id` |
-| `service:ready` | 服务初始化成功 | `id`, `durationMs` |
-| `service:error` | 服务初始化失败 | `id`, `error`, `durationMs` |
-| `service:shutdown:start` | 服务开始关闭 | `id` |
-| `service:shutdown:done` | 服务关闭完成 | `id`, `durationMs` |
-| `service:shutdown:error` | shutdown 回调执行失败 | `id`, `error` |
+| `service:init` | 服务开始初始化 | `key`（`ServiceKey`） |
+| `service:ready` | 服务初始化成功 | `key`, `durationMs` |
+| `service:error` | 服务初始化失败 | `key`, `error`, `durationMs` |
+| `service:shutdown:start` | 服务开始关闭 | `key` |
+| `service:shutdown:done` | 服务关闭完成 | `key`, `durationMs` |
+| `service:shutdown:error` | shutdown 回调执行失败 | `key`, `error` |
 | `container:shutdown:start` | 容器开始整体关闭 | — |
 | `container:shutdown:done` | 容器关闭完成 | `durationMs` |
 | `container:error` | 容器级错误（如循环依赖） | `error` |
@@ -266,15 +268,15 @@ const order = container.getStartupOrder()
 手动订阅事件：
 
 ```typescript
-import container from '@hile/core'
+import { container, formatServiceKey } from '@hile/core'
 
 const off = container.on((event) => {
   switch (event.type) {
     case 'service:ready':
-      console.log(`服务 #${event.id} 就绪，耗时 ${event.durationMs}ms`)
+      console.log(`服务 ${formatServiceKey(event.key)} 就绪，耗时 ${event.durationMs}ms`)
       break
     case 'service:error':
-      console.error(`服务 #${event.id} 失败:`, event.error)
+      console.error(`服务 ${formatServiceKey(event.key)} 失败:`, event.error)
       break
   }
 })
@@ -301,9 +303,9 @@ container.shutdown()
     ▼
 按 LIFO 顺序遍历 shutdownQueues
     │
-    ├── service#3: 关闭 HTTP 服务器
-    ├── service#2: 断开 Redis 连接
-    └── service#1: 销毁数据库连接池
+    ├── service(http): 关闭 HTTP 服务器
+    ├── service(@hile/ioredis): 断开 Redis 连接
+    └── service(@hile/typeorm): 销毁数据库连接池
     │
     ▼
 所有 shutdown 回调执行完毕

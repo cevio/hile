@@ -20,6 +20,8 @@ const redis = await loadService(ioredisService)
 // 使用 redis.get/set 等 ioredis API
 ```
 
+默认导出使用稳定的服务 key（实现中为 `Symbol.for` + 包名）。需要多个 Redis 连接时请为每个连接使用不同的 `defineService(key, ...)`。
+
 ## 环境变量
 
 默认客户端从以下环境变量读取配置：

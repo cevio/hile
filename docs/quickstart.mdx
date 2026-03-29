@@ -154,7 +154,7 @@ my-app/
     import { defineService } from '@hile/core'
     import { Http } from '@hile/http'
 
-    export default defineService(async (shutdown) => {
+    export default defineService('http', async (shutdown) => {
       const http = new Http({ port: 3000 })
 
       // 注册全局中间件：请求日志

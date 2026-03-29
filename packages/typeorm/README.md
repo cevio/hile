@@ -20,6 +20,8 @@ const ds = await loadService(typeormService)
 // 使用 ds.getRepository(Entity)、ds.manager 等
 ```
 
+默认导出使用稳定的服务 key（实现中为 `Symbol.for` + 包名），与 `@hile/core` 的「按 key 单例」语义一致；需要多个 DataSource 时请自行 `defineService(不同 key, ...)` 再包装。
+
 ## 环境变量
 
 默认 DataSource 从以下环境变量读取配置：

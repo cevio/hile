@@ -73,20 +73,22 @@ hile start --dev --env-file .env.development
 开发模式下的典型输出（在终端中会带颜色：成功绿、错误红、警告黄等）：
 
 ```
-[hile] service#1 init
-[hile] service#2 init
-[hile] service#2 ready (45ms)
-[hile] service#1 ready (1203ms)
+[hile] service(database) init
+[hile] service(http) init
+[hile] service(http) ready (45ms)
+[hile] service(database) ready (1203ms)
 ```
+
+（实际标签为 `service(<key>)`，`<key>` 来自各 boot / 集成包注册的 `ServiceKey`，开发模式下经 `formatServiceKey` 格式化。）
 
 按 Ctrl+C 关闭时：
 
 ```
 [hile] container shutdown start
-[hile] service#1 stopping
-[hile] service#1 stopped (12ms)
-[hile] service#2 stopping
-[hile] service#2 stopped (3ms)
+[hile] service(http) stopping
+[hile] service(http) stopped (12ms)
+[hile] service(database) stopping
+[hile] service(database) stopped (3ms)
 [hile] container shutdown done (15ms)
 ```
 
@@ -113,7 +115,7 @@ Boot 文件是 Hile 应用的服务入口点。CLI 会扫描运行时目录下�
 import { defineService } from '@hile/core'
 import { Http } from '@hile/http'
 
-export default defineService(async (shutdown) => {
+export default defineService('http', async (shutdown) => {
   const http = new Http({ port: 3000 })
 
   await http.load('./src/controllers', {
@@ -134,7 +136,7 @@ export default defineService(async (shutdown) => {
 |------|------|
 | 文件名 | 必须以 `.boot.ts` 或 `.boot.js` 结尾 |
 | 导出 | 必须有 `export default`（或 `module.exports`） |
-| 导出类型 | 必须是 `defineService()` 的返回值 |
+| 导出类型 | 必须是 `defineService(key, fn)` 的返回值 |
 | 校验 | CLI 使用 `isService()` 校验，不合法则抛出 `invalid service file` |
 
 ### 多个 Boot 文件

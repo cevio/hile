@@ -66,7 +66,7 @@ import { dirname, resolve } from "node:path";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-export default defineService(async (shutdown) => {
+export default defineService('http.next', async (shutdown) => {
   const httpNext = new HttpNext({
     port: 3000,
     cwd: resolve(__dirname, ".."),

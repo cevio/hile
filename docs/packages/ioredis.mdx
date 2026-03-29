@@ -205,7 +205,7 @@ await redis.publish('events', JSON.stringify({ type: 'user_created', id: 1 }))
 import { defineService, loadService } from '@hile/core'
 import ioredisService from '@hile/ioredis'
 
-export default defineService(async () => {
+export default defineService('redis.boot', async () => {
   const redis = await loadService(ioredisService)
   console.log('Redis 已连接')
   return redis
@@ -239,7 +239,7 @@ export default defineService(async () => {
     import { defineService } from '@hile/core'
     import Redis from 'ioredis'
 
-    export const clusterService = defineService(async (shutdown) => {
+    export const clusterService = defineService('redis.cluster', async (shutdown) => {
       const cluster = new Redis.Cluster([
         { host: 'node1', port: 6379 },
         { host: 'node2', port: 6379 },
@@ -253,13 +253,13 @@ export default defineService(async () => {
     默认导出是单例。如需多个实例，自定义额外的服务：
 
     ```typescript
-    export const cacheRedis = defineService(async (shutdown) => {
+    export const cacheRedis = defineService('redis.cache', async (shutdown) => {
       const client = new Redis({ host: 'cache-host', port: 6379 })
       shutdown(() => client.disconnect())
       return client
     })
 
-    export const sessionRedis = defineService(async (shutdown) => {
+    export const sessionRedis = defineService('redis.session', async (shutdown) => {
       const client = new Redis({ host: 'session-host', port: 6380 })
       shutdown(() => client.disconnect())
       return client

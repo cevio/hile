@@ -11,7 +11,7 @@ description: "@hile/typeorm 的代码生成与使用规范。适用于 DataSourc
 
 `@hile/typeorm` 提供：
 
-- 默认导出：Hile 服务化的 TypeORM `DataSource`
+- 默认导出：Hile 服务化的 TypeORM `DataSource`（服务 key 为稳定 symbol，见包内实现）
 - `transaction`：事务封装，支持失败时 LIFO 执行补偿回调
 
 依赖：`@hile/core`、`typeorm`。

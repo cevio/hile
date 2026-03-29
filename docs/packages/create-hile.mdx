@@ -109,7 +109,7 @@ my-app/
     import HttpNext from "@hile/http-next";
     import { defineService } from "@hile/core";
 
-    export default defineService(async (shutdown) => {
+    export default defineService('http.next', async (shutdown) => {
       const httpNext = new HttpNext({
         port: 3000,
         cwd: resolve(__dirname, ".."),

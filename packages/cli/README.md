@@ -104,7 +104,7 @@ HILE_RUNTIME_DIR=./custom hile start
 import { defineService, loadService } from '@hile/core'
 import { configService } from './services/config'
 
-export default defineService(async (shutdown) => {
+export default defineService('http', async (shutdown) => {
   const config = await loadService(configService)
   const pool = await createPool(config.dbUrl)
   shutdown(() => pool.end())

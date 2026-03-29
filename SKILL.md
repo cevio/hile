@@ -44,14 +44,14 @@ description: "引导 AI 在本仓库或使用 Hile 的项目中，正确选用�
 
 ### 3.1 服务定义与加载（@hile/core）
 
-- 服务**必须**用 `defineService(async (shutdown) => { ... })` 定义，参数名建议为 `shutdown`。
+- 服务**必须**用 `defineService(key, async (shutdown) => { ... })` 定义：第一个参数为 **服务 key**（`string` 或 `symbol`，全局唯一标识该槽位），`shutdown` 参数名建议不变。
 - **禁止**在模块顶层写 `const x = await loadService(...)`；只在**函数/服务内部**或 boot 内按需 `loadService`。
 - 创建外部资源（连接、服务器、定时器等）后**必须**立即 `shutdown(() => ...)` 注册清理；清理顺序为 LIFO。
-- 获取实例**只能**通过 `loadService(service)` 或 `container.resolve(service)`，禁止手造 `{ id, fn }` 等假服务对象。
+- 获取实例**只能**通过 `loadService(service)` 或 `container.resolve(service)`，禁止手造 `{ key, fn, flag }` 等假服务对象。
 
 ### 3.2 Boot 与启动（@hile/cli）
 
-- Boot 文件**必须**命名为 `*.boot.ts` 或 `*.boot.js`，且 **`export default`** 为 `defineService(...)` 或 `container.register(...)` 的返回值。
+- Boot 文件**必须**命名为 `*.boot.ts` 或 `*.boot.js`，且 **`export default`** 为 `defineService(key, ...)` 或 `container.register(key, ...)` 的返回值。
 - `package.json` 中的 **`hile.auto_load_packages`** 仅允许**模块名**（如 `@hile/typeorm`），禁止文件路径。
 - 加载顺序固定：先 `auto_load_packages`，再扫描运行目录下的 `*.boot.{ts,js}`。运行目录：`HILE_RUNTIME_DIR` > `--dev` 时 `src/` > 否则 `dist/`。
 
@@ -71,7 +71,7 @@ description: "引导 AI 在本仓库或使用 Hile 的项目中，正确选用�
 ## 4. 按场景的代码导向
 
 - **新建一个“可运行的服务入口”**  
-  → 在运行目录（如 `src/`）下新增 **`*.boot.ts`**，**export default defineService(async (shutdown) => { ... })**，其中创建 Http/HttpNext 或其它资源并 **shutdown(close)**。用 **`hile start --dev`** 加载。
+  → 在运行目录（如 `src/`）下新增 **`*.boot.ts`**，**export default defineService('http', async (shutdown) => { ... })**（或你选定的唯一 key），其中创建 Http/HttpNext 或其它资源并 **shutdown(close)**。用 **`hile start --dev`** 加载。
 
 - **新增 HTTP API 路由**  
   → 使用 **defineController** 的 **`*.controller.ts`**，放在 **http.load()** 所加载的目录下（如 `src/controllers/` 或 http-next 的 `src/app/`）；**不要**在控制器里写 **ctx.body = ... 再 return**，只 **return** 结果，由响应插件链写 **ctx.body**。

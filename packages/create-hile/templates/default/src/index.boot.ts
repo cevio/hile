@@ -7,7 +7,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const __controllers = resolve(__dirname, 'controllers')
 
-export default defineService(async (shutdown) => {
+export default defineService('http', async (shutdown) => {
   const http = new Http({
     port: process.env.HTTP_PORT
       ? parseInt(process.env.HTTP_PORT)

@@ -1,3 +1,4 @@
+import pkg from '../package.json' with { type: 'json' }
 import { defineService } from '@hile/core';
 import Redis, { RedisOptions } from 'ioredis';
 
@@ -11,7 +12,7 @@ import Redis, { RedisOptions } from 'ioredis';
  * - REDIS_PASSWORD: Redis 密码
  * - REDIS_DB: Redis 数据库
  */
-export default defineService(async (shutdown) => {
+export default defineService(Symbol.for(pkg.name), async (shutdown) => {
   const options: RedisOptions = {
     host: process.env.REDIS_HOST,
     port: typeof process.env.REDIS_PORT === 'string' ? Number(process.env.REDIS_PORT) : process.env.REDIS_PORT,

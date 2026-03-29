@@ -3,14 +3,20 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 export type ServiceCutDownFunction = () => unknown | Promise<unknown>;
 export type ServiceCutDownHandler = (fn: ServiceCutDownFunction) => void;
 export type ServiceFunction<R> = (fn: ServiceCutDownHandler) => R | Promise<R>;
-const sericeFlag = Symbol('service');
+export type ServiceKey = string | symbol;
+
+const sericeFlag = Symbol.for('service');
+
+declare global {
+  var HILE_GLOBAL_CONTAINER: Container;
+}
 
 export type ServiceLifecycleStage = 'init' | 'ready' | 'stopping' | 'stopped';
 
 export interface ServiceRegisterProps<R> {
-  id: number
   fn: ServiceFunction<R>
   flag: typeof sericeFlag;
+  key: ServiceKey;
 }
 
 export interface ContainerOptions {
@@ -19,12 +25,12 @@ export interface ContainerOptions {
 }
 
 export type ContainerEvent =
-  | { type: 'service:init'; id: number }
-  | { type: 'service:ready'; id: number; durationMs: number }
-  | { type: 'service:error'; id: number; error: any; durationMs: number }
-  | { type: 'service:shutdown:start'; id: number }
-  | { type: 'service:shutdown:done'; id: number; durationMs: number }
-  | { type: 'service:shutdown:error'; id: number; error: any }
+  | { type: 'service:init'; key: ServiceKey }
+  | { type: 'service:ready'; key: ServiceKey; durationMs: number }
+  | { type: 'service:error'; key: ServiceKey; error: any; durationMs: number }
+  | { type: 'service:shutdown:start'; key: ServiceKey }
+  | { type: 'service:shutdown:done'; key: ServiceKey; durationMs: number }
+  | { type: 'service:shutdown:error'; key: ServiceKey; error: any }
   | { type: 'container:shutdown:start' }
   | { type: 'container:shutdown:done'; durationMs: number }
   | { type: 'container:error'; error: any };
@@ -52,20 +58,26 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs?: number, message?:
   }
 }
 
+/** 日志或调试时展示服务 key */
+export function formatServiceKey(k: ServiceKey): string {
+  return typeof k === 'string' ? k : String(k);
+}
+
 export class Container {
-  private id = 1;
-  private readonly packages = new Map<Function, number>();
-  private readonly paddings = new Map<number, Paddings>();
+  private keyOrder = 0;
+  private readonly keyOrdinal = new Map<ServiceKey, number>();
+  private readonly registeredKeys = new Set<ServiceKey>();
+  private readonly paddings = new Map<ServiceKey, Paddings>();
 
-  private readonly dependencies = new Map<number, Set<number>>();
-  private readonly dependents = new Map<number, Set<number>>();
+  private readonly dependencies = new Map<ServiceKey, Set<ServiceKey>>();
+  private readonly dependents = new Map<ServiceKey, Set<ServiceKey>>();
 
-  private readonly shutdownFunctions = new Map<number, ServiceCutDownFunction[]>();
-  private readonly shutdownQueues: number[] = [];
-  private readonly startupOrder: number[] = [];
+  private readonly shutdownFunctions = new Map<ServiceKey, ServiceCutDownFunction[]>();
+  private readonly shutdownQueues: ServiceKey[] = [];
+  private readonly startupOrder: ServiceKey[] = [];
 
   private readonly listeners = new Set<(event: ContainerEvent) => void>();
-  private readonly context = new AsyncLocalStorage<number[]>();
+  private readonly context = new AsyncLocalStorage<ServiceKey[]>();
 
   constructor(private readonly options: ContainerOptions = {}) { }
 
@@ -79,15 +91,15 @@ export class Container {
     }
   }
 
-  private getId() {
-    let i = this.id++;
-    if (i >= Number.MAX_SAFE_INTEGER) {
-      i = this.id = 1;
+  private nextOrdinal() {
+    let o = ++this.keyOrder;
+    if (o >= Number.MAX_SAFE_INTEGER) {
+      o = this.keyOrder = 1;
     }
-    return i;
+    return o;
   }
 
-  private hasPath(from: number, to: number, visited = new Set<number>()): boolean {
+  private hasPath(from: ServiceKey, to: ServiceKey, visited = new Set<ServiceKey>()): boolean {
     if (from === to) return true;
     if (visited.has(from)) return false;
     visited.add(from);
@@ -101,27 +113,27 @@ export class Container {
     return false;
   }
 
-  private trackDependency(parentId: number, childId: number) {
-    if (parentId === childId) {
-      throw new Error(`circular dependency detected: ${parentId} -> ${childId}`);
+  private trackDependency(parentKey: ServiceKey, childKey: ServiceKey) {
+    if (parentKey === childKey) {
+      throw new Error(`circular dependency detected: ${formatServiceKey(parentKey)} -> ${formatServiceKey(childKey)}`);
     }
 
-    if (!this.dependencies.has(parentId)) {
-      this.dependencies.set(parentId, new Set());
+    if (!this.dependencies.has(parentKey)) {
+      this.dependencies.set(parentKey, new Set());
     }
-    if (!this.dependents.has(childId)) {
-      this.dependents.set(childId, new Set());
+    if (!this.dependents.has(childKey)) {
+      this.dependents.set(childKey, new Set());
     }
 
-    const parentDeps = this.dependencies.get(parentId)!;
-    if (!parentDeps.has(childId)) {
-      if (this.hasPath(childId, parentId)) {
-        const error = new Error(`circular dependency detected: ${parentId} -> ${childId}`);
+    const parentDeps = this.dependencies.get(parentKey)!;
+    if (!parentDeps.has(childKey)) {
+      if (this.hasPath(childKey, parentKey)) {
+        const error = new Error(`circular dependency detected: ${formatServiceKey(parentKey)} -> ${formatServiceKey(childKey)}`);
         this.emit({ type: 'container:error', error });
         throw error;
       }
-      parentDeps.add(childId);
-      this.dependents.get(childId)!.add(parentId);
+      parentDeps.add(childKey);
+      this.dependents.get(childKey)!.add(parentKey);
     }
   }
 
@@ -134,17 +146,19 @@ export class Container {
     this.listeners.delete(listener);
   }
 
-  public getLifecycle(id: number): ServiceLifecycleStage | undefined {
-    return this.paddings.get(id)?.lifecycle;
+  public getLifecycle(key: ServiceKey): ServiceLifecycleStage | undefined {
+    return this.paddings.get(key)?.lifecycle;
   }
 
   public getDependencyGraph() {
-    const nodes = Array.from(this.packages.values()).sort((a, b) => a - b);
-    const edges: Array<{ from: number; to: number }> = [];
+    const nodes = Array.from(this.registeredKeys).sort(
+      (a, b) => (this.keyOrdinal.get(a)! - this.keyOrdinal.get(b)!),
+    );
+    const edges: Array<{ from: ServiceKey; to: ServiceKey }> = [];
 
-    for (const [id, deps] of this.dependencies.entries()) {
-      for (const dep of deps) {
-        edges.push({ from: id, to: dep });
+    for (const [fromKey, deps] of this.dependencies.entries()) {
+      for (const toKey of deps) {
+        edges.push({ from: fromKey, to: toKey });
       }
     }
 
@@ -155,27 +169,26 @@ export class Container {
     return [...this.startupOrder];
   }
 
-  public register<R>(fn: ServiceFunction<R>): ServiceRegisterProps<R> {
-    if (this.packages.has(fn)) {
-      return { id: this.packages.get(fn)!, fn, flag: sericeFlag }
+  public register<R>(key: ServiceKey, fn: ServiceFunction<R>): ServiceRegisterProps<R> {
+    if (!this.keyOrdinal.has(key)) {
+      this.keyOrdinal.set(key, this.nextOrdinal());
     }
-    const id = this.getId();
-    this.packages.set(fn, id);
-    return { id, fn, flag: sericeFlag }
+    this.registeredKeys.add(key);
+    return { key, fn, flag: sericeFlag };
   }
 
   public resolve<R>(props: ServiceRegisterProps<R>): Promise<R> {
-    const { id, fn } = props;
+    const { key, fn } = props;
     const stack = this.context.getStore() || [];
-    const parentId = stack.length ? stack[stack.length - 1] : undefined;
+    const parentKey = stack.length ? stack[stack.length - 1] : undefined;
 
-    if (parentId !== undefined) {
-      this.trackDependency(parentId, id);
+    if (parentKey !== undefined) {
+      this.trackDependency(parentKey, key);
     }
 
     return new Promise<R>((resolve, reject) => {
-      if (!this.paddings.has(id)) {
-        return this.run(id, fn, (e, v) => {
+      if (!this.paddings.has(key)) {
+        return this.run(key, fn, (e, v) => {
           if (e) {
             reject(e);
           } else {
@@ -183,7 +196,7 @@ export class Container {
           }
         })
       }
-      const state = this.paddings.get(id)!;
+      const state = this.paddings.get(key)!;
       switch (state.status) {
         case 0:
           state.queue.add({ resolve, reject });
@@ -198,7 +211,7 @@ export class Container {
     })
   }
 
-  private run<R>(id: number, fn: ServiceFunction<R>, callback: (e: any, v?: R) => void) {
+  private run<R>(key: ServiceKey, fn: ServiceFunction<R>, callback: (e: any, v?: R) => void) {
     const state: Paddings = {
       status: 0,
       lifecycle: 'init',
@@ -206,39 +219,39 @@ export class Container {
       queue: new Set(),
       startedAt: Date.now(),
     }
-    this.paddings.set(id, state);
-    if (!this.startupOrder.includes(id)) {
-      this.startupOrder.push(id);
+    this.paddings.set(key, state);
+    if (!this.startupOrder.includes(key)) {
+      this.startupOrder.push(key);
     }
-    this.emit({ type: 'service:init', id });
+    this.emit({ type: 'service:init', key });
 
     const curDown: ServiceCutDownHandler = (cutDownFn: ServiceCutDownFunction) => {
-      if (!this.shutdownQueues.includes(id)) {
-        this.shutdownQueues.push(id);
+      if (!this.shutdownQueues.includes(key)) {
+        this.shutdownQueues.push(key);
       }
-      if (!this.shutdownFunctions.has(id)) {
-        this.shutdownFunctions.set(id, []);
+      if (!this.shutdownFunctions.has(key)) {
+        this.shutdownFunctions.set(key, []);
       }
-      const pools = this.shutdownFunctions.get(id)!;
+      const pools = this.shutdownFunctions.get(key)!;
       if (!pools.includes(cutDownFn)) {
         pools.push(cutDownFn);
       }
     }
 
     const parentStack = this.context.getStore() || [];
-    const startupPromise = this.context.run([...parentStack, id], () => Promise.resolve(fn(curDown)));
+    const startupPromise = this.context.run([...parentStack, key], () => Promise.resolve(fn(curDown)));
 
     withTimeout(
       startupPromise,
       this.options.startTimeoutMs,
-      `service startup timeout: ${id} exceeded ${this.options.startTimeoutMs}ms`
+      `service startup timeout: ${formatServiceKey(key)} exceeded ${this.options.startTimeoutMs}ms`
     ).then((value) => {
       state.status = 1;
       state.lifecycle = 'ready';
       state.value = value;
       state.endedAt = Date.now();
       const durationMs = state.endedAt - state.startedAt;
-      this.emit({ type: 'service:ready', id, durationMs });
+      this.emit({ type: 'service:ready', key, durationMs });
 
       for (const queue of state.queue) {
         queue.resolve(value);
@@ -251,7 +264,7 @@ export class Container {
       state.error = e;
       state.endedAt = Date.now();
       const durationMs = state.endedAt - state.startedAt;
-      this.emit({ type: 'service:error', id, error: e, durationMs });
+      this.emit({ type: 'service:error', key, error: e, durationMs });
 
       const clear = () => {
         state.lifecycle = 'stopped';
@@ -262,26 +275,26 @@ export class Container {
         callback(e);
       }
 
-      this.shutdownService(id)
+      this.shutdownService(key)
         .then(clear)
         .catch((shutdownError) => {
-          this.emit({ type: 'service:shutdown:error', id, error: shutdownError });
+          this.emit({ type: 'service:shutdown:error', key, error: shutdownError });
           clear();
         });
     })
   }
 
-  private async shutdownService(id: number) {
-    if (this.shutdownQueues.includes(id)) {
-      const meta = this.paddings.get(id);
+  private async shutdownService(key: ServiceKey) {
+    if (this.shutdownQueues.includes(key)) {
+      const meta = this.paddings.get(key);
       if (meta) {
         meta.lifecycle = 'stopping';
       }
 
-      this.emit({ type: 'service:shutdown:start', id });
+      this.emit({ type: 'service:shutdown:start', key });
       const startedAt = Date.now();
 
-      const pools = this.shutdownFunctions.get(id)!;
+      const pools = this.shutdownFunctions.get(key)!;
       let i = pools.length;
       while (i--) {
         const teardown = pools[i];
@@ -289,21 +302,21 @@ export class Container {
           await withTimeout(
             Promise.resolve(teardown()),
             this.options.shutdownTimeoutMs,
-            `service shutdown timeout: ${id} exceeded ${this.options.shutdownTimeoutMs}ms`
+            `service shutdown timeout: ${formatServiceKey(key)} exceeded ${this.options.shutdownTimeoutMs}ms`
           );
         } catch (error) {
-          this.emit({ type: 'service:shutdown:error', id, error });
+          this.emit({ type: 'service:shutdown:error', key, error });
         }
       }
 
-      this.shutdownFunctions.delete(id);
-      this.shutdownQueues.splice(this.shutdownQueues.indexOf(id), 1);
+      this.shutdownFunctions.delete(key);
+      this.shutdownQueues.splice(this.shutdownQueues.indexOf(key), 1);
 
       if (meta) {
         meta.lifecycle = 'stopped';
       }
 
-      this.emit({ type: 'service:shutdown:done', id, durationMs: Date.now() - startedAt });
+      this.emit({ type: 'service:shutdown:done', key, durationMs: Date.now() - startedAt });
     }
   }
 
@@ -314,8 +327,8 @@ export class Container {
     // 循环直到队列清空；再让出一次事件循环，处理「shutdown 期间才调用 curDown」的晚注册 teardown
     while (true) {
       while (this.shutdownQueues.length > 0) {
-        const id = this.shutdownQueues[this.shutdownQueues.length - 1];
-        await this.shutdownService(id);
+        const key = this.shutdownQueues[this.shutdownQueues.length - 1];
+        await this.shutdownService(key);
       }
       await new Promise<void>(r => setImmediate(r));
       if (this.shutdownQueues.length === 0) break;
@@ -326,26 +339,29 @@ export class Container {
     this.emit({ type: 'container:shutdown:done', durationMs: Date.now() - startedAt });
   }
 
-  public hasService<R>(fn: ServiceFunction<R>) {
-    return this.packages.has(fn);
+  public hasService(key: ServiceKey) {
+    return this.registeredKeys.has(key);
   }
 
-  public hasMeta(id: number) {
-    return this.paddings.has(id);
+  public hasMeta(key: ServiceKey) {
+    return this.paddings.has(key);
   }
 
-  public getIdByService<R>(fn: ServiceFunction<R>) {
-    return this.packages.get(fn);
-  }
-
-  public getMetaById(id: number) {
-    return this.paddings.get(id);
+  public getMetaByKey(key: ServiceKey) {
+    return this.paddings.get(key);
   }
 }
 
-export const container = new Container();
-export function defineService<R>(fn: ServiceFunction<R>) {
-  return container.register(fn);
+function getGlobalContainer() {
+  if (!globalThis.HILE_GLOBAL_CONTAINER) {
+    globalThis.HILE_GLOBAL_CONTAINER = new Container();
+  }
+  return globalThis.HILE_GLOBAL_CONTAINER;
+}
+
+export const container = getGlobalContainer();
+export function defineService<R>(key: ServiceKey, fn: ServiceFunction<R>) {
+  return container.register(key, fn);
 }
 
 export function loadService<R>(props: ServiceRegisterProps<R>): Promise<R> {
@@ -353,7 +369,11 @@ export function loadService<R>(props: ServiceRegisterProps<R>): Promise<R> {
 }
 
 export function isService<R>(props: ServiceRegisterProps<R>) {
-  return props.flag === sericeFlag && typeof props.id === 'number' && typeof props.fn === 'function';
+  return (
+    props.flag === sericeFlag
+    && typeof props.fn === 'function'
+    && (typeof props.key === 'string' || typeof props.key === 'symbol')
+  );
 }
 
 export default container;

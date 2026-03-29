@@ -1,3 +1,4 @@
+import pkg from '../package.json' with { type: 'json' }
 import { defineService } from '@hile/core';
 import { DataSource, DataSourceOptions, QueryRunner } from 'typeorm';
 
@@ -15,7 +16,7 @@ import { DataSource, DataSourceOptions, QueryRunner } from 'typeorm';
  * - TYPEORM_ENTITY_PREFIX: 实体前缀
  * - TYPEORM_ENTITIES: 实体目录
  */
-export default defineService(async (shutdown) => {
+export default defineService(Symbol.for(pkg.name), async (shutdown) => {
   const configs: DataSourceOptions = {
     // @ts-ignore
     type: process.env.TYPEORM_TYPE,

@@ -249,7 +249,7 @@ await http.load('./src/controllers', { conflict: 'error' })
 import { defineService } from '@hile/core'
 import { Http } from '@hile/http'
 
-export const httpService = defineService(async (shutdown) => {
+export const httpService = defineService('http', async (shutdown) => {
   const http = new Http({ port: 3000 })
   await http.load('./src/controllers', { suffix: 'controller', prefix: '/api' })
 

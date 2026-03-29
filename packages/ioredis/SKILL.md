@@ -9,7 +9,7 @@ description: "@hile/ioredis 的代码生成与使用规范。适用于 Redis 服
 
 ## 1. 架构概览
 
-`@hile/ioredis` 提供一个默认导出的 Hile 服务：
+`@hile/ioredis` 提供一个默认导出的 Hile 服务（服务 key 为稳定 symbol，见包内实现）：
 
 - 使用环境变量构建 ioredis 客户端
 - 首次加载时建立连接并等待 `connect`

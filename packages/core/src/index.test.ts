@@ -3,41 +3,47 @@ import { Container, isService } from './index'
 
 describe('Container', () => {
   let container: Container
+  let keySeq = 0
 
   beforeEach(() => {
     container = new Container()
+    keySeq = 0
   })
 
+  const svcKey = () => `svc:${keySeq++}`
+
   describe('register - 注册服务到容器', () => {
-    it('应注册服务并返回包含 id、fn 和 flag 的注册信息', () => {
+    it('应注册服务并返回包含 fn、flag 与 key 的注册信息', () => {
       const fn = () => 'hello'
-      const result = container.register(fn)
-      expect(result).toHaveProperty('id')
+      const result = container.register(svcKey(), fn)
       expect(result).toHaveProperty('flag')
+      expect(result).toHaveProperty('key')
       expect(result.fn).toBe(fn)
     })
 
-    it('重复注册同一个函数应返回相同的注册信息', () => {
+    it('重复注册同一 key 应返回相同 key（可更新工厂函数）', () => {
+      const dupKey = 'dup'
       const fn = () => 'hello'
-      const first = container.register(fn)
-      const second = container.register(fn)
-      expect(first.id).toBe(second.id)
-      expect(first.fn).toBe(second.fn)
+      const first = container.register(dupKey, fn)
+      const second = container.register(dupKey, () => 'other')
+      expect(first.key).toBe(second.key)
+      expect(first.fn).toBe(fn)
+      expect(second.fn).not.toBe(fn)
     })
 
-    it('不同函数应分配不同的 id', () => {
+    it('不同 key 应得到不同的注册项', () => {
       const fn1 = () => 'a'
       const fn2 = () => 'b'
-      const r1 = container.register(fn1)
-      const r2 = container.register(fn2)
-      expect(r1.id).not.toBe(r2.id)
+      const r1 = container.register(svcKey(), fn1)
+      const r2 = container.register(svcKey(), fn2)
+      expect(r1.key).not.toBe(r2.key)
     })
   })
 
   describe('resolve - 从容器中解决服务', () => {
     it('当服务未注册时，会自动注册并运行服务', async () => {
       const fn = () => 42
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
       const result = await container.resolve(props)
       expect(result).toBe(42)
     })
@@ -45,7 +51,7 @@ describe('Container', () => {
     it('当服务运行完成时，会返回服务实例（缓存）', async () => {
       let callCount = 0
       const fn = () => ++callCount
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
 
       const first = await container.resolve(props)
       const second = await container.resolve(props)
@@ -57,27 +63,27 @@ describe('Container', () => {
 
     it('当服务返回 Promise 时，应正确解析异步结果', async () => {
       const fn = () => Promise.resolve('async-value')
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
       const result = await container.resolve(props)
       expect(result).toBe('async-value')
     })
 
     it('当服务运行失败时，会返回错误', async () => {
       const fn = () => { throw new Error('service failed') }
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
       await expect(container.resolve(props)).rejects.toThrow('service failed')
     })
 
     it('当异步服务运行失败时，会返回错误', async () => {
       const fn = () => Promise.reject(new Error('async failed'))
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
       await expect(container.resolve(props)).rejects.toThrow('async failed')
     })
 
     it('当服务运行中时，会等待服务运行完成并返回服务实例', async () => {
       let resolveFn!: (value: string) => void
       const fn = () => new Promise<string>(r => { resolveFn = r })
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
 
       const p1 = container.resolve(props)
       const p2 = container.resolve(props)
@@ -96,7 +102,7 @@ describe('Container', () => {
         callCount++
         return new Promise<number>(r => { resolveFn = r })
       }
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
 
       const p1 = container.resolve(props)
       const p2 = container.resolve(props)
@@ -114,7 +120,7 @@ describe('Container', () => {
     it('多次调用运行中的服务失败时，所有等待者都收到 reject', async () => {
       let rejectFn!: (error: any) => void
       const fn = () => new Promise<string>((_, reject) => { rejectFn = reject })
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
 
       const p1 = container.resolve(props)
       const p2 = container.resolve(props)
@@ -129,7 +135,7 @@ describe('Container', () => {
 
     it('已失败的服务再次 resolve 时直接返回错误', async () => {
       const fn = () => Promise.reject(new Error('fail'))
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
 
       await expect(container.resolve(props)).rejects.toThrow('fail')
       await expect(container.resolve(props)).rejects.toThrow('fail')
@@ -137,7 +143,7 @@ describe('Container', () => {
 
     it('服务函数会收到 shutdown 注册器参数', async () => {
       const fn = vi.fn((_shutdown) => 'ok')
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
       await container.resolve(props)
       expect(fn).toHaveBeenCalledWith(expect.any(Function))
     })
@@ -151,7 +157,7 @@ describe('Container', () => {
         await Promise.resolve()
         throw new Error('boot failed')
       }
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
 
       await expect(container.resolve(props)).rejects.toThrow('boot failed')
       expect(teardown).toHaveBeenCalledOnce()
@@ -163,7 +169,7 @@ describe('Container', () => {
         shutdown(teardown)
         throw new Error('async boot failed')
       }
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
 
       await expect(container.resolve(props)).rejects.toThrow('async boot failed')
       expect(teardown).toHaveBeenCalledOnce()
@@ -177,7 +183,7 @@ describe('Container', () => {
         shutdown(() => order.push(3))
         throw new Error('fail')
       }
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
 
       await expect(container.resolve(props)).rejects.toThrow('fail')
       expect(order).toEqual([3, 2, 1])
@@ -190,7 +196,7 @@ describe('Container', () => {
         shutdown(async () => { order.push(2) })
         throw new Error('fail')
       }
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
 
       await expect(container.resolve(props)).rejects.toThrow('fail')
       expect(order).toEqual([2, 1])
@@ -202,7 +208,7 @@ describe('Container', () => {
         shutdown(teardown)
         return 'ok'
       }
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
 
       const result = await container.resolve(props)
       expect(result).toBe('ok')
@@ -217,7 +223,7 @@ describe('Container', () => {
         shutdown(teardown)
         throw new Error('fail')
       }
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
 
       await expect(container.resolve(props)).rejects.toThrow('fail')
       expect(teardown).toHaveBeenCalledOnce()
@@ -231,7 +237,7 @@ describe('Container', () => {
         shutdown(() => { events.push('teardown') })
         return new Promise<string>((_, reject) => { rejectFn = reject })
       }
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
 
       const p1 = container.resolve(props).catch(() => { events.push('p1-rejected') })
       const p2 = container.resolve(props).catch(() => { events.push('p2-rejected') })
@@ -247,7 +253,7 @@ describe('Container', () => {
         shutdown(() => { throw new Error('teardown error') })
         throw new Error('service error')
       }
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
 
       await expect(container.resolve(props)).rejects.toThrow('service error')
     })
@@ -264,7 +270,7 @@ describe('Container', () => {
       )
 
       for (const fn of services) {
-        await container.resolve(container.register(fn))
+        await container.resolve(container.register(svcKey(), fn))
       }
 
       await container.shutdown()
@@ -287,8 +293,8 @@ describe('Container', () => {
         return 'B'
       }
 
-      await container.resolve(container.register(fnA))
-      await container.resolve(container.register(fnB))
+      await container.resolve(container.register(svcKey(), fnA))
+      await container.resolve(container.register(svcKey(), fnB))
 
       expect(teardownA).not.toHaveBeenCalled()
       expect(teardownB).not.toHaveBeenCalled()
@@ -315,9 +321,9 @@ describe('Container', () => {
         return 'C'
       }
 
-      await container.resolve(container.register(fnA))
-      await container.resolve(container.register(fnB))
-      await container.resolve(container.register(fnC))
+      await container.resolve(container.register(svcKey(), fnA))
+      await container.resolve(container.register(svcKey(), fnB))
+      await container.resolve(container.register(svcKey(), fnC))
 
       await container.shutdown()
 
@@ -334,7 +340,7 @@ describe('Container', () => {
         return 'ok'
       }
 
-      await container.resolve(container.register(fn))
+      await container.resolve(container.register(svcKey(), fn))
       await container.shutdown()
 
       expect(order).toEqual([3, 2, 1])
@@ -353,8 +359,8 @@ describe('Container', () => {
         return 'slow'
       }
 
-      const pFast = container.resolve(container.register(fnFast))
-      const pSlow = container.resolve(container.register(fnSlow))
+      const pFast = container.resolve(container.register(svcKey(), fnFast))
+      const pSlow = container.resolve(container.register(svcKey(), fnSlow))
       await pFast
       // pSlow 尚未 resolve；shutdown 先处理 fast，再 yield 一次，slow 在 setImmediate 里注册 teardown，应被下一轮循环处理
       const shutdownPromise = container.shutdown()
@@ -372,7 +378,7 @@ describe('Container', () => {
         return 'ok'
       }
 
-      await container.resolve(container.register(fn))
+      await container.resolve(container.register(svcKey(), fn))
       await container.shutdown()
       await container.shutdown()
 
@@ -397,7 +403,7 @@ describe('Container', () => {
         return 'ok'
       }
 
-      await container.resolve(container.register(fn))
+      await container.resolve(container.register(svcKey(), fn))
       await container.shutdown()
 
       expect(order).toEqual([2, 1])
@@ -410,12 +416,12 @@ describe('Container', () => {
         shutdown(() => { })
         return 'ok'
       }
-      const props = container.register(fn)
-      expect(container.getLifecycle(props.id)).toBeUndefined()
+      const props = container.register(svcKey(), fn)
+      expect(container.getLifecycle(props.key)).toBeUndefined()
       await container.resolve(props)
-      expect(container.getLifecycle(props.id)).toBe('ready')
+      expect(container.getLifecycle(props.key)).toBe('ready')
       await container.shutdown()
-      expect(container.getLifecycle(props.id)).toBe('stopped')
+      expect(container.getLifecycle(props.key)).toBe('stopped')
     })
 
     it('启动超时应抛错', async () => {
@@ -424,7 +430,7 @@ describe('Container', () => {
         await new Promise(r => setTimeout(r, 50))
         return 'late'
       }
-      await expect(c.resolve(c.register(fn))).rejects.toThrow('service startup timeout')
+      await expect(c.resolve(c.register(svcKey(), fn))).rejects.toThrow('service startup timeout')
     })
 
     it('应可订阅可观测事件', async () => {
@@ -435,7 +441,7 @@ describe('Container', () => {
         shutdown(() => { })
         return 'ok'
       }
-      await c.resolve(c.register(fn))
+      await c.resolve(c.register(svcKey(), fn))
       await c.shutdown()
       off()
       expect(events).toContain('service:init')
@@ -445,8 +451,8 @@ describe('Container', () => {
     })
 
     it('应记录依赖图与启动顺序', async () => {
-      const dep = container.register(async () => 'dep')
-      const root = container.register(async (shutdown) => {
+      const dep = container.register(svcKey(), async () => 'dep')
+      const root = container.register(svcKey(), async (shutdown) => {
         shutdown(() => { })
         await container.resolve(dep)
         return 'root'
@@ -454,8 +460,8 @@ describe('Container', () => {
       await container.resolve(root)
 
       const graph = container.getDependencyGraph()
-      expect(graph.edges).toEqual(expect.arrayContaining([{ from: root.id, to: dep.id }]))
-      expect(container.getStartupOrder()).toEqual(expect.arrayContaining([root.id]))
+      expect(graph.edges).toEqual(expect.arrayContaining([{ from: root.key, to: dep.key }]))
+      expect(container.getStartupOrder()).toEqual(expect.arrayContaining([root.key]))
     })
 
     it('应检测循环依赖', async () => {
@@ -471,94 +477,83 @@ describe('Container', () => {
         return 'b'
       }
 
-      aProps = container.register(a)
-      bProps = container.register(b)
+      aProps = container.register(svcKey(), a)
+      bProps = container.register(svcKey(), b)
 
       await expect(container.resolve(aProps)).rejects.toThrow('circular dependency detected')
     })
   })
 
   describe('hasService - 检查服务是否已注册', () => {
-    it('未注册的服务应返回 false', () => {
-      const fn = () => 'hello'
-      expect(container.hasService(fn)).toBe(false)
+    it('未注册的 key 应返回 false', () => {
+      expect(container.hasService('missing')).toBe(false)
     })
 
-    it('已注册的服务应返回 true', () => {
+    it('已注册的 key 应返回 true', () => {
+      const key = 'my-svc'
       const fn = () => 'hello'
-      container.register(fn)
-      expect(container.hasService(fn)).toBe(true)
+      container.register(key, fn)
+      expect(container.hasService(key)).toBe(true)
     })
 
-    it('不同函数引用互不影响', () => {
+    it('不同 key 互不影响', () => {
+      const k1 = 'a'
+      const k2 = 'b'
       const fn1 = () => 'a'
       const fn2 = () => 'b'
-      container.register(fn1)
-      expect(container.hasService(fn1)).toBe(true)
-      expect(container.hasService(fn2)).toBe(false)
+      container.register(k1, fn1)
+      expect(container.hasService(k1)).toBe(true)
+      expect(container.hasService(k2)).toBe(false)
     })
   })
 
   describe('hasMeta - 检查服务是否已运行', () => {
     it('未运行的服务应返回 false', () => {
       const fn = () => 'hello'
-      const props = container.register(fn)
-      expect(container.hasMeta(props.id)).toBe(false)
+      const props = container.register(svcKey(), fn)
+      expect(container.hasMeta(props.key)).toBe(false)
     })
 
     it('已运行的服务应返回 true', async () => {
       const fn = () => 'hello'
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
       await container.resolve(props)
-      expect(container.hasMeta(props.id)).toBe(true)
+      expect(container.hasMeta(props.key)).toBe(true)
     })
 
     it('运行中的服务也应返回 true', () => {
       const fn = () => new Promise(() => { })
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
       container.resolve(props)
-      expect(container.hasMeta(props.id)).toBe(true)
+      expect(container.hasMeta(props.key)).toBe(true)
     })
 
-    it('不存在的 id 应返回 false', () => {
-      expect(container.hasMeta(99999)).toBe(false)
-    })
-  })
-
-  describe('getIdByService - 获取服务ID', () => {
-    it('未注册的服务应返回 undefined', () => {
-      const fn = () => 'hello'
-      expect(container.getIdByService(fn)).toBeUndefined()
-    })
-
-    it('已注册的服务应返回对应的 id', () => {
-      const fn = () => 'hello'
-      const props = container.register(fn)
-      expect(container.getIdByService(fn)).toBe(props.id)
+    it('不存在的 key 应返回 false', () => {
+      expect(container.hasMeta(Symbol('no-such'))).toBe(false)
     })
   })
 
-  describe('getMetaById - 获取服务元数据', () => {
+  describe('getMetaByKey - 获取服务元数据', () => {
     it('未运行的服务应返回 undefined', () => {
       const fn = () => 'hello'
-      const props = container.register(fn)
-      expect(container.getMetaById(props.id)).toBeUndefined()
+      const props = container.register(svcKey(), fn)
+      expect(container.getMetaByKey(props.key)).toBeUndefined()
     })
 
     it('运行中的服务元数据 status 应为 0', () => {
       const fn = () => new Promise(() => { })
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
       container.resolve(props)
-      const meta = container.getMetaById(props.id)
+      const meta = container.getMetaByKey(props.key)
       expect(meta).toBeDefined()
       expect(meta!.status).toBe(0)
     })
 
     it('运行成功的服务元数据 status 应为 1，且包含正确的 value', async () => {
       const fn = () => 'result'
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
       await container.resolve(props)
-      const meta = container.getMetaById(props.id)
+      const meta = container.getMetaByKey(props.key)
       expect(meta).toBeDefined()
       expect(meta!.status).toBe(1)
       expect(meta!.value).toBe('result')
@@ -567,56 +562,56 @@ describe('Container', () => {
     it('运行失败的服务元数据 status 应为 -1，且包含 error', async () => {
       const error = new Error('oops')
       const fn = () => Promise.reject(error)
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
       await container.resolve(props).catch(() => { })
-      const meta = container.getMetaById(props.id)
+      const meta = container.getMetaByKey(props.key)
       expect(meta).toBeDefined()
       expect(meta!.status).toBe(-1)
       expect(meta!.error).toBe(error)
     })
 
-    it('不存在的 id 应返回 undefined', () => {
-      expect(container.getMetaById(99999)).toBeUndefined()
+    it('不存在的 key 应返回 undefined', () => {
+      expect(container.getMetaByKey('no-such-key')).toBeUndefined()
     })
   })
 
   describe('isService - 判断是否为服务', () => {
     it('通过 register 返回的对象应判定为服务', () => {
       const fn = () => 'hello'
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
       expect(isService(props)).toBe(true)
     })
 
     it('手动构造的对象（缺少正确 flag）应判定为非服务', () => {
-      const fake = { id: 1, fn: () => 'hello', flag: Symbol('fake') }
+      const fake = { key: 'x', fn: () => 'hello', flag: Symbol('fake') }
       expect(isService(fake as any)).toBe(false)
     })
 
-    it('缺少 id 字段应判定为非服务', () => {
+    it('缺少 key 字段应判定为非服务', () => {
       const fn = () => 'hello'
-      const props = container.register(fn)
-      const broken = { ...props, id: undefined }
+      const props = container.register(svcKey(), fn)
+      const broken = { ...props, key: undefined }
       expect(isService(broken as any)).toBe(false)
     })
 
     it('缺少 fn 字段应判定为非服务', () => {
       const fn = () => 'hello'
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
       const broken = { ...props, fn: undefined }
       expect(isService(broken as any)).toBe(false)
     })
 
     it('fn 为非函数类型应判定为非服务', () => {
       const fn = () => 'hello'
-      const props = container.register(fn)
+      const props = container.register(svcKey(), fn)
       const broken = { ...props, fn: 'not-a-function' }
       expect(isService(broken as any)).toBe(false)
     })
 
     it('完全无关的对象应判定为非服务', () => {
       expect(isService({} as any)).toBe(false)
-      expect(isService({ id: 1 } as any)).toBe(false)
-      expect(isService({ id: 1, fn: () => { }, flag: 'wrong' } as any)).toBe(false)
+      expect(isService({ key: 'k' } as any)).toBe(false)
+      expect(isService({ key: 'k', fn: () => { }, flag: 'wrong' } as any)).toBe(false)
     })
   })
 })

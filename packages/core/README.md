@@ -1,6 +1,6 @@
 # @hile/core
 
-轻量级异步服务容器，提供单例管理、并发请求合并与生命周期销毁能力。纯 TypeScript 实现，零运行时依赖。
+轻量级异步服务容器，提供单例管理、并发请求合并与生命周期销毁能力。纯 TypeScript 实现，零运行时依赖。默认容器使用进程级单例 `globalThis.HILE_GLOBAL_CONTAINER`。
 
 ## 安装
 
@@ -13,7 +13,7 @@ pnpm add @hile/core
 ```typescript
 import { defineService, loadService } from '@hile/core'
 
-const greeterService = defineService(async (shutdown) => {
+const greeterService = defineService('greeter', async (shutdown) => {
   return {
     hello(name: string) {
       return `Hello, ${name}!`
@@ -27,23 +27,27 @@ greeter.hello('World') // Hello, World!
 
 ## 核心概念
 
-### 1) 定义服务
+### 1) 服务 key
 
-通过 `defineService` 注册服务。服务函数接收 `shutdown` 注册器，用于登记资源清理回调。
+每个服务必须指定 **`ServiceKey`（`string` 或 `symbol`）**，用于在容器内唯一标识该服务槽位。同一 key 多次 `defineService`/`register` 指向同一单例；不同 key 彼此独立。集成包常用 `Symbol.for('@scope/package')`，应用内可用 `'http'`、`'database'` 等字符串。
+
+### 2) 定义服务
+
+通过 `defineService(key, fn)` 注册服务。服务函数接收 `shutdown` 注册器，用于登记资源清理回调。
 
 ```typescript
 import { defineService } from '@hile/core'
 
-export const databaseService = defineService(async (shutdown) => {
+export const databaseService = defineService('database', async (shutdown) => {
   const pool = await createPool('postgres://localhost:5432/app')
   shutdown(() => pool.end())
   return pool
 })
 ```
 
-### 2) 加载服务
+### 3) 加载服务
 
-通过 `loadService` 获取服务实例。容器保证同一服务函数只执行一次。
+通过 `loadService` 获取服务实例。容器保证同一服务 key 只执行一次工厂函数。
 
 ```typescript
 import { loadService } from '@hile/core'
@@ -53,7 +57,7 @@ const db = await loadService(databaseService)
 const users = await db.query('SELECT * FROM users')
 ```
 
-### 3) 并发请求合并
+### 4) 并发请求合并
 
 并发加载同一服务时，初始化只执行一次，调用方共享结果。
 
@@ -67,7 +71,7 @@ const [r1, r2, r3] = await Promise.all([
 // r1 === r2 === r3
 ```
 
-### 4) 服务间依赖
+### 5) 服务间依赖
 
 服务内部可通过 `loadService` 继续加载依赖服务。
 
@@ -76,7 +80,7 @@ import { defineService, loadService } from '@hile/core'
 import { databaseService } from './database'
 import { cacheService } from './cache'
 
-export const userService = defineService(async (shutdown) => {
+export const userService = defineService('user', async (shutdown) => {
   const db = await loadService(databaseService)
   const cache = await loadService(cacheService)
 
@@ -92,12 +96,12 @@ export const userService = defineService(async (shutdown) => {
 })
 ```
 
-### 5) 资源销毁（Shutdown）
+### 6) 资源销毁（Shutdown）
 
 当服务初始化失败或手动执行全局关闭时，容器会按规则执行已注册的清理回调。`container.shutdown()` 会循环处理队列直到清空，并让出一次事件循环（`setImmediate`），确保在 shutdown 进行中才完成启动并注册的 teardown 也会被执行。
 
 ```typescript
-export const connectionService = defineService(async (shutdown) => {
+export const connectionService = defineService('connection', async (shutdown) => {
   const primary = await connectPrimary()
   shutdown(() => primary.disconnect())
 
@@ -120,7 +124,7 @@ export const connectionService = defineService(async (shutdown) => {
 
 > 建议始终使用 `async` 服务函数，确保异常路径可正确触发销毁机制。
 
-### 6) 生命周期、超时与可观测事件
+### 7) 生命周期、超时与可观测事件
 
 容器支持显式生命周期阶段：`init -> ready -> stopping -> stopped`。
 
@@ -135,12 +139,14 @@ const container = new Container({
 })
 ```
 
-订阅事件：
+订阅事件（服务相关事件携带 `key`）：
 
 ```typescript
+import { formatServiceKey } from '@hile/core'
+
 const off = container.on((event) => {
   if (event.type === 'service:ready') {
-    console.log(`service#${event.id} ready in ${event.durationMs}ms`)
+    console.log(`service(${formatServiceKey(event.key)}) ready in ${event.durationMs}ms`)
   }
 })
 
@@ -148,21 +154,21 @@ const off = container.on((event) => {
 off()
 ```
 
-### 7) 依赖图与启动顺序
+### 8) 依赖图与启动顺序
 
 容器会在 `resolve` 过程中自动记录依赖关系，并检测循环依赖。
 
 ```typescript
 const graph = container.getDependencyGraph()
-// graph.nodes: number[]
-// graph.edges: Array<{ from: number; to: number }>
+// graph.nodes: ServiceKey[]
+// graph.edges: Array<{ from: ServiceKey; to: ServiceKey }>
 
 const startupOrder = container.getStartupOrder()
 ```
 
 若出现循环依赖，会抛出 `circular dependency detected` 错误。
 
-### 8) 手动销毁（Graceful Shutdown）
+### 9) 手动销毁（Graceful Shutdown）
 
 ```typescript
 import container from '@hile/core'
@@ -175,15 +181,15 @@ process.on('SIGTERM', async () => {
 
 保证：每个在 defineService 中通过 `shutdown(fn)` 注册的回调都会在 `shutdown()` 时被执行；若某服务在 shutdown 期间才完成启动并调用 `shutdown(fn)`，也会在下一轮事件循环中被关掉。
 
-### 9) 服务校验（isService）
+### 10) 服务校验（isService）
 
 ```typescript
 import { defineService, isService } from '@hile/core'
 
-const myService = defineService(async (shutdown) => 'hello')
+const myService = defineService('my', async (shutdown) => 'hello')
 
 isService(myService) // true
-isService({ id: 1, fn: () => {} } as any) // false
+isService({ key: 'x', fn: () => {} } as any) // false
 ```
 
 ## 隔离容器
@@ -195,7 +201,7 @@ import { Container } from '@hile/core'
 
 const container = new Container()
 
-const service = container.register(async (shutdown) => {
+const service = container.register('test', async (shutdown) => {
   return { value: 42 }
 })
 
@@ -208,27 +214,27 @@ const result = await container.resolve(service)
 
 | 函数 | 说明 |
 |------|------|
-| `defineService(fn)` | 注册服务到默认容器 |
+| `defineService(key, fn)` | 注册服务到默认容器 |
 | `loadService(props)` | 从默认容器加载服务 |
 | `isService(props)` | 判断对象是否为合法服务注册信息 |
+| `formatServiceKey(key)` | 将 key 格式化为可读字符串（日志） |
 
 ### `Container`
 
 | 方法 | 说明 |
 |------|------|
 | `new Container(options?)` | 创建容器，可配置启动/销毁超时 |
-| `register(fn)` | 注册服务（同函数引用去重） |
+| `register(key, fn)` | 注册服务（同一 key 共享槽位） |
 | `resolve(props)` | 加载服务（执行、等待或返回缓存） |
 | `shutdown()` | 销毁所有服务并执行清理回调 |
 | `on(listener)` | 订阅容器事件，返回取消订阅函数 |
 | `off(listener)` | 取消订阅 |
-| `getLifecycle(id)` | 获取服务生命周期阶段 |
-| `getDependencyGraph()` | 获取依赖图 `{ nodes, edges }` |
+| `getLifecycle(key)` | 获取服务生命周期阶段 |
+| `getDependencyGraph()` | 获取依赖图 `{ nodes, edges }`（key 为 `ServiceKey`） |
 | `getStartupOrder()` | 获取服务启动顺序（首次启动顺序） |
-| `hasService(fn)` | 检查函数是否已注册 |
-| `hasMeta(id)` | 检查服务是否已有运行时元数据 |
-| `getIdByService(fn)` | 通过函数获取服务 ID |
-| `getMetaById(id)` | 通过 ID 获取运行时元数据 |
+| `hasService(key)` | 是否已对该 key 注册 |
+| `hasMeta(key)` | 该 key 是否已有运行时元数据 |
+| `getMetaByKey(key)` | 按 key 获取运行时元数据 |
 
 ### 服务状态
 
