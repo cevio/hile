@@ -39,8 +39,10 @@ my-app/
 │   ├── controllers/
 │   │   └── post.controller.ts # API 示例 → GET /-/post
 │   ├── models/
-│   │   ├── home.model.ts      # 首页数据 defineModel
-│   │   └── post.model.ts      # /-/post 数据 defineModel
+│   │   ├── home/
+│   │   │   └── home.model.ts  # 首页 defineModel（export default）
+│   │   └── post/
+│   │       └── post.model.ts  # /-/post defineModel（export default）
 │   └── services/
 │       └── index.boot.ts      # 服务启动入口（*.boot 须在 src/services/）
 ├── next.config.ts
@@ -50,7 +52,7 @@ my-app/
 └── package.json
 ```
 
-业务数据与 **`loadModel`** / **`defineModel`** 的目录约定以 **`packages/http-next/SKILL.md`** 为准（**`src/app/**`** 与 **`src/controllers/**`** 均可 **`loadModel`**；**`src/controllers/**`** 可 **`loadService`**；**`defineModel`** 仅在 **`src/models`**）。
+业务数据与 **`loadModel`** / **`defineModel`** 以 **`packages/http-next/SKILL.md`** 为准：**`src/models/<领域>/*.model.ts`**（**`export default`**）；**`app` / `controllers` / `services`** 仅 **`loadModel`** 消费 model；**`controllers`** 可 **`loadService`**；**`app`** **禁止** **`loadService`**。
 
 ## 生成项目的可用命令
 

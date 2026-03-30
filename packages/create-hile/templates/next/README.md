@@ -25,14 +25,14 @@ pnpm run dev
 src/
 ├── app/                 # Next.js App Router（禁止 loadService / defineModel）
 ├── controllers/         # *.controller.ts → 默认 GET /-/…（可 loadService / loadModel）
-├── models/              # *.model.ts 内 defineModel；供 app 与 controllers loadModel
+├── models/              # <领域>/*.model.ts：单文件 export default defineModel
 └── services/            # *.boot.ts | *.service.ts（*.boot 由 CLI 自启动）
 ```
 
 - **`src/services/index.boot.ts`**：`HttpNext` 与 **`cwd`**（见 **`packages/http-next/SKILL.md`**）。
-- **`src/models/*.model.ts`**：领域数据；**`src/app/page.tsx`** 示范 **`loadModel(homeModel)`**（直接调用，无包装函数）。
+- **`src/models/<领域>/*.model.ts`**：领域数据；**`src/app/page.tsx`** 示范 **`loadModel`** + **default** **import**。
 - **`src/controllers/post.controller.ts`**：示范 **`loadModel(postModel, …)`**。
 
 **`loadService`** 仅可在 **`src/services`**、**`src/models`**、**`src/controllers`** 中使用，**禁止**在 **`src/app`**。
 
-详见 **`packages/http-next/SKILL.md`** 与 [Hile 文档](https://github.com/cevio/hile)。
+详见 **`packages/http-next/SKILL.md`** 与 [Hile 文档](https://pulian.mintlify.app/packages/http-next)。

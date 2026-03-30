@@ -200,7 +200,7 @@ Next.js handler              ← 页面渲染（SSR/RSC）
 
 关键设计：
 - API 路由默认 `/-` 前缀（`HttpNext` 的 `controllerPrefix`），与 Next.js 的 `/about`、`/users` 等页面路由在路径层面隔离；**非 Next 的 API** 默认目录为 `src/controllers`（可用 `controllerDirectory` 改为 `app` 等与旧版一致）
-- **业务数据**：**`defineModel`** 在 **`src/models`**；**`src/app/**`** 与 **`src/controllers/**`** 均可 **`loadModel(xxxModel)`**；**`src/controllers/**`** 亦可 **`loadService`**；**`loadService`** 不在 **`src/app/**`** 直用（见 **`packages/http-next/SKILL.md`**）
+- **业务数据**：**`defineModel`** 在 **`src/models/<领域>/*.model.ts`**（**`export default`**）；**`app` / `controllers` / `services`** 仅 **`loadModel`** 消费；**`src/controllers/**`** 可 **`loadService`**；**`loadService`** 不在 **`src/app/**`** 使用（见 **`packages/http-next/SKILL.md`**）
 - Next.js handler 作为最后一个 Koa 中间件，Koa 设置 `ctx.respond = false` 让 Next.js 直接操作原生 `req/res`
 - Next.js handler 在 `prepare()` 完成后才注册为中间件，确保就绪后才接收请求
 

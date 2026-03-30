@@ -2,7 +2,7 @@ import Image from "next/image";
 import styles from "./page.module.css";
 import { ClickTest } from "./click";
 import { loadModel } from "@hile/http-next";
-import { homeModel } from "@/models/home.model";
+import homeModel from "@/models/home/home.model";
 
 export default async function Home() {
   const home = await loadModel(homeModel);

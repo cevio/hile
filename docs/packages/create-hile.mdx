@@ -92,8 +92,10 @@ my-app/
 │   ├── controllers/
 │   │   └── post.controller.ts   # API 示例 → GET /-/post（loadModel）
 │   ├── models/
-│   │   ├── home.model.ts        # 首页 defineModel
-│   │   └── post.model.ts        # /-/post defineModel
+│   │   ├── home/
+│   │   │   └── home.model.ts    # 首页 defineModel（export default）
+│   │   └── post/
+│   │       └── post.model.ts    # /-/post defineModel（export default）
 │   └── services/
 │       └── index.boot.ts        # Hile 服务启动入口（*.boot 须在 src/services/）
 ├── next.config.ts               # Next.js 配置
@@ -132,7 +134,7 @@ my-app/
     ```typescript
     import { defineController } from "@hile/http";
     import { loadModel } from "@hile/http-next";
-    import { postModel } from "../models/post.model";
+    import postModel from "../models/post/post.model";
 
     export default defineController("GET", async (ctx) =>
       loadModel(postModel, ctx.url),
@@ -143,7 +145,7 @@ my-app/
     演示 Next.js 的 Client Component，包含一个按钮点击后调用 API 并展示结果的弹出层。展示了前后端如何通过 `/-` 前缀的 API 路由交互。
   </Accordion>
   <Accordion title="业务数据与 defineModel / loadModel">
-    **`defineModel`** 仅写在 **`src/models/*.model.*`**；**`src/app/**`** 内可对 models 导出的 **`xxxModel`** 直接 **`await loadModel(xxxModel, …)`**（**不要**无意义再包一层）。**`src/controllers/**`** **允许** **`loadService`** 与 **`loadModel(xxxModel, …)`**。**`loadService`** 不得在 **`src/app/**`** 直用。详见 **`packages/http-next/SKILL.md`**。
+    **业务逻辑**在 **`src/models/<领域>/*.model.ts`**：单文件 **`export default defineModel`**；**`app` / `controllers` / `services`** 取数**只**用 **`loadModel`**（**default** **import**）。**`loadService`** 不得在 **`src/app/**`** 使用。详见 **`packages/http-next/SKILL.md`**。
   </Accordion>
   <Accordion title="next.config.ts — Next.js 配置">
     指定 `tsconfig.next.json` 作为 TypeScript 配置，让 Next.js 使用独立的编译配置。

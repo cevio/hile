@@ -106,31 +106,29 @@ export default defineService('http.next', async (shutdown) => {
 
 若你希望继续把控制器放在 **`src/app/`**（与旧版行为一致），在构造 `HttpNext` 时传入 **`controllerDirectory: "app"`**。
 
-**数据分层**（完整约定见包内 **`SKILL.md`**）：
+**数据分层**（以包内 **`SKILL.md`** 为准）：
 
-- **`loadService`** 与直引 **`src/services/**`**：**禁止**仅在 **`src/app/**`**。**`src/controllers/**`** **允许** **`loadService`**。
-- **`defineModel`**：**仅**写在 **`src/models/*.model.*`**。
-- **`src/app/**`**（**`page.tsx`**、**`layout.tsx`** 等）：**允许** **`import { loadModel } from "@hile/http-next"`** 与 models 导出的 **`xxxModel`**，直接 **`await loadModel(xxxModel, …)`**；**禁止** **`loadService`**、**`defineModel`**；**不要**无意义再包一层仅转调 **`loadModel`** 的函数。
-- **`src/controllers/**`**：**允许** **`loadService`** 与 **`loadModel(xxxModel, …)`**（**`xxxModel`** 自 models **`import`**）；可 **`import`** **`src/models`** 已导出函数并 **`return`**；**复杂业务**仍建议经 **models**。
-
-**系统 vs 业务**：**系统/基础设施逻辑**（连接、资源、与 Hile 集成）**全部**写在 **`src/services/*.service.*`**（及 **`*.boot.*`**）；**业务/领域逻辑** **全部**写在 **`src/models/*.model.*`**。
+- **业务逻辑**全部在 **`src/models/<领域>/*.model.ts`**：单文件**一个** **`defineModel`**，**`export default`**；**`app` / `controllers` / `services`** 取数**只**通过 **`import m from "…/….model"`** + **`loadModel(m, …)`**（**禁止**命名导出当取数入口）。
+- **`src/app/**`**：**`loadModel`** + UI；**禁止** **`loadService`**、**`defineModel`**、业务逻辑、直引 **`src/services`**。
+- **`src/controllers/**`**：薄 HTTP，**`loadModel`** / **`loadService`**；**禁止**在控制器写业务逻辑。
+- **`src/services/**`**：系统/基础设施（**`*.boot.*`** / **`*.service.*`**）；需要领域数据时同样 **`loadModel`**，**不**写业务规则。
 
 ### 页面与 `defineModel` / `loadModel`
 
 ```typescript
-// src/models/foo.model.ts
+// src/models/foo/foo.model.ts
 import { defineModel } from "@hile/http-next";
 
-export const fooModel = defineModel(async (slug: string) => {
+export default defineModel(async (slug: string) => {
   // 内可 await loadService(...)
   return { slug };
 });
 ```
 
 ```typescript
-// src/app/foo/page.tsx — 直接 loadModel，无需再包一层
+// src/app/foo/page.tsx — default import + loadModel
 import { loadModel } from "@hile/http-next";
-import { fooModel } from "@/models/foo.model";
+import fooModel from "@/models/foo/foo.model";
 
 export default async function Page() {
   const data = await loadModel(fooModel, "x");
@@ -225,7 +223,7 @@ export default async function IdPage({
 }
 ```
 
-推荐布局：**页面**仍在 `src/app/`，**API 控制器**在默认的 `src/controllers/`：
+推荐布局：**页面**在 `src/app/`，**API 控制器**在 `src/controllers/`，**业务 model** 按领域放在 **`src/models/<领域>/`**：
 
 ```
 src/
@@ -239,6 +237,9 @@ src/
 │   └── users/
 │       ├── index.controller.ts
 │       └── [id].controller.ts
+├── models/                   # 业务：单文件单 defineModel，export default
+│   └── foo/
+│       └── foo.model.ts
 └── services/
     └── index.boot.ts           # 所有 *.boot 须在 src/services/
 ```
