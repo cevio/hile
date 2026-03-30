@@ -21,8 +21,18 @@ pnpm run dev
 
 ## 项目结构
 
-- `src/services/index.boot.ts` — Hile 服务入口（`*.boot` 须在 `src/services/`）；本模板使用 **`controllerDirectory: "app"`**，故 API 控制器与页面同放在 **`src/app/*.controller.ts`**。默认推荐为 **`src/controllers/`**（见 **`packages/http-next/SKILL.md`**）。
-- `src/app/page.tsx`、`layout.tsx` 等 — Next.js 页面与布局
-- 业务数据：在 **`src/models/*.model.ts`** 中 **`defineModel`**；页面内可直接 **`loadModel(xxxModel, …)`**；控制器 **`import`** models 导出函数。**`loadService`** 不得在页面或控制器中直用。
+```
+src/
+├── app/                 # Next.js App Router（禁止 loadService / defineModel）
+├── controllers/         # *.controller.ts → 默认 GET /-/…（可 loadService / loadModel）
+├── models/              # *.model.ts 内 defineModel；供 app 与 controllers loadModel
+└── services/            # *.boot.ts | *.service.ts（*.boot 由 CLI 自启动）
+```
+
+- **`src/services/index.boot.ts`**：`HttpNext` 与 **`cwd`**（见 **`packages/http-next/SKILL.md`**）。
+- **`src/models/*.model.ts`**：领域数据；**`src/app/page.tsx`** 示范 **`loadModel(homeModel)`**（直接调用，无包装函数）。
+- **`src/controllers/post.controller.ts`**：示范 **`loadModel(postModel, …)`**。
+
+**`loadService`** 仅可在 **`src/services`**、**`src/models`**、**`src/controllers`** 中使用，**禁止**在 **`src/app`**。
 
 详见 **`packages/http-next/SKILL.md`** 与 [Hile 文档](https://github.com/cevio/hile)。

@@ -35,8 +35,12 @@ my-app/
 │   │   ├── page.tsx           # Next.js 首页
 │   │   ├── page.module.css    # 页面样式
 │   │   ├── globals.css        # 全局样式
-│   │   ├── click.tsx          # Client 组件示例
-│   │   └── post.controller.ts # API 示例（模板用 controllerDirectory: "app"；默认推荐 src/controllers/）
+│   │   └── click.tsx          # Client 组件示例
+│   ├── controllers/
+│   │   └── post.controller.ts # API 示例 → GET /-/post
+│   ├── models/
+│   │   ├── home.model.ts      # 首页数据 defineModel
+│   │   └── post.model.ts      # /-/post 数据 defineModel
 │   └── services/
 │       └── index.boot.ts      # 服务启动入口（*.boot 须在 src/services/）
 ├── next.config.ts
@@ -46,7 +50,7 @@ my-app/
 └── package.json
 ```
 
-业务数据与 **`loadModel`** / **`defineModel`** 的目录约定以 **`packages/http-next/SKILL.md`** 为准（**`src/app/**`** 可直接 **`loadModel`**；**`defineModel`** 仅在 **`src/models`**）。
+业务数据与 **`loadModel`** / **`defineModel`** 的目录约定以 **`packages/http-next/SKILL.md`** 为准（**`src/app/**`** 与 **`src/controllers/**`** 均可 **`loadModel`**；**`src/controllers/**`** 可 **`loadService`**；**`defineModel`** 仅在 **`src/models`**）。
 
 ## 生成项目的可用命令
 

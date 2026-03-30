@@ -7,7 +7,7 @@ description: "引导 AI 在本仓库或使用 Hile 的项目中，正确选用�
 
 本文档面向 AI 编码模型：在**本仓库**或**使用 Hile 的应用项目**中生成或修改代码时，必须按本 SKILL 选用模块并遵守各包约束，确保与 Hile 架构一致。
 
-**`@hile/http-next`（Next + API 同端口）**：只要项目的 `package.json` 依赖了 **`@hile/http-next`**，或代码中出现 **`HttpNext`** / **`from "@hile/http-next"`**，AI **必须**将 **`packages/http-next/SKILL.md`**（或应用内已同步的同名约束文档）视为**硬约束**：**全文条例均需遵守**，包括目录（`src/services/`、`src/controllers/` 为默认 API 根、`src/models/`）、**`controllerDirectory` 默认值**、**`defineModel`** 仅在 **`src/models`**、**`src/app` 可直接 `loadModel(xxxModel)`**（**`xxxModel`** 自 models 导出）、**`src/controllers` 经 models 导出函数取数**、boot 路径与 **`cwd`** 等；**禁止**只采纳其中部分条款或凭经验改写架构。
+**`@hile/http-next`（Next + API 同端口）**：只要项目的 `package.json` 依赖了 **`@hile/http-next`**，或代码中出现 **`HttpNext`** / **`from "@hile/http-next"`**，AI **必须**将 **`packages/http-next/SKILL.md`**（或应用内已同步的同名约束文档）视为**硬约束**：**全文条例均需遵守**，包括目录（`src/services/`、`src/controllers/` 为默认 API 根、`src/models/`）、**`controllerDirectory` 默认值**、**`defineModel`** 仅在 **`src/models`**、**`src/app` 可直接 `loadModel(xxxModel)`**、**`src/controllers` 允许 `loadService` 与 `loadModel(xxxModel)`**、boot 路径与 **`cwd`** 等；**禁止**只采纳其中部分条款或凭经验改写架构。
 
 ---
 
@@ -52,7 +52,7 @@ description: "引导 AI 在本仓库或使用 Hile 的项目中，正确选用�
 - 创建外部资源（连接、服务器、定时器等）后**必须**立即 `shutdown(() => ...)` 注册清理；清理顺序为 LIFO。
 - 获取实例**只能**通过 `loadService(service)` 或 `container.resolve(service)`，禁止手造 `{ key, fn, flag }` 等假服务对象。
 - **`src/services/`** 下的 **`*.boot.*`** 与 **`*.service.*`** **同属 service 模块**（均基于 **`defineService`** / **`register`**），区别仅在于加载方式：**`*.boot.*`** 由 CLI **进程启动时自动加载**；**`*.service.*`** 在 **boot / 其它服务 / models** 内按需 **`loadService`** **依赖加载**（见 §3.2）。
-- **系统逻辑与业务逻辑分层**：**系统/基础设施逻辑**（连接与资源封装、与 Hile 集成、可复用技术能力）**全部**写在 **`src/services/`** 的 **`*.service.*`**（及 **`*.boot.*`** 入口）；**业务/领域逻辑**（用例、规则、面向产品的数据编排）**全部**写在 **`src/models/`** 的 **`*.model.*`**。**`@hile/http-next`** 下：**`src/app/**`** 可直接 **`loadModel(xxxModel)`**（**`xxxModel`** 由 models **`defineModel`** 并导出）；**`src/controllers/**`** **`import`** models 已导出函数；**models** 内组合 **services**（详见 **`packages/http-next/SKILL.md`**，纯 **`@hile/http`** 项目可只遵守 **services** 侧约定）。
+- **系统逻辑与业务逻辑分层**：**系统/基础设施逻辑**（连接与资源封装、与 Hile 集成、可复用技术能力）**全部**写在 **`src/services/`** 的 **`*.service.*`**（及 **`*.boot.*`** 入口）；**业务/领域逻辑**（用例、规则、面向产品的数据编排）**全部**写在 **`src/models/`** 的 **`*.model.*`**。**`@hile/http-next`** 下：**`src/app/**`** 可直接 **`loadModel(xxxModel)`**（**`xxxModel`** 由 models **`defineModel`** 并导出）；**`src/controllers/**`** **允许** **`loadService`** 与 **`loadModel(xxxModel)`**，**复杂业务**仍建议 **`import`** models 已导出函数；**models** 内组合 **services**（详见 **`packages/http-next/SKILL.md`**，纯 **`@hile/http`** 项目可只遵守 **services** 侧约定）。
 
 ### 3.2 Boot 与启动（@hile/cli）
 
@@ -66,7 +66,7 @@ description: "引导 AI 在本仓库或使用 Hile 的项目中，正确选用�
 - 与 core 集成时：在 **defineService** 内创建 **Http** / **HttpNext**，在 **listen() 之前**完成 `use`、`load`，**listen()** 返回的关闭函数必须传给 **shutdown(close)**。
 - 控制器**必须**用 **defineController(method, fn)** 或 **defineController(method, [middlewares], fn)**，文件 **export default** 单个控制器或数组；控制器函数签名为 **(ctx)**，不要 **(ctx, next)**。
 - 使用 **@hile/http-next** 时：默认 API 前缀为 **`/-`**；**非 Next 的 API 路由**均在 **`src/controllers/*.controller.ts`**。若放在 **`src/app/`** 与页面同目录，需设置 **`controllerDirectory: "app"`**。
-- 使用 **@hile/http-next** 时：**`loadService`** 与直引 **`src/services/**`** **禁止**出现在 **`src/app/**`**、**`src/controllers/**`**（须在 **models** 或 **boot** 内使用）。**`src/app/**`**：**允许** **`loadModel`**（仅配合 **`src/models`** 导出的 **`xxxModel`**）；**禁止** **`defineModel`**。**`src/controllers/**`**：**禁止** **`loadModel`**，须 **`import`** **`src/models`** 导出函数（详见 **`packages/http-next/SKILL.md`**）。
+- 使用 **@hile/http-next** 时：**`loadService`** 与直引 **`src/services/**`** **禁止**仅在 **`src/app/**`**。**`src/controllers/**`** **允许** **`loadService`** 与 **`loadModel(xxxModel)`**（**`xxxModel`** 由 **`src/models`** 导出）。**`src/app/**`**：**允许** **`loadModel`**（仅配合 **`src/models`** 导出的 **`xxxModel`**）；**禁止** **`loadService`**、**`defineModel`**（详见 **`packages/http-next/SKILL.md`**）。
 
 ### 3.4 数据库与缓存（@hile/typeorm / @hile/ioredis）
 
@@ -87,7 +87,7 @@ description: "引导 AI 在本仓库或使用 Hile 的项目中，正确选用�
   → 使用 **@hile/http-next**，在 boot 中 **new HttpNext({ port, cwd, publicPath })**（按需 **`controllerDirectory`**），**shutdown(await httpNext.start())**；默认 API 前缀 **`/-`**，页面用 Next 约定文件（如 **page.tsx**）。
 
 - **使用数据库/Redis**  
-  → 在 **package.json** 的 **hile.auto_load_packages** 中加入 **@hile/typeorm** / **@hile/ioredis**，在 **services**、**models**、**boot** 等**内部** **await loadService(typeormService)** 或 **loadService(ioredisService)**（**@hile/http-next** 项目**禁止**在 **`src/controllers/**`** 内**直引** services 或 **loadService**，见 **`packages/http-next/SKILL.md`**）；环境变量按各包 README/SKILL 配置。
+  → 在 **package.json** 的 **hile.auto_load_packages** 中加入 **@hile/typeorm** / **@hile/ioredis**，在 **services**、**models**、**boot**、**`src/controllers/**`**（**@hile/http-next**）等**内部** **await loadService(...)**（**`src/app/**`** **禁止** **loadService**，见 **`packages/http-next/SKILL.md`**）；环境变量按各包 README/SKILL 配置。
 
 - **消息通信（IPC/Worker/WS）+ 文件系统路由**  
   → 用 **@hile/message-loader** 的 **MessageLoader** 与 **defineMessage** 做路由表，在 **@hile/message-ipc** / **message-worker-thread** / **message-ws** 子类的 **exec** 中调用 **loader.dispatch(url, data)**。
@@ -123,7 +123,7 @@ description: "引导 AI 在本仓库或使用 Hile 的项目中，正确选用�
 - **控制器**中同时写 **ctx.body = ...** 和 **return ...**（应只 **return**，由响应插件写 body）。
 - **控制器**签名为 **(ctx, next)** 并调用 **next()**（控制器无 next，需 next 的逻辑放中间件）。
 - 在 **@hile/http-next** 中把控制器放在非默认目录却未设置 **`controllerDirectory`**，或自定义 **`controllerPrefix`** 与 Next 页面路由冲突。
-- 在 **@hile/http-next** 的 **`src/controllers/**`** 或 **`src/app/**`** 内**直引** **`src/services/**`** 或 **`loadService`**（应经 **`src/models/**`**）；或在 **`src/app/**`** **`defineModel`**、在 **`src/controllers/**`** **`loadModel`**（见 **`packages/http-next/SKILL.md`**）。
+- 在 **@hile/http-next** 的 **`src/app/**`** 内**直引** **`src/services/**`** 或 **`loadService`**；或在 **`src/app/**`** **`defineModel`**（见 **`packages/http-next/SKILL.md`**）。
 - 将 **`*.boot.{ts,js}`** 放在 **`src/services/`** 外（如 **`src/index.boot.ts`**）。
 - 在 **`src/services/`** 内：**依赖加载**的 service 文件名**未**以 **`*.service.{ts,js}`** 结尾，或**自启动**入口**未**以 **`*.boot.{ts,js}`** 结尾。
 - **@hile/http-next** 项目中：把**业务/领域逻辑**写在 **`src/services/`**，或把**系统/基础设施**写在 **`src/models/`**；或 **`src/models/`** 内业务模块**未**以 **`*.model.{ts,js}`** 命名。

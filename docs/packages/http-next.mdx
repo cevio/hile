@@ -108,10 +108,10 @@ export default defineService('http.next', async (shutdown) => {
 
 **数据分层**（完整约定见包内 **`SKILL.md`**）：
 
-- **`loadService`** 与直引 **`src/services/**`**：**禁止**出现在 **`src/app/**`** 与 **`src/controllers/**`**（在 **`src/models`**、**boot** 或 **`*.service.*`** 内使用）。
+- **`loadService`** 与直引 **`src/services/**`**：**禁止**仅在 **`src/app/**`**。**`src/controllers/**`** **允许** **`loadService`**。
 - **`defineModel`**：**仅**写在 **`src/models/*.model.*`**。
-- **`src/app/**`**（**`page.tsx`**、**`layout.tsx`** 等）：**允许** **`import { loadModel } from "@hile/http-next"`** 与 models 导出的 **`xxxModel`**，直接 **`await loadModel(xxxModel, …)`**；**禁止** **`defineModel`**；**不要**无意义再包一层仅转调 **`loadModel`** 的函数。
-- **`src/controllers/**`**：**禁止** **`loadService`** 与 **`loadModel`**；**`import`** **`src/models`** 已导出函数并 **`return`** 其结果（模型内可 **`loadModel`**）。
+- **`src/app/**`**（**`page.tsx`**、**`layout.tsx`** 等）：**允许** **`import { loadModel } from "@hile/http-next"`** 与 models 导出的 **`xxxModel`**，直接 **`await loadModel(xxxModel, …)`**；**禁止** **`loadService`**、**`defineModel`**；**不要**无意义再包一层仅转调 **`loadModel`** 的函数。
+- **`src/controllers/**`**：**允许** **`loadService`** 与 **`loadModel(xxxModel, …)`**（**`xxxModel`** 自 models **`import`**）；可 **`import`** **`src/models`** 已导出函数并 **`return`**；**复杂业务**仍建议经 **models**。
 
 **系统 vs 业务**：**系统/基础设施逻辑**（连接、资源、与 Hile 集成）**全部**写在 **`src/services/*.service.*`**（及 **`*.boot.*`**）；**业务/领域逻辑** **全部**写在 **`src/models/*.model.*`**。
 

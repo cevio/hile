@@ -1,11 +1,11 @@
 ---
 name: http-next
-description: "@hile/http-next 强约束：目录分层、cwd、HttpNext 选项；models 内 defineModel，src/app 可直接 loadModel。依赖本包须全文遵守。"
+description: "@hile/http-next 强约束：目录分层、cwd、HttpNext 选项；models 内 defineModel；src/app 可直接 loadModel；src/controllers 可 loadService 与 loadModel。依赖本包须全文遵守。"
 ---
 
 # @hile/http-next
 
-面向 AI 与开发者的**代码生成规范**。依赖本包时须与根目录 **`SKILL.md`** 一并遵守；**禁止**节选条款或绕过 **models** 直引 **services**。
+面向 AI 与开发者的**代码生成规范**。依赖本包时须与根目录 **`SKILL.md`** 一并遵守；**`src/app/**`** **禁止** **`loadService`** / 直引 **`src/services/**`**；**`src/controllers/**`** **允许** **`loadService`** 与 **`loadModel(xxxModel, …)`**（**`xxxModel`** 自 models **`import`**）。
 
 ---
 
@@ -22,8 +22,8 @@ Request → Koa → koa-static(public / .next/static) → hile-http(默认 /-*) 
 | API 根目录 | 默认 **`controllerDirectory: "controllers"`** → `src/controllers/`（生产 `dist/controllers/`）；与页面分目录需 **`controllerDirectory: "app"`** |
 | API 前缀 | 默认 **`/-`**（`controllerPrefix`）；勿与页面路由冲突 |
 | `http.load` | **`conflict: "error"`** |
-| 业务数据 | **`loadService`** / 直引 **`src/services/**`**：**禁止**出现在 **`src/app/**`**、**`src/controllers/**`**（经 **`src/models`** 或 boot） |
-| 首屏 / 页面数据 | **`defineModel`** **仅**在 **`src/models/*.model.*`**；**`src/app/**`** **允许** **`loadModel(xxxModel, …)`**（**`xxxModel`** 自 models **`import`**）；**禁止**在 **`src/app/**`** **`loadService` / `defineModel`**；**禁止**无附加逻辑时再包一层仅转调 **`loadModel`** 的函数；**`src/controllers/**`** **禁止** **`loadModel`**（须 **`import`** models 导出函数）；见 **§3** |
+| 业务数据 | **`loadService`** / 直引 **`src/services/**`**：**禁止**仅在 **`src/app/**`**。**`src/controllers/**`** **允许** **`loadService`**（及为 **`loadService`** 而 **`import`** **`src/services/*.service.*`** 或 **`@hile/*`** 等） |
+| 首屏 / 页面数据 | **`defineModel`** **仅**在 **`src/models/*.model.*`**；**`src/app/**`** **允许** **`loadModel(xxxModel, …)`**（**`xxxModel`** 自 models **`import`**）；**禁止**在 **`src/app/**`** **`loadService` / `defineModel`**；**禁止**无附加逻辑时再包一层仅转调 **`loadModel`** 的函数；**`src/controllers/**`** **允许** **`loadService`**、**`loadModel`** 或 **`import`** models 已导出函数；见 **§3** |
 | Boot | 仅 **`src/services/**/*.boot.*`**；项目根 **`cwd`** 在 boot 内用 **`resolve(__dirname, "../..")`**（勿指到 `src/` 导致 `src/src/controllers`） |
 | tsconfig | **`tsconfig.json`** 含 controllers/models/services；**`tsconfig.next.json`** 含 app + models |
 
@@ -56,13 +56,13 @@ Request → Koa → koa-static(public / .next/static) → hile-http(默认 /-*) 
 ### 2.3 `src/services`（系统层）
 
 - **`defineService`**：**`*.boot.*`** = CLI 自启动；**`*.service.*`** = **`loadService`** 依赖加载；**必须**均在 **`src/services/`**。
-- **禁止**：业务规则写在此处；**`app/`**、**`controllers/`** **禁止**为取数 `import` 本目录。
+- **禁止**：业务规则写在此处。**`app/`** **禁止**为取数 **`import`** 本目录。**`controllers/`** **允许** **`loadService`** 并 **`import`** 本目录 **`*.service.*`**（及 **`@hile/*`** 包内服务）；**不要**把复杂领域规则堆在控制器里，宜经 **`src/models`**。
 - **`*.boot.*`** 不作为业务模块的常规 import 入口。
 
 ### 2.4 `src/models`（业务层）
 
 - 领域规则、用例、编排**全部**在此；**`boot`** 与 **models** 内可 **`loadService`**。
-- **controllers**：**`import`** models 已导出函数并 **`return`** 其结果；**不要**在控制器内 **`loadModel`**（见 **§3**）。
+- **controllers**：**允许** **`loadService`** 与 **`loadModel(xxxModel, …)`**；可 **`import`** models 已导出函数并 **`return`**（见 **§3**）。**复杂业务编排**仍建议放在 **models**。
 - **首屏业务数据**：**`defineModel`** 写在 **`src/models`**；**`src/app/**`** 内 **`await loadModel(xxxModel, …)`** 即可（**不要**无意义再包一层）。
 
 ### 2.5 `controllerDirectory`
@@ -88,8 +88,8 @@ Request → Koa → koa-static(public / .next/static) → hile-http(默认 /-*) 
 
 1. **`export const xxxModel = defineModel(...)`** 为模块顶层常量；**禁止**每次请求 **`defineModel(() => …)`**。
 2. **`src/app/**`**：**可** **`import { loadModel } from "@hile/http-next"`** 与 **`import { fooModel } from "@/models/foo.model"`**，在 **`page` / `layout` 等** 内 **`await loadModel(fooModel, …)`**；**禁止** **`loadService`**、**`defineModel`**；**禁止**无附加逻辑时再导出/再写一层仅 **`return loadModel(…)`** 的包装函数。
-3. **`src/controllers/**`**：**禁止** **`loadService`**；**禁止** **`loadModel`** — 只 **`import`** **`src/models`** 已导出 **`async function`**（其内部可 **`loadModel`**），并 **`return`**。
-4. **models** 内业务数据**必须**经 **`defineModel` + `loadModel`** 链路产出；**禁止**对外的首屏/API 用例**仅** `await loadService(...)` 而无 **`loadModel`**。
+3. **`src/controllers/**`**：**允许** **`loadService`** 与 **`loadModel(xxxModel, …)`**（**`xxxModel`** 自 models **`import`**）；可 **`return`** models 已导出函数的结果；**复杂领域逻辑**仍建议 **`import`** **models**。
+4. **`src/models/**`**：面向 **`defineModel`** 的业务结果**必须**经 **`loadModel`** 产出；**首屏**数据仍须遵守 **§1** 表。**`src/app/**`** **禁止** **`loadService`**。
 5. 按请求区分数据 → 参数传入 **`loadModel(model, …)`**。
 
 **示例**
@@ -175,13 +175,38 @@ export class HttpNext {
 }
 ```
 
-### 4.3 控制器（`src/controllers/post.controller.ts` → `GET /-/post`）
+### 4.3 控制器（`src/controllers/*.controller.ts` → 如 `GET /-/post`）
+
+**经 models 导出函数（复杂业务宜放在 models）**
 
 ```typescript
 import { defineController } from "@hile/http";
 import { getPost } from "../models/post.model";
 
 export default defineController("GET", async (ctx) => getPost(ctx));
+```
+
+**在控制器内 `loadService`（薄 HTTP、直调基础设施）**
+
+```typescript
+import { defineController } from "@hile/http";
+import { loadService } from "@hile/core";
+import { cacheService } from "../services/cache.service";
+
+export default defineController("GET", async (ctx) => {
+  const cache = await loadService(cacheService);
+  return cache.get(ctx.query.key as string);
+});
+```
+
+**在控制器内 `loadModel`（与页面一致，直接调 models 导出的 `xxxModel`）**
+
+```typescript
+import { defineController } from "@hile/http";
+import { loadModel } from "@hile/http-next";
+import { fooModel } from "../models/foo.model";
+
+export default defineController("GET", async () => loadModel(fooModel, "x"));
 ```
 
 | 文件 | 路由（prefix `/-`） |
@@ -200,8 +225,7 @@ export default defineController("GET", async (ctx) => getPost(ctx));
 
 - `start()` 后再改 **`Http`** 路由（**`http` 为 private**）。
 - 控制器 **`ctx.res.end()`** 与 Next 抢响应。
-- **`app/`** / **`controllers/`** **`loadService`** 或 **`import services`**；**`app/`** 内 **`defineModel`**。
-- **`controllers/`** 内 **`loadModel`**（应 **`import`** models 导出函数）。
+- **`src/app/**`**：**禁止** **`loadService`** / 直引 **`src/services`**；**禁止** **`defineModel`**。
 - **`app/`** 内无必要地再包一层 **`async function`**，**仅**为 **`return loadModel(…)`**。
 - 首屏数据在 **models** 里**只** `loadService`、无 **`defineModel`/`loadModel`**。
 - 每次请求 **`defineModel(…)`** 再 **`loadModel`**。

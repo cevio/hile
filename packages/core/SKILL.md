@@ -18,7 +18,7 @@ description: "@hile/core 的代码生成与使用规范。适用于定义/加载
 7. 多个 teardown 默认按 LIFO 顺序执行。
 8. `container.shutdown()` 必须执行所有已通过 `shutdown(fn)` 注册的回调；在 shutdown 进行中才完成启动并调用 `shutdown` 的服务，也会在让出一次事件循环后被关掉（避免竞态漏关）。
 9. **`src/services/`** 内：**`*.boot.*`** 与 **`*.service.*`** **同属 service 模块**（均为 **`defineService`** / **`register`**）；**`*.boot.*`** 由 CLI **自启动**加载，**`*.service.*`** 在需要时 **`loadService`** **依赖加载**。文件名**必须**以 **`*.service.ts`** / **`*.service.js`** 或 **`*.boot.ts`** / **`*.boot.js`** 结尾以区分上述两种加载方式。
-10. 应用分层（与 **`@hile/http-next`** / 根 **`SKILL.md`** 一致）：**系统/基础设施逻辑** 放 **`src/services/*.service.*`**（及 **`*.boot.*`**）；**业务/领域逻辑** 放 **`src/models/*.model.*`**，**不要**混写。（http-next 下 **`defineModel`** 仅在 models；**`src/app/**`** 可直接 **`loadModel(xxxModel)`**，见 **`packages/http-next/SKILL.md`**。）
+10. 应用分层（与 **`@hile/http-next`** / 根 **`SKILL.md`** 一致）：**系统/基础设施逻辑** 放 **`src/services/*.service.*`**（及 **`*.boot.*`**）；**业务/领域逻辑** 放 **`src/models/*.model.*`**，**不要**混写。（http-next 下 **`defineModel`** 仅在 models；**`src/app/**`** 与 **`src/controllers/**`** 均可 **`loadModel(xxxModel)`**；**`src/controllers/**`** 亦可 **`loadService`**，见 **`packages/http-next/SKILL.md`**。）
 
 ## 2. 生命周期与超时约束
 

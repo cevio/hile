@@ -10,7 +10,7 @@ Hile 按职责分为三层，每一层都是可选的，你可以按需引入：
 
 ┌──────────────────────────────────────────────────────┐
 │                    应用层 (App)                        │
-│   services·controllers·pages；models 承载业务；app 可 loadModel   │
+│   services·controllers·pages；models 承载业务；app/controllers 可 loadModel   │
 ├─────────────────┬────────────────┬────────────────────┤
 │   @hile/cli     │   @hile/http   │  @hile/http-next   │
 │   命令行启动器   │   HTTP 框架    │   Next.js 桥接     │
@@ -200,7 +200,7 @@ Next.js handler              ← 页面渲染（SSR/RSC）
 
 关键设计：
 - API 路由默认 `/-` 前缀（`HttpNext` 的 `controllerPrefix`），与 Next.js 的 `/about`、`/users` 等页面路由在路径层面隔离；**非 Next 的 API** 默认目录为 `src/controllers`（可用 `controllerDirectory` 改为 `app` 等与旧版一致）
-- **业务数据**：**`defineModel`** 在 **`src/models`**；**`src/app/**`** 可直接 **`loadModel(xxxModel)`**；**`src/controllers/**`** 经 models 导出函数取数；**`loadService`** 不在页面或控制器中直用（见 **`packages/http-next/SKILL.md`**）
+- **业务数据**：**`defineModel`** 在 **`src/models`**；**`src/app/**`** 与 **`src/controllers/**`** 均可 **`loadModel(xxxModel)`**；**`src/controllers/**`** 亦可 **`loadService`**；**`loadService`** 不在 **`src/app/**`** 直用（见 **`packages/http-next/SKILL.md`**）
 - Next.js handler 作为最后一个 Koa 中间件，Koa 设置 `ctx.respond = false` 让 Next.js 直接操作原生 `req/res`
 - Next.js handler 在 `prepare()` 完成后才注册为中间件，确保就绪后才接收请求
 
