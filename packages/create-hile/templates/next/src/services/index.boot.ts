@@ -9,8 +9,9 @@ export default defineService('http.next', async (shutdown) => {
   const port = Number(process.env.HTTP_PORT ?? 3000);
   const httpNext = new HttpNext({
     port,
-    cwd: resolve(__dirname, ".."),
+    cwd: resolve(__dirname, "../.."),
     publicPath: "public",
+    controllerDirectory: "app",
   });
 
   shutdown(await httpNext.start());

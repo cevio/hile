@@ -34,6 +34,10 @@ export async function CreateHileHttpNextProject(projectName: string) {
   packageJsonData.name = projectName;
   writeFileSync(packageJson, JSON.stringify(packageJsonData, null, 2), 'utf-8');
 
+  // 写入一个.env和.env-prod文件，内容是`HTTP_PORT=9527`
+  writeFileSync(resolve(targetDir, '.env'), 'HTTP_PORT=9527', 'utf-8');
+  writeFileSync(resolve(targetDir, '.env.prod'), 'HTTP_PORT=9527', 'utf-8');
+
   if (install) {
     const [pnpmexists, yarnexists, npmexists] = await Promise.all([
       commandExists('pnpm'),

@@ -222,7 +222,7 @@ const result = await transaction(ds, async (runner, rollback) => {
 方式二：在 boot 文件中手动加载：
 
 ```typescript
-// src/database.boot.ts
+// src/services/database.boot.ts
 import { loadService } from '@hile/core'
 import typeormService from '@hile/typeorm'
 
@@ -240,6 +240,7 @@ export default defineService('database.boot', async () => {
 ## 在服务中使用
 
 ```typescript
+// src/services/order.service.ts
 import { defineService, loadService } from '@hile/core'
 import typeormService, { transaction } from '@hile/typeorm'
 

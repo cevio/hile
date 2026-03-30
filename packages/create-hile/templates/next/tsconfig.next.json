@@ -21,6 +21,7 @@
   },
   "include": [
     "src/app/**/*",
+    "src/models/**/*",
     "next.config.ts",
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts"

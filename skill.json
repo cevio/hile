@@ -37,7 +37,7 @@
     {
       "id": "hile-http-next",
       "name": "Hile Next.js 桥接层指南",
-      "description": "提供 Hile 开发者将 Next.js 作为渲染引擎嵌入 @hile/http，实现 API 与 SSR 共存的开发指南",
+      "description": "将 Next.js 嵌入 @hile/http 的强约束规范。凡使用 @hile/http-next 的应用须全文遵守（目录、分层、HttpNext、defineModel 仅在 models、src/app 可直接 loadModel 等），不可节选。",
       "path": "packages/http-next/SKILL.md"
     },
     {

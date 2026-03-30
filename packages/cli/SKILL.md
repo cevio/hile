@@ -10,12 +10,14 @@ description: "@hile/cli 的强约束生成规范。适用于 boot 编排、启�
 ## 1. 强约束（必须遵守）
 
 1. `hile.auto_load_packages` 只允许模块名，禁止文件路径。
-2. boot 文件命名必须为 `*.boot.ts` / `*.boot.js`。
-3. boot 文件必须 `export default` 合法 Hile 服务（`defineService` / `register` 结果）。
-4. 加载顺序必须固定：`auto_load_packages` → 扫描 boot。
-5. 运行目录优先级必须固定：`HILE_RUNTIME_DIR` → `src`(dev) → `dist`。
-6. CLI 必须订阅 `container.on` 并输出关键生命周期日志。
-7. 进程退出时必须通过 `registerExitHook(container, offEvent)` 注册退出钩子；钩子内必须 **await** `container.shutdown()` 完成后再执行 `offEvent()` 与 `exit()`，未完成时进程挂起不退出。
+2. **`src/services/`** 下 **`*.boot.*`** 与 **`*.service.*`** **同属 service 模块**（均 **`defineService`**）；**`.boot`** = CLI **自启动**，**`.service`** = **`loadService`** **依赖加载**。
+3. **`*.boot.ts`** / **`*.boot.js`** **必须**位于 **`src/services/`**（如 `src/services/index.boot.ts`），**禁止**放在 `src/` 根目录。
+4. **`*.service.ts`** / **`*.service.js`**（依赖加载的 service 模块）**必须**同放在 **`src/services/`**。
+5. boot 文件必须 `export default` 合法 Hile 服务（`defineService` / `register` 结果）。
+6. 加载顺序必须固定：`auto_load_packages` → 扫描 boot。
+7. 运行目录优先级必须固定：`HILE_RUNTIME_DIR` → `src`(dev) → `dist`。
+8. CLI 必须订阅 `container.on` 并输出关键生命周期日志。
+9. 进程退出时必须通过 `registerExitHook(container, offEvent)` 注册退出钩子；钩子内必须 **await** `container.shutdown()` 完成后再执行 `offEvent()` 与 `exit()`，未完成时进程挂起不退出。
 
 ## 2. 容器事件日志约束
 

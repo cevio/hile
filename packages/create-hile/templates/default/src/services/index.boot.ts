@@ -5,7 +5,7 @@ import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
-const __controllers = resolve(__dirname, 'controllers')
+const __controllers = resolve(__dirname, '../controllers')
 
 export default defineService('http', async (shutdown) => {
   const http = new Http({

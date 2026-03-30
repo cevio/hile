@@ -21,8 +21,8 @@ pnpm run dev
 
 ## 项目结构
 
-- `src/index.boot.ts` — Hile 服务入口
-- `src/app/*.controller.ts` — API 控制器，自动挂载到 `/-` 前缀
+- `src/services/index.boot.ts` — Hile 服务入口（`*.boot` 须在 `src/services/`）；本模板使用 **`controllerDirectory: "app"`**，故 API 控制器与页面同放在 **`src/app/*.controller.ts`**。默认推荐为 **`src/controllers/`**（见 **`packages/http-next/SKILL.md`**）。
 - `src/app/page.tsx`、`layout.tsx` 等 — Next.js 页面与布局
+- 业务数据：在 **`src/models/*.model.ts`** 中 **`defineModel`**；页面内可直接 **`loadModel(xxxModel, …)`**；控制器 **`import`** models 导出函数。**`loadService`** 不得在页面或控制器中直用。
 
-详见 [Hile 文档](https://github.com/cevio/hile)。
+详见 **`packages/http-next/SKILL.md`** 与 [Hile 文档](https://github.com/cevio/hile)。

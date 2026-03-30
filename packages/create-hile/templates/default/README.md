@@ -47,7 +47,9 @@ pnpm run start  # 生产
 ```
 edvance/
 ├── src/
-│   ├── http.boot.ts          # HTTP 服务启动（Hile 服务）
+│   ├── services/
+│   │   ├── index.boot.ts        # HTTP 服务启动（*.boot 须在 src/services/）
+│   │   └── agent.service.ts     # Deep Agent 定义（模型、backend、skills、tools）
 │   ├── controllers/          # 路由控制器
 │   │   ├── index.controller.ts
 │   │   ├── agent.controller.ts                 # POST /agent
@@ -56,8 +58,6 @@ edvance/
 │   ├── entities/
 │   │   ├── evidence-type.entity.ts
 │   │   └── customs-inspection-record.entity.ts
-│   ├── services/
-│   │   └── agent.service.ts     # Deep Agent 定义（模型、backend、skills、tools）
 │   ├── tools/
 │   │   ├── console.tool.ts
 │   │   └── mongodb-store.tool.ts # MongoDB 落库工具 mongodb_store

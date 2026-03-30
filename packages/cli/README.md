@@ -97,12 +97,14 @@ HILE_RUNTIME_DIR=./custom hile start
 
 ## Boot 文件规范
 
+**约定**：**`src/services/`** 下 **`*.boot.*`** 与 **`*.service.*`** **同属 service 模块**（均 **`defineService`**）：**`.boot`** = CLI **自启动**，**`.service`** = **`loadService`** **依赖加载**。二者**必须**位于 **`src/services/`**。
+
 每个 `*.boot.ts` / `*.boot.js` 文件必须默认导出一个服务：
 
 ```typescript
-// src/database.boot.ts
+// src/services/database.boot.ts（*.boot 须放在 src/services/）
 import { defineService, loadService } from '@hile/core'
-import { configService } from './services/config'
+import { configService } from './config.service'
 
 export default defineService('http', async (shutdown) => {
   const config = await loadService(configService)
@@ -132,11 +134,11 @@ export default defineService('http', async (shutdown) => {
 ```text
 my-app/
 ├── src/
-│   ├── database.boot.ts
-│   ├── http.boot.ts
 │   └── services/
-│       ├── config.ts
-│       └── cache.ts
+│       ├── http.boot.ts
+│       ├── database.boot.ts
+│       ├── config.service.ts
+│       └── cache.service.ts
 ├── package.json
 └── tsconfig.json
 ```

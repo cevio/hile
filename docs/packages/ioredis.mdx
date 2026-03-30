@@ -201,7 +201,7 @@ await redis.publish('events', JSON.stringify({ type: 'user_created', id: 1 }))
 方式二：boot 文件手动加载：
 
 ```typescript
-// src/redis.boot.ts
+// src/services/redis.boot.ts
 import { defineService, loadService } from '@hile/core'
 import ioredisService from '@hile/ioredis'
 
@@ -236,6 +236,7 @@ export default defineService('redis.boot', async () => {
     默认导出只支持单节点模式。如需 Cluster 模式，建议自定义一个 Hile 服务：
 
     ```typescript
+    // src/services/redis.cluster.service.ts
     import { defineService } from '@hile/core'
     import Redis from 'ioredis'
 
@@ -253,6 +254,10 @@ export default defineService('redis.boot', async () => {
     默认导出是单例。如需多个实例，自定义额外的服务：
 
     ```typescript
+    // src/services/redis.instances.service.ts（示例：多实例可同文件或拆分）
+    import { defineService } from '@hile/core'
+    import Redis from 'ioredis'
+
     export const cacheRedis = defineService('redis.cache', async (shutdown) => {
       const client = new Redis({ host: 'cache-host', port: 6379 })
       shutdown(() => client.disconnect())

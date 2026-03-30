@@ -108,10 +108,12 @@ hile start --dev --env-file .env.development
 
 Boot 文件是 Hile 应用的服务入口点。CLI 会扫描运行时目录下的所有 `*.boot.{ts,js}` 文件并加载。
 
+**约定**：**`src/services/`** 下 **`*.boot.*`** 与 **`*.service.*`** **同属 service 模块**（均 **`defineService`**）：**`.boot`** 由 CLI **自启动**；**`.service`** 由 **`loadService`** **依赖加载**。二者**必须**放在 **`src/services/`**，**禁止**放在 **`src/`** 根目录。
+
 ### 编写 Boot 文件
 
 ```typescript
-// src/http.boot.ts
+// src/services/http.boot.ts
 import { defineService } from '@hile/core'
 import { Http } from '@hile/http'
 
@@ -134,8 +136,9 @@ export default defineService('http', async (shutdown) => {
 
 | 规则 | 说明 |
 |------|------|
-| 文件名 | 必须以 `.boot.ts` 或 `.boot.js` 结尾 |
-| 导出 | 必须有 `export default`（或 `module.exports`） |
+| **`*.boot.*`** | **自启动** service 模块；必须以 **`.boot.ts`** 或 **`.boot.js`** 结尾 |
+| **`*.service.*`** | **依赖加载** service 模块；必须以 **`.service.ts`** 或 **`.service.js`** 结尾 |
+| 导出 | Boot 必须有 `export default`（或 `module.exports`） |
 | 导出类型 | 必须是 `defineService(key, fn)` 的返回值 |
 | 校验 | CLI 使用 `isService()` 校验，不合法则抛出 `invalid service file` |
 
@@ -145,11 +148,10 @@ export default defineService('http', async (shutdown) => {
 
 ```
 src/
-├── http.boot.ts        # HTTP 服务
-├── database.boot.ts    # 数据库连接
-├── scheduler.boot.ts   # 定时任务
 └── services/
-    └── ...
+    ├── http.boot.ts        # HTTP 服务
+    ├── database.boot.ts    # 数据库连接
+    └── scheduler.boot.ts   # 定时任务
 ```
 
 每个 boot 文件是一个独立的服务入口。它们内部可以通过 `loadService` 相互依赖。
@@ -231,15 +233,15 @@ SIGTERM/SIGINT → exitHook → await container.shutdown() → 执行所有 shut
 ```
 my-app/
 ├── src/
-│   ├── http.boot.ts          # HTTP 服务入口
-│   ├── database.boot.ts      # 数据库服务入口
 │   ├── controllers/
 │   │   ├── users/
 │   │   │   └── index.controller.ts
 │   │   └── hello.controller.ts
 │   └── services/
-│       ├── config.ts          # 普通服务（通过 loadService 按需加载）
-│       └── cache.ts
+│       ├── http.boot.ts       # HTTP 服务入口（*.boot 须在此目录）
+│       ├── database.boot.ts   # 数据库服务入口
+│       ├── config.service.ts  # defineService（通过 loadService 按需加载）
+│       └── cache.service.ts
 ├── .env                       # 环境变量
 ├── package.json
 └── tsconfig.json
