@@ -145,7 +145,7 @@ my-app/
     演示 Next.js 的 Client Component，包含一个按钮点击后调用 API 并展示结果的弹出层。展示了前后端如何通过 `/-` 前缀的 API 路由交互。
   </Accordion>
   <Accordion title="业务数据与 defineModel / loadModel">
-    **业务逻辑**在 **`src/models/<领域>/*.model.ts`**：单文件 **`export default defineModel`**；**`app` / `controllers` / `services`** 取数**只**用 **`loadModel`**（**default** **import**）。**`loadService`** 不得在 **`src/app/**`** 使用。详见 **`packages/http-next/SKILL.md`**。
+    **业务逻辑**在 **`src/models/<领域>/*.model.ts`**：单文件 **`export default defineModel`**；**`app` / `controllers` / `services`** 取数**只**用 **`loadModel`**（**default** **import**）。**凡 `page.tsx` 使用 `loadModel`，同文件须 `export const dynamic = "force-dynamic"`**。**`loadService`** 不得在 **`src/app/**`** 使用。详见 **`packages/http-next/SKILL.md`**。
   </Accordion>
   <Accordion title="next.config.ts — Next.js 配置">
     指定 `tsconfig.next.json` 作为 TypeScript 配置，让 Next.js 使用独立的编译配置。

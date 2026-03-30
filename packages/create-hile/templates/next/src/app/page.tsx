@@ -4,6 +4,8 @@ import { ClickTest } from "./click";
 import { loadModel } from "@hile/http-next";
 import homeModel from "@/models/home/home.model";
 
+export const dynamic = "force-dynamic";
+
 export default async function Home() {
   const home = await loadModel(homeModel);
 

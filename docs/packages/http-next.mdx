@@ -109,7 +109,7 @@ export default defineService('http.next', async (shutdown) => {
 **数据分层**（以包内 **`SKILL.md`** 为准）：
 
 - **业务逻辑**全部在 **`src/models/<领域>/*.model.ts`**：单文件**一个** **`defineModel`**，**`export default`**；**`app` / `controllers` / `services`** 取数**只**通过 **`import m from "…/….model"`** + **`loadModel(m, …)`**（**禁止**命名导出当取数入口）。
-- **`src/app/**`**：**`loadModel`** + UI；**禁止** **`loadService`**、**`defineModel`**、业务逻辑、直引 **`src/services`**。
+- **`src/app/**`**：**`loadModel`** + UI；**凡 `page.tsx` 内调用 `loadModel`，同文件须** **`export const dynamic = "force-dynamic"`**（强制，见 **`SKILL.md`**）；**禁止** **`loadService`**、**`defineModel`**、业务逻辑、直引 **`src/services`**。
 - **`src/controllers/**`**：薄 HTTP，**`loadModel`** / **`loadService`**；**禁止**在控制器写业务逻辑。
 - **`src/services/**`**：系统/基础设施（**`*.boot.*`** / **`*.service.*`**）；需要领域数据时同样 **`loadModel`**，**不**写业务规则。
 
@@ -126,9 +126,11 @@ export default defineModel(async (slug: string) => {
 ```
 
 ```typescript
-// src/app/foo/page.tsx — default import + loadModel
+// src/app/foo/page.tsx — default import + loadModel（须 force-dynamic）
 import { loadModel } from "@hile/http-next";
 import fooModel from "@/models/foo/foo.model";
+
+export const dynamic = "force-dynamic";
 
 export default async function Page() {
   const data = await loadModel(fooModel, "x");

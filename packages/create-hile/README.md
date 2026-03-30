@@ -52,7 +52,7 @@ my-app/
 └── package.json
 ```
 
-业务数据与 **`loadModel`** / **`defineModel`** 以 **`packages/http-next/SKILL.md`** 为准：**`src/models/<领域>/*.model.ts`**（**`export default`**）；**`app` / `controllers` / `services`** 仅 **`loadModel`** 消费 model；**`controllers`** 可 **`loadService`**；**`app`** **禁止** **`loadService`**。
+业务数据与 **`loadModel`** / **`defineModel`** 以 **`packages/http-next/SKILL.md`** 为准：**`src/models/<领域>/*.model.ts`**（**`export default`**）；**`app` / `controllers` / `services`** 仅 **`loadModel`** 消费 model；**`page.tsx`** 使用 **`loadModel`** 须 **`export const dynamic = "force-dynamic"`**；**`controllers`** 可 **`loadService`**；**`app`** **禁止** **`loadService`**。
 
 ## 生成项目的可用命令
 

@@ -30,7 +30,7 @@ src/
 ```
 
 - **`src/services/index.boot.ts`**：`HttpNext` 与 **`cwd`**（见 **`packages/http-next/SKILL.md`**）。
-- **`src/models/<领域>/*.model.ts`**：领域数据；**`src/app/page.tsx`** 示范 **`loadModel`** + **default** **import**。
+- **`src/models/<领域>/*.model.ts`**：领域数据；**`src/app/page.tsx`** 示范 **`loadModel`** + **`export const dynamic = "force-dynamic"`**（凡 **`page.tsx`** 使用 **`loadModel`** 时强制）。
 - **`src/controllers/post.controller.ts`**：示范 **`loadModel(postModel, …)`**。
 
 **`loadService`** 仅可在 **`src/services`**、**`src/models`**、**`src/controllers`** 中使用，**禁止**在 **`src/app`**。

@@ -58,7 +58,7 @@ Request → Koa 中间件 → koa-static → hile-http 路由(默认 /-*) → Ne
 
 - **Next.js App Router**：页面仍在 `src/app/`（`page.tsx`、`layout.tsx` 等）
 - **hile-http API（非 Next 路由）**：**全部**放在 **`src/controllers/`**（开发）或 **`dist/controllers/`**（生产）下的 `*.controller.ts`；默认从该目录加载，路由前缀默认为 **`/-`**（可用 `controllerPrefix` 修改）；`http.load` 使用 **`conflict: "error"`**
-- **数据分层**（详见包内 **`SKILL.md`**）：**业务逻辑**在 **`src/models/<领域>/*.model.ts`**（单文件 **`export default defineModel`**）；**`app` / `controllers` / `services`** 取数**只**用 **`loadModel`**。**`app`** **禁止** **`loadService`**；**`controllers`** 可 **`loadService`**（基础设施）。**系统层**在 **`src/services/*.service.*`** 与 **`*.boot.*`**。
+- **数据分层**（详见包内 **`SKILL.md`**）：**业务逻辑**在 **`src/models/<领域>/*.model.ts`**（单文件 **`export default defineModel`**）；**`app` / `controllers` / `services`** 取数**只**用 **`loadModel`**。**`page.tsx`** 中若使用 **`loadModel`**，**必须** **`export const dynamic = "force-dynamic"`**。**`app`** **禁止** **`loadService`**；**`controllers`** 可 **`loadService`**（基础设施）。**系统层**在 **`src/services/*.service.*`** 与 **`*.boot.*`**。
 - **`src/services/`**：**`*.boot.*`** 与 **`*.service.*`** 同属 service；**`.boot`** = CLI 自启动，**`.service`** = **`loadService`** 依赖加载（见根 **`SKILL.md`**）。
 
 ## API 路由（控制器）

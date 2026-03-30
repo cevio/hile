@@ -102,7 +102,7 @@ my-app/
 - **`src/services/index.boot.ts`**：Hile 服务入口。CLI 会自动扫描并加载 `*.boot.ts`（**必须**在 **`src/services/`**）。创建 **`HttpNext`** 并 **`start()`**；默认 API 根为 **`src/controllers/`**。
 - **`src/models/<领域>/*.model.ts`**：业务数据，**`export default defineModel`**；示例 **`home/home.model.ts`**、**`post/post.model.ts`**。
 - **`src/controllers/post.controller.ts`**：API 示例（**`GET /-/post`**），内 **`loadModel`** + **default** **import**。约定见 **`packages/http-next/SKILL.md`**。
-- **`src/app/page.tsx`**：首页 SSR，示范 **`loadModel(homeModel)`**（直接调用、无包装函数）。
+- **`src/app/page.tsx`**：首页 SSR，示范 **`loadModel`** + **`export const dynamic = "force-dynamic"`**（凡 **`page.tsx`** 使用 **`loadModel`** 时强制，见 **`packages/http-next/SKILL.md`**）。
 
 ---
 

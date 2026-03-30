@@ -1,6 +1,6 @@
 ---
 name: http-next
-description: "@hile/http-next：业务只在 src/models；单文件 export default defineModel；app/controllers/services 仅 loadModel；services 系统层；cwd、Boot、HttpNext 选项见本文。"
+description: "@hile/http-next：业务只在 src/models；page.tsx 使用 loadModel 须 `export const dynamic = force-dynamic;`；app/controllers/services 仅 loadModel；cwd、Boot、HttpNext 见本文。"
 ---
 
 # @hile/http-next
@@ -12,7 +12,7 @@ description: "@hile/http-next：业务只在 src/models；单文件 export defau
 | 位置 | 做什么 | 禁止 |
 |------|--------|------|
 | **`src/models/<领域>/*.model.ts`** | **全部业务逻辑**；**一个文件一个** **`defineModel`**；**`export default`**；内可 **`loadService`** / **`loadModel`** 其他 default | 多 **`defineModel`**；根目录堆文件；**命名导出**给外层当取数入口 |
-| **`src/app/**`** | UI、**`import m from "…/….model"`** + **`loadModel(m, …)`** | **`loadService`**、**`defineModel`**、**业务逻辑**、直引 **`src/services`** |
+| **`src/app/**`** | UI、**`import m from "…/….model"`** + **`loadModel(m, …)`**；**凡 `page.tsx` 内调用 `loadModel`，同文件须** **`export const dynamic = "force-dynamic"`** | **`loadService`**、**`defineModel`**、**业务逻辑**、直引 **`src/services`**；**`page.tsx` 已用 `loadModel` 却未导出 `dynamic`** |
 | **`src/controllers/**`** | 薄 HTTP：**`loadModel`** / **`loadService`** | **业务逻辑**、**`import { … }`** 从 **`*.model.ts`** 直接取数 |
 | **`src/services/**`** | **`*.boot.*`** / **`*.service.*`**；要业务数据则 **`loadModel`** | **业务规则**；绕过 **`loadModel`** 用 model |
 
@@ -28,6 +28,8 @@ description: "@hile/http-next：业务只在 src/models；单文件 export defau
 - **`app` / `controllers` / `services`** 消费 model：**只认** **`loadModel(defaultImport, …)`**；首参非法 → **`TypeError`**。
 - 基础设施 → **`defineService` + `loadService`**；领域结果 → **`defineModel` + `loadModel`**。
 
+**Next.js `page.tsx`（强制）**：在 App Router 的**任意** **`page.tsx`** 中**一旦**使用 **`loadModel`**，**必须**在**同一文件**顶层增加 **`export const dynamic = "force-dynamic";`**。否则与动态数据/运行时取数不匹配，且不符合本包约定。**`layout.tsx`** 等若未调用 **`loadModel`** 则不要求；**仅在调用 `loadModel` 的 `page.tsx` 中**必须导出。
+
 ```typescript
 // src/models/foo/foo.model.ts
 import { defineModel } from "@hile/http-next";
@@ -36,6 +38,9 @@ export default defineModel(async (slug: string) => ({ slug }));
 // src/app/foo/page.tsx
 import { loadModel } from "@hile/http-next";
 import fooModel from "@/models/foo/foo.model";
+
+export const dynamic = "force-dynamic";
+
 export default async function Page() {
   return <div>{(await loadModel(fooModel, "x")).slug}</div>;
 }
@@ -73,7 +78,7 @@ export default defineService("http.next", async (shutdown) => {
 
 ## 反模式（摘）
 
-在 **`app`/`controllers`/`services`** 写业务逻辑；**`*.model.ts`** 用 **`export const`** 替代 **default**；请求内 **`defineModel`**；**`app`** 用 **`loadService`**；控制器 **`ctx.res.end()`** 与 Next 抢响应；**`start()`** 后再改路由。
+**`page.tsx`** 使用 **`loadModel`** 却**未** **`export const dynamic = "force-dynamic"`**；在 **`app`/`controllers`/`services`** 写业务逻辑；**`*.model.ts`** 用 **`export const`** 替代 **default**；请求内 **`defineModel`**；**`app`** 用 **`loadService`**；控制器 **`ctx.res.end()`** 与 Next 抢响应；**`start()`** 后再改路由。
 
 ## 测试
 
