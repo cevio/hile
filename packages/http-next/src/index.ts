@@ -11,7 +11,7 @@ export { defineModel, loadModel, type ModelDefinition } from "./model";
 
 export type HttpNextProps = HttpProps & {
   cwd?: string; // 绑定项目根目录
-  publicPath?: string; // 绑定项目静态资源目录
+  publicPath?: string | string[]; // 绑定项目静态资源目录
   controllerDirectory?: string; // 控制器目录名称，基于 src 或者 dist 目录 默认 `controllers` 目录
   controllerPrefix?: string; // 控制器前缀 默认 `/-`
   controllerSuffix?: string; // 控制器后缀 默认 `controller`
@@ -33,8 +33,10 @@ export class HttpNext {
     this.cwd = cwd || process.cwd();
     // 绑定项目静态资源目录
     if (publicPath) {
-      // 绑定项目静态资源目录到 http 服务
-      this.http.use(ServerStatic(resolve(this.cwd, publicPath)));
+      const publicPaths = Array.isArray(publicPath) ? publicPath : [publicPath];
+      publicPaths.forEach((path) => {
+        this.http.use(ServerStatic(resolve(this.cwd, path)));
+      });
     }
     // 绑定项目控制器目录
     this.controllerDirectory = resolve(

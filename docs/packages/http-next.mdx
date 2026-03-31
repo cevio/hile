@@ -32,7 +32,7 @@ import HttpNext from "@hile/http-next";
 const httpNext = new HttpNext({
   port: 3000,
   cwd: __dirname,        // 项目根目录
-  publicPath: "public",   // 静态资源目录
+  publicPath: "public",   // 或 string[] 挂载多个静态根（相对 cwd）
 });
 
 const close = await httpNext.start();
@@ -55,7 +55,7 @@ export default defineService('http.next', async (shutdown) => {
   const httpNext = new HttpNext({
     port: 3000,
     cwd: resolve(__dirname, "../.."),
-    publicPath: "public",
+    publicPath: "public", // 或 ["public", "static"] 等多目录
     // 可选：控制器仍在 src/app 下时：controllerDirectory: "app"
   });
 
@@ -81,7 +81,7 @@ export default defineService('http.next', async (shutdown) => {
 客户端请求
     │
     ▼
-① koa-static(public/)          匹配 public 目录下的静态文件
+① koa-static(publicPath…)      匹配 `publicPath` 配置的静态根（`string` 或 `string[]`，相对 cwd）
     │ 未命中
     ▼
 ② koa-static(.next/static/)    匹配 Next.js 构建产物（JS、CSS chunk）
@@ -358,7 +358,7 @@ export default nextConfig;
 <Steps>
   <Step title="构造函数">
     - 创建 `Http` 实例（Koa + find-my-way）
-    - 如果指定了 `publicPath`，注册 `koa-static(public/)` 中间件
+    - 如果指定了 `publicPath`（`string` 或 `string[]`），对每个路径注册 `koa-static(resolve(cwd, path))`
     - 判断 `NODE_ENV` 设置 `isDevelopment`
     - 解析控制器根路径：`resolve(cwd, src|dist, controllerDirectory || "controllers")`，以及默认的 `controllerPrefix`、`controllerSuffix`
   </Step>
@@ -390,7 +390,7 @@ export default nextConfig;
 |------|------|------|--------|------|
 | `port` | `number` | 是 | — | 监听端口 |
 | `cwd` | `string` | 否 | `process.cwd()` | 项目根目录 |
-| `publicPath` | `string` | 否 | — | 静态资源目录（相对于 cwd） |
+| `publicPath` | `string \| string[]` | 否 | — | 静态资源根目录（相对于 `cwd`）；传数组时可挂载多个目录 |
 | `controllerDirectory` | `string` | 否 | `"controllers"` | 相对于 `src/`（开发）或 `dist/`（生产）的子目录名，控制器根路径为 `resolve(cwd, src\|dist, controllerDirectory)` |
 | `controllerPrefix` | `string` | 否 | `"/-"` | 传给 `http.load` 的 `prefix`，API 路由前缀 |
 | `controllerSuffix` | `string` | 否 | `"controller"` | 传给 `http.load` 的 `suffix`，即 `*.controller.ts` 中的 `controller` 段 |

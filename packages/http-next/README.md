@@ -16,7 +16,7 @@ import HttpNext from "@hile/http-next";
 const httpNext = new HttpNext({
   port: 3000,
   cwd: __dirname,       // 项目根目录
-  publicPath: "public",  // 静态资源目录
+  publicPath: "public",  // 或 ["public", "…"]，多个静态根
 });
 
 const close = await httpNext.start();
@@ -90,7 +90,7 @@ export default defineController("GET", async (ctx) => {
 |------|------|-------|------|
 | `port` | `number` | — | 监听端口（必填） |
 | `cwd` | `string` | `process.cwd()` | 项目根目录 |
-| `publicPath` | `string` | — | 静态资源目录（相对于 cwd） |
+| `publicPath` | `string \| string[]` | — | 静态资源根目录（相对于 `cwd`）；可为**多个**，按顺序各注册一层 `koa-static` |
 | `controllerDirectory` | `string` | `"controllers"` | 控制器目录名（相对于 `src/` 或 `dist/`） |
 | `controllerPrefix` | `string` | `"/-"` | `http.load` 的 `prefix` |
 | `controllerSuffix` | `string` | `"controller"` | `http.load` 的 `suffix`（文件名 `*.controller.ts`） |
@@ -105,7 +105,7 @@ export default defineController("GET", async (ctx) => {
 
 ### `start()` 执行流程
 
-1. 注册 `publicPath` 与 `.next/static` 静态资源（构造函数与 start 内）
+1. 注册 `publicPath`（单个或多个目录）与 `.next/static` 静态资源（构造函数与 `start` 内）
 2. 加载控制器：`http.load(resolve(cwd, src|dist, controllerDirectory), { suffix, defaultSuffix, prefix, conflict: "error" })`
 3. 启动 HTTP 服务（`http.listen()`）
 4. 在 `onListen` 回调中：创建 Next 应用并 `prepare()`，挂载 Next.js 转发中间件

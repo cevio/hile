@@ -52,7 +52,7 @@ export default async function Page() {
 new HttpNext({
   port: 3000,
   cwd: resolve(__dirname, "../.."), // 项目根
-  publicPath: "public",
+  publicPath: "public", // 或 string[]，如 ["public", "static"] — 多个静态根各挂一层 koa-static
   controllerDirectory: "controllers", // 或 "app"
   controllerPrefix: "/-",             // API 前缀
 });
