@@ -100,4 +100,43 @@ describe('HttpNext', () => {
       }),
     )
   })
+
+  it('specialControllers 在主 load 之后追加多次 http.load', async () => {
+    vi.stubEnv('NODE_ENV', 'development')
+    const httpNext = new HttpNext({
+      port: 3000,
+      cwd: '/proj',
+      specialControllers: [
+        { directory: 'admin-api', prefix: '/admin' },
+        { directory: 'legacy', prefix: '/v1' },
+      ],
+    })
+    await httpNext.start()
+
+    expect(loadMock).toHaveBeenCalledTimes(3)
+    expect(loadMock).toHaveBeenNthCalledWith(
+      1,
+      '/proj/src/controllers',
+      expect.objectContaining({
+        prefix: '/-',
+        conflict: 'error',
+      }),
+    )
+    expect(loadMock).toHaveBeenNthCalledWith(
+      2,
+      '/proj/src/admin-api',
+      expect.objectContaining({
+        prefix: '/admin',
+        conflict: 'error',
+      }),
+    )
+    expect(loadMock).toHaveBeenNthCalledWith(
+      3,
+      '/proj/src/legacy',
+      expect.objectContaining({
+        prefix: '/v1',
+        conflict: 'error',
+      }),
+    )
+  })
 })

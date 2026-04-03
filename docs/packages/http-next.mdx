@@ -366,7 +366,7 @@ export default nextConfig;
     注册 `koa-static(.next/static/)` — 提供 Next.js 构建的 JS/CSS chunk
   </Step>
   <Step title="加载 API 控制器">
-    在 `start()` 内调用 `http.load(控制器根目录, { suffix, defaultSuffix, prefix, conflict: "error" })`。默认根目录为 `src/controllers`（开发）或 `dist/controllers`（生产）；`conflict` 为 **`error`**，路由冲突会抛错
+    在 `start()` 内先对**主**控制器根调用 `http.load(…, { suffix, defaultSuffix, prefix: controllerPrefix, conflict: "error" })`。若配置了 **`specialControllers`**（`{ directory, prefix }[]`），再**按顺序**对每一项执行 `http.load(resolve(cwd, src|dist, directory), { …同 suffix/defaultSuffix/conflict, prefix: 该项的 prefix })`。默认主根目录为 `src/controllers`（开发）或 `dist/controllers`（生产）；`conflict` 为 **`error`**，路由冲突会抛错
   </Step>
   <Step title="启动 HTTP 服务">
     调用 `http.listen()` 启动 Koa，传入 `onListen` 回调
@@ -394,11 +394,19 @@ export default nextConfig;
 | `controllerDirectory` | `string` | 否 | `"controllers"` | 相对于 `src/`（开发）或 `dist/`（生产）的子目录名，控制器根路径为 `resolve(cwd, src\|dist, controllerDirectory)` |
 | `controllerPrefix` | `string` | 否 | `"/-"` | 传给 `http.load` 的 `prefix`，API 路由前缀 |
 | `controllerSuffix` | `string` | 否 | `"controller"` | 传给 `http.load` 的 `suffix`，即 `*.controller.ts` 中的 `controller` 段 |
+| `specialControllers` | `SpecialController[]` | 否 | — | 额外控制器根，见下表 **`SpecialController`**；主 `load` 完成后再逐项 `load` |
 | `keys` | `string[]` | 否 | 随机生成 | Koa 签名密钥 |
+
+### `SpecialController`
+
+| 字段 | 说明 |
+|------|------|
+| `directory` | 相对 `src/`（开发）或 `dist/`（生产）的子目录名，如 `"admin-api"` → `src/admin-api/*.controller.ts` |
+| `prefix` | 该组控制器的 `http.load` 的 `prefix`，如 `"/admin"` |
 
 继承 `@hile/http` 的 `HttpProps`（`ignoreDuplicateSlashes`、`ignoreTrailingSlash` 等）。
 
-路由加载使用 **`conflict: "error"`**（与旧版 `warn` + `onConflict` 不同），重复路由会直接失败。
+路由加载使用 **`conflict: "error"`**（与旧版 `warn` + `onConflict` 不同），重复路由会直接失败。主路由与 **`specialControllers`** 各组之间若出现**相同**完整路由也会冲突失败。
 
 ### HttpNext
 

@@ -94,6 +94,7 @@ export default defineController("GET", async (ctx) => {
 | `controllerDirectory` | `string` | `"controllers"` | 控制器目录名（相对于 `src/` 或 `dist/`） |
 | `controllerPrefix` | `string` | `"/-"` | `http.load` 的 `prefix` |
 | `controllerSuffix` | `string` | `"controller"` | `http.load` 的 `suffix`（文件名 `*.controller.ts`） |
+| `specialControllers` | `SpecialController[]` | — | 可选，额外控制器根：`{ directory, prefix }` 相对 `src`/`dist`，在主线 `load` 之后逐项再 `load`（`suffix`/`conflict` 与主线相同） |
 | `keys` | `string[]` | — | Koa 签名密钥 |
 
 ### `HttpNext`
@@ -106,7 +107,7 @@ export default defineController("GET", async (ctx) => {
 ### `start()` 执行流程
 
 1. 注册 `publicPath`（单个或多个目录）与 `.next/static` 静态资源（构造函数与 `start` 内）
-2. 加载控制器：`http.load(resolve(cwd, src|dist, controllerDirectory), { suffix, defaultSuffix, prefix, conflict: "error" })`
+2. 加载主控制器：`http.load(resolve(cwd, src|dist, controllerDirectory), …)`；若配置了 **`specialControllers`**，再按顺序对每项 **`http.load(resolve(cwd, src|dist, item.directory), { …, prefix: item.prefix })`**
 3. 启动 HTTP 服务（`http.listen()`）
 4. 在 `onListen` 回调中：创建 Next 应用并 `prepare()`，挂载 Next.js 转发中间件
 

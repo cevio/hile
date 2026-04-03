@@ -1,6 +1,6 @@
 ---
 name: http-next
-description: "@hile/http-next：业务只在 src/models；page.tsx 使用 loadModel 须 `export const dynamic = force-dynamic;`；app/controllers/services 仅 loadModel；cwd、Boot、HttpNext 见本文。"
+description: "@hile/http-next：业务只在 src/models；page.tsx+loadModel 须 dynamic=force-dynamic；HttpNext 可选 specialControllers 多 API 根；app/controllers/services 仅 loadModel；见本文。"
 ---
 
 # @hile/http-next
@@ -21,6 +21,8 @@ description: "@hile/http-next：业务只在 src/models；page.tsx 使用 loadMo
 **控制器目录**：默认 **`src/controllers`**；API 写在 **`src/app`** 下则 **`controllerDirectory: "app"`**。生产：**`resolve(cwd, dist|src, controllers)`**，**tsc** 产出 **`dist/models`** 等与 **`src`** 同结构。
 
 **`http.load`**：**`conflict: "error"`**。
+
+**额外 API 根（可选）**：**`specialControllers?: { directory: string; prefix: string }[]`**。在默认 **`load`** 之后，对每一项依次 **`resolve(cwd, src|dist, directory)`** 再 **`http.load`**，**`suffix` / `defaultSuffix` / `conflict`** 与主控制器相同，**`prefix`** 取该项的 **`prefix`**。用于同一项目里多套 API 前缀（如主 **`/-`** +  **`/admin`**）。
 
 ## `defineModel` / `loadModel`
 
@@ -49,14 +51,21 @@ export default async function Page() {
 ## `HttpNext`（摘要）
 
 ```typescript
+import type { SpecialController } from "@hile/http-next";
+
+const extra: SpecialController[] = [
+  { directory: "admin-api", prefix: "/admin" }, // src/admin-api/*.controller.ts → /admin/…
+];
+
 new HttpNext({
   port: 3000,
   cwd: resolve(__dirname, "../.."), // 项目根
   publicPath: "public", // 或 string[]，如 ["public", "static"] — 多个静态根各挂一层 koa-static
   controllerDirectory: "controllers", // 或 "app"
-  controllerPrefix: "/-",             // API 前缀
+  controllerPrefix: "/-",             // 主 API 前缀
+  specialControllers: extra, // 可选；多组 directory + prefix
 });
-// start(): public → .next/static → load(controllers) → listen → Next prepare → 转发
+// start(): … → load(主目录) → load(special 每项) → listen → Next prepare → 转发
 ```
 
 **Boot（`src/services/*.boot.ts`）**
@@ -82,4 +91,4 @@ export default defineService("http.next", async (shutdown) => {
 
 ## 测试
 
-**`src/index.test.ts`**：**`load`** 路径与 **`conflict`**；**`src/model.test.ts`**：**`loadModel`** 行为与非法首参。
+**`src/index.test.ts`**：**`load`** 路径、**`specialControllers`** 追加 **`load`**、**`conflict`**；**`src/model.test.ts`**：**`loadModel`** 行为与非法首参。

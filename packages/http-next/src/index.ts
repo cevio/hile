@@ -9,12 +9,19 @@ import type { Server } from "http";
 
 export { defineModel, loadModel, type ModelDefinition } from "./model";
 
+/** 额外控制器根目录：相对 `src/`（开发）或 `dist/`（生产），使用独立 `prefix` 再 `http.load` 一次 */
+export interface SpecialController {
+  directory: string;
+  prefix: string;
+}
+
 export type HttpNextProps = HttpProps & {
   cwd?: string; // 绑定项目根目录
   publicPath?: string | string[]; // 绑定项目静态资源目录
   controllerDirectory?: string; // 控制器目录名称，基于 src 或者 dist 目录 默认 `controllers` 目录
   controllerPrefix?: string; // 控制器前缀 默认 `/-`
   controllerSuffix?: string; // 控制器后缀 默认 `controller`
+  specialControllers?: SpecialController[]
 };
 
 export class HttpNext {
@@ -24,8 +31,9 @@ export class HttpNext {
   private readonly controllerDirectory: string;
   private readonly controllerPrefix: string;
   private readonly controllerSuffix: string;
+  private readonly specialControllers: SpecialController[];
   constructor(options: HttpNextProps) {
-    const { cwd, publicPath, controllerDirectory, controllerPrefix, controllerSuffix, ...httpOptions } = options;
+    const { cwd, publicPath, controllerDirectory, controllerPrefix, controllerSuffix, specialControllers, ...httpOptions } = options;
     this.isDevelopment = process.env.NODE_ENV === "development";
     // 创建 http 服务
     this.http = new Http(httpOptions);
@@ -48,6 +56,8 @@ export class HttpNext {
     this.controllerPrefix = controllerPrefix || "/-";
     // 绑定项目控制器后缀
     this.controllerSuffix = controllerSuffix || "controller";
+    // 绑定项目特殊控制器
+    this.specialControllers = specialControllers || [];
   }
 
   private createForwardToNextMiddleware(handler: RequestHandler): Middleware {
@@ -82,6 +92,20 @@ export class HttpNext {
       prefix: this.controllerPrefix,
       conflict: "error",
     });
+    for (let i = 0; i < this.specialControllers.length; i++) {
+      const specialController = this.specialControllers[i];
+      const directory = resolve(
+        this.cwd,
+        this.isDevelopment ? "src" : "dist",
+        specialController.directory
+      );
+      await this.http.load(directory, {
+        suffix: this.controllerSuffix,
+        defaultSuffix: "/index",
+        prefix: specialController.prefix,
+        conflict: "error",
+      });
+    }
     // 启动 http 服务
     const stop = await this.http.listen(async (server) => {
       if (onListen) await onListen(server);
