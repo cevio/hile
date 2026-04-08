@@ -264,6 +264,8 @@ export default [getUsers, createUser]
     TYPEORM_PASSWORD=secret
     TYPEORM_DATABASE=mydb
     TYPEORM_ENTITIES=dist/entities/*.js
+    # 需要自动建表时设为 true；生产勿开启
+    TYPEORM_SYNCHRONIZE=true
 
     REDIS_HOST=localhost
     REDIS_PORT=6379

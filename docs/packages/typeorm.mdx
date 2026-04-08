@@ -59,6 +59,8 @@ TYPEORM_DATABASE=myapp
 TYPEORM_CHARSET=utf8mb4
 TYPEORM_ENTITY_PREFIX=app_
 TYPEORM_ENTITIES=dist/entities/*.js
+# 本地开发可开启自动建表；生产请省略或设为 false，改用 migration
+TYPEORM_SYNCHRONIZE=true
 ```
 
 ### 第二步：加载服务
@@ -105,18 +107,19 @@ export default defineController('GET', async (ctx) => {
 | `TYPEORM_CHARSET` | `string` | 否 | 字符集（如 `utf8mb4`） |
 | `TYPEORM_ENTITY_PREFIX` | `string` | 否 | 表名前缀（如 `app_`） |
 | `TYPEORM_ENTITIES` | `string` | 否 | 实体文件路径（glob 格式，如 `dist/entities/*.js`） |
+| `TYPEORM_SYNCHRONIZE` | `string` | 否 | 仅当值为 `true` 时启用 `synchronize`；未设置或其他值均为关闭 |
 
 ### 自动行为
 
 | 特性 | 说明 |
 |------|------|
-| `synchronize` | 始终为 `true`（自动同步表结构） |
+| `synchronize` | 仅当 `TYPEORM_SYNCHRONIZE=true` 时为 `true`（自动同步表结构），否则为 `false` |
 | `logging` | `NODE_ENV === 'development'` 时为 `true`（输出 SQL 日志） |
 | `entities` | 未配置 `TYPEORM_ENTITIES` 时为空数组 |
 | `shutdown` | 进程退出时自动调用 `connection.destroy()` |
 
 <Warning>
-  `synchronize: true` 会自动修改数据库表结构以匹配实体定义。在生产环境中使用时请确保你了解这一行为。如果需要更安全的迁移策略，建议使用 TypeORM 的 migration 功能。
+  开启 `synchronize` 会自动修改数据库表结构以匹配实体定义。务必避免在生产环境设置 `TYPEORM_SYNCHRONIZE=true`；需要可控变更时请使用 TypeORM 的 migration。
 </Warning>
 
 ---

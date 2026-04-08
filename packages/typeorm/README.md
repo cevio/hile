@@ -37,10 +37,11 @@ const ds = await loadService(typeormService)
 | `TYPEORM_CHARSET` | 字符集 |
 | `TYPEORM_ENTITY_PREFIX` | 实体表名前缀 |
 | `TYPEORM_ENTITIES` | 实体目录（单一路径） |
+| `TYPEORM_SYNCHRONIZE` | 设为 `true` 时开启 `synchronize`（自动同步表结构）；否则关闭（默认） |
 
 行为说明：
 
-- `synchronize: true`
+- `synchronize`：仅当 `TYPEORM_SYNCHRONIZE=true` 时为 `true`
 - 当 `NODE_ENV === 'development'` 时启用 `logging`
 - 未配置 `TYPEORM_ENTITIES` 时，实体数组为空
 - 进程退出时通过 Hile 的 shutdown 自动销毁连接

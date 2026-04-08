@@ -15,6 +15,7 @@ import { DataSource, DataSourceOptions, QueryRunner } from 'typeorm';
  * - TYPEORM_CHARSET: 数据库字符集
  * - TYPEORM_ENTITY_PREFIX: 实体前缀
  * - TYPEORM_ENTITIES: 实体目录
+ * - TYPEORM_SYNCHRONIZE: 是否同步数据库结构（环境变量值为字符串 "true" 时开启，否则关闭）
  */
 export default defineService(Symbol.for(pkg.name), async (shutdown) => {
   const configs: DataSourceOptions = {
@@ -34,7 +35,7 @@ export default defineService(Symbol.for(pkg.name), async (shutdown) => {
 
   const connection = new DataSource({
     ...configs,
-    synchronize: true,
+    synchronize: process.env.TYPEORM_SYNCHRONIZE === 'true',
     logging: process.env.NODE_ENV === 'development',
   });
 

@@ -29,10 +29,11 @@ description: "@hile/typeorm 的代码生成与使用规范。适用于 DataSourc
 | `TYPEORM_CHARSET` | 字符集 |
 | `TYPEORM_ENTITY_PREFIX` | 表名前缀 |
 | `TYPEORM_ENTITIES` | 实体目录（单一路径） |
+| `TYPEORM_SYNCHRONIZE` | 设为 `true` 时开启 TypeORM `synchronize`（自动改表结构）；未设或其他值则为关闭 |
 
 行为：
 
-- `synchronize: true`
+- `synchronize`：`TYPEORM_SYNCHRONIZE === 'true'` 时为 `true`，否则为 `false`
 - `NODE_ENV === 'development'` 时 `logging: true`
 - 未设置 `TYPEORM_ENTITIES` 时实体为空数组
 
