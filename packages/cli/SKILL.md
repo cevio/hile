@@ -17,7 +17,7 @@ description: "@hile/cli 的强约束生成规范。适用于 boot 编排、启�
 6. 加载顺序必须固定：`auto_load_packages` → 扫描 boot。
 7. 运行目录优先级必须固定：`HILE_RUNTIME_DIR` → `src`(dev) → `dist`。
 8. CLI 必须订阅 `container.on` 并输出关键生命周期日志。
-9. 进程退出时必须通过 `registerExitHook(container, offEvent)` 注册退出钩子；钩子内必须 **await** `container.shutdown()` 完成后再执行 `offEvent()` 与 `exit()`，未完成时进程挂起不退出。
+9. 进程退出时必须通过 `registerExitHook(offEvent)` 注册退出钩子；实现内对 **`@hile/core` 的全局 `container`** 调用 **`await container.shutdown()`**，**仅在其完成后**（含 TTY 下对 `process.stdin.unref()` 的收尾）在 `finally` 中执行 `offEvent()` 与 `exit()`；`shutdown` 未完成时进程挂起不退出（受 `forceExitTimeout` 上限保护）。
 
 ## 2. 容器事件日志约束
 
@@ -77,7 +77,7 @@ const off = container.on(listener)
 // ✗ 直接 exit 不关闭容器
 exitHook(exit => exit())
 
-// ✓ 使用 registerExitHook(container, offEvent)，内部会 shutdown 再 exit
+// ✓ 使用 registerExitHook(offEvent)，内部 await container.shutdown() 再 exit
 ```
 
 ## 4. 边界条件清单
@@ -88,3 +88,4 @@ exitHook(exit => exit())
 - [ ] 多个 `--env-file` 加载顺序可预测
 - [ ] shutdown 期间异常不会吞掉主错误
 - [ ] 退出钩子：`exit()` 仅在 `container.shutdown()` 完成后调用；shutdown 未完成时进程挂起（见 exitHook 单测）
+- [ ] TTY 场景下退出前对 `process.stdin` 调用 `unref()`，避免 stdin 拖住进程退出
