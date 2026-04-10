@@ -1,5 +1,20 @@
 import { describe, it, expect, vi } from 'vitest'
-import { defineController, defineResponsePlugin } from './controller'
+import { z } from 'zod'
+import { createControllerMetadata, defineController, defineResponsePlugin } from './controller'
+
+function mockCtx(overrides: Record<string, unknown> = {}) {
+  const ctx: Record<string, unknown> = {
+    query: {},
+    params: {},
+    request: { body: undefined },
+    throw(status: number, msg?: string) {
+      const err = Object.assign(new Error(msg ?? String(status)), { status })
+      throw err
+    },
+    ...overrides,
+  }
+  return ctx
+}
 
 describe('defineController - 定义路由控制器', () => {
   it('传入 method 和 controller 函数时，正确返回注册信息', () => {
@@ -82,6 +97,58 @@ describe('defineController - 定义路由控制器', () => {
       await middleware(ctx, async () => { })
     }
     expect(order).toEqual([1, 2])
+  })
+
+  describe('createControllerMetadata + Zod', () => {
+    it('校验 query 通过后注入解析结果', async () => {
+      const meta = createControllerMetadata({
+        method: 'GET',
+        middlewares: [],
+        schema: { query: z.object({ page: z.coerce.number() }) },
+      })
+      const result = defineController(meta, (ctx) => ({ n: ctx.query.page }))
+      const ctx = mockCtx({ query: { page: '3' } })
+      const composed = result.middlewares[result.middlewares.length - 1]
+      await composed(ctx as any, async () => { })
+      expect(ctx.body).toEqual({ n: 3 })
+    })
+
+    it('query 校验失败时 ctx.throw(400)', async () => {
+      const meta = createControllerMetadata({
+        method: 'GET',
+        middlewares: [],
+        schema: { query: z.object({ id: z.string().uuid() }) },
+      })
+      const result = defineController(meta, () => ({ ok: true }))
+      const ctx = mockCtx({ query: { id: 'not-uuid' } })
+      const composed = result.middlewares[result.middlewares.length - 1]
+      await expect(composed(ctx as any, async () => { })).rejects.toMatchObject({ status: 400 })
+    })
+
+    it('仅 body schema 时也会校验 body', async () => {
+      const meta = createControllerMetadata({
+        method: 'POST',
+        middlewares: [],
+        schema: { body: z.object({ name: z.string().min(1) }) },
+      })
+      const result = defineController(meta, (ctx) => ctx.request.body)
+      const ctx = mockCtx({ request: { body: { name: 'a' } } })
+      const composed = result.middlewares[result.middlewares.length - 1]
+      await composed(ctx as any, async () => { })
+      expect(ctx.body).toEqual({ name: 'a' })
+    })
+
+    it('params 校验失败时 ctx.throw(400)', async () => {
+      const meta = createControllerMetadata({
+        method: 'GET',
+        middlewares: [],
+        schema: { params: z.object({ id: z.coerce.number().positive() }) },
+      })
+      const result = defineController(meta, () => ({ ok: true }))
+      const ctx = mockCtx({ params: { id: '-1' } })
+      const composed = result.middlewares[result.middlewares.length - 1]
+      await expect(composed(ctx as any, async () => { })).rejects.toMatchObject({ status: 400 })
+    })
   })
 
   it('response plugin 可以修改最终 ctx.body', async () => {

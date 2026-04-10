@@ -81,6 +81,12 @@ describe('Http - HTTP 服务类', () => {
       const off = http.trace('/path', async (ctx) => { ctx.body = 'ok' })
       expect(typeof off).toBe('function')
     })
+
+    it('patch() 返回注销回调函数', () => {
+      const http = new Http({ port: 3035 })
+      const off = http.patch('/path', async (ctx) => { ctx.body = 'ok' })
+      expect(typeof off).toBe('function')
+    })
   })
 
   describe('listen - 启动服务', () => {

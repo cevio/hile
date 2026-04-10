@@ -102,7 +102,7 @@ export default defineService('http.next', async (shutdown) => {
 
 ## API 路由（控制器）
 
-控制器默认放在 **`src/controllers/`**（`NODE_ENV === 'development'` 时）或 **`dist/controllers/`**（生产构建后），使用 `@hile/http` 的 `defineController`。这样与 Next.js 的 **`src/app/`**（页面、`layout.tsx` 等）目录分离，避免混在同一文件夹。
+控制器默认放在 **`src/controllers/`**（`NODE_ENV === 'development'` 时）或 **`dist/controllers/`**（生产构建后），使用 `@hile/http` 的 `defineController`（可选 **`createControllerMetadata` + Zod** 校验入参，行为与纯 `@hile/http` 一致）。这样与 Next.js 的 **`src/app/`**（页面、`layout.tsx` 等）目录分离，避免混在同一文件夹。
 
 若你希望继续把控制器放在 **`src/app/`**（与旧版行为一致），在构造 `HttpNext` 时传入 **`controllerDirectory: "app"`**。
 
@@ -373,8 +373,8 @@ export default nextConfig;
   </Step>
   <Step title="初始化 Next.js">
     在 `onListen` 回调中：
-    - 创建 `NextServer({ dev, webpack, httpServer })` — 共享 Koa 的 HTTP Server
-    - 调用 `app.prepare()` — Next.js 编译页面、启动 HMR 等
+    - 创建 `NextServer({ dev, httpServer })` — 与 Koa 共用同一 `http.Server`
+    - 调用 `app.prepare()` — Next.js 编译页面、开发模式下 HMR 等
     - 获取 `app.getRequestHandler()` — 保存为 Next 请求处理函数
     - 注册 Next.js 转发中间件（此后未匹配请求由 Next.js 处理）
   </Step>

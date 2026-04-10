@@ -42,7 +42,7 @@ Hile 按职责分为三层，每一层都是可选的，你可以按需引入：
   <Accordion title="服务层：@hile/http、@hile/typeorm、@hile/ioredis、@hile/message-modem">
     **职责：** 提供具体的基础设施服务。
 
-    - `@hile/http` — 封装 Koa + find-my-way，提供路由注册、中间件、文件系统自动路由
+    - `@hile/http` — 封装 Koa + find-my-way，提供路由注册、中间件、文件系统路由；控制器可选 Zod 校验
     - `@hile/typeorm` — 将 TypeORM DataSource 封装为 Hile 服务，提供事务辅助
     - `@hile/ioredis` — 将 ioredis 客户端封装为 Hile 服务
     - `@hile/message-modem` — 传输无关的请求/响应消息通信抽象层，支持超时、中止、错误传播

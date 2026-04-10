@@ -37,7 +37,8 @@ describe('@hile/message-ws', () => {
   let port: number;
 
   beforeEach(async () => {
-    wss = new WebSocketServer({ port: 0 });
+    // 绑定 127.0.0.1，避免部分环境下 ::1 / 代理对 localhost 升级返回非 101
+    wss = new WebSocketServer({ host: '127.0.0.1', port: 0 });
     await new Promise<void>((r) => wss.once('listening', r));
     const addr = wss.address();
     port = typeof addr === 'object' ? addr!.port : 0;
@@ -49,9 +50,12 @@ describe('@hile/message-ws', () => {
   });
 
   function connectPair(): Promise<{ client: WebSocket; server: WebSocket }> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const client = new WebSocket(`ws://127.0.0.1:${port}`);
+      const onErr = (err: Error) => reject(err);
+      client.once('error', onErr);
       wss.once('connection', (server) => {
+        client.off('error', onErr);
         resolve({ client, server });
       });
     });

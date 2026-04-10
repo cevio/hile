@@ -22,6 +22,8 @@ description: "@hile/http-next：业务只在 src/models；page.tsx+loadModel 须
 
 **`http.load`**：**`conflict: "error"`**。
 
+**控制器校验**：与纯 **`@hile/http`** 相同，可使用 **`createControllerMetadata`** + **Zod** 与 **`defineController(metadata, fn)`** 校验 **`query` / `params` / `request.body`**，失败 **`400`**（见 **`packages/http/SKILL.md`**）。
+
 **额外 API 根（可选）**：**`specialControllers?: { directory: string; prefix: string }[]`**。在默认 **`load`** 之后，对每一项依次 **`resolve(cwd, src|dist, directory)`** 再 **`http.load`**，**`suffix` / `defaultSuffix` / `conflict`** 与主控制器相同，**`prefix`** 取该项的 **`prefix`**。用于同一项目里多套 API 前缀（如主 **`/-`** +  **`/admin`**）。
 
 ## `defineModel` / `loadModel`

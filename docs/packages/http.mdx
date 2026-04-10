@@ -1,6 +1,6 @@
 ---
 title: "@hile/http"
-description: "基于 Koa + find-my-way 的 HTTP 服务框架，支持中间件、路由注册与文件系统自动路由"
+description: "基于 Koa + find-my-way 的 HTTP 服务框架，支持中间件、文件系统路由，以及可选的 Zod 入参校验"
 ---
 
 ## 安装
@@ -9,7 +9,7 @@ description: "基于 Koa + find-my-way 的 HTTP 服务框架，支持中间件�
 pnpm add @hile/http
 ```
 
-依赖：`koa`、`find-my-way`、`koa-compose`、`glob`。
+依赖：`koa`、`find-my-way`、`koa-compose`、`glob`、`zod`。
 
 ---
 
@@ -164,7 +164,7 @@ http.route('OPTIONS', '/users', async (ctx) => {
 })
 ```
 
-支持的快捷方法：`get`、`post`、`put`、`delete`、`trace`。其他方法使用 `route(method, url, ...middlewares)`。
+支持的快捷方法：`get`、`post`、`put`、`delete`、`patch`、`trace`。其他方法使用 `route(method, url, ...middlewares)`。
 
 ---
 
@@ -256,6 +256,32 @@ const deleteUser = defineController('DELETE', [auth], async (ctx) => {
 
 // 导出为数组
 export default [getUsers, createUser, deleteUser]
+```
+
+### 使用 Zod 校验 query / params / body（可选）
+
+使用 **`createControllerMetadata`** 传入 `method`、`middlewares` 与可选的 **`schema`**（`query`、`params`、`body` 均为可选 Zod schema），再以 **`defineController(metadata, fn)`** 注册。进入业务 handler 前会对已声明部分做 **`safeParse`**，失败则 **`ctx.throw(400, message)`**。传统的 **`defineController(method, fn)`** / **`defineController(method, [mw], fn)`** 使用内部占位 schema，**不会**执行 Zod 校验。
+
+```typescript
+import { z } from "zod";
+import { createControllerMetadata, defineController } from "@hile/http";
+
+export default defineController(
+  createControllerMetadata({
+    method: "POST",
+    middlewares: [],
+    schema: {
+      query: z.object({ page: z.coerce.number().optional() }),
+      params: z.object({ id: z.string().uuid() }),
+      body: z.object({ title: z.string().min(1) }),
+    },
+  }),
+  async (ctx) => ({
+    id: ctx.params.id,
+    title: ctx.request.body.title,
+    page: ctx.query.page,
+  }),
+);
 ```
 
 ### 加载路由
@@ -426,6 +452,7 @@ export const httpService = defineService('http', async (shutdown) => {
 | `put(url, ...mw)` | `() => void` | 注册 PUT 路由 |
 | `delete(url, ...mw)` | `() => void` | 注册 DELETE 路由 |
 | `trace(url, ...mw)` | `() => void` | 注册 TRACE 路由 |
+| `patch(url, ...mw)` | `() => void` | 注册 PATCH 路由 |
 | `route(method, url, ...mw)` | `() => void` | 注册任意方法路由 |
 | `load(dir, options?)` | `Promise<() => void>` | 加载文件系统路由 |
 
@@ -456,8 +483,11 @@ export const httpService = defineService('http', async (shutdown) => {
 | 导出 | 说明 |
 |------|------|
 | `Http` | HTTP 服务类 |
-| `defineController` | 控制器定义函数 |
+| `defineController` | 控制器定义（含 Zod 元数据重载） |
+| `createControllerMetadata` | 构造控制器元数据（method / middlewares / schema） |
 | `defineResponsePlugin` | 响应插件定义函数 |
 | `Loader` | 路由加载器类 |
 | `compileRoutePath` | 路径编译纯函数 |
 | `toRouterPath` | `[param]` → `:param` 转换函数 |
+
+类型导出包括 **`ControllerContext`**、**`ControllerFunction`** 等与控制器相关的类型。

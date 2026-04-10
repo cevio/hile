@@ -26,7 +26,7 @@ description: "引导 AI 在本仓库或使用 Hile 的项目中，正确选用�
 |------|--------|------|
 | 定义/加载异步服务、生命周期、依赖图、优雅关闭 | `@hile/core` | 基础容器，所有依赖容器的包都基于它 |
 | 启动应用、扫描 boot、容器事件日志、退出钩子 | `@hile/cli` | 与 core 配合，入口为 `hile start` |
-| HTTP API：Koa、路由、中间件、文件系统路由 | `@hile/http` | 与 core 集成时在 defineService 内 new Http、load、listen、shutdown(close) |
+| HTTP API：Koa、路由、中间件、文件系统路由 | `@hile/http` | 与 core 集成时在 defineService 内 new Http、load、listen、shutdown(close)；控制器可选 **`createControllerMetadata` + Zod** 校验 query/params/body |
 | API + Next.js SSR 同端口 | `@hile/http-next` | 基于 http；**应用侧 AI 须严格执行 `packages/http-next/SKILL.md`**；默认前缀 `/-`、API 默认 `src/controllers`（可选 `controllerDirectory: "app"`） |
 | TypeORM DataSource、事务与补偿回调 | `@hile/typeorm` | 默认导出为 Hile 服务，配合 `auto_load_packages` 或 boot 中 loadService |
 | Redis 客户端、环境变量配置、优雅断连 | `@hile/ioredis` | 同上，环境变量 `REDIS_*` |

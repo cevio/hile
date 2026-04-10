@@ -148,6 +148,16 @@ export class Http {
   }
 
   /**
+   * 注册 PATCH 请求路由
+   * @param url - 请求路径
+   * @param middlewares - 中间件函数
+   * @returns - 注销路由回调函数
+   */
+  public patch(url: string, ...middlewares: Middleware[]) {
+    return this.route('PATCH', url, ...middlewares);
+  }
+
+  /**
    * 注册路由
    * @param method 请求方法
    * @param url 请求路径

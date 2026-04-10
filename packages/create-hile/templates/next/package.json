@@ -9,7 +9,7 @@
     "build:base": "rm -rf dist && tsc -b && npm run build:fix",
     "build:next": "next build",
     "build:fix": "fix-esm-import-path --preserve-import-type ./dist ",
-    "dev": "npm run build:next && hile start --dev --env-file .env",
+    "dev": "hile start --dev --env-file .env",
     "start": "hile start --env-file .env.prod"
   },
   "license": "MIT",

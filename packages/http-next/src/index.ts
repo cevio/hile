@@ -112,7 +112,7 @@ export class HttpNext {
       // 创建 next 应用
       const app = NextServer({
         dev: this.isDevelopment,
-        webpack: this.isDevelopment,
+        // webpack: this.isDevelopment,
         httpServer: server,
       });
       // 准备 next 应用

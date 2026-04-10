@@ -12,7 +12,7 @@ description: "@hile/http 的代码生成与使用规范。适用于路由、控�
 `@hile/http` 由四部分组成：
 
 - `Http`：封装 Koa 与路由器，负责中间件、路由注册与服务启停
-- `defineController`：将方法、可选中间件与处理函数封装为标准控制器
+- `defineController`：将方法、可选中间件与处理函数封装为标准控制器；可选配合 **`createControllerMetadata`** 与 **Zod** 校验 `query` / `params` / `request.body`
 - `defineResponsePlugin`：注册控制器结果的后处理插件链
 - `Loader`：支持手动编译路由与按文件系统自动加载，并提供冲突策略与冲突回调
 
@@ -23,6 +23,7 @@ description: "@hile/http 的代码生成与使用规范。适用于路由、控�
 ```typescript
 import type { Context, Middleware } from 'koa'
 import type { HTTPMethod } from 'find-my-way'
+import { z, type ZodObject, type ZodType } from 'zod'
 
 type HttpProps = {
   port: number
@@ -34,7 +35,16 @@ type HttpProps = {
   caseSensitive?: boolean
 }
 
-type ControllerFunction = (ctx: Context) => unknown | Promise<unknown>
+type ControllerContext<A extends ZodObject, B extends ZodObject, C extends ZodType> = Context & {
+  query: z.infer<A>
+  params: z.infer<B>
+  request: Context['request'] & { body: z.infer<C> }
+}
+
+type ControllerFunction<A extends ZodObject, B extends ZodObject, C extends ZodType> = (
+  ctx: ControllerContext<A, B, C>
+) => unknown | Promise<unknown>
+// 两参/三参 defineController(method, …) 内部使用占位 z.object({})，运行时跳过 Zod；handler 仍按 (ctx: Context) 书写即可
 
 type ResponsePluginFunction = (
   ctx: Context,
@@ -82,6 +92,8 @@ import { Http } from '@hile/http'
 const http = new Http({ port: 3000 })
 ```
 
+**`listen(onListen?)`**：可选 **`onListen(server)`** 在 **`createServer`** 之后、**`server.listen`** 完成端口绑定之前调用（可为 `async`），便于把同一 **`http.Server`** 交给 Next.js、WebSocket 等；返回 **`Promise<() => void>`** 关闭函数。
+
 ### 3.2 注册全局中间件
 
 ```typescript
@@ -104,7 +116,7 @@ const off = http.get('/api/users', async (ctx) => {
 off()
 ```
 
-规则：所有路由注册方法都返回注销函数。
+规则：所有路由注册方法都返回注销函数。另支持 **`patch(url, ...mw)`** 与通用 **`route(method, url, ...mw)`**。
 
 ### 3.4 定义控制器
 
@@ -139,6 +151,27 @@ export default defineController('POST', [auth], async (ctx) => {
 - 控制器函数签名为 `(ctx)`，不是 `(ctx, next)`
 - 控制器返回值会先经过响应插件链
 - 插件链最终结果非 `undefined` 时自动写入 `ctx.body`
+
+使用 **`createControllerMetadata`** 声明 **Zod** `schema` 时，走第三重载 **`defineController(metadata, fn)`**；请求进入控制器前对 **`ctx.query`**、**`ctx.params`**、**`ctx.request.body`** 分别 **`safeParse`**，失败 **`ctx.throw(400, message)`**。仅声明部分字段（如只写 `body`）时，未声明部分不校验。`schema` 的三项均为内部占位空对象时与旧版行为一致（跳过校验）。
+
+```typescript
+import { z } from 'zod'
+import { createControllerMetadata, defineController } from '@hile/http'
+
+const meta = createControllerMetadata({
+  method: 'POST',
+  middlewares: [],
+  schema: {
+    query: z.object({ page: z.coerce.number().optional() }),
+    params: z.object({ id: z.string().uuid() }),
+    body: z.object({ title: z.string().min(1) }),
+  },
+})
+
+export default defineController(meta, async (ctx) => {
+  return { id: ctx.params.id, title: ctx.request.body.title, page: ctx.query.page }
+})
+```
 
 ### 3.5 响应插件
 
@@ -200,6 +233,7 @@ await http.load('./src/controllers', {
 5. 控制器里不要调用 `next()`，需要 `next` 的逻辑放中间件。
 6. `load()` 为异步，必须 `await`。
 7. 大型项目建议显式设置 `conflict` 策略，避免隐式覆盖。
+8. 使用 Zod 时，`schema` 应与真实请求形状一致；校验失败为 **400**，消息来自 Zod。
 
 ## 5. 常见反模式
 
@@ -264,8 +298,11 @@ export const httpService = defineService('http', async (shutdown) => {
 
 | 导出 | 说明 |
 |---|---|
-| `Http` | HTTP 服务实例类 |
-| `defineController` | 控制器定义函数 |
+| `Http` | HTTP 服务实例类（`listen(onListen?)`、`get/post/put/delete/patch/trace/route`、`load`） |
+| `defineController` | 控制器定义（`method+fn`、`method+middlewares+fn`、`metadata+fn`） |
+| `createControllerMetadata` | 构造带 `method` / `middlewares` / `schema` 的元数据，供 Zod 校验 |
+| `ControllerContext` | 带推断类型的 `Context`（类型） |
+| `defineResponsePlugin` | 响应结果插件 |
 | `Loader` | 路由加载器 |
 | `compileRoutePath` | 路径编译纯函数 |
 | `toRouterPath` | 参数路径转换纯函数 |

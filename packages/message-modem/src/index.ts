@@ -139,12 +139,18 @@ export abstract class MessageModem {
           clear();
         }
 
-        // Abort 处理函数
+        // Abort 处理函数（post 失败时仍须 reject，否则调用方会一直挂起）
         const aborthandler = () => {
           clearTimeout(timer);
-          this.post(this.createPostData(MESSAGE_MODEM_TYPE.ABORT, state.id));
-          clear();
-          reject(new AbortException());
+          try {
+            this.post(this.createPostData(MESSAGE_MODEM_TYPE.ABORT, state.id));
+          } catch {
+            /* 例如 WebSocket 已关闭时 send 可能抛错 */
+          } finally {
+            controller.signal.removeEventListener('abort', aborthandler);
+            clear();
+            reject(new AbortException());
+          }
         }
 
         // 成功处理

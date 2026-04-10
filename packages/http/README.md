@@ -19,7 +19,8 @@ http.get('/hello', async (ctx) => {
   ctx.body = 'Hello, World!'
 })
 
-const close = await http.listen(() => {
+const close = await http.listen((server) => {
+  // server：Node http.Server，在端口绑定完成前传入，可交给其他库复用
   console.log('Server running on http://localhost:3000')
 })
 ```
@@ -78,7 +79,7 @@ const off = http.get('/temporary', async (ctx) => {
 off()
 ```
 
-快捷方法：`get`、`post`、`put`、`delete`、`trace`。也可使用 `route()`：
+快捷方法：`get`、`post`、`put`、`delete`、`patch`、`trace`。也可使用 `route()`：
 
 ```typescript
 http.route('PATCH', '/users/:id', async (ctx) => {
@@ -140,6 +141,27 @@ const updateUser = defineController('PUT', [auth], async (ctx) => {
 export default [getUser, updateUser]
 ```
 
+### 使用 Zod 校验（可选）
+
+依赖已包含 **zod**。通过 **`createControllerMetadata`** 描述 `method`、`middlewares` 与 `schema`（`query` / `params` / `body` 可选），再使用 **`defineController(metadata, handler)`**。校验使用 **`safeParse`**，失败时 **`ctx.throw(400, …)`**。未在 `schema` 中声明的字段不校验。传统的 **`defineController(method, fn)`** 与 **`defineController(method, [mw], fn)`** 仍使用内部占位 schema，**不进行** Zod 校验。
+
+```typescript
+import { z } from 'zod'
+import { createControllerMetadata, defineController } from '@hile/http'
+
+export default defineController(
+  createControllerMetadata({
+    method: 'POST',
+    middlewares: [],
+    schema: {
+      query: z.object({ page: z.coerce.number().optional() }),
+      body: z.object({ title: z.string().min(1) }),
+    },
+  }),
+  async (ctx) => ({ title: ctx.request.body.title, page: ctx.query.page }),
+)
+```
+
 ### 加载路由
 
 ```typescript
@@ -185,7 +207,7 @@ export const httpService = defineService('http', async (shutdown) => {
 
 ## API
 
-导出：`Http`、`defineController`、`defineResponsePlugin`、`Loader` 以及类型 `HttpProps`、`LoaderCompileOptions`、`LoaderFromOptions`、`ControllerRegisterProps`、`ControllerFunction`、`ResponsePluginFunction`。
+导出：`Http`、`defineController`、`createControllerMetadata`、`defineResponsePlugin`、`Loader` 以及类型 `HttpProps`、`LoaderCompileOptions`、`LoaderFromOptions`、`ControllerRegisterProps`、`ControllerContext`、`ControllerFunction`、`ResponsePluginFunction`。
 
 ### `Http`
 
@@ -194,8 +216,8 @@ export const httpService = defineService('http', async (shutdown) => {
 | `new Http(props)` | 创建实例，`port` 必填 |
 | `port` | 获取端口号 |
 | `use(middleware)` | 注册全局中间件 |
-| `listen(onListen?)` | 启动服务，返回关闭函数 |
-| `get/post/put/delete/trace(url, ...mw)` | 注册路由，返回注销函数 |
+| `listen(onListen?)` | 启动服务；可选 `onListen(server)` 在绑定端口前调用，返回关闭函数 |
+| `get/post/put/delete/patch/trace(url, ...mw)` | 注册路由，返回注销函数 |
 | `route(method, url, ...mw)` | 注册任意方法路由 |
 | `load(dir, options?)` | 加载文件系统路由 |
 
@@ -205,6 +227,7 @@ export const httpService = defineService('http', async (shutdown) => {
 |---------|------|
 | `defineController(method, fn)` | 无中间件 |
 | `defineController(method, [mw...], fn)` | 带中间件 |
+| `defineController(createControllerMetadata({ ... }), fn)` | 带 Zod `schema` 时校验 `query` / `params` / `body` |
 
 - 控制器返回值会先经过响应插件链处理
 - 插件链最终结果非 `undefined` 时自动赋值给 `ctx.body`

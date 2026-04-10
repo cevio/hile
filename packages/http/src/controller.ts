@@ -1,6 +1,17 @@
 import { HTTPMethod } from 'find-my-way';
-import { Context, Middleware } from 'koa';
-export type ControllerFunction = (ctx: Context) => unknown | Promise<unknown>;
+import { Context, Middleware, type Next } from 'koa';
+import { ParsedUrlQuery } from 'node:querystring';
+import { z, ZodObject, ZodType } from 'zod';
+
+export type ControllerContext<A extends ZodObject, B extends ZodObject, C extends ZodType> = Context & {
+  query: z.infer<A>,
+  params: z.infer<B>,
+  request: Context['request'] & {
+    body: z.infer<C>
+  }
+}
+export type ControllerFunction<A extends ZodObject, B extends ZodObject, C extends ZodType> =
+  (ctx: ControllerContext<A, B, C>) => unknown | Promise<unknown>;
 export interface ControllerRegisterProps {
   id: number;
   method: HTTPMethod;
@@ -52,45 +63,142 @@ function composeResponsePlugin(ctx: Context, res: any, last: (result: any) => Pr
   return dispatch(0, res);
 }
 
+/** 旧版 `defineController(method, …)` 无 Zod 时的占位 schema（`safeParse` 恒成功） */
+const legacyEmptyObject = z.object({});
+
 /**
  * 定义路由控制器
- * @param method 请求方法
- * @param middlewares 中间件，可以是中间件数组或控制器函数
- * @param fn 控制器函数
- * @returns 路由控制器注册信息
+ * @overload 仅 method + handler（无 Zod）
+ * @overload method + 前置中间件 + handler
+ * @overload 由 `createControllerMetadata` 提供 method / middlewares / schema
  */
 export function defineController(
   method: HTTPMethod,
-  middlewares: Middleware[] | ControllerFunction,
-  fn?: ControllerFunction
+  fn: ControllerFunction<typeof legacyEmptyObject, typeof legacyEmptyObject, typeof legacyEmptyObject>,
+): ControllerRegisterProps;
+export function defineController(
+  method: HTTPMethod,
+  middlewares: Middleware[],
+  fn: ControllerFunction<typeof legacyEmptyObject, typeof legacyEmptyObject, typeof legacyEmptyObject>,
+): ControllerRegisterProps;
+export function defineController<A extends ZodObject, B extends ZodObject, C extends ZodType>(
+  metadata: ReturnType<typeof createControllerMetadata<A, B, C>>,
+  fn: ControllerFunction<A, B, C>,
+): ControllerRegisterProps;
+export function defineController(
+  arg0: HTTPMethod | ReturnType<typeof createControllerMetadata<ZodObject, ZodObject, ZodType>>,
+  arg1?: unknown,
+  arg2?: unknown,
 ): ControllerRegisterProps {
-  let _middlewares: Middleware[] = [];
-  let _fn: ControllerFunction | undefined = undefined;
-  if (typeof middlewares === 'function' && !fn) {
-    _fn = middlewares;
-    _middlewares = [];
-  } else {
-    _middlewares = middlewares as Middleware[];
-    _fn = fn;
+  if (typeof arg0 === 'string') {
+    const method = arg0;
+    if (typeof arg1 === 'function' && arg2 === undefined) {
+      return defineControllerWithMetadata(
+        createControllerMetadata({
+          method,
+          middlewares: [],
+          schema: {
+            query: legacyEmptyObject,
+            params: legacyEmptyObject,
+            body: legacyEmptyObject,
+          },
+        }),
+        arg1 as ControllerFunction<typeof legacyEmptyObject, typeof legacyEmptyObject, typeof legacyEmptyObject>,
+      );
+    }
+    if (Array.isArray(arg1)) {
+      if (typeof arg2 !== 'function') throw new Error('Controller function is required');
+      return defineControllerWithMetadata(
+        createControllerMetadata({
+          method,
+          middlewares: arg1,
+          schema: {
+            query: legacyEmptyObject,
+            params: legacyEmptyObject,
+            body: legacyEmptyObject,
+          },
+        }),
+        arg2 as ControllerFunction<typeof legacyEmptyObject, typeof legacyEmptyObject, typeof legacyEmptyObject>,
+      );
+    }
+    throw new Error('Middlewares must be an array');
   }
-  if (!Array.isArray(_middlewares)) throw new Error('Middlewares must be an array');
-  if (!_fn) throw new Error('Controller function is required');
+  return defineControllerWithMetadata(
+    arg0 as ReturnType<typeof createControllerMetadata<ZodObject, ZodObject, ZodType>>,
+    arg1 as ControllerFunction<ZodObject, ZodObject, ZodType>,
+  );
+}
+
+function defineControllerWithMetadata<A extends ZodObject, B extends ZodObject, C extends ZodType>(
+  metadata: ReturnType<typeof createControllerMetadata<A, B, C>>,
+  fn: ControllerFunction<A, B, C>,
+): ControllerRegisterProps {
+  const method = metadata.method;
+  const middlewares = (metadata.middlewares || []).slice();
+  if (!Array.isArray(middlewares)) throw new Error('Middlewares must be an array');
 
   const id = _id++;
 
-  _middlewares.push(async (ctx) => {
-    const result = await _fn(ctx);
+  middlewares.push(async (ctx: Context, _next: Next) => {
+    const schema = metadata.schema;
+    /** `z.object({})` 对 `undefined` 会失败；旧版两参/三参 API 用同一套占位 schema，此处跳过校验 */
+    const skipZod =
+      (schema?.query as unknown) === legacyEmptyObject &&
+      (schema?.params as unknown) === legacyEmptyObject &&
+      (schema?.body as unknown) === legacyEmptyObject;
+
+    if (!skipZod && schema?.query) {
+      const query = schema.query.safeParse(ctx.query);
+      if (!query.success) {
+        ctx.throw(400, query.error.message);
+        return;
+      }
+      ctx.query = query.data as ParsedUrlQuery;
+    }
+
+    if (!skipZod && schema?.params) {
+      const params = schema.params.safeParse((ctx as Context & { params?: unknown }).params);
+      if (!params.success) {
+        ctx.throw(400, params.error.message);
+        return;
+      }
+      (ctx as Context & { params: z.infer<B> }).params = params.data;
+    }
+
+    if (!skipZod && schema?.body) {
+      const rawBody = (ctx.request as Context['request'] & { body?: unknown }).body;
+      const body = schema.body.safeParse(rawBody);
+      if (!body.success) {
+        ctx.throw(400, body.error.message);
+        return;
+      }
+      (ctx.request as Context['request'] & { body: z.infer<C> }).body = body.data;
+    }
+
+    const result = await fn(ctx as ControllerContext<A, B, C>);
     await composeResponsePlugin(ctx, result, async r => {
       if (r !== undefined) {
         ctx.body = r;
       }
-    })
+    });
   });
 
   return {
     id,
     method,
-    middlewares: _middlewares,
+    middlewares,
     data: {},
-  }
+  };
+}
+
+export function createControllerMetadata<A extends ZodObject, B extends ZodObject, C extends ZodType>(options: {
+  method: HTTPMethod;
+  middlewares: Middleware[];
+  schema: {
+    query?: A;
+    params?: B;
+    body?: C;
+  };
+}) {
+  return options;
 }
