@@ -135,5 +135,5 @@ export async function start(options: {
   }
 
   // 注册退出钩子，在进程退出时销毁所有服务
-  registerExitHook(container, offEvent);
+  registerExitHook(offEvent);
 }

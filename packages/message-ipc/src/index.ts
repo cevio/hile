@@ -46,6 +46,7 @@ export abstract class MessageIpc extends MessageModem {
    * 移除消息监听，释放资源
    */
   public dispose(): void {
+    this._dispose();
     this.channel.removeListener('message', this.listener);
   }
 }

@@ -44,13 +44,14 @@ export abstract class MessageWorkerThread extends MessageModem {
   }
 
   protected post<T = any>(data: MessageTransferFormat<T>): void {
-    this.port.postMessage(data);
+    this.port.postMessage(data, []);
   }
 
   /**
    * 移除消息监听，释放资源
    */
   public dispose(): void {
+    this._dispose();
     this.port.removeListener('message', this.listener);
   }
 }

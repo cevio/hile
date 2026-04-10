@@ -28,6 +28,17 @@ export abstract class MessageModem {
     reject: (reason?: any) => void
   }>();
 
+  protected _dispose() {
+    for (const { reject } of this.stacks.values()) {
+      reject(new AbortException());
+    }
+    for (const reject of this.aborts.values()) {
+      reject(new AbortException());
+    }
+    this.aborts.clear();
+    this.stacks.clear();
+  }
+
   /**
    * 创建自增 ID
    * 超过最大安全整数时重置为 0

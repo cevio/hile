@@ -1,4 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+const shutdownMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
+vi.mock('@hile/core', () => ({
+  container: {
+    shutdown: (...args: unknown[]) => shutdownMock(...args),
+  },
+}));
+
 import { registerExitHook } from './exitHook.js';
 
 // 捕获 exitHook 注册的回调，便于测试时模拟进程退出
@@ -15,6 +24,8 @@ describe('exitHook', () => {
 
   beforeEach(() => {
     capturedExitCallback = null;
+    shutdownMock.mockReset();
+    shutdownMock.mockResolvedValue(undefined);
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
@@ -23,11 +34,9 @@ describe('exitHook', () => {
   });
 
   it('注册后，进程退出时应调用 container.shutdown()', async () => {
-    const shutdown = vi.fn().mockResolvedValue(undefined);
-    const container = { shutdown };
     const offEvent = vi.fn();
 
-    registerExitHook(container, offEvent);
+    registerExitHook(offEvent);
 
     expect(capturedExitCallback).not.toBeNull();
 
@@ -35,7 +44,7 @@ describe('exitHook', () => {
     capturedExitCallback!(exit);
 
     await vi.waitFor(() => {
-      expect(shutdown).toHaveBeenCalledTimes(1);
+      expect(shutdownMock).toHaveBeenCalledTimes(1);
     });
     await vi.waitFor(() => {
       expect(offEvent).toHaveBeenCalledTimes(1);
@@ -45,15 +54,14 @@ describe('exitHook', () => {
 
   it('进程退出时应在 shutdown 完成后再调用 offEvent 和 exit', async () => {
     let resolveShutdown!: () => void;
-    const shutdown = vi.fn().mockReturnValue(new Promise<void>(r => { resolveShutdown = r; }));
-    const container = { shutdown };
+    shutdownMock.mockReturnValue(new Promise<void>(r => { resolveShutdown = r; }));
     const offEvent = vi.fn();
     const exit = vi.fn();
 
-    registerExitHook(container, offEvent);
+    registerExitHook(offEvent);
     capturedExitCallback!(exit);
 
-    expect(shutdown).toHaveBeenCalledTimes(1);
+    expect(shutdownMock).toHaveBeenCalledTimes(1);
     expect(offEvent).not.toHaveBeenCalled();
     expect(exit).not.toHaveBeenCalled();
 
@@ -66,12 +74,11 @@ describe('exitHook', () => {
   });
 
   it('shutdown 失败时仍应调用 offEvent 和 exit（错误被 catch 并打印）', async () => {
-    const shutdown = vi.fn().mockRejectedValue(new Error('shutdown failed'));
-    const container = { shutdown };
+    shutdownMock.mockRejectedValue(new Error('shutdown failed'));
     const offEvent = vi.fn();
     const exit = vi.fn();
 
-    registerExitHook(container, offEvent);
+    registerExitHook(offEvent);
     capturedExitCallback!(exit);
 
     await vi.waitFor(() => {
@@ -84,15 +91,14 @@ describe('exitHook', () => {
 
   it('shutdown() 未完成前，exit() 不会被调用（进程应挂起）', async () => {
     let resolveShutdown!: () => void;
-    const shutdown = vi.fn().mockReturnValue(new Promise<void>(r => { resolveShutdown = r; }));
-    const container = { shutdown };
+    shutdownMock.mockReturnValue(new Promise<void>(r => { resolveShutdown = r; }));
     const offEvent = vi.fn();
     const exit = vi.fn();
 
-    registerExitHook(container, offEvent);
+    registerExitHook(offEvent);
     capturedExitCallback!(exit);
 
-    expect(shutdown).toHaveBeenCalledTimes(1);
+    expect(shutdownMock).toHaveBeenCalledTimes(1);
 
     // 在一小段时间内不 resolve：exit 必须未被调用
     await new Promise(r => setTimeout(r, 30));
@@ -109,7 +115,7 @@ describe('exitHook', () => {
   it('调用顺序必须为：先 await shutdown 完成，再 offEvent，再 exit', async () => {
     const order: string[] = [];
     let resolveShutdown!: () => void;
-    const shutdown = vi.fn().mockImplementation(() => {
+    shutdownMock.mockImplementation(() => {
       order.push('shutdown:start');
       return new Promise<void>(r => {
         resolveShutdown = () => {
@@ -118,11 +124,10 @@ describe('exitHook', () => {
         };
       });
     });
-    const container = { shutdown };
     const offEvent = vi.fn(() => order.push('offEvent'));
     const exit = vi.fn(() => order.push('exit'));
 
-    registerExitHook(container, offEvent);
+    registerExitHook(offEvent);
     capturedExitCallback!(exit);
 
     expect(order).toEqual(['shutdown:start']);
@@ -133,5 +138,38 @@ describe('exitHook', () => {
     });
 
     expect(order).toEqual(['shutdown:start', 'shutdown:done', 'offEvent', 'exit']);
+  });
+
+  it('stdin 为 TTY 时应对 process.stdin 调用 unref', async () => {
+    const unref = vi.fn();
+    const stub = { isTTY: true, unref } as unknown as NodeJS.ReadStream;
+    const original = process.stdin;
+    Object.defineProperty(process, 'stdin', { value: stub, configurable: true });
+    try {
+      registerExitHook(vi.fn());
+      capturedExitCallback!(vi.fn());
+      await vi.waitFor(() => {
+        expect(unref).toHaveBeenCalledTimes(1);
+      });
+    } finally {
+      Object.defineProperty(process, 'stdin', { value: original, configurable: true });
+    }
+  });
+
+  it('stdin 非 TTY 时不应调用 unref', async () => {
+    const unref = vi.fn();
+    const stub = { isTTY: false, unref } as unknown as NodeJS.ReadStream;
+    const original = process.stdin;
+    Object.defineProperty(process, 'stdin', { value: stub, configurable: true });
+    try {
+      registerExitHook(vi.fn());
+      capturedExitCallback!(vi.fn());
+      await vi.waitFor(() => {
+        expect(shutdownMock).toHaveBeenCalled();
+      });
+      expect(unref).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, 'stdin', { value: original, configurable: true });
+    }
   });
 });
