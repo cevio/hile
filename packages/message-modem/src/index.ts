@@ -155,7 +155,7 @@ export abstract class MessageModem {
           } else {
             _reject(new TimeoutException());
           }
-        }, timeout);
+        }, timeout).unref();
 
         // 添加 Abort 处理函数
         controller.signal.addEventListener('abort', aborthandler);
