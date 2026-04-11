@@ -193,8 +193,8 @@ function defineControllerWithMetadata<A extends ZodObject, B extends ZodObject, 
 
 export function createControllerMetadata<A extends ZodObject, B extends ZodObject, C extends ZodType>(options: {
   method: HTTPMethod;
-  middlewares: Middleware[];
-  schema: {
+  middlewares?: Middleware[];
+  schema?: {
     query?: A;
     params?: B;
     body?: C;
