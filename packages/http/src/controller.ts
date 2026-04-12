@@ -1,6 +1,5 @@
 import { HTTPMethod } from 'find-my-way';
 import { Context, Middleware, type Next } from 'koa';
-import { ParsedUrlQuery } from 'node:querystring';
 import { z, ZodObject, ZodType } from 'zod';
 
 export type ControllerContext<A extends ZodObject, B extends ZodObject, C extends ZodType> = Context & {
@@ -86,7 +85,7 @@ export function defineController<A extends ZodObject, B extends ZodObject, C ext
   fn: ControllerFunction<A, B, C>,
 ): ControllerRegisterProps;
 export function defineController(
-  arg0: HTTPMethod | ReturnType<typeof createControllerMetadata<ZodObject, ZodObject, ZodType>>,
+  arg0: HTTPMethod | ControllerRequestMetadata<ZodObject, ZodObject, ZodType>,
   arg1?: unknown,
   arg2?: unknown,
 ): ControllerRegisterProps {
@@ -153,7 +152,7 @@ function defineControllerWithMetadata<A extends ZodObject, B extends ZodObject, 
         ctx.throw(400, query.error.message);
         return;
       }
-      ctx.query = query.data as ParsedUrlQuery;
+      // 仅校验：不把 `query.data` 写回 `ctx.query`（避免丢失 Koa 原始 query 形态）
     }
 
     if (!skipZod && schema?.params) {
@@ -162,7 +161,7 @@ function defineControllerWithMetadata<A extends ZodObject, B extends ZodObject, 
         ctx.throw(400, params.error.message);
         return;
       }
-      (ctx as Context & { params: z.infer<B> }).params = params.data;
+      // (ctx as Context & { params: z.infer<B> }).params = params.data;
     }
 
     if (!skipZod && schema?.body) {
@@ -172,7 +171,7 @@ function defineControllerWithMetadata<A extends ZodObject, B extends ZodObject, 
         ctx.throw(400, body.error.message);
         return;
       }
-      (ctx.request as Context['request'] & { body: z.infer<C> }).body = body.data;
+      // (ctx.request as Context['request'] & { body: z.infer<C> }).body = body.data;
     }
 
     const result = await fn(ctx as ControllerContext<A, B, C>);
@@ -202,3 +201,5 @@ export function createControllerMetadata<A extends ZodObject, B extends ZodObjec
 }) {
   return options;
 }
+
+export type ControllerRequestMetadata<A extends ZodObject, B extends ZodObject, C extends ZodType> = ReturnType<typeof createControllerMetadata<A, B, C>>;

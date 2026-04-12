@@ -100,7 +100,7 @@ describe('defineController - 定义路由控制器', () => {
   })
 
   describe('createControllerMetadata + Zod', () => {
-    it('校验 query 通过后注入解析结果', async () => {
+    it('校验 query 通过后不改写 ctx.query（handler 仍见原始 query）', async () => {
       const meta = createControllerMetadata({
         method: 'GET',
         middlewares: [],
@@ -110,7 +110,8 @@ describe('defineController - 定义路由控制器', () => {
       const ctx = mockCtx({ query: { page: '3' } })
       const composed = result.middlewares[result.middlewares.length - 1]
       await composed(ctx as any, async () => { })
-      expect(ctx.body).toEqual({ n: 3 })
+      // 仅 safeParse 校验：`z.coerce.number()` 接受字符串，但不会把解析后的数字写回 `ctx.query`
+      expect(ctx.body).toEqual({ n: '3' })
     })
 
     it('query 校验失败时 ctx.throw(400)', async () => {
