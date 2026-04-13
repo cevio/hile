@@ -81,21 +81,22 @@ program
     envFile?: string[],
     silent?: boolean
   }) => {
-    const cwd = process.cwd();
-    const filePath = resolve(cwd, name)
-    let directory: string | undefined;
-    if (existsSync(filePath)) {
-      directory = filePath;
-    } else {
-      const cwdPkg = resolve(cwd, 'package.json');
-      if (existsSync(cwdPkg)) {
-        directory = tryResolvePackageDir(name, createRequire(cwdPkg));
-      }
-      if (!directory) {
-        directory = tryResolvePackageDir(name, requireCli);
-      }
-      if (!directory) {
-        directory = tryGlobalPackageDir(name);
+    let directory: string | undefined = process.cwd();
+    if (name) {
+      const filePath = resolve(directory, name);
+      if (existsSync(filePath)) {
+        directory = filePath;
+      } else {
+        const cwdPkg = resolve(directory, 'package.json');
+        if (existsSync(cwdPkg)) {
+          directory = tryResolvePackageDir(name, createRequire(cwdPkg));
+        }
+        if (!directory) {
+          directory = tryResolvePackageDir(name, requireCli);
+        }
+        if (!directory) {
+          directory = tryGlobalPackageDir(name);
+        }
       }
     }
 
