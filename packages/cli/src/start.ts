@@ -76,6 +76,7 @@ interface HilePackageJson {
 
 export async function start(options: {
   dev: boolean,
+  cwd?: string,
   envFile?: string[],
   silent?: boolean
 }) {
@@ -97,7 +98,7 @@ export async function start(options: {
     ? container.on(logContainerEvent)
     : () => { };
 
-  const cwd = process.cwd();
+  const cwd = options.cwd ?? process.cwd();
   const files: string[] = [];
 
   // 加载 package.json 文件
@@ -111,7 +112,7 @@ export async function start(options: {
   }
 
   // 加载所有后缀为 boot.ts 或 boot.js 的服务
-  const directory = resolve(cwd, process.env.HILE_RUNTIME_DIR || (options.dev ? 'src' : 'dist'));
+  const directory = resolve(cwd, options.dev ? 'src' : 'dist');
   const _files = await glob(`**/*.boot.{ts,js}`, { cwd: directory });
   files.push(..._files.map(file => resolve(directory, file)));
 
@@ -125,6 +126,9 @@ export async function start(options: {
     const fn = target?.default ?? target;
     if (!fn || !isService(fn)) throw new Error(`invalid service file: ${file}`);
     await loadService(fn);
+    if (!options.silent) {
+      console.info(`+ [bootstrap] ${file}`);
+    }
   }))
 
   // 如果没有服务要加载，则提示
