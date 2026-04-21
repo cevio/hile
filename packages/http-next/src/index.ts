@@ -21,7 +21,8 @@ export type HttpNextProps = HttpProps & {
   controllerDirectory?: string; // 控制器目录名称，基于 src 或者 dist 目录 默认 `controllers` 目录
   controllerPrefix?: string; // 控制器前缀 默认 `/-`
   controllerSuffix?: string; // 控制器后缀 默认 `controller`
-  specialControllers?: SpecialController[]
+  specialControllers?: SpecialController[],
+  nextArtifactsDir?: string; // .next 构建产物目录
 };
 
 export class HttpNext {
@@ -32,8 +33,17 @@ export class HttpNext {
   private readonly controllerPrefix: string;
   private readonly controllerSuffix: string;
   private readonly specialControllers: SpecialController[];
+  private readonly nextArtifactsDir: string;
   constructor(options: HttpNextProps) {
-    const { cwd, publicPath, controllerDirectory, controllerPrefix, controllerSuffix, specialControllers, ...httpOptions } = options;
+    const {
+      cwd, publicPath,
+      controllerDirectory,
+      controllerPrefix,
+      controllerSuffix,
+      specialControllers,
+      nextArtifactsDir,
+      ...httpOptions
+    } = options;
     this.isDevelopment = process.env.NODE_ENV === "development";
     // 创建 http 服务
     this.http = new Http(httpOptions);
@@ -58,6 +68,8 @@ export class HttpNext {
     this.controllerSuffix = controllerSuffix || "controller";
     // 绑定项目特殊控制器
     this.specialControllers = specialControllers || [];
+    // 绑定项目 .next 构建产物目录
+    this.nextArtifactsDir = nextArtifactsDir || resolve(this.cwd, ".next");
   }
 
   private createForwardToNextMiddleware(handler: RequestHandler): Middleware {
@@ -84,7 +96,7 @@ export class HttpNext {
 
   public async start(onListen?: (server: Server) => void | Promise<void>) {
     // 绑定项目静态资源目录到 http 服务
-    this.http.use(ServerStatic(resolve(this.cwd, ".next", "static")));
+    this.http.use(ServerStatic(resolve(this.nextArtifactsDir, "static")));
     // 加载项目路由
     await this.http.load(this.controllerDirectory, {
       suffix: this.controllerSuffix,
@@ -114,6 +126,7 @@ export class HttpNext {
         dev: this.isDevelopment,
         // webpack: this.isDevelopment,
         httpServer: server,
+        dir: this.cwd,
       });
       // 准备 next 应用
       await app.prepare();
