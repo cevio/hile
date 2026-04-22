@@ -4,7 +4,7 @@ import { Http } from "@hile/http";
 import { RequestHandler } from "next/dist/server/next";
 import type { HttpProps } from "@hile/http";
 import type { Middleware } from "koa";
-import { resolve } from "node:path";
+import { resolve, relative } from "node:path";
 import type { Server } from "http";
 
 export { defineModel, loadModel, type ModelDefinition } from "./model";
@@ -121,12 +121,19 @@ export class HttpNext {
     // 启动 http 服务
     const stop = await this.http.listen(async (server) => {
       if (onListen) await onListen(server);
+      const artifacts = resolve(this.nextArtifactsDir);
+      const defaultArtifacts = resolve(this.cwd, ".next");
+      const distRel =
+        !this.isDevelopment && artifacts !== defaultArtifacts
+          ? relative(this.cwd, artifacts).replace(/\\/g, "/") || ".next"
+          : undefined;
       // 创建 next 应用
       const app = NextServer({
         dev: this.isDevelopment,
         // webpack: this.isDevelopment,
         httpServer: server,
         dir: this.cwd,
+        ...(distRel ? { conf: { distDir: distRel } } : {}),
       });
       // 准备 next 应用
       await app.prepare();
