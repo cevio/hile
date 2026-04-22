@@ -78,7 +78,8 @@ export async function start(options: {
   dev: boolean,
   cwd?: string,
   envFile?: string[],
-  silent?: boolean
+  silent?: boolean,
+  autoLoadPackages?: string[]
 }) {
   // 先加载 --env-file（与 Node --env-file 行为一致：先加载的优先，已存在的 key 不被覆盖）
   const envFiles = options.envFile ?? [];
@@ -104,10 +105,16 @@ export async function start(options: {
   // 加载 package.json 文件
   // 如果 package.json 中存在 hile.auto_load_packages 属性，则加载该属性值中的所有服务
   // 该属性值中的每个元素必须是模块名称，不能是文件路径
-  const packageJson: HilePackageJson = require(resolve(cwd, 'package.json'));
-  if (packageJson.hile?.auto_load_packages && Array.isArray(packageJson.hile.auto_load_packages)) {
-    for (let i = 0; i < packageJson.hile.auto_load_packages.length; i++) {
-      files.push(AUTO_TAG + packageJson.hile.auto_load_packages[i]);
+  if (options.autoLoadPackages) {
+    for (const p of options.autoLoadPackages) {
+      files.push(AUTO_TAG + p);
+    }
+  } else {
+    const packageJson: HilePackageJson = require(resolve(cwd, 'package.json'));
+    if (packageJson.hile?.auto_load_packages && Array.isArray(packageJson.hile.auto_load_packages)) {
+      for (let i = 0; i < packageJson.hile.auto_load_packages.length; i++) {
+        files.push(AUTO_TAG + packageJson.hile.auto_load_packages[i]);
+      }
     }
   }
 
