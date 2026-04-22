@@ -26,9 +26,9 @@ export type HttpNextProps = HttpProps & {
 };
 
 export class HttpNext {
-  private readonly http: Http;
-  private readonly isDevelopment: boolean;
-  private readonly cwd: string;
+  public readonly http: Http;
+  public readonly isDevelopment: boolean;
+  public readonly cwd: string;
   private readonly controllerDirectory: string;
   private readonly controllerPrefix: string;
   private readonly controllerSuffix: string;
@@ -92,6 +92,20 @@ export class HttpNext {
   public use(middleware: Middleware) {
     this.http.use(middleware);
     return this;
+  }
+
+  /**
+   * 加载项目路由
+   * @param directory - 路由目录
+   * @returns - 注销回调
+   */
+  public load(directory: string) {
+    return this.http.load(directory, {
+      suffix: this.controllerSuffix,
+      defaultSuffix: "/index",
+      prefix: this.controllerPrefix,
+      conflict: "error",
+    });
   }
 
   public async start(onListen?: (server: Server) => void | Promise<void>) {
