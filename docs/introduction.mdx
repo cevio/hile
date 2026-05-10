@@ -7,7 +7,7 @@ description: "Hile — 面向 Node.js 的轻量级服务化工具集"
 
 Hile 是一套面向 Node.js 的**轻量级服务化工具集**。它的核心理念是：用最简单的 API 管理复杂的服务依赖关系，让你专注于业务逻辑而不是基础设施。
 
-Hile 提供了从**服务容器**、**HTTP 框架**、**SSR 渲染**到**数据库/缓存集成**的完整解决方案，所有模块通过统一的服务容器协作。
+Hile 提供**服务容器**、**HTTP / Next 集成**、**数据库与缓存**以及**消息传输**等模块化能力。其中 **`@hile/core` 系**（如 `cli`、`http`、`typeorm`）通过同一套服务容器协作生命周期；**消息类包**（`message-modem`、`message-ws`、`message-loader`、`micro` 等）可脱离容器独立使用，也可在 boot 中自行接入。
 
 ## 核心特性
 
@@ -34,20 +34,23 @@ Hile 提供了从**服务容器**、**HTTP 框架**、**SSR 渲染**到**数据�
 
 ## 包一览
 
+{/* package-table:auto */}
 | 包名 | 说明 | 版本 | 安装 |
 |------|------|------|------|
 | `@hile/core` | 异步服务容器 | 1.1.2 | `pnpm add @hile/core` |
-| `@hile/http` | HTTP 服务框架 | 1.1.0 | `pnpm add @hile/http` |
-| `@hile/http-next` | Next.js 桥接层 | 1.1.6 | `pnpm add @hile/http-next` |
-| `@hile/cli` | 命令行启动器 | 1.1.3 | `pnpm add @hile/cli` |
+| `@hile/http` | HTTP 服务框架 | 1.1.3 | `pnpm add @hile/http` |
+| `@hile/http-next` | Next.js 桥接层 | 1.1.12 | `pnpm add @hile/http-next` |
+| `@hile/cli` | 命令行启动器 | 1.1.7 | `pnpm add @hile/cli` |
 | `@hile/typeorm` | TypeORM 集成 | 1.1.4 | `pnpm add @hile/typeorm` |
 | `@hile/ioredis` | ioredis 集成 | 1.1.2 | `pnpm add @hile/ioredis` |
-| `@hile/message-modem` | 消息通信抽象层 | 1.0.6 | `pnpm add @hile/message-modem` |
-| `@hile/message-ipc` | Node.js IPC 通信实现 | 1.0.6 | `pnpm add @hile/message-ipc` |
-| `@hile/message-worker-thread` | Worker Threads 通信实现 | 1.0.5 | `pnpm add @hile/message-worker-thread` |
-| `@hile/message-ws` | WebSocket 通信实现 | 1.0.5 | `pnpm add @hile/message-ws` |
+| `@hile/message-modem` | 消息通信抽象层 | 1.0.7 | `pnpm add @hile/message-modem` |
+| `@hile/message-ipc` | Node.js IPC 通信实现 | 1.0.7 | `pnpm add @hile/message-ipc` |
+| `@hile/message-worker-thread` | Worker Threads 通信实现 | 1.0.6 | `pnpm add @hile/message-worker-thread` |
+| `@hile/message-ws` | WebSocket 通信实现 | 1.0.6 | `pnpm add @hile/message-ws` |
 | `@hile/message-loader` | 文件系统消息路由加载器 | 1.0.7 | `pnpm add @hile/message-loader` |
-| `create-hile` | 项目脚手架 | 1.1.6 | `npx create-hile` |
+| `@hile/micro` | WebSocket 服务注册与发现 | 1.0.0 | `pnpm add @hile/micro` |
+| `create-hile` | 项目脚手架 | 1.1.7 | `npx create-hile` |
+{/* /package-table:auto */}
 
 ## 依赖关系
 
@@ -67,8 +70,12 @@ Hile 提供了从**服务容器**、**HTTP 框架**、**SSR 渲染**到**数据�
   ├── @hile/message-worker-thread ← Worker Threads 实现，依赖 message-modem
   └── @hile/message-ws ← WebSocket 实现，依赖 message-modem + ws
 
+@hile/message-loader ← 文件系统消息路由（独立，可搭配各 message 实现）
+
+@hile/micro ← 轻量服务发现（依赖 message-loader + message-ws + ws）
+
 create-hile ← 脚手架工具
-  └── 生成的项目依赖上述所有包
+  └── 生成的项目依赖模板所选包（通常为 core/http/http-next/cli 等）
 ```
 
 ## 典型技术栈组合
@@ -76,6 +83,12 @@ create-hile ← 脚手架工具
 根据你的项目类型，选择不同的包组合：
 
 <AccordionGroup>
+  <Accordion title="消息 / WS 服务发现">
+    ```bash
+    pnpm add @hile/message-loader @hile/message-ws @hile/micro
+    ```
+    适合：多进程之间用 WebSocket 做请求/响应，并需要 **Registry** 按 namespace 发现实例。细节见 [@hile/message-loader](/packages/message-loader) 与 [@hile/micro](/packages/micro)。
+  </Accordion>
   <Accordion title="纯 API 服务">
     ```bash
     pnpm add @hile/core @hile/http @hile/cli

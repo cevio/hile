@@ -17,27 +17,31 @@ pnpm add @hile/message-loader
 
 `@hile/message-loader` 是一个 **基于文件系统的消息路由加载器**，与 `@hile/http` 的 `Loader` 思路一致，但面向消息通信场景。
 
-它将目录中的 `*.msg.{ts,js,tsx,jsx}` 文件自动扫描并注册为路由，通过 `dispatch(path, data)` 分发消息到匹配的处理器。
+它将目录中的 `*.msg.{ts,js,tsx,jsx}` 文件自动扫描并注册为路由，也可用 **`register(routePath, fn)`** 在运行时挂载单条路由；通过 **`dispatch(path, data, extras?)`** 分发消息到匹配的处理器，其中 **`extras`** 会展开合并到处理器入参（例如 `@hile/micro` 注入 `client`）。
 
 ```
 文件系统                        路由表                       分发
   messages/                    ┌──────────────────────┐
   ├── index.msg.ts    ──────►  │ /                    │
-  ├── hello.msg.ts    ──────►  │ /hello               │  ──► dispatch(url, data)
+  ├── hello.msg.ts    ──────►  │ /hello               │  ──► dispatch(url, data, extras?)
   ├── users/                   │                      │       找到路由 → 执行 fn
   │   ├── index.msg.ts ─────►  │ /users               │       未找到  → 抛出错误
   │   └── [id].msg.ts  ─────►  │ /users/:id           │
   └── ...                      └──────────────────────┘
 ```
 
+也可用 `loader.register(...)` 向路由表追加 **编程式路由**（图中未画出）。
+
 核心能力：
 
 - **文件系统即路由** — 目录结构自动映射为路由表
 - **index 折叠** — `users/index.msg.ts` 映射为 `/users`
-- **动态参数** — `[id].msg.ts` 转换为 `:id`，通过 `ctx.params` 传递
+- **动态参数** — `[id].msg.ts` 转换为 `:id`，通过处理器入参 **`params`** 访问
 - **路径前缀** — 通过 `prefix` 配置统一前缀（如 `/-`）
-- **注销支持** — `load()` 返回注销函数，调用后移除所有已注册路由
-- **传输无关** — 可搭配任意 message 通信模块使用
+- **编程式路由** — `register(path, fn)` 返回单条注销函数
+- **`dispatch` 扩展** — 第三参 `extras` 会与 `{ params, data, url }` 合并后传入 `fn`
+- **注销支持** — `load()` 的注销移除该次扫描注册的全部路由；`register()` 的注销仅移除对应一条
+- **传输无关** — 可搭配任意 message 通信模块或 [@hile/micro](/packages/micro) 使用
 
 ---
 
@@ -87,7 +91,17 @@ const result = await loader.dispatch('/-/hello', { name: 'world' });
 console.log(result); // { greeting: 'Hello, world!' }
 
 const user = await loader.dispatch('/-/users/42', {});
-console.log(user); // { id: '42', name: 'Alice' }
+console.log(user); // findUserById 返回值，通常包含 id 等字段
+```
+
+### 编程式注册（可选）
+
+不通过文件，直接在内存里挂路由：
+
+```typescript
+const unload = loader.register('/-/health', async ({ data }) => ({ ok: true, data }));
+await loader.dispatch('/-/health', { ping: 1 });
+unload();
 ```
 
 ---
@@ -110,7 +124,7 @@ console.log(user); // { id: '42', name: 'Alice' }
 
 ## 与 message 模块搭配
 
-`@hile/message-loader` 天然与 `@hile/message-modem` 家族模块搭配使用。只需在 `exec` 方法中调用 `loader.dispatch` 即可。
+`@hile/message-loader` 天然与 `@hile/message-modem` 家族模块搭配使用。只需在 `exec` 方法中调用 `loader.dispatch` 即可。若你需要 **中心化注册表 + 多实例 namespace 查找**，可先阅读 [@hile/micro](/packages/micro)：它在 message-loader + message-ws 上封装 `Registry` 与 `Application`。
 
 ### 搭配 @hile/message-ws
 
@@ -207,8 +221,9 @@ ipc.dispose();
 | 方法 | 签名 | 说明 |
 |------|------|------|
 | `constructor` | `new MessageLoader(props: MessageLoaderProps)` | 创建加载器实例 |
-| `load` | `load(directory: string): Promise<() => void>` | 从目录加载消息处理器，返回注销函数 |
-| `dispatch` | `dispatch(path: string, data: any): Promise<any>` | 分发消息到匹配的处理器 |
+| `load` | `load(directory: string): Promise<() => void>` | 从目录批量注册，返回注销函数（移除本批路由） |
+| `register` | `register(routePath: string, fn: MessageFunction): () => void` | 注册单条路由，返回注销函数 |
+| `dispatch` | `dispatch(path: string, data: any, extras?: Record<string, any>): Promise<any>` | 分发消息；`extras` 合并进处理器入参 |
 
 ### `MessageLoaderProps`
 
@@ -223,17 +238,17 @@ ipc.dispose();
 工厂函数，创建消息处理器注册信息，自动分配递增 ID。
 
 ```typescript
-function defineMessage(fn: MessageFunction): MessageRegisterProps;
+function defineMessage<T = any>(fn: MessageFunction<T>): MessageRegisterProps<T>;
 
-type MessageFunction = (data: {
+type MessageFunction<T = any, E extends Record<string, any> = {}> = (data: {
   params?: Record<string, string>;
-  data: any;
+  data: T;
   url: string;
-}) => any;
+} & E) => any;
 
-interface MessageRegisterProps {
+interface MessageRegisterProps<T = any> {
   id: number;
-  fn: MessageFunction;
+  fn: MessageFunction<T>;
 }
 ```
 
@@ -244,6 +259,11 @@ interface MessageRegisterProps {
 | `params` | `Record<string, string>` | 路由匹配提取的动态参数 |
 | `data` | `any` | 调用方传入的消息数据 |
 | `url` | `string` | 原始请求路径 |
+| （其它） | `extras` 中的键 | `dispatch` **第三参** 会展开并入同一对象，例如 `client` |
+
+<Note>
+  与 `defineMessage` 通过 `load` 注册的 **文件路由** 并列；`register` 注册的 handler 使用同一套 `dispatch` 语义。
+</Note>
 
 ---
 
@@ -316,6 +336,12 @@ interface MessageRegisterProps {
   </Accordion>
   <Accordion title="支持 TypeScript 消息处理器吗？">
     支持。`load()` 使用 `import()` 动态导入文件，只要运行环境支持 `.ts` 文件（如通过 `tsx`、`ts-node` 或编译后运行），就可以正常加载 `.msg.ts` 文件。
+  </Accordion>
+  <Accordion title="`register` 和 `load()` 能一起用吗？">
+    可以。二者共用同一张 `rou3` 路由表；`load()` 返回的注销只撤销**该次目录扫描**注册的路由，`register()` 返回的注销只撤销**那一条**。
+  </Accordion>
+  <Accordion title="`dispatch` 第三参 `extras` 是什么？">
+    可选对象，会展开合并进处理器入参（与 `params`、`data`、`url` 同级）。`@hile/micro` 在向 Registry 查询等场景下会传入 `{ client }`，handler 可读取 `client`。避免使用 `data`、`params`、`url` 作为 `extras` 的键名以免语义混淆。
   </Accordion>
   <Accordion title="与 @hile/http 的 Loader 有什么区别？">
     两者设计理念相同（文件系统即路由），但 `@hile/http` Loader 面向 HTTP 请求，支持多种 HTTP 方法和中间件；`@hile/message-loader` 面向消息通信，更轻量，不依赖 `@hile/core` 容器。

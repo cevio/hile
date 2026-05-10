@@ -1,0 +1,87 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Hile",
+  "colors": {
+    "primary": "#0D9373",
+    "light": "#07C983",
+    "dark": "#0D9373"
+  },
+  "favicon": "/favicon.svg",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "开始使用",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "architecture"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API 参考",
+        "groups": [
+          {
+            "group": "核心包",
+            "pages": [
+              "packages/core",
+              "packages/http",
+              "packages/http-next",
+              "packages/cli"
+            ]
+          },
+          {
+            "group": "集成包",
+            "pages": [
+              "packages/typeorm",
+              "packages/ioredis",
+              "packages/message-modem",
+              "packages/message-ipc",
+              "packages/message-worker-thread",
+              "packages/message-ws",
+              "packages/message-loader",
+              "packages/micro"
+            ]
+          },
+          {
+            "group": "工具",
+            "pages": [
+              "packages/create-hile"
+            ]
+          }
+        ]
+      }
+    ],
+    "global": {
+      "anchors": [
+        {
+          "anchor": "NPM",
+          "href": "https://www.npmjs.com/@hile/core",
+          "icon": "npm"
+        }
+      ]
+    }
+  },
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg"
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "GitHub",
+        "href": "https://github.com/cevio/hile"
+      }
+    ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/cevio/hile"
+    }
+  }
+}

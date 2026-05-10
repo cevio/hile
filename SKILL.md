@@ -35,9 +35,10 @@ description: "引导 AI 在本仓库或使用 Hile 的项目中，正确选用�
 | 主线程与 Worker 线程请求/响应 | `@hile/message-worker-thread` | 基于 message-modem |
 | WebSocket 请求/响应 | `@hile/message-ws` | 基于 message-modem + ws |
 | 按目录映射消息路由（`*.msg.ts`）、与 message-* 搭配 | `@hile/message-loader` | 独立于 core，`MessageLoader` + `defineMessage` |
+| WebSocket 服务注册与发现（Registry + Application） | `@hile/micro` | 基于 `message-loader` + `message-ws`，与 core 无关 |
 | 一键创建 Hile + Next.js 项目 | `create-hile` | `npx create-hile create <name>` |
 
-**依赖关系**：core ← cli / typeorm / ioredis；http ← http-next。message-modem ← message-ipc / message-worker-thread / message-ws。message-loader 可单独与任意 message 传输层搭配。
+**依赖关系**：core ← cli / typeorm / ioredis；http ← http-next。message-modem ← message-ipc / message-worker-thread / message-ws。message-loader 可单独与任意 message 传输层搭配。**`@hile/micro`** 依赖 **message-loader + message-ws + ws**。
 
 ---
 
@@ -71,26 +72,29 @@ description: "引导 AI 在本仓库或使用 Hile 的项目中，正确选用�
 ### 3.4 数据库与缓存（@hile/typeorm / @hile/ioredis）
 
 - 通过 **loadService(typeormService)** / **loadService(ioredisService)** 获取实例；需在应用启动时即加载时，在 **`hile.auto_load_packages`** 中加入 **`@hile/typeorm`** / **`@hile/ioredis`**。
-- TypeORM 事务与补偿使用 **transaction(ds, async (runner, rollback) => { ... })**，禁止在事务外混用 runner 或忽略 rollback 注册。
+- TypeORM 事务与补偿使用 **`transaction(ds, async (runner, rollback) => { ... })`**，禁止在事务外混用 runner 或忽略 rollback 注册。
 
 ---
 
 ## 4. 按场景的代码导向
 
 - **新建一个“可运行的服务入口”**  
-  → 在 **`src/services/`** 下新增 **`*.boot.ts`**（如 **`src/services/http.boot.ts`**），**export default defineService('http', async (shutdown) => { ... })**（或你选定的唯一 key），其中创建 Http/HttpNext 或其它资源并 **shutdown(close)**；**`cwd`** 等路径需按 **`src/services/`** 相对项目根多一层 **`".."`**（见各包 SKILL）。用 **`hile start --dev`** 加载。
+  → 在 **`src/services/`** 下新增 **`*.boot.ts`**（如 **`src/services/http.boot.ts`**），**`export default defineService('http', async (shutdown) => { ... })`**（或你选定的唯一 key），其中创建 Http/HttpNext 或其它资源并 **shutdown(close)**；**`cwd`** 等路径需按 **`src/services/`** 相对项目根多一层 **`".."`**（见各包 SKILL）。用 **`hile start --dev`** 加载。
 
 - **新增 HTTP API 路由**  
   → 使用 **defineController** 的 **`*.controller.ts`**，放在 http-next 默认的 **`src/controllers/`**（或 **`controllerDirectory`** 指定目录）；**不要**在控制器里写 **ctx.body = ... 再 return**，只 **return** 结果，由响应插件链写 **ctx.body**。
 
 - **API + 页面同端口（Next.js）**  
-  → 使用 **@hile/http-next**，在 boot 中 **new HttpNext({ port, cwd, publicPath })**（按需 **`controllerDirectory`**），**shutdown(await httpNext.start())**；默认 API 前缀 **`/-`**，页面用 Next 约定文件（如 **page.tsx**）。
+  → 使用 **@hile/http-next**，在 boot 中 **`new HttpNext({ port, cwd, publicPath })`**（按需 **`controllerDirectory`**），**shutdown(await httpNext.start())**；默认 API 前缀 **`/-`**，页面用 Next 约定文件（如 **page.tsx**）。
 
 - **使用数据库/Redis**  
   → 在 **package.json** 的 **hile.auto_load_packages** 中加入 **@hile/typeorm** / **@hile/ioredis**，在 **services**、**models**、**boot**、**`src/controllers/**`**（**@hile/http-next**）等**内部** **await loadService(...)**（**`src/app/**`** **禁止** **loadService**，见 **`packages/http-next/SKILL.md`**）；环境变量按各包 README/SKILL 配置。
 
 - **消息通信（IPC/Worker/WS）+ 文件系统路由**  
   → 用 **@hile/message-loader** 的 **MessageLoader** 与 **defineMessage** 做路由表，在 **@hile/message-ipc** / **message-worker-thread** / **message-ws** 子类的 **exec** 中调用 **loader.dispatch(url, data)**。
+
+- **轻量服务发现（WebSocket Registry）**  
+  → 使用 **@hile/micro**（`Registry`、`Application`），按 **`packages/micro/SKILL.md`** 的路径与 namespace 约定接入；与 **Hile core 无强绑定**，也可在 boot 中自行 `listen`。
 
 ---
 
@@ -113,6 +117,7 @@ description: "引导 AI 在本仓库或使用 Hile 的项目中，正确选用�
 | `packages/message-worker-thread` | `packages/message-worker-thread/SKILL.md` | Worker 实现与用法 |
 | `packages/message-ws` | `packages/message-ws/SKILL.md` | WebSocket 实现与用法 |
 | `packages/message-loader` | `packages/message-loader/SKILL.md` | MessageLoader、defineMessage、路径映射 |
+| `packages/micro` | `packages/micro/SKILL.md` | Server/Client/Registry/Application、URL 路由约定、发现缓存、连接超时 |
 
 ---
 
@@ -135,7 +140,8 @@ description: "引导 AI 在本仓库或使用 Hile 的项目中，正确选用�
 
 ## 7. 文档与版本
 
-- 各包**使用方式**以该包 **README.md** 与 **docs/** 为准；**代码生成与约束**以各包 **SKILL.md** 为准。
-- 根目录 **README.md** 中的「包一览」与「依赖关系」描述当前仓库包划分与依赖；版本号以各包 **package.json** 为准。
+- 各包**使用方式**以该包 **README.md** 与 **docs/**（Mintlify）为准；**代码生成与约束**以各包 **SKILL.md** 为准。**本文件**负责 monorepo 内如何选用各包并引用各 SKILL。
+- 根目录 **README.md**、**docs/introduction** 等处的「包一览 / 版本」表格应与各 **`packages` 子目录内的 `package.json`** 对齐，发版时若未同步更新易造成读者困惑；**Bump 任一包版本后**可运行 **`pnpm run docs:package-table`**（由 `scripts/generate-package-docs-tables.mjs` 写入自动生成标记之间的内容）。
+- API 细节与边界行为以**源码与测试**为准；文档与实现冲突时，以实现为准并应回写文档。
 
 遵守本 SKILL 并结合具体包的 SKILL，可保证生成的 Hile 相关代码与仓库架构一致、可被 CLI 正确加载并优雅关闭。**使用 `@hile/http-next` 的应用还须与 `packages/http-next/SKILL.md` 完全一致，否则视为未通过技能约束。**

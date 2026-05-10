@@ -21,20 +21,23 @@ description: Code generation and contribution rules for @hile/message-loader. Us
 文件系统                        路由表                       分发
   messages/                    ┌──────────────────────┐
   ├── index.msg.ts    ──────►  │ /                    │
-  ├── hello.msg.ts    ──────►  │ /hello               │  ──► dispatch(url, data)
+  ├── hello.msg.ts    ──────►  │ /hello               │  ──► dispatch(url, data, extras?)
   ├── users/                   │                      │       找到路由 → 执行 fn
-  │   ├── index.msg.ts ─────►  │ /users               │       未找到  → 抛出错误
+  │   ├── index.msg.ts ─────►  │ /users               │       未找到  → NotFoundException
   │   └── [id].msg.ts  ─────►  │ /users/:id           │
   └── ...                      └──────────────────────┘
+  + register('/-/x', fn)  ───►  │ /-/x                 │
 ```
 
 关键设计：
 
 - **文件系统即路由** — `*.msg.{ts,js,tsx,jsx}` 文件自动注册为消息路由
 - **index 折叠** — `users/index.msg.ts` 映射为 `/users`
-- **动态参数** — `[id].msg.ts` 转换为 `:id`，参数通过 `ctx.params` 传递
+- **动态参数** — `[id].msg.ts` 转换为 `:id`，参数通过处理器入参对象的 **`params`** 传递
 - **路径前缀** — 可通过 `prefix` 添加统一前缀（如 `/-`）
-- **注销支持** — `load()` 返回注销函数，调用后移除所有已注册路由
+- **编程式路由** — `register(routePath, fn)` 运行时注册单条路由，返回注销函数（与 `load` 并列使用）
+- **`dispatch` 扩展入参** — `dispatch(path, data, extras)` 将 `extras` 展开并入 `fn` 的参数（如传入 `{ client }` 供 handler 使用）
+- **注销支持** — `load()` 返回注销函数，调用后移除该次加载的所有路由；`register()` 各自返回单路由注销
 - **底层路由** — 使用 `rou3` 作为路由匹配引擎
 
 ---
@@ -50,24 +53,25 @@ interface MessageLoaderProps {
   prefix?: string;         // 路径前缀，默认 ''
 }
 
-type MessageFunction = (data: {
+type MessageFunction<T = any, E extends Record<string, any> = {}> = (data: {
   params?: Record<string, string>;
-  data: any;
+  data: T;
   url: string;
-}) => any;
+} & E) => any;
 
-interface MessageRegisterProps {
+interface MessageRegisterProps<T = any> {
   id: number;
-  fn: MessageFunction;
+  fn: MessageFunction<T>;
 }
 
 class MessageLoader {
   constructor(props: MessageLoaderProps);
   load(directory: string): Promise<() => void>;
-  dispatch(path: string, data: any): Promise<any>;
+  register<T = any, E extends Record<string, any> = {}>(routePath: string, fn: MessageFunction<T, E>): () => void;
+  dispatch(path: string, data: any, extras?: Record<string, any>): Promise<any>;
 }
 
-function defineMessage(fn: MessageFunction): MessageRegisterProps;
+function defineMessage<T = any>(fn: MessageFunction<T>): MessageRegisterProps<T>;
 ```
 
 ---
@@ -114,7 +118,26 @@ await loader.load(path.resolve(__dirname, 'messages'));
 const result = await loader.dispatch('/-/hello', { name: 'world' });
 ```
 
-### 3.4 与 message-ws 搭配模板
+### 3.4 编程式 `register`（与 `load` 并列）
+
+```typescript
+const loader = new MessageLoader({ prefix: '/-' });
+
+const off = loader.register('/-/status', async ({ data }) => ({ ok: true, data }));
+// await loader.dispatch('/-/status', { ping: 1 });
+// off(); // 仅移除该路由
+```
+
+`register` 与 `defineMessage`/`load` 使用不同的内部 `id` 分配器，**id 仅用于内部区别 handler**，不影响 URL 匹配。
+
+### 3.5 `dispatch` 与 `extras`
+
+```typescript
+// 第三参会展开合并到 handler 入参，例如注入连接上下文：
+await loader.dispatch('/-/find', payload, { client: wsClient });
+```
+
+### 3.6 与 message-ws 搭配模板
 
 ```typescript
 import { MessageWs } from '@hile/message-ws';
@@ -130,18 +153,20 @@ class AppWs extends MessageWs {
 }
 ```
 
-### 3.5 强制规则
+### 3.7 强制规则
 
 | 规则 | 说明 |
 |------|------|
 | **文件必须 `export default`** | 缺少默认导出的文件会被静默跳过 |
 | **默认导出必须是 `MessageRegisterProps`** | 推荐使用 `defineMessage()` 创建 |
-| **`fn` 接收 `{ params, data, url }` 参数** | `params` 来自路由匹配，`data` 来自调用方 |
+| **`fn` 接收 `{ params, data, url, ...extras }`** | `params`/`data`/`url` 为固定键；`extras` 来自 `dispatch` 第三参 |
 | **`dispatch` 返回 Promise** | 即使 `fn` 是同步函数也会被 `Promise.resolve` 包装 |
+| **`register` 返回单路由注销** | 仅移除该路径注册；与 `load()` 批处理注销独立 |
+| **`dispatch` 可选第三参 `extras`** | 与 `{ params, data, url }` 合并传入 `fn`，勿与内置键无意冲突 |
 | **路径未匹配时 `dispatch` 抛出错误** | `NotFoundException`（`status: 'NOT_FOUND'`） |
-| **`load` 返回注销函数** | 调用后移除所有已注册路由 |
+| **`load` 返回注销函数** | 调用后移除**该次 load** 注册的全部路由 |
 
-### 3.6 反模式
+### 3.8 反模式
 
 ```typescript
 // ❌ 不使用 defineMessage，手动构造对象时遗漏 id
@@ -169,6 +194,8 @@ export default defineMessage(() => 'hello');
 const loader = new MessageLoader({ prefix: '/-' });
 loader.dispatch('/hello', data); // 未找到
 
-// ✅ dispatch 路径需要包含 prefix
-loader.dispatch('/-/hello', data);
-```
+// ❌ extras 与内置键同名，覆盖语义
+await loader.dispatch('/x', {}, { data: 'oops' });
+
+// ✅ extras 使用不与 params/data/url 冲突的键（如 client、auth）
+await loader.dispatch('/x', { a: 1 }, { client });

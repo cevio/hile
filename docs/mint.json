@@ -61,7 +61,8 @@
         "packages/message-ipc",
         "packages/message-worker-thread",
         "packages/message-ws",
-        "packages/message-loader"
+        "packages/message-loader",
+        "packages/micro"
       ]
     },
     {

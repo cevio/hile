@@ -22,6 +22,9 @@ Hile 按职责分为三层，每一层都是可选的，你可以按需引入：
 │          异步服务容器 · 生命周期 · 依赖图               │
 └──────────────────────────────────────────────────────┘
 
+<Note>
+上图强调 **经 `@hile/core` 编排** 的常见 Web/数据栈。**`@hile/message-loader`、`@hile/message-ws`、`@hile/micro`** 等可脱离容器在任意 Node 进程中单独使用。
+</Note>
 
 ### 各层职责
 
@@ -50,8 +53,9 @@ Hile 按职责分为三层，每一层都是可选的，你可以按需引入：
     - `@hile/message-worker-thread` — 基于 message-modem 的 Worker Threads 实现，用于主线程与 Worker 线程间通信
     - `@hile/message-ws` — 基于 message-modem + ws 的 WebSocket 实现，用于客户端与服务端间通信
     - `@hile/message-loader` — 基于文件系统的消息路由加载器，将目录结构映射为路由表，可搭配上述 message 模块使用
+    - `@hile/micro` — 在 message-loader + message-ws 之上的轻量 **服务注册与发现**（`Registry` / `Application`），不依赖 core 容器
 
-    其中 `@hile/http`、`@hile/typeorm`、`@hile/ioredis` 通过 `defineService` 注册到容器，生命周期由容器统一管理。`@hile/message-modem`、`@hile/message-ipc`、`@hile/message-worker-thread`、`@hile/message-ws`、`@hile/message-loader` 是独立模块，不依赖容器，可在任何 Node.js 环境中使用。
+    其中 `@hile/http`、`@hile/typeorm`、`@hile/ioredis` 通过 `defineService` 注册到容器，生命周期由容器统一管理。`@hile/message-modem`、`@hile/message-ipc`、`@hile/message-worker-thread`、`@hile/message-ws`、`@hile/message-loader`、`@hile/micro` 是独立模块，不依赖容器，可在任何 Node.js 进程中使用。
   </Accordion>
   <Accordion title="编排层：@hile/cli、@hile/http-next">
     **职责：** 编排服务启动与请求分流。

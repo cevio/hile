@@ -1,0 +1,42 @@
+---
+title: "@hile/micro"
+description: "基于 message-loader 与 message-ws 的 WebSocket 服务注册与轻量服务发现"
+---
+
+## 安装
+
+```bash
+pnpm add @hile/micro
+```
+
+---
+
+## 概述
+
+`@hile/micro` 提供三类角色：
+
+- **`Registry`**：集中记录「逻辑 namespace → 多个服务实例地址」，对 `/-/find` 请求 **随机**返回其中一条 `{ host, port }`。
+- **`Application`**：进程 `listen` 后主动向 Registry **建立出站连接**，连接 URL 中的路径携带本服务 **namespace**，Registry 在 `connect` 事件中完成登记；`get(namespace)` 查询其它实例并缓存 `Client`。
+- **`Server` / `Client`**：在 `MessageLoader` 之上处理 `{ url, data }` 路由；出站连接带 **5s** 握手超时；`Client.dispose()` 会关闭底层 WebSocket，保证 `listen` 收尾可结束。
+
+与 **@hile/core** 无直接依赖，可在任意 Node 进程中使用，或由你在 `defineService` 中包装。
+
+详见同仓库包目录下的 **README** 与 **SKILL**（`packages/micro/README.md`、`packages/micro/SKILL.md`）。
+
+---
+
+## 最小流程
+
+1. 启动 `Registry` 并 `listen`。
+2. 每个服务进程 `new Application({ namespace, registry })` 后 `listen`（向 Registry 报到）。
+3. 消费方 `await app.get('target-namespace')`，再 `client.request('/your-route', payload)`。
+
+路径约定与反模式以 **`packages/micro/SKILL.md`** 为准。
+
+---
+
+## 相关包
+
+- `@hile/message-loader` — 路由注册与 `dispatch`
+- `@hile/message-ws` — WebSocket 上的请求/响应传输
+- `ws` — 底层 WebSocket 实现
