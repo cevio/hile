@@ -5,3 +5,4 @@ dist
 lerna-debug.log
 build
 .next
+superpowers/

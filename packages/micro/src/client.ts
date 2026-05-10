@@ -12,6 +12,7 @@ export interface ClientProps {
 
 export class Client extends MessageWs {
   private readonly server: Server;
+  private readonly socket: WebSocket;
   public readonly host: string;
   public readonly port: number;
   private _online = true;
@@ -21,6 +22,7 @@ export class Client extends MessageWs {
     const { server, ws, host, port } = props;
     super(ws);
     this.server = server;
+    this.socket = ws;
     this.host = host;
     this.port = port;
     this.events.on('connect', () => this._online = true);
@@ -42,5 +44,12 @@ export class Client extends MessageWs {
   public push(url: string, data: any, timeout?: number) {
     if (!this._online) throw new Error('Client is not online');
     return this._push({ url, data }, timeout);
+  }
+
+  public dispose(): void {
+    super.dispose();
+    if (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING) {
+      this.socket.close();
+    }
   }
 }

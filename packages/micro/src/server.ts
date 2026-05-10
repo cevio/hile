@@ -6,6 +6,8 @@ import { IncomingMessage } from 'http';
 import { getLocalIPv4 } from './utils';
 import { EventEmitter } from 'node:events';
 
+const DEFAULT_CONNECT_TIMEOUT = 5000;
+
 export class Server extends MessageLoader {
   private wss?: WebSocketServer;
   public port?: number;
@@ -50,14 +52,23 @@ export class Server extends MessageLoader {
     return client;
   }
 
-  protected async connect(host: string, port: number) {
+  protected async connect(host: string, port: number, timeout = DEFAULT_CONNECT_TIMEOUT) {
     const key = `${host}:${port}`;
     if (this.clients.has(key)) {
       return this.clients.get(key)!;
     }
     const ws = await new Promise<WebSocket>((resolve, reject) => {
       const ws = new WebSocket(`ws://${host}:${port}/${this.ipv4}/${this.port}/${this.namespace}`);
+      const timer = setTimeout(() => {
+        clear();
+        ws.on('error', () => { });
+        try {
+          ws.terminate();
+        } catch { }
+        reject(new Error('Connection timeout'));
+      }, timeout).unref();
       const clear = () => {
+        clearTimeout(timer);
         ws.off('open', onopen);
         ws.off('error', onerror);
       }

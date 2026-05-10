@@ -1,33 +1,28 @@
 import { Client } from './client';
 import { Server } from './server';
 import { MessageLoaderProps } from '@hile/message-loader';
+import { RegistryAddress } from './registry';
 
-enum GET_FROM_REGISTRY_STATUS {
-  INITED,
+enum RegistryLookupStatus {
+  IDLE,
   PENDING,
-  DONE,
+  READY,
 }
 
 export type ApplicationProps = {
   namespace: string;
-  registry: {
-    host: string;
-    port: number;
-  };
+  registry: RegistryAddress;
 } & MessageLoaderProps;
 
 export class Application extends Server {
   private registry?: Client;
   private reconnectTimeout?: NodeJS.Timeout;
-  private readonly _registry_address: {
-    host: string;
-    port: number;
-  };
+  private readonly _registry_address: RegistryAddress;
 
   private readonly namespaces = new Map<string, {
     host: string;
     port: number;
-    status: GET_FROM_REGISTRY_STATUS;
+    status: RegistryLookupStatus;
     handlers: Set<[(value: Client) => void, (reason?: any) => void]>
   }>();
 
@@ -71,26 +66,26 @@ export class Application extends Server {
       this.namespaces.set(namespace, {
         host: '',
         port: 0,
-        status: GET_FROM_REGISTRY_STATUS.PENDING,
+        status: RegistryLookupStatus.IDLE,
         handlers: new Set(),
       });
     }
     const stack = this.namespaces.get(namespace)!;
     const key = `${stack.host}:${stack.port}`;
-    if (stack.status === GET_FROM_REGISTRY_STATUS.DONE && this.clients.has(key)) {
+    if (stack.status === RegistryLookupStatus.READY && this.clients.has(key)) {
       return Promise.resolve(this.clients.get(key)!);
     }
 
     return new Promise<Client>((resolve, reject) => {
       stack.handlers.add([resolve, reject]);
-      if (stack.status === GET_FROM_REGISTRY_STATUS.INITED) {
-        stack.status = GET_FROM_REGISTRY_STATUS.PENDING;
+      if (stack.status === RegistryLookupStatus.IDLE) {
+        stack.status = RegistryLookupStatus.PENDING;
         this.findFromRegistry(namespace).then(data => {
           if (!data) return Promise.reject(new Error('Namespace not found'));
           return this.connect(data.host, data.port).then(client => {
             stack.host = data.host;
             stack.port = data.port;
-            stack.status = GET_FROM_REGISTRY_STATUS.DONE;
+            stack.status = RegistryLookupStatus.READY;
             for (const [resolve] of stack.handlers.values()) {
               resolve(client);
             }
