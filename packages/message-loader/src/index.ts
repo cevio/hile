@@ -2,7 +2,7 @@ import { glob } from 'glob';
 import { resolve, extname } from 'node:path';
 import { createRouter, addRoute, RouterContext, removeRoute, findRoute } from "rou3";
 import { toRouterPath } from './utils';
-import { MessageRegisterProps } from './message';
+import { MessageRegisterProps, MessageFunction, getId } from './message';
 import { pathToFileURL } from 'node:url';
 
 export * from './message';
@@ -152,12 +152,24 @@ export class MessageLoader {
   }
 
   /**
+   * 注册消息处理器
+   * @param routePath 路由路径
+   * @param fn 消息处理器
+   * @returns 注销函数
+   */
+  public register<T = any, E extends Record<string, any> = {}>(routePath: string, fn: MessageFunction<T, E>) {
+    const id = getId();
+    addRoute(this.router, this.METHOD, routePath, { id, fn });
+    return () => removeRoute(this.router, this.METHOD, routePath);
+  }
+
+  /**
    * 分发消息
    * @param path 路径
    * @param data 数据
    * @returns 结果
    */
-  public async dispatch(path: string, data: any) {
+  public async dispatch(path: string, data: any, extras: Record<string, any> = {}) {
     const matched = findRoute(this.router, this.METHOD, path, {
       params: true,
       normalize: true,
@@ -170,6 +182,7 @@ export class MessageLoader {
       params: matched.params ?? {},
       data,
       url: path,
+      ...extras,
     }));
   }
 }

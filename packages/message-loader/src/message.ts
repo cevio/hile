@@ -5,11 +5,11 @@ export interface MessageRegisterProps<T = any> {
   fn: MessageFunction<T>;
 }
 
-export type MessageFunction<T = any> = (data: {
+export type MessageFunction<T = any, E extends Record<string, any> = {}> = (data: {
   params?: Record<string, string>;
   data: T,
   url: string,
-}) => any;
+} & E) => any;
 
 export function defineMessage<T = any>(fn: MessageFunction<T>): MessageRegisterProps<T> {
   const id = _id++;
@@ -17,4 +17,8 @@ export function defineMessage<T = any>(fn: MessageFunction<T>): MessageRegisterP
     id,
     fn,
   }
+}
+
+export function getId() {
+  return _id++;
 }
