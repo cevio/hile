@@ -1,5 +1,5 @@
 import exitHook from 'async-exit-hook';
-import { ContainerEvent, container } from '@hile/core';
+import { container } from '@hile/core';
 
 /** 强制退出超时：仅当 shutdown 未在该时间内完成时才强制退出，默认约 24 天，等效于「等 shutdown 完成再退出」 */
 const FORCE_EXIT_AFTER_MS = 2 ** 31 - 1;
@@ -31,6 +31,28 @@ export function registerExitHook(offEvent: () => void): void {
       console.error(e);
     } finally {
       offEvent();
+      exit();
+    }
+  });
+}
+
+export async function useExit(fn: () => void | Promise<void>) {
+  exitHook(async exit => {
+    try {
+      await Promise.resolve(fn());
+      await new Promise<void>((resolve, reject) => {
+        try {
+          if (process.stdin.isTTY) {
+            process.stdin.unref();
+          }
+          resolve();
+        } catch (e) {
+          reject(e)
+        }
+      })
+    } catch (e) {
+      console.error(e);
+    } finally {
       exit();
     }
   });

@@ -7,6 +7,8 @@ import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
+import { Registry } from '@hile/micro';
+import { useExit } from './exitHook';
 
 type NodeRequire = ReturnType<typeof createRequire>;
 
@@ -111,6 +113,16 @@ program
       envFile: options.envFile,
       silent: options.silent
     })
+  });
+
+program.command('registry')
+  .option('-p, --port <port>', '注册中心端口', '9876')
+  .description('启动注册中心')
+  .action(async (options: { port: number }) => {
+    const port = options.port ? Number(options.port) : 9876;
+    const registry = new Registry();
+    useExit(await registry.listen(port));
+    console.log(`+ [registry] started on port ${port}`);
   });
 
 program.parseAsync(process.argv);

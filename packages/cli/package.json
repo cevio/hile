@@ -26,6 +26,7 @@
   },
   "dependencies": {
     "@hile/core": "workspace:^",
+    "@hile/micro": "workspace:^",
     "async-exit-hook": "^2.0.1",
     "commander": "^14.0.3",
     "glob": "^13.0.6",

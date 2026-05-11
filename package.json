@@ -17,8 +17,7 @@
     "test": "lerna run test",
     "dev": "lerna run dev",
     "publish": "lerna publish",
-    "create": "bash scripts/create-package.sh",
-    "docs:package-table": "node scripts/generate-package-docs-tables.mjs"
+    "create": "bash scripts/create-package.sh"
   },
   "devDependencies": {
     "lerna": "^8.2.2",

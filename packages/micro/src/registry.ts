@@ -28,7 +28,7 @@ export class Registry extends Server {
 
   constructor(props?: MessageLoaderProps) {
     super('registry', props);
-    this.events.on('connect', (client:Client, extras: string[]) => {
+    this.events.on('connect', (client: Client, extras: string[]) => {
       const key = client.host + ':' + client.port;
       const namespace = extras.join('/');
       if (!this.namespaces.has(namespace)) {
@@ -36,7 +36,7 @@ export class Registry extends Server {
       }
       this.namespaces.get(namespace)!.add(key);
     });
-    this.events.on('disconnect', (client:Client, extras: string[]) => {
+    this.events.on('disconnect', (client: Client, extras: string[]) => {
       const key = client.host + ':' + client.port;
       const namespace = extras.join('/');
       if (this.namespaces.has(namespace)) {
