@@ -46,6 +46,18 @@ class TestServer extends Server {
   }
 
   public open(host: string, port: number, timeout: number) {
+    this.setPort(1);
+    return this.connect(host, port, timeout);
+  }
+}
+
+/** 用于断言「未 setPort 不能 connect」，与 `open` 用例分离 */
+class ServerWithoutAnnounce extends Server {
+  constructor() {
+    super('no-announce');
+  }
+
+  public attemptConnect(host: string, port: number, timeout: number) {
     return this.connect(host, port, timeout);
   }
 }
@@ -132,6 +144,13 @@ describe('@hile/micro application discovery', () => {
 });
 
 describe('@hile/micro server connection', () => {
+  it('rejects connect when local announce port was not set', async () => {
+    const server = new ServerWithoutAnnounce();
+    await expect(server.attemptConnect('127.0.0.1', 9, 10)).rejects.toThrow(
+      'local port',
+    );
+  });
+
   it('rejects when websocket handshake exceeds the connection timeout', async () => {
     const hangingServer = await startHangingServer();
     const server = new TestServer();

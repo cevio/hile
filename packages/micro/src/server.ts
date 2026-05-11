@@ -5,6 +5,7 @@ import { Client } from './client';
 import { IncomingMessage } from 'http';
 import { getLocalIPv4 } from './utils';
 import { EventEmitter } from 'node:events';
+import type { Duplex } from "node:stream";
 
 const DEFAULT_CONNECT_TIMEOUT = 5000;
 
@@ -25,7 +26,7 @@ export class Server extends MessageLoader {
     });
   }
 
-  private onConnected(ws: WebSocket, req: IncomingMessage) {
+  private upstream(ws: WebSocket, req: IncomingMessage) {
     const path = req.url?.split('?')[0];
     if (!path) return ws.close();
     let _path = path.startsWith('/') ? path.slice(1) : path;
@@ -34,10 +35,10 @@ export class Server extends MessageLoader {
     if (sp.length < 3) return ws.close();
     const [host, port, ...extras] = sp;
     if (!host || !port) return ws.close();
-    this.onRegister(ws, host, Number(port), extras);
+    this.createClient(ws, host, Number(port), extras);
   }
 
-  private onRegister(ws: WebSocket, host: string, port: number, extras: string[] = []) {
+  private createClient(ws: WebSocket, host: string, port: number, extras: string[] = []) {
     const key = `${host}:${port}`;
     const client = new Client({ server: this, ws, host, port });
     ws.on('close', () => {
@@ -57,6 +58,7 @@ export class Server extends MessageLoader {
     if (this.clients.has(key)) {
       return this.clients.get(key)!;
     }
+    if (!this.port) throw new Error('You can not connect to a server without a local port, please use `.setPort(port)` for local port.');
     const ws = await new Promise<WebSocket>((resolve, reject) => {
       const ws = new WebSocket(`ws://${host}:${port}/${this.ipv4}/${this.port}/${this.namespace}`);
       const timer = setTimeout(() => {
@@ -83,31 +85,33 @@ export class Server extends MessageLoader {
       ws.on('open', onopen);
       ws.on('error', onerror);
     })
-    return this.onRegister(ws, host, port);
+    return this.createClient(ws, host, port);
   }
 
-  public async listen(port?: number) {
-    this.wss = await new Promise<WebSocketServer>((resolve, reject) => {
+  public async listen(port: number = 0) {
+    if (port > 0) {
       const wss = new WebSocketServer({ port });
-      const clear = () => {
-        wss.off('error', onerror);
-        wss.off('listening', onlistening);
-      }
-      const onerror = (err: Error) => {
-        clear();
-        reject(err);
-      };
-      const onlistening = () => {
-        clear();
-        resolve(wss);
-      };
-      wss.on('error', onerror);
-      wss.on('listening', onlistening);
-    });
-
-    const onConnection = (ws: WebSocket, req: IncomingMessage) => this.onConnected(ws, req);
-    this.wss!.on('connection', onConnection);
-    this.port = port;
+      this.wss = await new Promise<WebSocketServer>((resolve, reject) => {
+        const clear = () => {
+          wss.off('error', onerror);
+          wss.off('listening', onlistening);
+        }
+        const onerror = (err: Error) => {
+          clear();
+          reject(err);
+        };
+        const onlistening = () => {
+          clear();
+          resolve(wss);
+        };
+        wss.on('error', onerror);
+        wss.on('listening', onlistening);
+      });
+      this.wss!.on('connection', (ws: WebSocket, req: IncomingMessage) => this.upstream(ws, req));
+      this.setPort(port);
+    } else {
+      this.wss = new WebSocketServer({ noServer: true });
+    }
 
     return async () => {
       for (const client of this.clients.values()) {
@@ -115,7 +119,6 @@ export class Server extends MessageLoader {
       }
       this.clients.clear();
       if (this.wss) {
-        this.wss!.off('connection', onConnection);
         await new Promise<void>((resolve, reject) => {
           this.wss!.close((err) => {
             if (err) return reject(err);
@@ -126,5 +129,20 @@ export class Server extends MessageLoader {
       this.wss = undefined;
       this.port = undefined;
     }
+  }
+
+  public setPort(port: number) {
+    this.port = port;
+    return this;
+  }
+
+  public handleUpgrade(
+    req: IncomingMessage, socket: Duplex, head: Buffer
+  ) {
+    if (!this.wss) throw new Error('WebSocket server not initialized');
+    this.wss!.handleUpgrade(req, socket, head, ws => {
+      this.upstream(ws, req);
+    });
+    return this;
   }
 }

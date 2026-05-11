@@ -32,7 +32,7 @@ export class Application extends Server {
     this._registry_address = registry;
   }
 
-  public async listen(port: number) {
+  public async listen(port: number = 0) {
     const callback = await super.listen(port);
     await this.reconnectToRegistry();
     return async () => {

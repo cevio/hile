@@ -1,28 +1,8 @@
-import { networkInterfaces } from 'node:os';
-
-function isIPv4(family: string | number): boolean {
-  return family === 'IPv4' || family === 4;
-}
+import { internalIpV4Sync } from 'internal-ip';
 
 /**
- * 获取本机第一个非回环、非内部的 IPv4 地址；若无则返回 `undefined`。
+ * 本机用于「宣告」给其他节点的 IPv4（与 {@link internalIpV4Sync} 行为一致：多网卡无法唯一确定时可能为 `undefined`）。
  */
 export function getLocalIPv4(): string | undefined {
-  const ifaces = networkInterfaces();
-  if (!ifaces) {
-    return undefined;
-  }
-
-  for (const addrs of Object.values(ifaces)) {
-    if (!addrs) {
-      continue;
-    }
-    for (const addr of addrs) {
-      if (isIPv4(addr.family) && !addr.internal) {
-        return addr.address;
-      }
-    }
-  }
-
-  return undefined;
+  return internalIpV4Sync();
 }
