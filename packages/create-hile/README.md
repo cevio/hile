@@ -1,6 +1,18 @@
 # create-hile
 
-基于 `@hile/http-next` 的项目脚手架，一条命令创建开箱即用的 Hile + Next.js 项目。
+基于内置模板的 Hile 项目脚手架：交互选择模板后，一条命令复制完整工程并写好 `package.json` 项目名。
+
+## 内置模板
+
+| 目录名 | 说明 |
+|--------|------|
+| `default` | 默认 Hile + HTTP |
+| `next` | Next.js + `@hile/http-next` 全栈 |
+| `micro-http` | `@hile/micro` + HTTP |
+| `micro` | 独立 Micro 服务 |
+| `micro-http-next` | Next.js + Micro + HTTP |
+
+模板仓库内部分环境文件以 **`_env`、`_env.prod`、`_gitignore`** 命名；创建项目时会自动重命名为 **`.env`、`.env.prod`、`.gitignore`**。
 
 ## 使用方式
 
@@ -13,15 +25,15 @@ npm i -g create-hile
 create-hile create my-app
 ```
 
-创建完成后：
+按提示选择模板与是否安装依赖。完成后：
 
 ```bash
 cd my-app
-pnpm install
-pnpm run dev
+pnpm install   # 若创建时未选安装依赖
+pnpm run dev   # 具体脚本以该模板的 package.json 为准
 ```
 
-## 生成的项目结构
+## 生成的项目结构（`next` 模板示例）
 
 ```text
 my-app/
@@ -58,13 +70,13 @@ my-app/
 
 | 命令 | 说明 |
 |------|------|
-| `pnpm run dev` | 构建 Next.js 并以开发模式启动 Hile 服务 |
+| `pnpm run dev` | 构建 Next.js 并以开发模式启动 Hile 服务（以模板为准） |
 | `pnpm run build` | 编译 TypeScript 与 Next.js 生产构建 |
 | `pnpm run start` | 以生产模式启动 Hile 服务 |
 
-## 技术栈
+## 技术栈（`next` 类模板）
 
-生成的项目基于以下依赖：
+生成的项目基于以下依赖（其他模板可能包含 `@hile/micro` 等而不含 Next）：
 
 - **@hile/core** — 异步服务容器
 - **@hile/http** — Koa + find-my-way HTTP 框架

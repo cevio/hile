@@ -27,7 +27,7 @@ pnpm run test
 | [`@hile/message-ws`](./packages/message-ws) | WebSocket 通信实现，基于 message-modem + ws，用于客户端/服务端请求/响应 | 1.0.6 |
 | [`@hile/message-loader`](./packages/message-loader) | 基于文件系统的消息路由加载器，将目录结构映射为路由表，适配各种 message 通信模块 | 1.0.7 |
 | [`@hile/micro`](./packages/micro) | WebSocket 服务注册与发现（Registry + Application），基于 message-loader 与 message-ws | 1.0.0 |
-| [`create-hile`](./packages/create-hile) | 项目脚手架：一键创建 Hile + Next.js 应用 | 1.1.7 |
+| [`create-hile`](./packages/create-hile) | 项目脚手架：多模板（默认 / Next / Micro 等），复制工程并重命名 `_env` 等 | 1.1.7 |
 <!-- /package-table:auto -->
 
 ### 快速创建项目

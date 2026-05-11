@@ -1,5 +1,5 @@
 import { dirname, relative, resolve } from 'node:path';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import ora from 'ora';
 import { ensureDir, copy } from 'fs-extra';
 import { fileURLToPath } from 'node:url';
@@ -27,16 +27,13 @@ export async function CreateHileHttpNextProject(projectName: string) {
   const spinner = ora('正在创建项目...').start();
   await ensureDir(targetDir);
   await copy(template, targetDir);
+  promoteUnderscoreDotfiles(targetDir);
 
   const packageJson = resolve(targetDir, 'package.json');
   const packageJsonContent = readFileSync(packageJson, 'utf-8');
   const packageJsonData = JSON.parse(packageJsonContent);
   packageJsonData.name = projectName;
   writeFileSync(packageJson, JSON.stringify(packageJsonData, null, 2), 'utf-8');
-
-  // 写入一个.env和.env-prod文件，内容是`HTTP_PORT=9527`
-  writeFileSync(resolve(targetDir, '.env'), 'HTTP_PORT=9527', 'utf-8');
-  writeFileSync(resolve(targetDir, '.env.prod'), 'HTTP_PORT=9527', 'utf-8');
 
   if (install) {
     const [pnpmexists, yarnexists, npmexists] = await Promise.all([
@@ -67,7 +64,10 @@ export async function CreateHileHttpNextProject(projectName: string) {
 async function choose() {
   const templates = [
     { name: 'default', message: '默认模板' },
-    { name: 'next', message: 'Next.js模板' },
+    { name: 'next', message: 'Next.js 模板' },
+    { name: 'micro-http', message: 'Micro + HTTP 模板' },
+    { name: 'micro', message: 'Micro 独立服务模板' },
+    { name: 'micro-http-next', message: 'Next.js + Micro + HTTP 模板' },
   ];
   const { template } = await Enquirer.prompt<{ template: string }>({
     type: 'select',
@@ -81,6 +81,22 @@ async function choose() {
     message: '是否安装依赖',
   });
   return { template: resolve(__templates, template), install };
+}
+
+/** 模板中用 `_env`、`_env.prod`、`_gitignore` 避免工具链忽略；拷贝到目标目录后还原为点文件 */
+function promoteUnderscoreDotfiles(dir: string) {
+  const renames: [string, string][] = [
+    ['_env', '.env'],
+    ['_env.prod', '.env.prod'],
+    ['_gitignore', '.gitignore'],
+  ];
+  for (const [from, to] of renames) {
+    const src = resolve(dir, from);
+    const dest = resolve(dir, to);
+    if (existsSync(src)) {
+      renameSync(src, dest);
+    }
+  }
 }
 
 function commandExists(command: string) {

@@ -1,11 +1,11 @@
 ---
 title: "create-hile"
-description: "一键创建 Hile + Next.js 项目的脚手架工具"
+description: "一键从内置模板创建 Hile 项目的脚手架 CLI（含默认、Next.js、Micro 等）"
 ---
 
 ## 概述
 
-`create-hile` 是一个项目脚手架 CLI 工具。它从内置模板复制完整的项目结构，帮你跳过从零配置的过程，直接开始开发。
+`create-hile` 是一个项目脚手架 CLI 工具。创建时**交互选择内置模板**，将模板目录完整复制到目标路径，并把 `package.json` 的 `name` 改为项目名。部分模板在仓库内用 **`_env`、`_env.prod`、`_gitignore`** 命名（避免点文件在发布链路中被忽略）；复制到目标目录后会**自动重命名**为 **`.env`、`.env.prod`、`.gitignore`**。
 
 ---
 
@@ -39,10 +39,12 @@ create-hile create my-app
     脚手架会执行以下操作：
 
     1. 检查 `my-app` 目录是否已存在（如存在则报错）
-    2. 创建目录
-    3. 从内置模板复制所有文件到目标目录
-    4. 将 `package.json` 的 `name` 字段改为 `my-app`
-    5. 输出后续操作提示
+    2. 交互选择**内置模板**（默认、Next.js、Micro 相关等，以 CLI 列表为准）
+    3. 创建目录并从所选模板复制所有文件到目标目录
+    4. 若模板中存在 `_env` / `_env.prod` / `_gitignore`，则重命名为 `.env` / `.env.prod` / `.gitignore`
+    5. 将 `package.json` 的 `name` 字段改为 `my-app`
+    6. 可选：是否立即安装依赖
+    7. 输出后续操作提示
   </Step>
   <Step title="安装依赖">
     ```bash
@@ -70,7 +72,23 @@ create-hile create my-app
 
 ---
 
+## 内置模板
+
+| 目录名 | 说明（CLI 中展示文案以实际为准） |
+|--------|----------------------------------|
+| `default` | 默认 Hile + HTTP，无 Next.js |
+| `next` | Next.js + `@hile/http-next` 全栈（文档下文「项目结构」主要针对此模板） |
+| `micro-http` | `@hile/micro` + HTTP（与 Registry 等集成） |
+| `micro` | 独立 Micro 服务骨架 |
+| `micro-http-next` | Next.js + Micro + HTTP 组合 |
+
+不同模板的目录结构、`pnpm run dev` 行为与依赖不完全相同，请以生成后的 **`package.json` 与 README** 为准。
+
+---
+
 ## 生成的项目结构
+
+以下为 **`next` 模板**（Next.js + `http-next`）的常见布局；其他模板可能无 `src/app/` 或 `public/` 等目录。
 
 ```
 my-app/
@@ -165,6 +183,8 @@ my-app/
 ---
 
 ## 技术栈
+
+以下依赖**常见于**带 Next.js 的模板（如 `next`、`micro-http-next`）；纯 HTTP 或 Micro 模板以生成项目内的 `package.json` 为准。
 
 生成的项目依赖以下包：
 

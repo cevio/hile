@@ -75,7 +75,7 @@ Hile 提供**服务容器**、**HTTP / Next 集成**、**数据库与缓存**以
 @hile/micro ← 轻量服务发现（依赖 message-loader + message-ws + ws）
 
 create-hile ← 脚手架工具
-  └── 生成的项目依赖模板所选包（通常为 core/http/http-next/cli 等）
+  └── 生成的项目依赖所选模板（default / next / micro-http / micro / micro-http-next 等）
 ```
 
 ## 典型技术栈组合
@@ -99,7 +99,7 @@ create-hile ← 脚手架工具
     ```bash
     npx create-hile create my-app
     ```
-    适合：需要服务端渲染的全栈应用。Koa API 路由 + Next.js 页面共享同一端口。
+    创建时在 CLI 中选择 **`next`** 或 **`micro-http-next`** 等含 Next.js 的模板，即可得到 Koa API 路由与 Next.js 页面共享同一端口的典型全栈应用。若选 **`default`** 等模板，则无 Next.js，请以生成项目说明为准。
   </Accordion>
   <Accordion title="API + 数据库 + 缓存">
     ```bash

@@ -11,7 +11,7 @@ description: "从零到运行：5 分钟搭建你的第一个 Hile 项目"
 
 ## 方式一：使用脚手架（推荐）
 
-最快的上手方式是使用 `create-hile` 脚手架，它会生成一个包含 Koa API + Next.js SSR 的完整项目。
+最快的上手方式是使用 `create-hile` 脚手架：按提示**选择内置模板**（默认、Next.js、Micro 相关等），复制完整项目结构。下文以带 **Next.js + `http-next`** 的模板为例说明目录与 `/-/post` 验证步骤；其他模板请以生成后的 `package.json` 与 README 为准。
 
 <Steps>
   <Step title="创建项目">
@@ -22,7 +22,8 @@ description: "从零到运行：5 分钟搭建你的第一个 Hile 项目"
     ```
 
     脚手架会：
-    - 从内置模板复制完整项目结构
+    - 交互选择模板并复制完整项目结构
+    - 将模板中的 `_env` / `_env.prod` / `_gitignore` 重命名为 `.env` / `.env.prod` / `.gitignore`（若存在）
     - 自动将 `package.json` 的 `name` 设为你指定的项目名
     - 输出后续操作提示
   </Step>
@@ -68,6 +69,8 @@ description: "从零到运行：5 分钟搭建你的第一个 Hile 项目"
 </Steps>
 
 ### 生成的项目结构
+
+以下树形结构以选择 **`next`**（或等价的带 Next.js + `http-next` 全栈）模板为准；其他模板目录与启动脚本可能不同。
 
 ```
 my-app/

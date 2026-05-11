@@ -1,0 +1,33 @@
+{
+  "name": "micro-http-next",
+  "description": "Hile Http Next Example",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "npm run build:base && npm run build:next",
+    "build:base": "rm -rf dist && tsc -b && npm run build:fix",
+    "build:next": "next build",
+    "build:fix": "fix-esm-import-path --preserve-import-type ./dist ",
+    "dev": "hile start --dev --env-file .env",
+    "start": "hile start --env-file .env.prod"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "fix-esm-import-path": "^1.10.3"
+  },
+  "dependencies": {
+    "@hile/cli": "^1.0.23",
+    "@hile/core": "^1.1.0",
+    "@hile/http": "^1.1.0",
+    "@hile/http-next": "^1.1.1",
+    "next": "^16.2.1",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "@hile/micro": "^1.0.3",
+    "@hile/message-loader": "^1.0.8",
+    "detect-port": "^2.1.0"
+  }
+}

@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.log
+.env
+.env.local
+.DS_Store
+.agent
+.agents
+.claude
+skills-lock.json
+tsconfig.tsbuildinfo
+pnpm-lock.yaml

@@ -36,7 +36,7 @@ description: "引导 AI 在本仓库或使用 Hile 的项目中，正确选用�
 | WebSocket 请求/响应 | `@hile/message-ws` | 基于 message-modem + ws |
 | 按目录映射消息路由（`*.msg.ts`）、与 message-* 搭配 | `@hile/message-loader` | 独立于 core，`MessageLoader` + `defineMessage` |
 | WebSocket 服务注册与发现（Registry + Application） | `@hile/micro` | 基于 `message-loader` + `message-ws`，与 core 无关 |
-| 一键创建 Hile + Next.js 项目 | `create-hile` | `npx create-hile create <name>` |
+| 从内置模板创建 Hile 项目（多模板可选） | `create-hile` | `npx create-hile create <name>` |
 
 **依赖关系**：core ← cli / typeorm / ioredis；http ← http-next。message-modem ← message-ipc / message-worker-thread / message-ws。message-loader 可单独与任意 message 传输层搭配。**`@hile/micro`** 依赖 **message-loader + message-ws + ws**。
 
