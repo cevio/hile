@@ -1,0 +1,42 @@
+---
+title: HTTP 请求管线
+description: "纯 API 模式下 Koa 中间件、find-my-way 路由与响应插件链"
+---
+
+在 **`@hile/http`** 模式下，请求依次经过全局中间件、路由器与控制器；返回值可经 **响应插件链** 整形后写入 `ctx.body`。
+
+## 流程概览
+
+```
+客户端请求
+    │
+    ▼
+Koa 全局中间件（注册顺序）
+    │  ├── 日志
+    │  ├── 鉴权
+    │  └── ...
+    ▼
+find-my-way 路由匹配
+    │
+    ├── 匹配成功 ──→ 路由级中间件 ──→ 控制器
+    │                                        │
+    │                                        ▼
+    │                                  响应插件链
+    │                                        │
+    │                                        ▼
+    │                               result → ctx.body
+    │
+    └── 未匹配 ──→ defaultRoute（next）──→ 404
+```
+
+## 响应插件链
+
+插件串行执行，语义接近 Koa 洋葱模型：可对控制器返回值变换后再交给下一个插件；传给 `next()` 的非 `undefined` 结果最终会写入 **`ctx.body`**。
+
+```typescript
+defineResponsePlugin(async (ctx, result, next) => {
+  return await next({ code: 0, data: result })
+})
+```
+
+文件系统路由、`defineController`、Zod 校验、中间件注册等完整 API 见 [@hile/http](/packages/http)。

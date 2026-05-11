@@ -1,0 +1,54 @@
+---
+title: 服务容器
+description: "defineService、loadService、依赖图与循环依赖——理解 Hile 如何编排单例服务"
+---
+
+Hile 通过 **`@hile/core`** 提供异步服务容器：所有经 `defineService` 注册的服务按 **服务 key**（`string | symbol`）全局单例；`loadService` 负责懒执行、并发合并与缓存。
+
+## 注册与加载
+
+- **`defineService(key, fn)`** — 将异步工厂 `fn` 注册到容器；**此时不会执行** `fn`，直到有人 `loadService`。
+- **`loadService(props)`** — 首次调用时执行工厂并缓存返回值；后续调用返回同一实例。
+
+集成包通常用 `Symbol.for('包名')` 作为 key，避免与用户自定义字符串冲突；应用内可用 `'http'`、`'database'` 等可读 key。
+
+工厂函数接收 **`shutdown`**，用于注册进程退出时的清理回调（与 [生命周期与事件](/fundamentals/lifecycle-and-events) 一致）。
+
+## 依赖图与循环检测
+
+容器在服务函数执行期间用 **`AsyncLocalStorage`** 追踪调用栈：若服务 A 在初始化过程中 `loadService(B)`，则记录边 **A → B**，形成依赖图。
+
+```typescript
+const serviceC = defineService('c', async () => ({}))
+
+const serviceB = defineService('b', async (shutdown) => {
+  const c = await loadService(serviceC) // B → C
+  return { c }
+})
+
+const serviceA = defineService('a', async (shutdown) => {
+  const b = await loadService(serviceB) // A → B
+  const c = await loadService(serviceC) // A → C
+  return { b, c }
+})
+```
+
+依赖图示意：
+
+```
+A → B → C
+A → C
+```
+
+若 **C 再次 load A**，会形成环路，容器立即抛出 `circular dependency detected` 类错误。
+
+可随时 introspect：
+
+```typescript
+const graph = container.getDependencyGraph()
+const order = container.getStartupOrder()
+```
+
+## 何时深入 API 参考
+
+容器还支持自定义 `Container` 实例、超时、事件订阅等；选项类型与边界行为见 [@hile/core](/packages/core)。

@@ -1,0 +1,23 @@
+---
+title: 消息与微服务发现
+description: "message-modem 抽象、传输实现、文件路由与 micro 注册发现的关系"
+---
+
+Hile 的消息栈既可以 **脱离 `@hile/core` 单独使用**，也可以与 HTTP/CLI 应用同进程共存。
+
+## 分层关系
+
+1. **`@hile/message-modem`** — 传输无关的请求/响应抽象：超时、中止、错误传播；**无外部依赖**。
+2. **传输实现**（择一或多）  
+   - **`@hile/message-ipc`** — 父子进程 IPC  
+   - **`@hile/message-worker-thread`** — Worker 线程  
+   - **`@hile/message-ws`** — WebSocket（依赖 **`ws`**）
+3. **`@hile/message-loader`** — 按目录结构加载「消息路由」，生成路由表；可与上述传输组合。
+4. **`@hile/micro`** — 在 **message-loader + message-ws** 之上的 **`Registry` / `Application`**，提供按 namespace 的**实例注册与发现**；**不依赖 core 容器**。
+
+## 与 Web 栈对比
+
+- **`@hile/http`**：HTTP 语义、Koa、REST 风格控制器。  
+- **消息栈**：更适合进程间/长连接、RPC 式消息、或多实例注册发现。
+
+按需阅读：[@hile/message-modem](/packages/message-modem)、[@hile/message-ipc](/packages/message-ipc)、[@hile/message-worker-thread](/packages/message-worker-thread)、[@hile/message-ws](/packages/message-ws)、[@hile/message-loader](/packages/message-loader)、[@hile/micro](/packages/micro)。

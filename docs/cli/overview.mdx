@@ -1,0 +1,32 @@
+---
+title: CLI 概览
+description: "何时用 create-hile、何时用 hile start；与文档其它章节的衔接"
+---
+
+Hile 的命令行工具分两类：**项目脚手架**与**进程启动器**。
+
+## create-hile（脚手架）
+
+**`npx create-hile create <项目名>`** 用于生成带约定目录的完整应用（多种模板：默认、Next、micro-http 等）。适合「从零要一份可运行仓库」的场景。
+
+模板会把 **`_env`** / **`_gitignore`** 等重命名为 **`.env`** / **`.gitignore`**（若存在），并写入 **`package.json` name**。详见 [@hile/create-hile](/packages/create-hile)。
+
+## hile（运行时 CLI）
+
+**`hile start`** 是已存在项目中的启动入口：扫描 **`*.boot.{ts,js}`**（约定在 **`src/services/`**），对其中导出的服务执行 **`loadService`**，订阅容器事件（开发模式），并注册信号处理以 **优雅关闭**。
+
+常用选项：
+
+- **`--dev`** — 开发模式：`NODE_ENV=development`，**tsx** 直接跑 TypeScript，扫描 **`src/`**，打印容器事件。
+- **`--env-file <path>`** — 加载 env；可多次指定。
+
+完整选项表、`auto_load_packages`、目录扫描规则见 [@hile/cli](/packages/cli)。
+
+## 阅读路径建议
+
+| 目标 | 建议 |
+|------|------|
+| 第一次跑起来 | [第一步](/quickstart) |
+| 理解容器与关闭 | [服务容器](/fundamentals/container)、[生命周期与事件](/fundamentals/lifecycle-and-events) |
+| 配置 env 与 package.json | [配置](/techniques/configuration) |
+| 上线 | [生产部署](/deployment) |

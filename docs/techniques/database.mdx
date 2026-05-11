@@ -1,0 +1,15 @@
+---
+title: 数据库（TypeORM）
+description: "将 DataSource 接入服务容器与事务辅助的使用思路"
+---
+
+**`@hile/typeorm`** 把 **TypeORM `DataSource`** 注册为 Hile 服务，生命周期由容器管理（初始化、优雅关闭），并提供事务辅助（含失败时的 **LIFO 补偿** 回调）。
+
+## 典型用法
+
+1. 安装：`pnpm add @hile/core @hile/typeorm`（通常与 **`@hile/cli`**、**`@hile/http`** 同用）。
+2. 在 **`package.json`** 中配置 **`hile.auto_load_packages`** 包含 **`@hile/typeorm`**（若包文档要求），或通过 boot 中 **`loadService`** 拉取。
+3. 用环境变量配置连接（`TYPEORM_*` 等），启动时用 **`--env-file`** 加载。
+4. 在控制器或其它服务中 **`loadService(typeormService)`** 取得 DataSource，再执行查询或事务。
+
+具体 env 键名、`defineService` 的 symbol key、事务 API 与注意事项见 [@hile/typeorm](/packages/typeorm)。

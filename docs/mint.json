@@ -36,12 +36,38 @@
   ],
   "navigation": [
     {
-      "group": "开始使用",
+      "group": "概述",
+      "pages": ["introduction", "architecture"]
+    },
+    {
+      "group": "第一步",
+      "pages": ["quickstart"]
+    },
+    {
+      "group": "基础",
       "pages": [
-        "introduction",
-        "quickstart",
-        "architecture"
+        "fundamentals/container",
+        "fundamentals/lifecycle-and-events",
+        "fundamentals/http-pipeline",
+        "fundamentals/http-next-pipeline"
       ]
+    },
+    {
+      "group": "技巧",
+      "pages": [
+        "techniques/configuration",
+        "techniques/database",
+        "techniques/caching",
+        "techniques/messaging"
+      ]
+    },
+    {
+      "group": "CLI",
+      "pages": ["cli/overview"]
+    },
+    {
+      "group": "部署",
+      "pages": ["deployment"]
     },
     {
       "group": "核心包",
@@ -53,7 +79,7 @@
       ]
     },
     {
-      "group": "集成包",
+      "group": "集成（数据库 · 缓存 · 消息）",
       "pages": [
         "packages/typeorm",
         "packages/ioredis",
@@ -67,9 +93,7 @@
     },
     {
       "group": "工具",
-      "pages": [
-        "packages/create-hile"
-      ]
+      "pages": ["packages/create-hile"]
     }
   ],
   "footerSocials": {

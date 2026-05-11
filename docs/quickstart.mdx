@@ -319,18 +319,7 @@ export default [getUsers, createUser]
 
 ## 生产部署
 
-```bash
-# 1. 编译 TypeScript
-pnpm run build
-
-# 2. 生产模式启动
-NODE_ENV=production hile start
-```
-
-生产模式下：
-- CLI 扫描 `dist/` 目录而非 `src/`
-- TypeORM 关闭 SQL 日志
-- 不使用 tsx，直接运行编译后的 JS
+构建、`NODE_ENV`、扫描 `dist/`、优雅关闭与 Next 模板注意点见 **[生产部署](/deployment)**。
 
 ---
 

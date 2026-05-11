@@ -1,16 +1,16 @@
 ---
 title: 架构概览
-description: "深入理解 Hile 的分层设计、请求处理流程与服务生命周期"
+description: "Hile 分层与职责鸟瞰；详细流程见基础与技巧各章"
 ---
 
 ## 分层架构
 
-Hile 按职责分为三层，每一层都是可选的，你可以按需引入：
+Hile 按职责分层，各层可按需引入：
 
-
+```
 ┌──────────────────────────────────────────────────────┐
 │                    应用层 (App)                        │
-│   services·controllers·pages；models 承载业务；app/controllers 可 loadModel   │
+│   services·controllers·pages；models 承载业务           │
 ├─────────────────┬────────────────┬────────────────────┤
 │   @hile/cli     │   @hile/http   │  @hile/http-next   │
 │   命令行启动器   │   HTTP 框架    │   Next.js 桥接     │
@@ -21,304 +21,50 @@ Hile 按职责分为三层，每一层都是可选的，你可以按需引入：
 │                     @hile/core                         │
 │          异步服务容器 · 生命周期 · 依赖图               │
 └──────────────────────────────────────────────────────┘
+```
 
 <Note>
 上图强调 **经 `@hile/core` 编排** 的常见 Web/数据栈。**`@hile/message-loader`、`@hile/message-ws`、`@hile/micro`** 等可脱离容器在任意 Node 进程中单独使用。
 </Note>
 
-### 各层职责
+### 各层职责（摘要）
 
 <AccordionGroup>
   <Accordion title="基础层：@hile/core">
-    **职责：** 管理所有服务的创建、缓存、依赖追踪与销毁。
+    **职责：** 管理服务的创建、缓存、依赖追踪与销毁。
 
-    核心能力：
-    - `defineService(key, fn)` — 向容器注册一个异步服务（`key` 为 `string | symbol`，标识全局单例槽位）
-    - `loadService(props)` — 按需加载服务（首次执行，后续返回缓存）
-    - 并发请求合并 — 多处同时加载同一服务，只初始化一次
-    - 依赖图追踪 — 自动记录服务间依赖关系
-    - 循环依赖检测 — 运行时检测并抛出明确错误
-    - 优雅关闭 — `shutdown()` 按 LIFO 顺序执行所有清理回调
-
-    容器使用 `AsyncLocalStorage` 追踪服务间的调用关系，自动构建依赖图。
+    深入：[服务容器](/fundamentals/container)、[生命周期与事件](/fundamentals/lifecycle-and-events)；API 细节：[@hile/core](/packages/core)。
   </Accordion>
-  <Accordion title="服务层：@hile/http、@hile/typeorm、@hile/ioredis、@hile/message-modem">
-    **职责：** 提供具体的基础设施服务。
+  <Accordion title="服务层：HTTP、数据、消息">
+    **职责：** 具体基础设施。
 
-    - `@hile/http` — 封装 Koa + find-my-way，提供路由注册、中间件、文件系统路由；控制器可选 Zod 校验
-    - `@hile/typeorm` — 将 TypeORM DataSource 封装为 Hile 服务，提供事务辅助
-    - `@hile/ioredis` — 将 ioredis 客户端封装为 Hile 服务
-    - `@hile/message-modem` — 传输无关的请求/响应消息通信抽象层，支持超时、中止、错误传播
-    - `@hile/message-ipc` — 基于 message-modem 的 Node.js IPC 实现，用于 fork 父子进程间通信
-    - `@hile/message-worker-thread` — 基于 message-modem 的 Worker Threads 实现，用于主线程与 Worker 线程间通信
-    - `@hile/message-ws` — 基于 message-modem + ws 的 WebSocket 实现，用于客户端与服务端间通信
-    - `@hile/message-loader` — 基于文件系统的消息路由加载器，将目录结构映射为路由表，可搭配上述 message 模块使用
-    - `@hile/micro` — 在 message-loader + message-ws 之上的轻量 **服务注册与发现**（`Registry` / `Application`），不依赖 core 容器
-
-    其中 `@hile/http`、`@hile/typeorm`、`@hile/ioredis` 通过 `defineService` 注册到容器，生命周期由容器统一管理。`@hile/message-modem`、`@hile/message-ipc`、`@hile/message-worker-thread`、`@hile/message-ws`、`@hile/message-loader`、`@hile/micro` 是独立模块，不依赖容器，可在任何 Node.js 进程中使用。
+    - **`@hile/http`** — Koa + find-my-way，路由与中间件；流程见 [HTTP 请求管线](/fundamentals/http-pipeline)；[@hile/http](/packages/http)。
+    - **`@hile/http-next`** — 与 Next 共用端口；见 [HttpNext 与全栈分流](/fundamentals/http-next-pipeline)；[@hile/http-next](/packages/http-next)。
+    - **`@hile/typeorm`** / **`@hile/ioredis`** — 见 [数据库](/techniques/database)、[缓存](/techniques/caching)。
+    - **消息族** — modem / ipc / worker / ws / loader / micro；见 [消息与微服务发现](/techniques/messaging)。
   </Accordion>
-  <Accordion title="编排层：@hile/cli、@hile/http-next">
-    **职责：** 编排服务启动与请求分流。
+  <Accordion title="编排：CLI">
+    **职责：** 扫描 **`*.boot`**、加载服务、信号与日志。
 
-    - `@hile/cli` — 扫描 `*.boot.ts` 文件，按顺序加载服务，订阅容器事件输出日志，注册进程退出钩子
-    - `@hile/http-next` — 在同一 HTTP Server 上同时运行 Koa 路由和 Next.js，实现 API 与 SSR 共存
+    见 [CLI 概览](/cli/overview)；[@hile/cli](/packages/cli)。
   </Accordion>
 </AccordionGroup>
 
 ---
 
-## 服务生命周期
+## 下一步读哪里
 
-每个通过 `defineService` 注册的服务都经历以下生命周期阶段：
-
-```
-           defineService()              loadService()
-                │                           │
-                ▼                           ▼
-  ┌──────────────────────┐     ┌──────────────────────┐
-  │   注册到容器          │     │   容器检查状态        │
-  │   绑定服务 key        │     │                      │
-  └──────────┬───────────┘     └──────────┬───────────┘
-             │                            │
-             │              ┌─────────────┼─────────────┐
-             │              │             │             │
-             │           未运行        运行中         已完成
-             │              │             │             │
-             │              ▼             ▼             ▼
-             │          执行 fn()    加入等待队列   返回缓存值
-             │              │             │
-             │              ▼             │
-             │     ┌─── init ───┐         │
-             │     │            │         │
-             │   成功          失败       │
-             │     │            │         │
-             │     ▼            ▼         │
-             │   ready     执行 shutdown  │
-             │     │        → stopped     │
-             │     │                      │
-             │     ▼                      │
-             │   通知等待队列 ◄────────────┘
-             │
-             ▼
-         进程退出信号
-             │
-             ▼
-    container.shutdown()
-             │
-     按 LIFO 顺序执行
-     所有 shutdown 回调
-             │
-             ▼
-          stopped
-```
-
-### 生命周期阶段详解
-
-| 阶段 | 说明 | 触发事件 |
-|------|------|---------|
-| `init` | 服务函数开始执行 | `service:init` |
-| `ready` | 服务函数执行成功，结果已缓存 | `service:ready`（含耗时 `durationMs`） |
-| `stopping` | 正在执行 shutdown 回调 | `service:shutdown:start` |
-| `stopped` | 所有 shutdown 回调执行完毕 | `service:shutdown:done`（含耗时） |
-
-错误场景：
-| 场景 | 事件 | 行为 |
-|------|------|------|
-| 服务初始化失败 | `service:error` | 自动执行已注册的 shutdown 回调，然后进入 stopped |
-| shutdown 回调执行失败 | `service:shutdown:error` | 记录错误但不中断其他回调的执行 |
-| 启动超时 | `service:error` | 抛出超时错误，触发 shutdown |
-
-### 超时控制
-
-```typescript
-import { Container } from '@hile/core'
-
-const container = new Container({
-  startTimeoutMs: 5_000,    // 单个服务启动超时 5 秒
-  shutdownTimeoutMs: 3_000, // 单个 shutdown 回调超时 3 秒
-})
-```
-
-超时不会杀死进程，而是让对应的 Promise reject，进入错误处理流程。
-
----
-
-## 请求处理流程
-
-### 纯 API 模式（@hile/http）
-
-```
-客户端请求
-    │
-    ▼
-Koa 全局中间件（按注册顺序执行）
-    │  ├── 日志中间件
-    │  ├── 鉴权中间件
-    │  └── ...
-    ▼
-find-my-way 路由匹配
-    │
-    ├── 匹配成功 ──→ 执行路由中间件 ──→ 执行控制器函数
-    │                                        │
-    │                                        ▼
-    │                                  响应插件链处理
-    │                                        │
-    │                                        ▼
-    │                               result → ctx.body
-    │
-    └── 未匹配 ──→ defaultRoute（调用 next()）──→ 404
-```
-
-**响应插件链**的工作方式：
-
-```typescript
-defineResponsePlugin(async (ctx, result, next) => {
-  // result 是控制器返回值
-  // 可以变换后传给 next
-  return await next({ code: 0, data: result })
-})
-```
-
-插件按注册顺序串行执行，采用 onion 模型（类似 Koa 中间件）。最终传给 `next()` 的结果如果不是 `undefined`，就会被写入 `ctx.body`。
-
-### SSR 模式（@hile/http-next）
-
-```
-客户端请求
-    │
-    ▼
-koa-static(public/)         ← 静态资源（图片、字体等）
-    │ 未命中
-    ▼
-koa-static(.next/static/)   ← Next.js 构建产物（JS、CSS）
-    │ 未命中
-    ▼
-hile-http 路由(默认 /-*)     ← API 控制器（默认 `src/controllers`，可配置 `controllerPrefix`）
-    │ 未命中
-    ▼
-Next.js handler              ← 页面渲染（SSR/RSC）
-    │
-    ├── 匹配到 page.tsx ──→ SSR 渲染 HTML
-    └── 未匹配 ──→ Next.js 404 页面
-```
-
-关键设计：
-- API 路由默认 `/-` 前缀（`HttpNext` 的 `controllerPrefix`），与 Next.js 的 `/about`、`/users` 等页面路由在路径层面隔离；**非 Next 的 API** 默认目录为 `src/controllers`（可用 `controllerDirectory` 改为 `app` 等与旧版一致）；可选 **`specialControllers`** 为额外目录各配独立 `prefix`（主 `load` 后再逐项 `load`，见 **`packages/http-next`** 文档）
-- **业务数据**：**`defineModel`** 在 **`src/models/<领域>/*.model.ts`**（**`export default`**）；**`app` / `controllers` / `services`** 仅 **`loadModel`** 消费；**`page.tsx`** 使用 **`loadModel`** 时须 **`export const dynamic = "force-dynamic"`**；**`src/controllers/**`** 可 **`loadService`**；**`loadService`** 不在 **`src/app/**`** 使用（见 **`packages/http-next/SKILL.md`**）
-- Next.js handler 作为最后一个 Koa 中间件，Koa 设置 `ctx.respond = false` 让 Next.js 直接操作原生 `req/res`
-- Next.js handler 在 `prepare()` 完成后才注册为中间件，确保就绪后才接收请求
-
----
-
-## 依赖图与循环检测
-
-容器使用 `AsyncLocalStorage` 在服务函数执行期间追踪调用栈。当服务 A 内部 `loadService(B)` 时，容器自动记录 `A → B` 的依赖边。
-
-```typescript
-const serviceC = defineService('c', async () => ({}))
-
-const serviceB = defineService('b', async (shutdown) => {
-  const c = await loadService(serviceC)  // 记录 B → C
-  return { c }
-})
-
-const serviceA = defineService('a', async (shutdown) => {
-  const b = await loadService(serviceB)  // 记录 A → B
-  const c = await loadService(serviceC)  // 记录 A → C
-  return { b, c }
-})
-```
-
-此时依赖图为：
-
-```
-A → B → C
-A → C
-```
-
-如果 `serviceC` 内部又 `loadService(serviceA)`，容器会检测到 `C → A` 形成环路，立即抛出：
-
-```
-Error: circular dependency detected: <keyA> -> <keyB>（具体为服务 key 的字符串形式）
-```
-
-你可以随时查看依赖图：
-
-```typescript
-const graph = container.getDependencyGraph()
-// { nodes: ['a', 'b', 'c'], edges: [{ from: 'a', to: 'b' }, ...] } — nodes/edges 均为 ServiceKey
-
-const order = container.getStartupOrder()
-// ['a', 'b', 'c']  — 按首次启动的顺序
-```
-
----
-
-## 容器事件流
-
-容器在每个关键节点发出事件，CLI 在开发模式下自动订阅并输出日志：
-
-| 事件类型 | 触发时机 | 携带数据 |
-|---------|---------|---------|
-| `service:init` | 服务开始初始化 | `key`（`ServiceKey`） |
-| `service:ready` | 服务初始化成功 | `key`, `durationMs` |
-| `service:error` | 服务初始化失败 | `key`, `error`, `durationMs` |
-| `service:shutdown:start` | 服务开始关闭 | `key` |
-| `service:shutdown:done` | 服务关闭完成 | `key`, `durationMs` |
-| `service:shutdown:error` | shutdown 回调执行失败 | `key`, `error` |
-| `container:shutdown:start` | 容器开始整体关闭 | — |
-| `container:shutdown:done` | 容器关闭完成 | `durationMs` |
-| `container:error` | 容器级错误（如循环依赖） | `error` |
-
-手动订阅事件：
-
-```typescript
-import { container, formatServiceKey } from '@hile/core'
-
-const off = container.on((event) => {
-  switch (event.type) {
-    case 'service:ready':
-      console.log(`服务 ${formatServiceKey(event.key)} 就绪，耗时 ${event.durationMs}ms`)
-      break
-    case 'service:error':
-      console.error(`服务 ${formatServiceKey(event.key)} 失败:`, event.error)
-      break
-  }
-})
-
-// 取消订阅
-off()
-```
-
----
-
-## 优雅关闭流程
-
-当进程收到 `SIGTERM` 或 `SIGINT` 信号时：
-
-```
-SIGTERM / SIGINT
-    │
-    ▼
-CLI exitHook 触发
-    │
-    ▼
-container.shutdown()
-    │
-    ▼
-按 LIFO 顺序遍历 shutdownQueues
-    │
-    ├── service(http): 关闭 HTTP 服务器
-    ├── service(@hile/ioredis): 断开 Redis 连接
-    └── service(@hile/typeorm): 销毁数据库连接池
-    │
-    ▼
-所有 shutdown 回调执行完毕
-    │
-    ▼
-进程退出
-```
-
-LIFO（后进先出）顺序确保：先启动的资源最后关闭。例如数据库连接在 HTTP 服务器之前创建，那么 HTTP 服务器先关闭（不再接受新请求），然后才关闭数据库连接。
-
-每个 shutdown 回调独立执行，即使某个回调抛出错误，也不会阻止其他回调的执行。错误会通过 `service:shutdown:error` 事件报告。
+<CardGroup cols={2}>
+  <Card title="服务容器" icon="cube" href="/fundamentals/container">
+    defineService、loadService、依赖图与循环检测
+  </Card>
+  <Card title="生命周期与事件" icon="timeline" href="/fundamentals/lifecycle-and-events">
+    就绪/关闭、超时、事件与优雅关机
+  </Card>
+  <Card title="HTTP 管线" icon="server" href="/fundamentals/http-pipeline">
+    纯 API 模式下的请求链
+  </Card>
+  <Card title="HttpNext 分流" icon="react" href="/fundamentals/http-next-pipeline">
+    API 与 SSR 同一端口时的顺序与约定
+  </Card>
+</CardGroup>

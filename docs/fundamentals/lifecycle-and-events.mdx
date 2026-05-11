@@ -1,0 +1,138 @@
+---
+title: 生命周期与事件
+description: "服务从注册到就绪、关闭与超时；容器事件与 CLI 日志的关系"
+---
+
+每个通过 **`defineService`** 注册的服务在 **`loadService`** 触发后经历初始化与（可选）关闭阶段；CLI 在开发模式下会订阅容器事件并打印日志。
+
+## 生命周期流程
+
+```
+           defineService()              loadService()
+                │                           │
+                ▼                           ▼
+  ┌──────────────────────┐     ┌──────────────────────┐
+  │   注册到容器          │     │   容器检查状态        │
+  │   绑定服务 key        │     │                      │
+  └──────────┬───────────┘     └──────────┬───────────┘
+             │                            │
+             │              ┌─────────────┼─────────────┐
+             │              │             │             │
+             │           未运行        运行中         已完成
+             │              │             │             │
+             │              ▼             ▼             ▼
+             │          执行 fn()    加入等待队列   返回缓存值
+             │              │             │
+             │              ▼             │
+             │     ┌─── init ───┐         │
+             │     │            │         │
+             │   成功          失败       │
+             │     │            │         │
+             │     ▼            ▼         │
+             │   ready     执行 shutdown  │
+             │     │        → stopped     │
+             │     │                      │
+             │     ▼                      │
+             │   通知等待队列 ◄────────────┘
+             │
+             ▼
+         进程退出信号
+             │
+             ▼
+    container.shutdown()
+             │
+     按 LIFO 顺序执行
+     所有 shutdown 回调
+             │
+             ▼
+          stopped
+```
+
+### 阶段与事件
+
+| 阶段 | 说明 | 触发事件 |
+|------|------|---------|
+| `init` | 服务函数开始执行 | `service:init` |
+| `ready` | 服务函数成功，结果已缓存 | `service:ready`（含 `durationMs`） |
+| `stopping` | 正在执行 shutdown | `service:shutdown:start` |
+| `stopped` | shutdown 全部结束 | `service:shutdown:done` |
+
+错误场景：
+
+| 场景 | 事件 | 行为 |
+|------|------|------|
+| 初始化失败 | `service:error` | 执行已注册的 shutdown，再进入 stopped |
+| shutdown 回调抛错 | `service:shutdown:error` | 记录错误，不阻断其余回调 |
+| 启动超时 | `service:error` | Promise reject，触发 shutdown |
+
+### 超时
+
+```typescript
+import { Container } from '@hile/core'
+
+const container = new Container({
+  startTimeoutMs: 5_000,
+  shutdownTimeoutMs: 3_000,
+})
+```
+
+超时不会强行杀进程，而是让对应 Promise **reject**，进入错误处理路径。
+
+## 容器事件流
+
+| 事件类型 | 触发时机 | 携带数据 |
+|---------|---------|---------|
+| `service:init` | 服务开始初始化 | `key` |
+| `service:ready` | 初始化成功 | `key`, `durationMs` |
+| `service:error` | 初始化失败 | `key`, `error`, `durationMs` |
+| `service:shutdown:start` | 开始关闭某服务 | `key` |
+| `service:shutdown:done` | 关闭完成 | `key`, `durationMs` |
+| `service:shutdown:error` | shutdown 回调失败 | `key`, `error` |
+| `container:shutdown:start` | 容器整体开始关闭 | — |
+| `container:shutdown:done` | 容器关闭完成 | `durationMs` |
+| `container:error` | 容器级错误（如循环依赖） | `error` |
+
+手动订阅示例：
+
+```typescript
+import { container, formatServiceKey } from '@hile/core'
+
+const off = container.on((event) => {
+  switch (event.type) {
+    case 'service:ready':
+      console.log(`服务 ${formatServiceKey(event.key)} 就绪，耗时 ${event.durationMs}ms`)
+      break
+    case 'service:error':
+      console.error(`服务 ${formatServiceKey(event.key)} 失败:`, event.error)
+      break
+  }
+})
+
+off()
+```
+
+## 优雅关闭（SIGTERM / SIGINT）
+
+```
+SIGTERM / SIGINT
+    │
+    ▼
+CLI exitHook
+    │
+    ▼
+container.shutdown()
+    │
+    ▼
+按 LIFO 遍历 shutdown 队列
+    │
+    ├── 关闭 HTTP 监听
+    ├── 断开 Redis
+    └── 销毁数据库连接池
+    │
+    ▼
+进程退出
+```
+
+**LIFO** 保证「后注册的资源先关」：例如先关 HTTP 不再接新请求，再释放数据库连接。单个 shutdown 回调失败不会阻塞其余回调；错误通过 `service:shutdown:error` 上报。
+
+启动扫描、`*.boot` 与 **`hile start`** 选项见 [CLI 概览](/cli/overview) 与 [@hile/cli](/packages/cli)。

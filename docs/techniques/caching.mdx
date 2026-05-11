@@ -1,0 +1,14 @@
+---
+title: 缓存（Redis）
+description: "ioredis 客户端服务化与环境变量约定"
+---
+
+**`@hile/ioredis`** 将 **ioredis** 客户端封装为容器中的单例服务：随 **`hile start`** 连接，随 **`container.shutdown()`** 断开。
+
+## 典型用法
+
+1. 安装：`pnpm add @hile/ioredis`，并在 **`hile.auto_load_packages`** 中列出（若采用自动加载）。
+2. 通过 **`REDIS_HOST`**、**`REDIS_PORT`**、**`REDIS_DB`** 等环境变量配置（详见包文档）。
+3. 业务代码中 **`loadService(ioredisService)`** 获取客户端实例。
+
+与控制器组合示例见 [第一步](/quickstart) 中「方式三」；完整选项见 [@hile/ioredis](/packages/ioredis)。

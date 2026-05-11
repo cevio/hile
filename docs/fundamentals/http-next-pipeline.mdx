@@ -1,0 +1,35 @@
+---
+title: HttpNext 与全栈分流
+description: "同一端口下静态资源、API 与 Next.js 页面的请求顺序与约定"
+---
+
+**`@hile/http-next`** 把 **Koa + `@hile/http`** 与 **Next.js** 绑在同一 HTTP Server：先尝试静态与 API，最后交给 Next 做 SSR/RSC。
+
+## 请求顺序
+
+```
+客户端请求
+    │
+    ▼
+koa-static(public/)
+    │ 未命中
+    ▼
+koa-static(.next/static/)
+    │ 未命中
+    ▼
+hile-http 路由（默认前缀 /-*）
+    │ 未命中
+    ▼
+Next.js handler（SSR / RSC）
+    │
+    ├── 命中 page.tsx ──→ 渲染 HTML
+    └── 未命中 ──→ Next 404
+```
+
+## 关键约定
+
+- **API 路径**：默认 **`/-`** 前缀（`controllerPrefix`），与页面路由如 `/about` 隔离；控制器目录默认 **`src/controllers`**（可用 `controllerDirectory`、`specialControllers` 扩展多目录与多前缀，见包文档）。
+- **业务数据**：**`defineModel`** 放在 **`src/models/<领域>/*.model.ts`**，**`export default`**；**`app` / `controllers` / `services`** 侧只 **`loadModel`**。**`page.tsx`** 若使用 **`loadModel`**，须 **`export const dynamic = "force-dynamic"`**。**`src/controllers/**`** 可 **`loadService`**；**不在 `src/app/**` 使用 `loadService`**（细化约定见仓库内 `packages/http-next/SKILL.md`）。
+- **集成细节**：Next handler 作为最后一个 Koa 中间件；通过 **`ctx.respond = false`** 交还原生 **`req`/`res`**；在 **`prepare()`** 完成后再挂载，避免未就绪接流。
+
+完整构造参数与示例见 [@hile/http-next](/packages/http-next)。

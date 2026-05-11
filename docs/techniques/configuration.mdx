@@ -1,0 +1,33 @@
+---
+title: 配置与环境变量
+description: "env 文件、hile start 选项与 package.json 中的 Hile 字段"
+---
+
+## 环境变量文件
+
+**`hile start`** 默认不会自动读取 `.env`；需要时用 **`--env-file`**（可重复指定）：
+
+```bash
+hile start --dev --env-file .env
+hile start --env-file .env --env-file .env.local
+```
+
+集成包（如 **TypeORM**、**ioredis**）通常从 **`process.env`** 读取连接参数；本地开发可将变量写入 `.env` 再通过上述选项注入。各变量名见 [@hile/typeorm](/packages/typeorm)、[@hile/ioredis](/packages/ioredis)。
+
+## `package.json` 中的 `hile` 字段
+
+常用字段：**`auto_load_packages`** —— 字符串数组，列出要在启动时 **`import()`** 的包名（用于触发包侧注册逻辑，例如自动注册服务）。
+
+```json
+{
+  "hile": {
+    "auto_load_packages": ["@hile/typeorm", "@hile/ioredis"]
+  }
+}
+```
+
+行为细节与边界见 [@hile/cli](/packages/cli)。
+
+## 与「第一步」的关系
+
+从零搭建时的 **`NODE_ENV`**、**`--dev`** 与扫描 **`src/` / `dist/`** 的差异见 [第一步](/quickstart) 与 [生产部署](/deployment)。

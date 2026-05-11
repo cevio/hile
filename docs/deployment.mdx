@@ -1,0 +1,39 @@
+---
+title: 生产部署
+description: "构建、NODE_ENV、扫描 dist 与 TypeORM 等行为差异"
+---
+
+## 基本步骤
+
+```bash
+# 1. 编译 TypeScript（脚本名以你的 package.json 为准）
+pnpm run build
+
+# 2. 生产模式启动（示例）
+NODE_ENV=production hile start
+```
+
+若生产环境需要 env 文件：
+
+```bash
+NODE_ENV=production hile start --env-file .env.prod
+```
+
+## 生产模式与开发模式差异
+
+| 特性 | `hile start --dev` | `hile start`（生产） |
+|------|-------------------|---------------------|
+| `NODE_ENV` | `development` | 通常为 `production`（也可由部署平台注入） |
+| TypeScript | **tsx** 直接执行 `src/` | 运行 **编译后的 JS**，扫描 **`dist/`** |
+| 容器事件日志 | 默认输出 | 默认不输出 |
+| TypeORM SQL 日志 | 依配置 | 通常关闭冗长日志（见 [@hile/typeorm](/packages/typeorm)） |
+
+确保 **`tsconfig`** 的 **`outDir`** 与 CLI 在生产环境下扫描的目录一致（一般为 **`dist/`**），且 boot 与控制器路径在编译产物中存在。
+
+## 优雅关闭
+
+进程管理器（systemd、Kubernetes、Docker STOP）通常发送 **SIGTERM**。**`@hile/cli`** 会触发 **`container.shutdown()`**，按 **LIFO** 执行各服务的 shutdown 回调（关 HTTP、断 Redis、销毁连接池等）。详见 [生命周期与事件](/fundamentals/lifecycle-and-events)。
+
+## 全栈（Next + HttpNext）注意点
+
+含 **Next.js** 的模板往往需要 **先 `next build`** 再启动（具体以模板 **`package.json` scripts** 为准）；静态资源与 **`.next/static`** 需在部署镜像或产物中可用。
