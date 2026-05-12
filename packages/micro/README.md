@@ -2,6 +2,14 @@
 
 基于 `@hile/message-loader` 与 `@hile/message-ws` 的轻量级 **WebSocket 服务注册与发现**：用固定格式的连接 URL 标识对端，`Registry` 按逻辑 namespace 记录实例，`Application` 从注册中心拉取地址并缓存到远端服务的会话。
 
+## 概念分层
+
+1. **`Server`**：实现「服务」的 **底层协议与运行时**——基于 `ws` 监听、按路径解析对端身份，对内用 `MessageLoader` 做 `{ url, data }` 路由；不关心注册中心，只负责连接语义与消息派发。
+2. **`Registry`**：**注册中心**，维护「逻辑 namespace → 一组实例地址」，`/-/find` 随机返回其一。
+3. **`Application`**：**基于 `Server` 的具体应用侧实现**——继承 `Server`，在 `listen` 后自动连上 `Registry`，用 `get(namespace)` 发现其它服务并缓存 `Client`。
+
+同一进程里通常只建一个 `Application`，它 **同时** 扮演 **provider**（`register` 暴露接口）与 **consumer**（`get` + `request`/`push` 调用其它 namespace）；文档里把「提供方 / 调用方」拆开示例，是为了说明两种用法，而不是两类不同的类。
+
 ## 安装
 
 ```bash
@@ -16,10 +24,10 @@ pnpm add @hile/micro
 
 | 组件 | 作用 |
 |------|------|
-| `Server` | 监听 WebSocket；解析路径中的调用方地址与可选分段；对内用 `register`/`dispatch` 处理 `{ url, data }` |
+| `Server` | **底层协议**：监听 WebSocket；解析路径中的调用方地址与可选分段；对内用 `register`/`dispatch` 处理 `{ url, data }` |
 | `Client` | 连到远端 `Server`，`request`/`push` 走 `MessageModem`，`dispose()` 会关闭底层连接 |
-| `Registry` | 固定 namespace `'registry'`；实例上线/下线更新 namespace→地址集合；`/-/find` **随机** 返回其中一个地址 |
-| `Application` | 启动后连接 Registry；`get(ns)` 查询并 **缓存** 到目标服务的 `Client`，断连后清空缓存 |
+| `Registry` | **注册中心**：固定 namespace `'registry'`；实例上线/下线更新 namespace→地址集合；`/-/find` **随机** 返回其中一个地址 |
+| `Application` | **基于 `Server` 的应用实现**：启动后连接 Registry；`register` 侧即 provider、`get` 侧即 consumer；`get(ns)` 查询并 **缓存** 到目标服务的 `Client`，断连后清空缓存 |
 
 连接串格式（出站）：
 

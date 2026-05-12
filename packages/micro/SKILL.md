@@ -11,20 +11,22 @@ description: Code generation and contribution rules for @hile/micro. Use when ed
 
 ## 1. 架构总览
 
-`@hile/micro` 在 `@hile/message-loader` + `@hile/message-ws` 之上提供 **轻量级进程间服务发现与会话**：
+`@hile/micro` 在 `@hile/message-loader` + `@hile/message-ws` 之上提供 **轻量级进程间服务发现与会话**。分层理解：
 
-- **`Server`**：基于 `ws` 的 `WebSocketServer`，用 **URL 路径** 携带对端身份与命名空间；对内用 `MessageLoader.register` / `dispatch` 处理消息路由。
+- **`Server`**：实现服务的 **底层协议与运行时**——`WebSocketServer` + 路径约定；对内 `MessageLoader.register` / `dispatch` 完成 `{ url, data }` 路由。不包含注册中心逻辑。
+- **`Registry`**：**注册中心**，固定 `namespace` 为 `'registry'`，维护「逻辑 namespace → 一组 `host:port`」；`/-/find` 在集合中 **随机** 返回一条地址（见 `selectRandomRegistryAddress`）。
+- **`Application`**：**基于 `Server` 的应用侧实现**（`extends Server`）；`listen(port)` 后自动 `connect` 到注册中心；`get(targetNamespace)` 向注册中心查询并 **缓存** 到目标服务的 `Client`，目标断连后删除缓存以便下次重新发现。
 - **`Client`**：连接到远端 `Server`，`request(url, data)` / `push(url, data)` 将负载交给本端 `Server.dispatch`；`dispose()` 会移除监听并 **关闭底层 WebSocket**，避免 `listen` 关闭阶段挂住。
-- **`Registry`**：固定 `namespace` 为 `'registry'`，维护「逻辑 namespace → 一组 `host:port`」；`/-/find` 在集合中 **随机** 返回一条地址（见 `selectRandomRegistryAddress`）。
-- **`Application`**：`Server` 的子类；`listen(port)` 后自动 `connect` 到注册中心；`get(targetNamespace)` 向注册中心查询并 **缓存** 到目标服务的 `Client`，目标断连后删除缓存以便下次重新发现。
+
+**应用模型**：`Application = provider + consumer`——同一实例既可 `register(...)`（对外提供能力），也可 `get(ns)` 再 `request`/`push`（消费其它 namespace）。文档示例常拆成两个进程分别演示 provider / consumer，API 层面仍是同一个类。
 
 依赖链：
 
 ```
 MessageLoader (路由) + MessageWs (请求/响应传输)
-  └── Server / Client
-        ├── Registry
-        └── Application
+  └── Server（底层协议）+ Client
+        ├── Registry（注册中心，一种特殊的 Server 用法）
+        └── Application（基于 Server，叠加上注册发现）
 ```
 
 ---
