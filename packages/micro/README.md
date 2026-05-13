@@ -31,9 +31,11 @@ pnpm add @hile/micro
 
 连接串格式（出站）：
 
-`ws://目标主机:端口/{本机广告IPv4}/{本机监听端口}/{本机namespace}`
+`ws://目标主机:端口/{宣告地址}/{本机监听端口}/{本机namespace}`
 
-其中广告 IPv4 由 `getLocalIPv4()` 取第一个非回环网卡地址；多网卡或容器环境可能需要后续版本支持显式 `advertiseHost`（当前未暴露）。
+宣告地址：构造 `Server` / `Application` / `Registry` 时可通过 **`advertiseHost`** 显式传入；未传则使用 `getLocalIPv4()`。若二者皆无（例如无可用 IPv4），**构造阶段即抛错**。容器、多网卡或 CI 环境建议设置 `advertiseHost`（如 `127.0.0.1` 或 Pod IP）。
+
+`Application` 还支持 **`registryLookupTimeoutMs`**（默认 `10000`），限制对 Registry `/-/find` 的响应等待时间。
 
 出站 `connect` 默认 **5 秒**握手超时，超时报错 `Connection timeout`。
 
@@ -46,7 +48,7 @@ pnpm add @hile/micro
 ```typescript
 import { Registry } from '@hile/micro';
 
-const registry = new Registry();
+const registry = new Registry({ advertiseHost: '127.0.0.1' });
 await registry.listen(9000);
 ```
 
@@ -58,6 +60,7 @@ import { Application } from '@hile/micro';
 const provider = new Application({
   namespace: 'payments',
   registry: { host: '127.0.0.1', port: 9000 },
+  advertiseHost: '127.0.0.1',
 });
 
 await provider.listen(9100);
@@ -75,6 +78,7 @@ import { Application } from '@hile/micro';
 const consumer = new Application({
   namespace: 'checkout',
   registry: { host: '127.0.0.1', port: 9000 },
+  advertiseHost: '127.0.0.1',
 });
 
 await consumer.listen(9200);

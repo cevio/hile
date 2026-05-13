@@ -15,7 +15,10 @@ export default defineService('micro.app', async (shutdown) => {
     registry: {
       host: process.env.REGISTRY_HOST!,
       port: Number(process.env.REGISTRY_PORT!),
-    }
+    },
+    ...(process.env.HILE_ADVERTISE_HOST
+      ? { advertiseHost: process.env.HILE_ADVERTISE_HOST }
+      : {}),
   });
 
   shutdown(await app.listen(port));

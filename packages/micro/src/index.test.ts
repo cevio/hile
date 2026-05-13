@@ -1,10 +1,12 @@
 import { createServer, type Socket } from 'node:net';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import WebSocket from 'ws';
-import { selectRandomRegistryAddress } from './registry';
+import { selectRandomRegistryAddress, parseAddressKey } from './registry';
 import { Application } from './application';
 import { Registry } from './registry';
 import { Server } from './server';
+
+const testAdvertise = { advertiseHost: '127.0.0.1' as const };
 
 async function getAvailablePort(): Promise<number> {
   const server = createServer();
@@ -43,7 +45,7 @@ async function startHangingServer() {
 
 class TestServer extends Server {
   constructor() {
-    super('test');
+    super('test', testAdvertise);
   }
 
   public open(host: string, port: number, timeout: number) {
@@ -55,7 +57,7 @@ class TestServer extends Server {
 /** 用于断言「未 setPort 不能 connect」，与 `open` 用例分离 */
 class ServerWithoutAnnounce extends Server {
   constructor() {
-    super('no-announce');
+    super('no-announce', testAdvertise);
   }
 
   public attemptConnect(host: string, port: number, timeout: number) {
@@ -105,6 +107,31 @@ describe('@hile/micro registry selection', () => {
       port: 4100,
     });
   });
+
+  it('parses bracketed IPv6 host:port keys', () => {
+    expect(parseAddressKey('[::1]:9000')).toEqual({ host: '[::1]', port: 9000 });
+  });
+
+  it('skips malformed keys when selecting', () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    expect(selectRandomRegistryAddress(['bogus', '127.0.0.1:1'])).toEqual({
+      host: '127.0.0.1',
+      port: 1,
+    });
+  });
+
+  it('find handler survives repeated onFind()', async () => {
+    const r = new Registry(testAdvertise);
+    r.onFind();
+    r.onFind();
+    const p = await getAvailablePort();
+    const d = await r.listen(p);
+    try {
+      await expect(r.dispatch('/-/find', { namespace: 'none' })).resolves.toBeUndefined();
+    } finally {
+      await d();
+    }
+  });
 });
 
 describe('@hile/micro application discovery', () => {
@@ -113,14 +140,16 @@ describe('@hile/micro application discovery', () => {
     const providerPort = await getAvailablePort();
     const consumerPort = await getAvailablePort();
 
-    const registry = new Registry();
+    const registry = new Registry(testAdvertise);
     const provider = new Application({
       namespace: 'provider',
       registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
     });
     const consumer = new Application({
       namespace: 'consumer',
       registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
     });
 
     const disposeRegistry = await registry.listen(registryPort);
@@ -149,14 +178,16 @@ describe('@hile/micro application discovery', () => {
     const appPort2 = await getAvailablePort();
     const providerPort = await getAvailablePort();
 
-    const registry = new Registry();
+    const registry = new Registry(testAdvertise);
     const app = new Application({
       namespace: 're-listen',
       registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
     });
     const provider = new Application({
       namespace: 'peer',
       registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
     });
 
     const disposeRegistry = await registry.listen(registryPort);
@@ -177,6 +208,20 @@ describe('@hile/micro application discovery', () => {
       await disposeProvider();
       await disposeRegistry();
     }
+  });
+
+  it('rolls back listen when registry is unreachable', async () => {
+    const deadPort = await getAvailablePort();
+    const port = await getAvailablePort();
+    const app = new Application({
+      namespace: 'rollback',
+      registry: { host: '127.0.0.1', port: deadPort },
+      ...testAdvertise,
+    });
+    await expect(app.listen(port)).rejects.toThrow();
+    const s2 = new Server('probe', testAdvertise);
+    const dispose = await s2.listen(port);
+    await dispose();
   });
 });
 
@@ -208,7 +253,7 @@ describe('@hile/micro server connection', () => {
 
   it('closes inbound websocket when path port is not a valid TCP port', async () => {
     const port = await getAvailablePort();
-    const server = new Server('svc');
+    const server = new Server('svc', testAdvertise);
     const dispose = await server.listen(port);
     await new Promise<void>((resolve, reject) => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/127.0.0.1/not-a-port/extra`);
@@ -224,7 +269,7 @@ describe('@hile/micro server connection', () => {
 
   it('closes inbound websocket when path port is out of range', async () => {
     const port = await getAvailablePort();
-    const server = new Server('svc');
+    const server = new Server('svc', testAdvertise);
     const dispose = await server.listen(port);
     await new Promise<void>((resolve, reject) => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/127.0.0.1/65536/extra`);
@@ -234,6 +279,41 @@ describe('@hile/micro server connection', () => {
         resolve();
       });
       ws.on('error', () => {});
+    });
+    await dispose();
+  });
+
+  it('replaces prior inbound client when the same caller host:port connects again', async () => {
+    const port = await getAvailablePort();
+    const server = new Server('svc', testAdvertise);
+    const dispose = await server.listen(port);
+    const path = `ws://127.0.0.1:${port}/192.0.2.1/12345/svc`;
+    const ws1 = new WebSocket(path);
+    await new Promise<void>((resolve, reject) => {
+      ws1.once('open', () => resolve());
+      ws1.once('error', reject);
+    });
+    const ws2 = new WebSocket(path);
+    await new Promise<void>((resolve, reject) => {
+      ws2.once('open', () => resolve());
+      ws2.once('error', reject);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('expected first socket to close after replace')), 2000);
+      if (ws1.readyState === WebSocket.CLOSED) {
+        clearTimeout(t);
+        resolve();
+        return;
+      }
+      ws1.once('close', () => {
+        clearTimeout(t);
+        resolve();
+      });
+    });
+    expect(ws2.readyState).toBe(WebSocket.OPEN);
+    ws2.close();
+    await new Promise<void>((resolve) => {
+      ws2.once('close', () => resolve());
     });
     await dispose();
   });

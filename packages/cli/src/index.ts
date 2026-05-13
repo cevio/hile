@@ -120,7 +120,7 @@ program.command('registry')
   .description('启动注册中心')
   .action(async (options: { port: number }) => {
     const port = options.port ? Number(options.port) : 9876;
-    const registry = new Registry();
+    const registry = new Registry({ advertiseHost: process.env.HILE_ADVERTISE_HOST ?? '127.0.0.1' });
     useExit(await registry.listen(port));
     console.log(`+ [registry] started on port ${port}`);
   });

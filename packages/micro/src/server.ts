@@ -9,15 +9,32 @@ import type { Duplex } from "node:stream";
 
 const DEFAULT_CONNECT_TIMEOUT = 5000;
 
+/** {@link MessageLoaderProps} 加上出站 WebSocket 宣告地址 */
+export type MicroServerProps = MessageLoaderProps & {
+  /**
+   * 出站连接 URL 中 `ws://{host}:{port}/{本段}/...` 的「本段」宣告地址。
+   * 缺省使用 `getLocalIPv4()`；若仍为 `undefined`（无可用 IPv4）则构造 {@link Server} 时抛错。
+   */
+  advertiseHost?: string;
+};
+
 export class Server extends MessageLoader {
   private wss?: WebSocketServer;
   public port?: number;
   protected readonly clients = new Map<string, Client>();
-  private readonly ipv4 = getLocalIPv4();
+  private readonly announceHost: string;
   public readonly events = new EventEmitter();
 
-  constructor(private readonly namespace: string, props: MessageLoaderProps = {}) {
-    super(props);
+  constructor(private readonly namespace: string, props: MicroServerProps = {}) {
+    const { advertiseHost, ...loaderProps } = props;
+    super(loaderProps);
+    const resolved = advertiseHost?.trim() || getLocalIPv4();
+    if (!resolved) {
+      throw new Error(
+        'Unable to resolve advertise host for @hile/micro Server: pass `advertiseHost` (e.g. "127.0.0.1") in constructor options, or ensure getLocalIPv4() returns an address.',
+      );
+    }
+    this.announceHost = resolved;
     this.events.on('connect', (client: Client, extras: string[]) => {
       client.events.emit('connect', extras);
     });
@@ -49,9 +66,14 @@ export class Server extends MessageLoader {
 
   private createClient(ws: WebSocket, host: string, port: number, extras: string[] = []) {
     const key = `${host}:${port}`;
+    const previous = this.clients.get(key);
+    if (previous) {
+      this.clients.delete(key);
+      previous.dispose();
+    }
     const client = new Client({ server: this, ws, host, port });
     ws.on('close', () => {
-      if (this.clients.has(key)) {
+      if (this.clients.get(key) === client) {
         this.clients.delete(key);
       }
       client.dispose();
@@ -69,7 +91,7 @@ export class Server extends MessageLoader {
     }
     if (!this.port) throw new Error('You can not connect to a server without a local port, please use `.setPort(port)` for local port.');
     const ws = await new Promise<WebSocket>((resolve, reject) => {
-      const ws = new WebSocket(`ws://${host}:${port}/${this.ipv4}/${this.port}/${this.namespace}`);
+      const ws = new WebSocket(`ws://${host}:${port}/${this.announceHost}/${this.port}/${this.namespace}`);
       const timer = setTimeout(() => {
         clear();
         ws.on('error', () => { });
@@ -123,7 +145,8 @@ export class Server extends MessageLoader {
     }
 
     return async () => {
-      for (const client of this.clients.values()) {
+      const toDispose = [...this.clients.values()];
+      for (const client of toDispose) {
         client.dispose();
       }
       this.clients.clear();

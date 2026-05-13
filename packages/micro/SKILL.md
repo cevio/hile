@@ -64,27 +64,28 @@ ws://{host}:{port}/${this.ipv4}/${this.port}/${this.namespace}
 ## 3. 类型与关键 API（生成代码须一致）
 
 ```typescript
-// registry.ts
-export interface RegistryFindData {
-  namespace: string;
-}
+// server.ts
+export type MicroServerProps = MessageLoaderProps & {
+  /** 出站 URL 宣告段；缺省 getLocalIPv4()，皆无则构造抛错 */
+  advertiseHost?: string;
+};
 
-export interface RegistryAddress {
-  host: string;
-  port: number;
-}
+// registry.ts
+export function parseAddressKey(key: string): RegistryAddress | undefined;
 
 export function selectRandomRegistryAddress(
   keys: Iterable<string>,
 ): RegistryAddress | undefined;
 
-export class Registry extends Server { /* ... */ }
+export class Registry extends Server { /* constructor(props?: MicroServerProps); onFind() 幂等 */ }
 
 // application.ts
 export type ApplicationProps = {
   namespace: string;
   registry: RegistryAddress;
-} & MessageLoaderProps;
+  /** 默认 10000；对 `/-/find` 的 response 等待上限 */
+  registryLookupTimeoutMs?: number;
+} & MicroServerProps;
 
 export class Application extends Server {
   listen(port: number): Promise<() => Promise<void>>;
@@ -111,7 +112,7 @@ export class Client extends MessageWs {
 ### 4.1 Registry 服务端
 
 ```typescript
-const registry = new Registry();
+const registry = new Registry({ advertiseHost: '127.0.0.1' });
 const dispose = await registry.listen(registryPort);
 // shutdown: await dispose();
 ```
@@ -122,6 +123,7 @@ const dispose = await registry.listen(registryPort);
 const app = new Application({
   namespace: 'my-service',
   registry: { host: '127.0.0.1', port: registryPort },
+  advertiseHost: '127.0.0.1',
 });
 const dispose = await app.listen(appPort);
 
@@ -149,7 +151,7 @@ const result = await response();
 - 修改 WebSocket URL 三段式约定却不同时更新 **`Server.onConnected`** 与 **`Server.connect`** 的拼接格式。
 - 在 `Registry` 中按 `Set` **迭代顺序** 固定返回「第一个」实例（破坏负载分散）；除非你明确改需求并改写测试。
 - `Client`/`Server` **`dispose`** 后不关闭 **`ws`**（会导致 **`WebSocketServer.close`** 长时间等待）；本包已在 `Client.dispose` 内关闭socket，不要随意删除。
-- 假设 `host:port` 串可无损表达 **IPv6**（当前实现按 **首个 `:` 分割**，仅适合 IPv4 或不含冒号的 host）。
+- 假设 `host:port` 串可无损表达 **IPv6**：注册表 Set 的键应使用 **`[IPv6]:port`**；`selectRandomRegistryAddress` / `parseAddressKey` 按 **最后一个 `:`** 切分 host 与 port。
 - `Application.props.registry` **不要传错端口**；丢失与注册中心的连接时依赖 `reconnectToRegistry`，不要在外部缓存 `registry` Client 绕过重连语义。
 
 ---
