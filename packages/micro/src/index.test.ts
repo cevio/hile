@@ -1,5 +1,6 @@
 import { createServer, type Socket } from 'node:net';
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import WebSocket from 'ws';
 import { selectRandomRegistryAddress } from './registry';
 import { Application } from './application';
 import { Registry } from './registry';
@@ -141,6 +142,42 @@ describe('@hile/micro application discovery', () => {
       await disposeRegistry();
     }
   });
+
+  it('allows listen again on the same Application after teardown', async () => {
+    const registryPort = await getAvailablePort();
+    const appPort1 = await getAvailablePort();
+    const appPort2 = await getAvailablePort();
+    const providerPort = await getAvailablePort();
+
+    const registry = new Registry();
+    const app = new Application({
+      namespace: 're-listen',
+      registry: { host: '127.0.0.1', port: registryPort },
+    });
+    const provider = new Application({
+      namespace: 'peer',
+      registry: { host: '127.0.0.1', port: registryPort },
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeProvider = await provider.listen(providerPort);
+    const unregister = provider.register('/x', async () => ({ ok: true }));
+
+    const dispose1 = await app.listen(appPort1);
+    await dispose1();
+    const dispose2 = await app.listen(appPort2);
+
+    try {
+      const client = await app.get('peer');
+      const { response } = client.request('/x', {});
+      await expect(response()).resolves.toEqual({ ok: true });
+    } finally {
+      unregister();
+      await dispose2();
+      await disposeProvider();
+      await disposeRegistry();
+    }
+  });
 });
 
 describe('@hile/micro server connection', () => {
@@ -167,5 +204,37 @@ describe('@hile/micro server connection', () => {
     } finally {
       await hangingServer.close();
     }
+  });
+
+  it('closes inbound websocket when path port is not a valid TCP port', async () => {
+    const port = await getAvailablePort();
+    const server = new Server('svc');
+    const dispose = await server.listen(port);
+    await new Promise<void>((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/127.0.0.1/not-a-port/extra`);
+      const t = setTimeout(() => reject(new Error('expected socket to close')), 2000);
+      ws.on('close', () => {
+        clearTimeout(t);
+        resolve();
+      });
+      ws.on('error', () => {});
+    });
+    await dispose();
+  });
+
+  it('closes inbound websocket when path port is out of range', async () => {
+    const port = await getAvailablePort();
+    const server = new Server('svc');
+    const dispose = await server.listen(port);
+    await new Promise<void>((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/127.0.0.1/65536/extra`);
+      const t = setTimeout(() => reject(new Error('expected socket to close')), 2000);
+      ws.on('close', () => {
+        clearTimeout(t);
+        resolve();
+      });
+      ws.on('error', () => {});
+    });
+    await dispose();
   });
 });

@@ -17,7 +17,9 @@ export type ApplicationProps = {
 export class Application extends Server {
   private registry?: Client;
   private reconnectTimeout?: NodeJS.Timeout;
-  private reconnecting = false;
+  private registryReconnectPromise: Promise<void> | undefined;
+  /** 为 true 时不再向 Registry 重连（listen 返回的 teardown 已触发） */
+  private stopped = false;
   private readonly _registry_address: RegistryAddress;
 
   private readonly namespaces = new Map<string, {
@@ -34,28 +36,57 @@ export class Application extends Server {
   }
 
   public async listen(port: number = 0) {
+    this.stopped = false;
     const callback = await super.listen(port);
     await this.reconnectToRegistry();
     return async () => {
-      if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+      this.stopped = true;
+      if (this.reconnectTimeout) {
+        clearTimeout(this.reconnectTimeout);
+        this.reconnectTimeout = undefined;
+      }
+      this.registry = undefined;
       await callback();
-    }
+    };
   }
 
-  private async reconnectToRegistry() {
-    const registry = await this.connect(this._registry_address.host, this._registry_address.port);
-    registry.events.on('disconnect', () => {
-      if (this.reconnecting) return;
-      this.reconnecting = true;
-      this.registry = undefined;
-      const reconnect = () => {
-        this.reconnectToRegistry().then(() => this.reconnecting = false).catch(e => {
-          this.reconnectTimeout = setTimeout(reconnect, 3000)
-        });
+  private scheduleRegistryRetry() {
+    if (this.stopped) return;
+    if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+    this.reconnectTimeout = setTimeout(() => {
+      this.reconnectTimeout = undefined;
+      void this.reconnectToRegistry().catch(() => {
+        if (this.stopped) return;
+        this.scheduleRegistryRetry();
+      });
+    }, 3000);
+  }
+
+  private async reconnectToRegistry(): Promise<void> {
+    if (this.stopped) return;
+    if (this.registryReconnectPromise) return this.registryReconnectPromise;
+
+    this.registryReconnectPromise = (async () => {
+      const registry = await this.connect(this._registry_address.host, this._registry_address.port);
+      if (this.stopped) {
+        registry.dispose();
+        return;
       }
-      reconnect();
+      registry.events.once('disconnect', () => {
+        if (this.registry !== registry) return;
+        this.registry = undefined;
+        if (this.stopped) return;
+        void this.reconnectToRegistry().catch(() => {
+          if (this.stopped) return;
+          this.scheduleRegistryRetry();
+        });
+      });
+      this.registry = registry;
+    })().finally(() => {
+      this.registryReconnectPromise = undefined;
     });
-    this.registry = registry;
+
+    return this.registryReconnectPromise;
   }
 
   private async findFromRegistry(namespace: string) {
@@ -74,6 +105,14 @@ export class Application extends Server {
       });
     }
     const stack = this.namespaces.get(namespace)!;
+    if (
+      stack.status === RegistryLookupStatus.READY &&
+      !this.clients.has(`${stack.host}:${stack.port}`)
+    ) {
+      stack.status = RegistryLookupStatus.IDLE;
+      stack.host = '';
+      stack.port = 0;
+    }
     const key = `${stack.host}:${stack.port}`;
     if (stack.status === RegistryLookupStatus.READY && this.clients.has(key)) {
       return Promise.resolve(this.clients.get(key)!);

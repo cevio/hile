@@ -35,7 +35,16 @@ export class Server extends MessageLoader {
     if (sp.length < 3) return ws.close();
     const [host, port, ...extras] = sp;
     if (!host || !port) return ws.close();
-    this.createClient(ws, host, Number(port), extras);
+    const portNum = Number(port);
+    if (
+      !Number.isFinite(portNum) ||
+      portNum !== Math.trunc(portNum) ||
+      portNum < 1 ||
+      portNum > 65535
+    ) {
+      return ws.close();
+    }
+    this.createClient(ws, host, portNum, extras);
   }
 
   private createClient(ws: WebSocket, host: string, port: number, extras: string[] = []) {
