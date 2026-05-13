@@ -17,6 +17,7 @@ export type ApplicationProps = {
 export class Application extends Server {
   private registry?: Client;
   private reconnectTimeout?: NodeJS.Timeout;
+  private reconnecting = false;
   private readonly _registry_address: RegistryAddress;
 
   private readonly namespaces = new Map<string, {
@@ -44,9 +45,11 @@ export class Application extends Server {
   private async reconnectToRegistry() {
     const registry = await this.connect(this._registry_address.host, this._registry_address.port);
     registry.events.on('disconnect', () => {
+      if (this.reconnecting) return;
+      this.reconnecting = true;
       this.registry = undefined;
       const reconnect = () => {
-        this.reconnectToRegistry().catch(e => {
+        this.reconnectToRegistry().then(() => this.reconnecting = false).catch(e => {
           this.reconnectTimeout = setTimeout(reconnect, 3000)
         });
       }
