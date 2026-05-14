@@ -513,3 +513,327 @@ describe('@hile/micro circuit breaker', () => {
     }
   });
 });
+
+describe('@hile/micro correlation ID', () => {
+  it('injects _correlationId into call() data', async () => {
+    const registryPort = await getAvailablePort();
+    const providerPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const provider = new Application({
+      namespace: 'svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const consumer = new Application({
+      namespace: 'consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeProvider = await provider.listen(providerPort);
+    const disposeConsumer = await consumer.listen(consumerPort);
+    const unregister = provider.register<{ _correlationId: string }>('/echo', async ({ data }) => {
+      return { id: data._correlationId };
+    });
+
+    try {
+      const result = await consumer.call<{ id: string }>('svc', '/echo', {});
+      expect(result.id).toBeDefined();
+      expect(typeof result.id).toBe('string');
+      expect(result.id.length).toBeGreaterThan(0);
+    } finally {
+      unregister();
+      await disposeConsumer();
+      await disposeProvider();
+      await disposeRegistry();
+    }
+  });
+
+  it('preserves existing _correlationId', async () => {
+    const registryPort = await getAvailablePort();
+    const providerPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const provider = new Application({
+      namespace: 'svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const consumer = new Application({
+      namespace: 'consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeProvider = await provider.listen(providerPort);
+    const disposeConsumer = await consumer.listen(consumerPort);
+    const unregister = provider.register<{ _correlationId: string }>('/echo', async ({ data }) => {
+      return { id: data._correlationId };
+    });
+
+    try {
+      const result = await consumer.call<{ id: string }>('svc', '/echo', { _correlationId: 'my-trace-id' });
+      expect(result.id).toBe('my-trace-id');
+    } finally {
+      unregister();
+      await disposeConsumer();
+      await disposeProvider();
+      await disposeRegistry();
+    }
+  });
+});
+
+describe('@hile/micro health endpoint', () => {
+  it('/-/health returns status and registry state', async () => {
+    const registryPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const consumer = new Application({
+      namespace: 'health-test',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeConsumer = await consumer.listen(consumerPort);
+
+    try {
+      const result: any = await consumer.dispatch('/-/health', {});
+      expect(result).toBeDefined();
+      expect(result.status).toBe('ok');
+      expect(result.registry).toBe(true);
+      expect(typeof result.uptime).toBe('number');
+      expect(Array.isArray(result.namespaces)).toBe(true);
+    } finally {
+      await disposeConsumer();
+      await disposeRegistry();
+    }
+  });
+});
+
+describe('@hile/micro call retry', () => {
+  it('retries on failure and succeeds on second peer', async () => {
+    const registryPort = await getAvailablePort();
+    const portA = await getAvailablePort();
+    const portB = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const providerA = new Application({
+      namespace: 'svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const providerB = new Application({
+      namespace: 'svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const consumer = new Application({
+      namespace: 'consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeA = await providerA.listen(portA);
+    const disposeConsumer = await consumer.listen(consumerPort);
+
+    const unregisterA = providerA.register('/api', async () => {
+      throw new Error('fail');
+    });
+
+    try {
+      // Only A exists, A fails, retry also hits A (only option), also fails
+      await expect(consumer.call('svc', '/api', {})).rejects.toThrow();
+
+      // Now B exists and succeeds
+      const disposeB = await providerB.listen(portB);
+      const unregisterB = providerB.register('/api', async () => ({ ok: true }));
+
+      // A is excluded from previous failure, retry should pick B
+      const result = await consumer.call<{ ok: boolean }>('svc', '/api', {});
+      expect(result).toEqual({ ok: true });
+
+      unregisterB();
+      await disposeB();
+    } finally {
+      unregisterA();
+      await disposeConsumer();
+      await disposeA();
+      await disposeRegistry();
+    }
+  });
+
+  it('respects retries=0 (no retry)', async () => {
+    const registryPort = await getAvailablePort();
+    const providerPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const provider = new Application({
+      namespace: 'svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const consumer = new Application({
+      namespace: 'consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeProvider = await provider.listen(providerPort);
+    const disposeConsumer = await consumer.listen(consumerPort);
+    const unregister = provider.register('/api', async () => {
+      throw new Error('no-retry');
+    });
+
+    try {
+      await expect(consumer.call('svc', '/api', {}, undefined, 0)).rejects.toThrow('no-retry');
+    } finally {
+      unregister();
+      await disposeConsumer();
+      await disposeProvider();
+      await disposeRegistry();
+    }
+  });
+});
+
+describe('@hile/micro cache degradation', () => {
+  it('uses cached client when registry lookup fails due to exclusion', async () => {
+    const registryPort = await getAvailablePort();
+    const providerPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const provider = new Application({
+      namespace: 'svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const consumer = new Application({
+      namespace: 'consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeProvider = await provider.listen(providerPort);
+    const disposeConsumer = await consumer.listen(consumerPort);
+    const unregister = provider.register('/api', async () => ({ ok: true }));
+
+    try {
+      // First call establishes cache
+      const result1 = await consumer.call('svc', '/api', {});
+      expect(result1).toEqual({ ok: true });
+
+      // Replace with failing handler
+      unregister();
+      const unregisterFail = provider.register('/api', async () => {
+        throw new Error('fail');
+      });
+
+      // Call fails with retries=0; failure is recorded in circuit breaker
+      await expect(consumer.call('svc', '/api', {}, undefined, 0)).rejects.toThrow('fail');
+      unregisterFail();
+
+      // Re-register working handler
+      const unregisterOk = provider.register('/api', async () => ({ ok: true }));
+
+      // Second call: cached peer is excluded by circuit breaker → registry lookup
+      // fails (find excludes the only peer) → cache degradation returns the
+      // still-connected cached client → succeeds
+      const result2 = await consumer.call('svc', '/api', {}, undefined, 0);
+      expect(result2).toEqual({ ok: true });
+
+      unregisterOk();
+    } finally {
+      await disposeConsumer();
+      await disposeProvider();
+      await disposeRegistry();
+    }
+  });
+});
+
+
+describe('@hile/micro request timeout', () => {
+  it('rejects when request exceeds the timeout', async () => {
+    const registryPort = await getAvailablePort();
+    const providerPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const provider = new Application({
+      namespace: 'svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const consumer = new Application({
+      namespace: 'consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeProvider = await provider.listen(providerPort);
+    const disposeConsumer = await consumer.listen(consumerPort);
+    const unregister = provider.register('/slow', async () => {
+      await new Promise(resolve => setTimeout(resolve, 500));
+      return { value: 'too-late' };
+    });
+
+    try {
+      // timeout=50ms but handler takes 500ms → rejects
+      await expect(
+        consumer.call('svc', '/slow', {}, 50, 0)
+      ).rejects.toThrow('Abort');
+    } finally {
+      unregister();
+      await disposeConsumer();
+      await disposeProvider();
+      await disposeRegistry();
+    }
+  });
+
+  it('succeeds when timeout is long enough', async () => {
+    const registryPort = await getAvailablePort();
+    const providerPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const provider = new Application({
+      namespace: 'svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const consumer = new Application({
+      namespace: 'consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeProvider = await provider.listen(providerPort);
+    const disposeConsumer = await consumer.listen(consumerPort);
+    const unregister = provider.register<{ value: string }>('/echo', async ({ data }) => {
+      return { value: data.value };
+    });
+
+    try {
+      const result = await consumer.call<{ value: string }>('svc', '/echo', { value: 'ok' }, 5000);
+      expect(result).toEqual({ value: 'ok' });
+    } finally {
+      unregister();
+      await disposeConsumer();
+      await disposeProvider();
+      await disposeRegistry();
+    }
+  });
+});

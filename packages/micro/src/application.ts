@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Client } from './client';
 import { Server, type MicroServerProps } from './server';
 import { RegistryAddress } from './registry';
@@ -42,6 +43,8 @@ export type ApplicationProps = {
   registry: RegistryAddress;
   /** `/-/find` 等待响应的上限（毫秒），默认 `10000` */
   registryLookupTimeoutMs?: number;
+  /** 单次 request() 等待响应的上限（毫秒），默认 `30000` */
+  requestTimeoutMs?: number;
 } & MicroServerProps;
 
 export class Application extends Server {
@@ -52,6 +55,7 @@ export class Application extends Server {
   private stopped = false;
   private readonly _registry_address: RegistryAddress;
   private readonly _registryLookupTimeoutMs: number;
+  private readonly _requestTimeoutMs: number;
 
   private readonly namespaces = new Map<string, {
     host: string;
@@ -65,11 +69,18 @@ export class Application extends Server {
   private readonly circuitBreakers = new Map<string, Map<string, number>>();
 
   constructor(props: ApplicationProps) {
-    const { namespace, registry, registryLookupTimeoutMs = 10_000, ...microAndLoader } = props;
+    const { namespace, registry, registryLookupTimeoutMs = 10_000, requestTimeoutMs = 30_000, ...microAndLoader } = props;
     super(namespace, microAndLoader);
     assertValidRegistrySocket('registry address', registry.host, registry.port);
     this._registry_address = registry;
     this._registryLookupTimeoutMs = registryLookupTimeoutMs;
+    this._requestTimeoutMs = requestTimeoutMs;
+    this.register('/-/health', async () => ({
+      status: 'ok' as const,
+      registry: !!this.registry,
+      uptime: process.uptime(),
+      namespaces: [...this.namespaces.keys()],
+    }));
   }
 
   public async listen(port: number = 0) {
@@ -205,6 +216,9 @@ export class Application extends Server {
       });
     }
     const stack = this.namespaces.get(namespace)!;
+    // Save old cache info before potential invalidation (used for cache degradation)
+    const cachedHost = stack.host;
+    const cachedPort = stack.port;
     if (
       stack.status === RegistryLookupStatus.READY &&
       (!this.clients.has(`${stack.host}:${stack.port}`) ||
@@ -242,6 +256,19 @@ export class Application extends Server {
             }
           });
         }).catch(e => {
+          // Registry unavailable but previously cached client still valid -> degrade
+          const cachedKey = `${cachedHost}:${cachedPort}`;
+          if (cachedHost && this.clients.has(cachedKey)) {
+            const client = this.clients.get(cachedKey)!;
+            // Restore cache so subsequent calls hit the fast path
+            stack.host = cachedHost;
+            stack.port = cachedPort;
+            stack.status = RegistryLookupStatus.READY;
+            for (const [resolve] of stack.handlers.values()) {
+              resolve(client);
+            }
+            return;
+          }
           this.namespaces.delete(namespace);
           for (const [_, reject] of stack.handlers.values()) {
             reject(e);
@@ -251,25 +278,34 @@ export class Application extends Server {
     })
   }
 
-  public async call<T = any>(namespace: string, url: string, data: unknown): Promise<T> {
+  public async call<T = any>(namespace: string, url: string, data: any, timeout?: number, retries = 1): Promise<T> {
+    // Inject or preserve correlation ID (no mutation of original data)
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+      data = { _correlationId: randomUUID(), data };
+    } else if (!data._correlationId) {
+      data = { ...data, _correlationId: randomUUID() };
+    }
+
     const exclude = this.getActiveExcludes(namespace);
     let client: Client;
 
     try {
       client = await this.get(namespace, exclude);
     } catch {
-      // All peers excluded → reset breaker and retry
       this.circuitBreakers.delete(namespace);
       client = await this.get(namespace);
     }
 
     try {
-      const { response } = client.request(url, data);
+      const { response } = client.request(url, data, timeout ?? this._requestTimeoutMs);
       const result = await response<T>();
       this.recordSuccess(namespace, client.host, client.port);
       return result;
     } catch (err) {
       this.recordFailure(namespace, client.host, client.port);
+      if (retries > 0) {
+        return this.call(namespace, url, data, timeout, retries - 1);
+      }
       throw err;
     }
   }

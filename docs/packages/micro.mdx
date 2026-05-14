@@ -1,6 +1,6 @@
 ---
 title: "@hile/micro"
-description: "基于 message-loader 与 message-ws 的 WebSocket 服务注册与轻量服务发现"
+description: "WebSocket 微服务框架：服务注册与发现、心跳、熔断、重试、链路追踪、超时控制"
 ---
 
 ## 安装
@@ -13,25 +13,291 @@ pnpm add @hile/micro
 
 ## 概述
 
-`@hile/micro` 提供三类角色：
+`@hile/micro` 是基于 `@hile/message-loader` 与 `@hile/message-ws` 的轻量级 **WebSocket 微服务框架**。提供服务注册与发现、心跳保活、熔断、请求超时、自动重试、调用链路追踪等功能。
 
-- **`Registry`**：集中记录「逻辑 namespace → 多个服务实例地址」，对 `/-/find` 请求 **随机**返回其中一条 `{ host, port }`。
-- **`Application`**：进程 `listen` 后主动向 Registry **建立出站连接**，连接 URL 中的路径携带本服务 **namespace**，Registry 在 `connect` 事件中完成登记；`get(namespace)` 查询其它实例并缓存 `Client`。
-- **`Server` / `Client`**：在 `MessageLoader` 之上处理 `{ url, data }` 路由；出站连接带 **5s** 握手超时；`Client.dispose()` 会关闭底层 WebSocket，保证 `listen` 收尾可结束。
+### 架构分层
 
-与 **@hile/core** 无直接依赖，可在任意 Node 进程中使用，或由你在 `defineService` 中包装。
+```
+MessageLoader (路由) + MessageWs (请求/响应传输)
+  └── Server（WebSocket 服务底层）
+        ├── Registry（注册中心）
+        └── Application（应用服务）
+```
 
-详见同仓库包目录下的 **README** 与 **SKILL**（`packages/micro/README.md`、`packages/micro/SKILL.md`）。
+### 角色说明
+
+| 组件 | 职责 |
+|------|------|
+| **Server** | WebSocket 监听、连接管理、消息路由。不关心注册中心 |
+| **Client** | 远端 Server 的代理，提供 `request()` / `push()` 通信接口 |
+| **Registry** | 注册中心。维护 namespace → 实例列表，心跳检测剔除死实例 |
+| **Application** | 应用服务。集成注册发现、熔断、重试、追踪、超时等功能 |
+
+一个 `Application` 实例 **同时** 扮演 provider（`register` 暴露接口）和 consumer（`get` / `call` 调用其它服务）。同一进程只需一个 Application 实例。
 
 ---
 
-## 最小流程
+## 连接协议
 
-1. 启动 `Registry` 并 `listen`。
-2. 每个服务进程 `new Application({ namespace, registry })` 后 `listen`（向 Registry 报到）。
-3. 消费方 `await app.get('target-namespace')`，再 `client.request('/your-route', payload)`。
+### 出站 URL 格式
 
-路径约定与反模式以 **`packages/micro/SKILL.md`** 为准。
+```
+ws://{targetHost}:{targetPort}/{announceHost}/{listenPort}/{namespace}
+```
+
+- `announceHost`：构造时传入 `advertiseHost` 或自动获取的 IPv4
+- `listenPort`：`listen(port)` 设置的端口
+- `namespace`：构造时传入的 namespace 字符串
+
+### 入站路径解析
+
+Server 将 URL 路径按 `/` 分割为 `[callerHost, callerPort, ...extras]`。extras 以 `/` 分段，Registry 用 `extras.join('/')` 作为 namespace。
+
+---
+
+## 核心功能
+
+### 快速开始
+
+以下示例展示三个独立进程：Registry、服务 A（payments）、服务 B（checkout）。**每个服务进程只需要一个 `Application` 实例**，同时扮演 provider 和 consumer：
+
+```typescript
+import { Registry, Application } from '@hile/micro';
+
+// 1. 启动 Registry
+const registry = new Registry({ advertiseHost: '127.0.0.1' });
+await registry.listen(9000);
+
+// 2. 启动 Provider（服务 A）
+
+const provider = new Application({
+  namespace: 'payments',
+  registry: { host: '127.0.0.1', port: 9000 },
+  advertiseHost: '127.0.0.1',
+});
+await provider.listen(9100);
+provider.register('/charge', async ({ data }) => {
+  return { charged: true, amount: data.amount };
+});
+
+// 3. 启动 Consumer 调用（服务 B）
+
+const consumer = new Application({
+  namespace: 'checkout',
+  registry: { host: '127.0.0.1', port: 9000 },
+  advertiseHost: '127.0.0.1',
+});
+await consumer.listen(9200);
+
+const result = await consumer.call('payments', '/charge', { amount: 100 });
+console.log(result); // { charged: true, amount: 100 }
+```
+
+### 服务发现
+
+按 namespace 从 Registry 获取远端 Client 并缓存：
+
+```typescript
+const client = await consumer.get('payments');
+const { response } = client.request('/charge', { amount: 100 });
+const result = await response();
+```
+
+- 首次查询通过 Registry `/-/find` 获取地址
+- 结果**缓存**在内存中（namespace → Client），后续调用直接使用
+- Client 断连时自动清理缓存，下次 `get()` 重新发现
+
+### 熔断器
+
+`call()` 自动跟踪每个 namespace 下各 peer 的调用失败。失败的 peer 被临时排除，**30 秒冷却期**后自动恢复。
+
+| 场景 | 行为 |
+|------|------|
+| 调用 peer A 失败 | A 加入排除列表（30s cooldown） |
+| 再次调用 | Registry `/‑/find` 带上 `exclude`，返回其他 peer |
+| 所有 peer 都被排除 | 重置排除列表，从所有 peer 中重新选择 |
+| 调用成功 | 该 peer 从排除列表中移除 |
+
+### 请求超时
+
+每个请求都有超时控制，超时后自动向对端发送 **ABORT** 消息取消远程执行：
+
+```typescript
+// 构造时设置全局默认超时
+const app = new Application({
+  namespace: 'svc',
+  registry: { host, port },
+  requestTimeoutMs: 10_000,  // 默认 30000ms
+});
+
+// 单次调用覆盖
+await app.call('svc', '/api', data, 5_000);    // 5s 超时
+await app.call('svc', '/api', data, 1_000, 0);  // 1s 超时，不重试
+```
+
+### 手动取消请求
+
+使用 `get()` 拿到 Client 后，`request()` 返回的 `abort()` 可主动取消正在等待响应的请求：
+
+```typescript
+const client = await consumer.get('payments');
+const { response, abort } = client.request('/charge', { amount: 100 });
+
+// 例如 5 秒后主动取消
+setTimeout(() => abort(), 5000);
+
+try {
+  const result = await response();
+} catch (err) {
+  // 超时或手动 abort 都会 reject
+}
+```
+
+- `abort()` 向对端发送 **ABORT 消息**，让远程 handler 提前终止
+- 超时到期内部也是调用同一个 `controller.abort()`，机制相同
+- 适用场景：用户取消、页面卸载、竞态淘汰
+
+### 自动重试
+
+`call()` 默认 retries=1，失败后自动换 peer 重试：
+
+```typescript
+await app.call('svc', '/api', data);            // 默认重试 1 次
+await app.call('svc', '/api', data, 5000, 3);   // 超时 5s，重试 3 次
+await app.call('svc', '/api', data, 5000, 0);   // 超时 5s，不重试
+```
+
+重试策略：失败 → 该 peer 被排除 → 递归 `call(retries-1)` → 从排除列表中选其他 peer。
+
+### Correlation ID 链路追踪
+
+`call()` 自动为每次调用注入唯一 `_correlationId`：
+
+```typescript
+provider.register('/api', async ({ data }) => {
+  console.log(data._correlationId); // 自动注入的 UUID
+});
+```
+
+| 入参 data | 结果 |
+|-----------|------|
+| `null / undefined` | 包装为 `{ _correlationId, data: null }` |
+| 字符串/数字 | 包装为 `{ _correlationId, data: '原始值' }` |
+| 数组 | 包装为 `{ _correlationId, data: [原始数组] }` |
+| `{ value: 1 }`（无 `_correlationId`） | 浅拷贝注入 `{ value: 1, _correlationId: 'uuid' }` |
+| `{ _correlationId: 'trace-1' }` | 保留已有 ID，**不覆盖** |
+
+**注意：** 原始 data 对象不会被修改（使用浅拷贝 `{ ...data, _correlationId }`）。
+
+### 健康检查
+
+每个 `Application` 实例自动注册 `/-/health` 端点：
+
+```typescript
+const health = await app.dispatch('/-/health', {});
+// { status: 'ok', registry: true, uptime: 123.45, namespaces: ['payments'] }
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `status` | `'ok'` | 固定值 |
+| `registry` | `boolean` | 是否已连接 Registry |
+| `uptime` | `number` | 进程启动时长（秒） |
+| `namespaces` | `string[]` | 本地已缓存的 namespace 列表 |
+
+### 缓存降级
+
+当 Registry 不可用但本地仍有已缓存的 Client 连接时，`get()` 自动降级使用缓存：
+
+| 场景 | 行为 |
+|------|------|
+| Registry 宕机 + 缓存有效 | 返回缓存 Client，继续服务 |
+| Registry 宕机 + 缓存已过期 | 报错 |
+| 全新 namespace + Registry 宕机 | 报错 |
+| Registry 恢复 | 恢复正常查询 |
+
+### Registry 心跳保活
+
+- **Application** 每 10 秒向 Registry 推送 `/-/heartbeat`
+- **Registry** 每 1 秒检查所有实例的心跳时间戳
+- 超过 20 秒未收到心跳的实例被自动剔除并断开连接
+
+### Registry 重连
+
+Application 与 Registry 断开时自动重连，失败后 3 秒重试，直到 `listen()` 返回的 teardown 触发。
+
+---
+
+## API 参考
+
+### ApplicationProps
+
+```typescript
+type ApplicationProps = {
+  namespace: string;                           // 本服务 namespace
+  registry: { host: string; port: number };    // Registry 地址
+  registryLookupTimeoutMs?: number;            // /-/find 超时，默认 10000
+  requestTimeoutMs?: number;                   // 单次请求超时，默认 30000
+} & { advertiseHost?: string };                // 出站宣告地址
+```
+
+### Application
+
+```typescript
+class Application extends Server {
+  constructor(props: ApplicationProps);
+
+  // 启动监听，自动连接 Registry，启动心跳
+  listen(port: number): Promise<() => Promise<void>>;
+
+  // 获取 namespace 对应的远端 Client（缓存 + 自动发现）
+  get(namespace: string, exclude?: string[]): Promise<Client>;
+
+  // 一站式调用：get + request + response + 熔断 + 重试 + 追踪
+  call<T = any>(
+    namespace: string,
+    url: string,
+    data: any,
+    timeout?: number,     // 请求超时（ms），默认 requestTimeoutMs
+    retries?: number,     // 失败重试次数，默认 1
+  ): Promise<T>;
+
+  // 注册路由（provider 侧）
+  register<T = any>(url: string, handler: Function): () => void;
+
+  // 同进程调用路由
+  dispatch(url: string, data: any): Promise<any>;
+}
+```
+
+### Registry
+
+```typescript
+class Registry extends Server {
+  constructor(props?: MicroServerProps);
+  listen(port: number): Promise<() => Promise<void>>;
+  onFind(): void;
+}
+```
+
+### Client
+
+```typescript
+class Client extends MessageWs {
+  request(url: string, data: any, timeout?: number): {
+    abort(): void;
+    response<T>(): Promise<T>;
+  };
+  push(url: string, data: any, timeout?: number): void;
+  dispose(): void;
+}
+```
+
+---
+
+## 与 @hile/core 的关系
+
+`@hile/micro` **不依赖** `@hile/core`，可与任意 Node.js 进程独立使用，也可在 `defineService` 中接入容器。
 
 ---
 
