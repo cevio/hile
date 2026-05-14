@@ -59,6 +59,8 @@ export class Application extends Server {
     status: RegistryLookupStatus;
     handlers: Set<[(value: Client) => void, (reason?: any) => void]>
   }>();
+  private static readonly HEARTBEAT_INTERVAL = 10000;
+  private heartbeatTimer?: ReturnType<typeof setInterval>;
 
   constructor(props: ApplicationProps) {
     const { namespace, registry, registryLookupTimeoutMs = 10_000, ...microAndLoader } = props;
@@ -73,6 +75,7 @@ export class Application extends Server {
     const callback = await super.listen(port);
     try {
       await this.reconnectToRegistry();
+      this.startHeartbeat();
     } catch (err) {
       try {
         await callback();
@@ -83,6 +86,7 @@ export class Application extends Server {
     }
     return async () => {
       this.stopped = true;
+      this.stopHeartbeat();
       if (this.reconnectTimeout) {
         clearTimeout(this.reconnectTimeout);
         this.reconnectTimeout = undefined;
@@ -129,6 +133,21 @@ export class Application extends Server {
     });
 
     return this.registryReconnectPromise;
+  }
+
+  private startHeartbeat() {
+    this.stopHeartbeat();
+    this.heartbeatTimer = setInterval(() => {
+      if (!this.registry) return;
+      this.registry.push('/-/heartbeat', {});
+    }, Application.HEARTBEAT_INTERVAL);
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = undefined;
+    }
   }
 
   private async findFromRegistry(namespace: string) {

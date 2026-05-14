@@ -318,3 +318,58 @@ describe('@hile/micro server connection', () => {
     await dispose();
   });
 });
+
+describe('@hile/micro heartbeat', () => {
+  it('keeps client alive when heartbeats arrive on time', async () => {
+    const registryPort = await getAvailablePort();
+    const appPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const app = new Application({
+      namespace: 'hb-keepalive',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeApp = await app.listen(appPort);
+
+    try {
+      // Wait 2.5s (>2 heartbeat cycles) — should remain connected
+      await new Promise(r => setTimeout(r, 2500));
+      const entryKey = `127.0.0.1:${appPort}`;
+      expect((registry as any).clients.has(entryKey)).toBe(true);
+      expect((registry as any).heartbeats.has(entryKey)).toBe(true);
+    } finally {
+      await disposeApp();
+      await disposeRegistry();
+    }
+  });
+
+  it('disconnects client that stops sending heartbeats', async () => {
+    const registryPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const disposeRegistry = await registry.listen(registryPort);
+
+    // A raw Server connected to Registry sends no heartbeats
+    const silent = new Server('silent', testAdvertise);
+    silent.setPort(1);
+    // Use type assertion to access protected connect method
+    const silentClient = await (silent as any).connect('127.0.0.1', registryPort);
+    // The Registry-side Client records silent's host:port (from the WS path), not registry's
+    const entryKey = '127.0.0.1:1';
+
+    try {
+      // Set last heartbeat to 25s ago to simulate timeout
+      (registry as any).heartbeats.set(entryKey, Date.now() - 25000);
+      // Wait for polling cycle (1s interval + buffer)
+      await new Promise(r => setTimeout(r, 1500));
+      // Client should be evicted
+      expect((registry as any).clients.has(entryKey)).toBe(false);
+    } finally {
+      silentClient.dispose();
+      await disposeRegistry();
+    }
+  });
+});
