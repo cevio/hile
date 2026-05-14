@@ -373,3 +373,143 @@ describe('@hile/micro heartbeat', () => {
     }
   });
 });
+
+describe('@hile/micro circuit breaker', () => {
+  it('call() returns data on success', async () => {
+    const registryPort = await getAvailablePort();
+    const providerPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const provider = new Application({
+      namespace: 'svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const consumer = new Application({
+      namespace: 'consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeProvider = await provider.listen(providerPort);
+    const disposeConsumer = await consumer.listen(consumerPort);
+    const unregister = provider.register<{ value: string }>('/echo', async ({ data }) => {
+      return { value: data.value };
+    });
+
+    try {
+      const result = await consumer.call('svc', '/echo', { value: 'ok' });
+      expect(result).toEqual({ value: 'ok' });
+    } finally {
+      unregister();
+      await disposeConsumer();
+      await disposeProvider();
+      await disposeRegistry();
+    }
+  });
+
+  it('excludes a failing peer and selects a different one', async () => {
+    const registryPort = await getAvailablePort();
+    const portA = await getAvailablePort();
+    const portB = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const providerA = new Application({
+      namespace: 'svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const providerB = new Application({
+      namespace: 'svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const consumer = new Application({
+      namespace: 'consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeA = await providerA.listen(portA);
+    const disposeConsumer = await consumer.listen(consumerPort);
+
+    // Only A is registered initially — it always fails
+    const unregisterA = providerA.register('/api', async () => {
+      throw new Error('A fail');
+    });
+
+    let disposeB: () => Promise<void>;
+
+    try {
+      // First call → hits A (only option) → fails → A is excluded
+      await expect(consumer.call('svc', '/api', {})).rejects.toThrow('A fail');
+
+      // Now register B (which succeeds)
+      disposeB = await providerB.listen(portB);
+      const unregisterB = providerB.register('/api', async () => ({ ok: true }));
+
+      // Second call → A excluded → Registry picks B → succeeds
+      const result = await consumer.call('svc', '/api', {});
+      expect(result).toEqual({ ok: true });
+
+      unregisterB();
+    } finally {
+      unregisterA();
+      await disposeConsumer();
+      if (disposeB) await disposeB();
+      await disposeA();
+      await disposeRegistry();
+    }
+  });
+
+  it('resets breaker when all peers are excluded', async () => {
+    const registryPort = await getAvailablePort();
+    const portA = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const providerA = new Application({
+      namespace: 'svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const consumer = new Application({
+      namespace: 'consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeA = await providerA.listen(portA);
+    const disposeConsumer = await consumer.listen(consumerPort);
+
+    let unregisterA = providerA.register('/api', async () => {
+      throw new Error('A fail');
+    });
+
+    try {
+      // Single peer that fails → gets excluded → all excluded → reset
+      await expect(consumer.call('svc', '/api', {})).rejects.toThrow('A fail');
+
+      // Now make it succeed
+      unregisterA();
+      unregisterA = () => {};
+      const unregisterA2 = providerA.register('/api', async () => ({ ok: true }));
+
+      // All peers excluded → reset → retries A → now succeeds
+      const result = await consumer.call('svc', '/api', {});
+      expect(result).toEqual({ ok: true });
+
+      unregisterA2();
+    } finally {
+      unregisterA();
+      await disposeConsumer();
+      await disposeA();
+      await disposeRegistry();
+    }
+  });
+});

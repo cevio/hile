@@ -61,6 +61,8 @@ export class Application extends Server {
   }>();
   private static readonly HEARTBEAT_INTERVAL = 10000;
   private heartbeatTimer?: ReturnType<typeof setInterval>;
+  private static readonly CB_COOLDOWN_MS = 30_000;
+  private readonly circuitBreakers = new Map<string, Map<string, number>>();
 
   constructor(props: ApplicationProps) {
     const { namespace, registry, registryLookupTimeoutMs = 10_000, ...microAndLoader } = props;
@@ -139,7 +141,11 @@ export class Application extends Server {
     this.stopHeartbeat();
     this.heartbeatTimer = setInterval(() => {
       if (!this.registry) return;
-      this.registry.push('/-/heartbeat', {});
+      try {
+        this.registry.push('/-/heartbeat', {});
+      } catch {
+        // registry connection may have dropped between null-check and push
+      }
     }, Application.HEARTBEAT_INTERVAL);
   }
 
@@ -150,14 +156,46 @@ export class Application extends Server {
     }
   }
 
-  private async findFromRegistry(namespace: string) {
-    if (!this.registry) throw new Error('Registry not found');
-    const { response } = this.registry.request('/-/find', { namespace });
-    const p = response<{ host: string, port: number } | undefined>();
-    return await withTimeout(p, this._registryLookupTimeoutMs, 'Registry /-/find');
+  private recordSuccess(ns: string, host: string, port: number) {
+    const excludes = this.circuitBreakers.get(ns);
+    if (excludes) {
+      excludes.delete(`${host}:${port}`);
+      if (excludes.size === 0) this.circuitBreakers.delete(ns);
+    }
   }
 
-  public get(namespace: string) {
+  private recordFailure(ns: string, host: string, port: number) {
+    let excludes = this.circuitBreakers.get(ns);
+    if (!excludes) {
+      excludes = new Map();
+      this.circuitBreakers.set(ns, excludes);
+    }
+    excludes.set(`${host}:${port}`, Date.now());
+  }
+
+  private getActiveExcludes(ns: string): string[] {
+    const excludes = this.circuitBreakers.get(ns);
+    if (!excludes) return [];
+    const now = Date.now();
+    const active: string[] = [];
+    for (const [key, openedAt] of excludes) {
+      if (now - openedAt >= Application.CB_COOLDOWN_MS) {
+        excludes.delete(key);
+      } else {
+        active.push(key);
+      }
+    }
+    if (excludes.size === 0) this.circuitBreakers.delete(ns);
+    return active;
+  }
+
+  private async findFromRegistry(namespace: string, exclude?: string[]) {
+    if (!this.registry) throw new Error('Registry not found');
+    const { response } = this.registry.request('/-/find', { namespace, exclude });
+    return await withTimeout(response<{ host: string, port: number } | undefined>(), this._registryLookupTimeoutMs, 'Registry /-/find');
+  }
+
+  public get(namespace: string, exclude?: string[]) {
     if (!this.namespaces.has(namespace)) {
       this.namespaces.set(namespace, {
         host: '',
@@ -169,7 +207,8 @@ export class Application extends Server {
     const stack = this.namespaces.get(namespace)!;
     if (
       stack.status === RegistryLookupStatus.READY &&
-      !this.clients.has(`${stack.host}:${stack.port}`)
+      (!this.clients.has(`${stack.host}:${stack.port}`) ||
+       (exclude?.length && exclude.includes(`${stack.host}:${stack.port}`)))
     ) {
       stack.status = RegistryLookupStatus.IDLE;
       stack.host = '';
@@ -184,7 +223,7 @@ export class Application extends Server {
       stack.handlers.add([resolve, reject]);
       if (stack.status === RegistryLookupStatus.IDLE) {
         stack.status = RegistryLookupStatus.PENDING;
-        this.findFromRegistry(namespace).then(data => {
+        this.findFromRegistry(namespace, exclude).then(data => {
           if (!data) return Promise.reject(new Error('Namespace not found'));
           assertValidRegistrySocket('peer address from registry', data.host, data.port);
           return this.connect(data.host, data.port).then(client => {
@@ -210,5 +249,28 @@ export class Application extends Server {
         }).finally(() => stack.handlers.clear())
       }
     })
+  }
+
+  public async call<T = any>(namespace: string, url: string, data: unknown): Promise<T> {
+    const exclude = this.getActiveExcludes(namespace);
+    let client: Client;
+
+    try {
+      client = await this.get(namespace, exclude);
+    } catch {
+      // All peers excluded → reset breaker and retry
+      this.circuitBreakers.delete(namespace);
+      client = await this.get(namespace);
+    }
+
+    try {
+      const { response } = client.request(url, data);
+      const result = await response<T>();
+      this.recordSuccess(namespace, client.host, client.port);
+      return result;
+    } catch (err) {
+      this.recordFailure(namespace, client.host, client.port);
+      throw err;
+    }
   }
 }

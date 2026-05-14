@@ -4,6 +4,7 @@ import { Client } from './client';
 
 export interface RegistryFindData {
   namespace: string;
+  exclude?: string[];
 }
 
 export interface RegistryAddress {
@@ -113,8 +114,16 @@ export class Registry extends Server {
     }
     this.unregisterFind = this.register<RegistryFindData, { client: Client }>('/-/find', async ({ data }) => {
       const namespace = data.namespace;
-      const keys = this.namespaces.get(namespace);
+      let keys = this.namespaces.get(namespace);
       if (!keys) return;
+
+      if (data.exclude?.length) {
+        const excludeSet = new Set(data.exclude);
+        const filtered = [...keys].filter(k => !excludeSet.has(k));
+        if (filtered.length === 0) return;
+        keys = new Set(filtered);
+      }
+
       return selectRandomRegistryAddress(keys);
     });
   }
