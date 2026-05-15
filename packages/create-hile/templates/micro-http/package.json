@@ -17,7 +17,8 @@
     "@hile/core": "^1.1.0",
     "@hile/http": "^1.0.28",
     "@hile/micro": "^1.0.3",
-    "@hile/message-loader": "^1.0.8"
+    "@hile/message-loader": "^1.0.8",
+    "detect-port":"^2.1.0"
   },
   "devDependencies": {
     "@hile/cli": "^1.0.23"

@@ -1,8 +1,7 @@
 import HttpNext from "@hile/http-next";
-import { defineService, loadService } from "@hile/core";
+import { defineService } from "@hile/core";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
-import appService from "./app.service";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -15,12 +14,9 @@ export default defineService("http.next", async (shutdown) => {
     publicPath: "public",
   });
 
-  const app = await loadService(appService);
-  shutdown(await httpNext.start(server => {
-    app.attachServer(server);
-  }));
+  shutdown(await httpNext.start());
 
-  console.log(`Server is running on port http://127.0.0.1:${port}`);
+  console.log(`+ http://127.0.0.1:${port}`);
 
   return httpNext;
 });
