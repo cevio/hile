@@ -29,8 +29,8 @@ description: Code generation and contribution rules for @hile/micro. Use when ed
 |----|------|------|---------|
 | `Server` | `server.ts` | WebSocketServer 生命周期, 出入站连接, Client Map | 不感知 Registry |
 | `Client` | `client.ts` | 远端 Server 的 WebSocket 会话代理 | `dispose()` 必须关闭底层 socket |
-| `Registry` | `registry.ts` | namespace → Set\<host:port\>, 心跳检测, /-/find 随机返回 | `namespace` 固定 `'registry'` |
-| `Application` | `application.ts` | 注册发现 + 熔断 + 重试 + 追踪 + 心跳 | `listen()` 后自动连 Registry |
+| `Registry` | `registry.ts` | namespace → Set\<host:port\>, 心跳检测, /-/find 随机返回, 环境变量管理 | 自动创建 `~/.registry/` 工作目录 |
+| `Application` | `application.ts` | 注册发现 + 熔断 + 重试 + 追踪 + 心跳 + 远程环境变量读取 | `listen()` 后自动连 Registry |
 
 ### 应用模型
 
@@ -100,12 +100,19 @@ export class Registry extends Server {
   // heartbeat 常量:
   //   HEARTBEAT_INTERVAL = 1000   (1s 轮询)
   //   HEARTBEAT_TIMEOUT = 20000   (20s 未收到心跳则剔除)
+  // 工作目录: ~/.registry/ (自动创建)
+  //   - 自动加载 .env 文件到 process.env
+  //   - 文件变化时通过 dotenv.config({ override: true }) 热重载
+  //   - 监听 workspace 目录，兼容 vim 原子写入
+  // 内部路由:
+  //   /-/find       — 按 namespace 随机返回地址 (支持 exclude)
+  //   /-/heartbeat  — 更新实例心跳时间戳
+  //   /-/env        — 返回请求的环境变量值 (通过 getEnvVariables 调用)
+
   constructor(props?: MicroServerProps);
   listen(port: number): Promise<() => Promise<void>>;
   onFind(): void; // 幂等，可重复调用
-  // 内部路由:
-  //   /-/find     — 按 namespace 随机返回地址 (支持 exclude)
-  //   /-/heartbeat — 更新实例心跳时间戳
+  watchEnvFile(): fs.FSWatcher | undefined; // 监听 ~/.registry/.env 文件变化
 }
 ```
 
@@ -139,6 +146,9 @@ export class Application extends Server {
     timeout?: number,     // 单次超时, 默认 requestTimeoutMs
     retries?: number,     // 重试次数, 默认 1
   ): Promise<T>;
+
+  // 远程读取 Registry 的环境变量
+  getEnvVariables(...names: string[]): Promise<(string | undefined)[]>;
 
   // 继承自 Server/MessageLoader:
   // register<T, E>(url, handler): () => void;

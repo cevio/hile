@@ -1,6 +1,9 @@
-import { MessageLoaderProps } from '@hile/message-loader';
 import { Server, type MicroServerProps } from './server';
 import { Client } from './client';
+import { homedir } from 'node:os';
+import { resolve } from 'node:path';
+import { existsSync, mkdirSync, watch } from 'node:fs';
+import dotenv from 'dotenv';
 
 export interface RegistryFindData {
   namespace: string;
@@ -47,9 +50,22 @@ export class Registry extends Server {
   private static readonly HEARTBEAT_INTERVAL = 1000;
   private static readonly HEARTBEAT_TIMEOUT = 20000;
   private readonly heartbeats = new Map<string, number>();
+  private readonly _envfile: string;
 
-  constructor(props?: MicroServerProps) {
-    super('registry', props ?? {});
+  constructor(props: MicroServerProps = {}) {
+    const workspace = resolve(homedir(), '.registry');
+    if (!existsSync(workspace)) {
+      mkdirSync(workspace, { recursive: true });
+    }
+    const envFile = resolve(workspace, '.env');
+    if (existsSync(envFile)) {
+      process.loadEnvFile(envFile);
+    }
+    if (!props.advertiseHost && process.env.REGISTRY_HOST) {
+      props.advertiseHost = process.env.REGISTRY_HOST;
+    }
+    super('registry', props);
+    this._envfile = envFile;
     this.events.on('connect', (client: Client, extras: string[]) => {
       const key = client.host + ':' + client.port;
       this.heartbeats.set(key, Date.now());
@@ -74,6 +90,7 @@ export class Registry extends Server {
       }
     });
     this.mountFindHandler();
+    this.registerEnvVariables();
     this.register<{}, { client: Client }>('/-/heartbeat', async ({ client }) => {
       if (!client) return;
       const key = client.host + ':' + client.port;
@@ -81,8 +98,24 @@ export class Registry extends Server {
     });
   }
 
+  public watchEnvFile() {
+    if (!existsSync(this._envfile)) return;
+    const workspace = resolve(this._envfile, '..');
+    return watch(workspace, (_, filename) => {
+      if (filename !== '.env') return;
+      try {
+        dotenv.config({ path: this._envfile, override: true });
+        process.env.REGISTRY_PORT = this.port?.toString() || '';
+        process.env.REGISTRY_HOST = this.host;
+      } catch { /* vim 替换文件时的中间态读错误，忽略 */ }
+    });
+  }
+
   public async listen(port: number = 0) {
-    const teardown = await super.listen(port);
+    const registry_port = process.env.REGISTRY_PORT ? Number(process.env.REGISTRY_PORT) : 0;
+    const _port = port || registry_port;
+    if (!_port || _port <= 0) throw new Error('Unable to resolve registry port: pass `port` in constructor options, or ensure process.env.REGISTRY_PORT is set.');
+    const teardown = await super.listen(_port);
     const timer = setInterval(() => {
       const now = Date.now();
       for (const [key, lastTime] of this.heartbeats) {
@@ -96,7 +129,13 @@ export class Registry extends Server {
       }
     }, Registry.HEARTBEAT_INTERVAL);
 
+    process.env.REGISTRY_PORT = this.port?.toString() || '';
+    process.env.REGISTRY_HOST = this.host;
+
+    const watcher = this.watchEnvFile();
+
     return async () => {
+      if (watcher) watcher.close();
       clearInterval(timer);
       await teardown();
     };
@@ -126,5 +165,12 @@ export class Registry extends Server {
 
       return selectRandomRegistryAddress(keys);
     });
+  }
+
+  private registerEnvVariables() {
+    this.register<string[]>('/-/env', async ({ data }) => {
+      const names = data || [];
+      return names.map(name => process.env[name]);
+    })
   }
 }

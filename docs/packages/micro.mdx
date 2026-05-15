@@ -228,6 +228,34 @@ Application 与 Registry 断开时自动重连，失败后 3 秒重试，直到 
 
 ---
 
+## 配置管理
+
+### Registry 工作目录
+
+Registry 启动时自动创建 `~/.registry/` 目录并加载其中的 `.env` 文件到 `process.env`：
+
+```bash
+# ~/.registry/.env
+REGISTRY_PORT=9876
+REGISTRY_HOST=192.168.1.100
+```
+
+### 环境变量热加载
+
+`.env` 文件发生变化时 Registry 自动重新加载（兼容 vim 原子写入），服务无需重启即可获取更新后的环境变量。
+
+### 远程读取环境变量
+
+通过 `/-/env` 端点，已连服务可从 Registry 远程读取环境变量：
+
+```typescript
+// Application 侧
+const [dbHost, dbPort] = await app.getEnvVariables('DB_HOST', 'DB_PORT');
+// => ['10.0.0.2', '3306']
+```
+
+---
+
 ## API 参考
 
 ### ApplicationProps
@@ -267,6 +295,9 @@ class Application extends Server {
 
   // 同进程调用路由
   dispatch(url: string, data: any): Promise<any>;
+
+  // 远程读取 Registry 的环境变量
+  getEnvVariables(...names: string[]): Promise<(string | undefined)[]>;
 }
 ```
 
@@ -277,6 +308,7 @@ class Registry extends Server {
   constructor(props?: MicroServerProps);
   listen(port: number): Promise<() => Promise<void>>;
   onFind(): void;
+  watchEnvFile(): fs.FSWatcher | undefined;
 }
 ```
 

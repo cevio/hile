@@ -19,6 +19,9 @@
   "publishConfig": {
     "access": "public"
   },
+  "engines": {
+    "node": ">=20.12.0"
+  },
   "devDependencies": {
     "@types/async-exit-hook": "^2.0.2",
     "fix-esm-import-path": "^1.10.3",

@@ -255,6 +255,9 @@ importers:
       '@hile/message-ws':
         specifier: workspace:^
         version: link:../message-ws
+      dotenv:
+        specifier: ^16.6.1
+        version: 16.6.1
       internal-ip:
         specifier: ^9.0.0
         version: 9.0.0
@@ -5176,7 +5179,7 @@ snapshots:
 
   dotenv-expand@11.0.7:
     dependencies:
-      dotenv: 16.4.7
+      dotenv: 16.6.1
 
   dotenv@16.4.7: {}
 

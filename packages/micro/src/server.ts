@@ -25,6 +25,10 @@ export class Server extends MessageLoader {
   private readonly announceHost: string;
   public readonly events = new EventEmitter();
 
+  get host() {
+    return this.announceHost;
+  }
+
   constructor(private readonly namespace: string, props: MicroServerProps = {}) {
     const { advertiseHost, ...loaderProps } = props;
     super(loaderProps);

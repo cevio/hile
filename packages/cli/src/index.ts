@@ -116,11 +116,12 @@ program
   });
 
 program.command('registry')
-  .option('-p, --port <port>', '注册中心端口', '9876')
+  .option('--port <port>', '注册中心端口', '9876')
+  .option('--host <host>', '注册中心主机')
   .description('启动注册中心')
-  .action(async (options: { port: number }) => {
+  .action(async (options: { port?: number, host?: string }) => {
     const port = options.port ? Number(options.port) : 9876;
-    const registry = new Registry({ advertiseHost: process.env.HILE_ADVERTISE_HOST ?? '127.0.0.1' });
+    const registry = new Registry({ advertiseHost: options.host ?? undefined });
     useExit(await registry.listen(port));
     console.log(`+ [registry] started on port ${port}`);
   });

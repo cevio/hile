@@ -222,7 +222,7 @@ export class Application extends Server {
     if (
       stack.status === RegistryLookupStatus.READY &&
       (!this.clients.has(`${stack.host}:${stack.port}`) ||
-       (exclude?.length && exclude.includes(`${stack.host}:${stack.port}`)))
+        (exclude?.length && exclude.includes(`${stack.host}:${stack.port}`)))
     ) {
       stack.status = RegistryLookupStatus.IDLE;
       stack.host = '';
@@ -308,5 +308,11 @@ export class Application extends Server {
       }
       throw err;
     }
+  }
+
+  public getEnvVariables(...names: string[]) {
+    if (!this.registry) throw new Error('Registry not found');
+    const { response } = this.registry.request('/-/env', names);
+    return response<string[]>();
   }
 }

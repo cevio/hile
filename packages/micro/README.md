@@ -243,6 +243,57 @@ const health = await app.dispatch('/-/health', {});
 
 ---
 
+## 配置管理
+
+### Registry 工作目录
+
+Registry 启动时自动创建 `~/.registry/` 目录并加载其中的 `.env` 文件到 `process.env`：
+
+```bash
+# ~/.registry/.env
+REGISTRY_PORT=9876
+REGISTRY_HOST=192.168.1.100
+```
+
+### 环境变量热加载
+
+`.env` 文件发生变化时 Registry 自动重新加载（兼容 vim 原子写入）：
+
+```bash
+# 修改 ~/.registry/.env
+# Registry 自动检测变化并更新 process.env
+```
+
+### 远程读取环境变量
+
+通过 `/-/env` 端点，已连服务可从 Registry 远程读取环境变量：
+
+```typescript
+// Application 侧
+const [dbHost, dbPort] = await app.getEnvVariables('DB_HOST', 'DB_PORT');
+// => ['10.0.0.2', '3306']
+```
+
+---
+
+## CLI
+
+### `hile registry`
+
+启动注册中心：
+
+```bash
+# 使用默认配置
+hile registry
+
+# 指定端口（覆盖 ~/.registry/.env 中的 REGISTRY_PORT）
+hile registry --port 8888
+
+# 指定宣告地址
+hile registry --host 10.0.0.1
+```
+`
+
 ## 连接协议
 
 ### 连接 URL 格式
@@ -308,6 +359,9 @@ class Application extends Server {
 
   // 同进程调用路由
   dispatch(url: string, data: any): Promise<any>;
+
+  // 远程读取 Registry 的环境变量
+  getEnvVariables(...names: string[]): Promise<(string | undefined)[]>;
 }
 ```
 
@@ -318,6 +372,7 @@ class Registry extends Server {
   constructor(props?: MicroServerProps);
   listen(port: number): Promise<() => Promise<void>>;
   onFind(): void; // 幂等地挂载 /-/find 路由
+  watchEnvFile(): fs.FSWatcher | undefined; // 监听 ~/.registry/.env 文件变化
 }
 ```
 
