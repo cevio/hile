@@ -83,6 +83,7 @@
       "pages": [
         "packages/typeorm",
         "packages/ioredis",
+        "packages/cache",
         "packages/message-modem",
         "packages/message-ipc",
         "packages/message-worker-thread",

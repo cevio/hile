@@ -15,6 +15,22 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  packages/cache:
+    dependencies:
+      '@hile/core':
+        specifier: workspace:^
+        version: link:../core
+      '@hile/ioredis':
+        specifier: workspace:^
+        version: link:../ioredis
+    devDependencies:
+      fix-esm-import-path:
+        specifier: ^1.10.3
+        version: 1.10.3
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@types/node@25.3.1)(less@4.5.1)(terser@5.46.0)(tsx@4.21.0)(yaml@2.8.2)
+
   packages/cli:
     dependencies:
       '@hile/core':

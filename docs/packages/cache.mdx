@@ -1,0 +1,253 @@
+---
+title: "@hile/cache"
+description: "基于 Redis 的类型安全读穿透缓存：key 模板类型推导、自动回源、TTL 管理"
+---
+
+## 安装
+
+```bash
+pnpm add @hile/cache
+```
+
+同时确保安装了 peer 依赖：
+
+```bash
+pnpm add @hile/core @hile/ioredis
+```
+
+---
+
+## 概述
+
+`@hile/cache` 是在 `@hile/ioredis` 之上构建的**类型安全读穿透缓存层**。提供：
+
+1. **类型安全的 key 模板** — `{name:type}` 占位符，编译期自动推导参数类型
+2. **读穿透** — 缓存 miss 时自动调用回源函数计算并写入
+3. **TTL 管理** — 每条缓存可独立设置过期时间
+4. **完整的 CRUD** — read / write / remove / has
+
+---
+
+## 快速开始
+
+### 定义缓存
+
+```typescript
+import { defineCache, Cache, RedisCache } from '@hile/cache';
+
+// 定义一条缓存：key 模板 + 回源函数
+const userCache = defineCache('user:{id:string}:info', async ({ id }) => {
+  const user = await db.query('SELECT * FROM users WHERE id = $1', [id]);
+  if (!user) return new Cache(undefined);
+  return new Cache(user).setExpire(300); // 5 分钟
+});
+```
+
+`defineCache` 的类型推导确保 `params` 的类型与 key 模板一一对应。
+
+### 读写缓存
+
+```typescript
+const cache = new RedisCache('myapp:');
+const { read, write, remove, has } = await cache.loadCache(userCache);
+
+// 读穿透 — miss 时自动回源
+const user = await read({ id: 'u-001' });
+
+// 强制刷新
+await write({ id: 'u-001' });
+
+// 检查存在
+if (await has({ id: 'u-001' })) {
+  // ...
+}
+
+// 删除
+await remove({ id: 'u-001' });
+```
+
+---
+
+## 类型安全 key 模板
+
+Key 模板使用 `{name:type}` 占位符语法，`ExtractParams` 在编译期推导完整参数类型。
+
+### 支持的类型
+
+| 类型 | TypeScript 映射 | 示例 |
+|------|----------------|------|
+| `string` | `string` | `user:{id:string}` |
+| `number` | `number` | `page:{page:number}` |
+| `boolean` | `boolean` | `{verified:boolean}` |
+
+### 多参数推导
+
+```typescript
+const cache = defineCache(
+  'user:{id:string}:posts:{page:number}:{verified:boolean}',
+  async (params) => {
+    // params 类型: { id: string; page: number; verified: boolean }
+    // 所有占位符按名称匹配，与顺序无关
+    const data = await db.query(
+      'SELECT * FROM posts WHERE user_id = $1 AND verified = $2 LIMIT 10 OFFSET $3',
+      [params.id, params.verified, (params.page - 1) * 10]
+    );
+    return new Cache(data).setExpire(60);
+  }
+);
+```
+
+### 宽松模式
+
+当模板是宽泛的 `string` 类型（非字面量）时，参数退化为 `Record<string, string | number | boolean>`。
+
+---
+
+## 缓存操作
+
+### read — 读穿透
+
+```
+read(params)
+  → EXISTS key
+    ├─ true  → GET key → JSON.parse → 返回数据
+    └─ false → write(params) → handler 回源 → SET/SETEX → 返回
+```
+
+- **缓存命中**：2 次 Redis 操作（EXISTS + GET）
+- **缓存 miss**：handler 执行耗时 + 写入开销
+- **竞态保护**：EXISTS 返回 true 但 GET 为空时，自动回源重写
+
+### write — 强制回源写入
+
+```
+write(params)
+  → handler(params) → Cache<R>
+  ├─ data === undefined → DEL key (若存在) → return undefined
+  └─ data !== undefined →
+       ├─ expire > 0 → SETEX(key, expire, JSON.stringify(data))
+       └─ expire = 0 → SET(key, JSON.stringify(data))
+```
+
+### remove — 删除
+
+```
+remove(params)
+  → EXISTS key → DEL key → 返回删除数量 (0 或 1)
+```
+
+### has — 存在判断
+
+```
+has(params)
+  → EXISTS key → boolean
+```
+
+---
+
+## 实际 Redis key 结构
+
+```
+{prefix}{模板渲染结果}
+```
+
+| 组件 | 示例 |
+|------|------|
+| `prefix` (构造传入) | `myapp:` |
+| key 模板 | `user:{id:string}:info` |
+| params | `{ id: "u-001" }` |
+| **实际 key** | `myapp:user:u-001:info` |
+
+---
+
+## 与 @hile/cli 集成
+
+```json
+{
+  "hile": {
+    "auto_load_packages": ["@hile/ioredis"]
+  }
+}
+```
+
+`@hile/cache` 内部通过 `loadService(ioredisService)` 自动获取 Redis 连接，应用启动时自动建立，退出时自动断开。
+
+---
+
+## 完整示例
+
+```typescript
+import { defineCache, Cache, RedisCache } from '@hile/cache';
+
+// 定义多条缓存
+const userCache = defineCache('user:{id:string}:info', async ({ id }) => {
+  const user = await db.query('SELECT * FROM users WHERE id = $1', [id]);
+  return user ? new Cache(user).setExpire(600) : new Cache(undefined);
+});
+
+const postCache = defineCache('post:{id:string}:detail', async ({ id }) => {
+  const post = await db.query('SELECT * FROM posts WHERE id = $1', [id]);
+  return new Cache(post).setExpire(3600);
+});
+
+// 使用统一前缀
+const cache = new RedisCache('myapp:');
+
+// 批量加载
+const [userOps, postOps] = await Promise.all([
+  cache.loadCache(userCache),
+  cache.loadCache(postCache),
+]);
+
+// 在控制器中使用
+export default defineController('GET', async (ctx) => {
+  const userId = ctx.query.id as string;
+  const user = await userOps.read({ id: userId });
+  if (!user) return { error: 'not found' };
+  return { data: user };
+});
+```
+
+---
+
+## API 参考
+
+### 顶层导出
+
+| 导出 | 类型 | 说明 |
+|------|------|------|
+| `RedisCache` | `class` | 缓存操作入口，构造函数接收 key 前缀 |
+| `defineCache(key, fn)` | `function` | 定义一条缓存的 key 模板和回源 handler |
+| `Cache<R>` | `class` | 数据包装类，提供 `setExpire` 设置 TTL |
+| `ExtractParams` | `type` | 从 key 模板推导参数类型的工具类型 |
+
+### RedisCache 方法
+
+| 方法 | 返回值 | 说明 |
+|------|--------|------|
+| `loadCache(target)` | `Promise<{read, write, remove, has}>` | 加载一条缓存定义，返回操作对象 |
+
+### 操作对象
+
+| 方法 | 返回值 | 说明 |
+|------|--------|------|
+| `read(params)` | `Promise<R \| undefined>` | 读穿透：缓存 miss 自动回源 |
+| `write(params)` | `Promise<R \| undefined>` | 强制回源并写入 |
+| `remove(params)` | `Promise<number>` | 删除缓存 key |
+| `has(params)` | `Promise<boolean>` | 检查 key 是否存在 |
+
+---
+
+## 常见问题
+
+<AccordionGroup>
+  <Accordion title="回源函数返回 undefined 会怎样？">
+    `new Cache(undefined)` 会使 `_write` 删除 Redis 中对应的 key（如果存在），`read` 会返回 `undefined`。
+  </Accordion>
+  <Accordion title="如何为不同的业务使用不同的 Redis 实例？">
+    默认情况下 `@hile/cache` 使用 `@hile/ioredis` 的默认导出。如果需要不同实例，在 `@hile/ioredis` 层面自定义服务，`@hile/cache` 暂不支持切换 Redis 连接。
+  </Accordion>
+  <Accordion title="key 模板中特殊字符如何处理？">
+    key 模板占位符之外的字符会被原样保留（如冒号、斜杠等），直接拼接为 Redis key 的一部分。占位符名称仅用于参数匹配，不影响渲染结果。
+  </Accordion>
+</AccordionGroup>
