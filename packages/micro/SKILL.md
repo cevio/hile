@@ -369,6 +369,38 @@ listen() teardown 触发:
 
 **不处理的情况：** 全新 namespace（无缓存）、缓存 Client 已断连。
 
+### 3.10 环境变量管理
+
+**Registry 侧：**
+
+```
+Registry 构造:
+  1. 创建 ~/.registry/ 目录 (自动)
+  2. 加载 ~/.registry/.env → process.loadEnvFile()
+  3. REGISTRY_HOST 环境变量回退 advertiseHost
+
+Registry listen():
+  1. process.env.REGISTRY_PORT 回退 listen 端口
+  2. 启动 watchEnvFile() — 监听 ~/.registry/ 目录
+     ├─ vim 兼容: 监听目录而非文件 (inode 变化不影响)
+     ├─ dotenv.config({ override: true }) 覆盖全部变量
+     └─ 显式写回 REGISTRY_PORT / REGISTRY_HOST (运行时值)
+
+/-/env 端点:
+  register('/-/env', async ({ data }) => {
+    names = data || []
+    return names.map(name => process.env[name])
+  })
+```
+
+**Application 侧：**
+
+```
+getEnvVariables(...names):
+  → registry.request('/-/env', names)
+  → response<string[]>()
+```
+
 ---
 
 ## 4. 代码生成模板
@@ -480,6 +512,13 @@ pnpm --filter @hile/micro test     # 必须全部通过
 | 超时 reject | `request timeout > rejects when request exceeds the timeout` |
 | 超时充足则成功 | `request timeout > succeeds when timeout is long enough` |
 | 缓存降级 | `cache degradation > uses cached client when registry lookup fails due to exclusion` |
+| env 文件加载 | `env file from workspace > loads env file on construction` |
+| env 文件热加载 | `env file from workspace > reloads env vars when .env file changes` |
+| env 文件不存在 | `env file from workspace > does not crash when env file does not exist` |
+| /-/env 端点 | `/-/env endpoint > returns requested env vars` |
+| /-/env 不存在的变量 | `/-/env endpoint > returns undefined for non-existent env vars` |
+| /-/env 空列表 | `/-/env endpoint > handles empty names list` |
+| getEnvVariables 集成 | `Application.getEnvVariables > fetches env vars from Registry` |
 
 ### 5.3 测试规范（必须遵守）
 
@@ -510,10 +549,11 @@ pnpm --filter @hile/micro test     # 必须全部通过
 | 文件 | 可修改 | 说明 |
 |------|--------|------|
 | `packages/micro/src/application.ts` | ✅ | 核心业务逻辑 |
-| `packages/micro/src/index.test.ts` | ✅ | 测试 |
+| `packages/micro/src/index.test.ts` | ✅ | 测试（主测试文件） |
+| `packages/micro/src/env-config.test.ts` | ✅ | 测试（环境变量配置测试） |
 | `packages/micro/src/server.ts` | ❌ | 底层协议，不动 |
 | `packages/micro/src/client.ts` | ❌ | 底层协议，不动 |
-| `packages/micro/src/registry.ts` | ❌ | 注册中心，不动 |
+| `packages/micro/src/registry.ts` | ✅ | 注册中心（环境变量管理） |
 | `packages/micro/src/utils.ts` | ❌ | 工具函数，不动 |
 | `packages/micro/README.md` | ✅ | 用户文档 |
 | `packages/micro/SKILL.md` | ✅ | AI 参考文档 |
