@@ -2,8 +2,8 @@ import { Server, type MicroServerProps } from './server';
 import { Client } from './client';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
-import { existsSync, mkdirSync, watch } from 'node:fs';
-import dotenv from 'dotenv';
+import { existsSync, mkdirSync, readdirSync, readFileSync, watch } from 'node:fs';
+import YAML from 'yaml';
 
 export interface RegistryFindData {
   namespace: string;
@@ -50,22 +50,17 @@ export class Registry extends Server {
   private static readonly HEARTBEAT_INTERVAL = 1000;
   private static readonly HEARTBEAT_TIMEOUT = 20000;
   private readonly heartbeats = new Map<string, number>();
-  private readonly _envfile: string;
+  private readonly workspace: string;
+  private readonly configFileSuffix = '.config.yaml';
+  private readonly configs = new Map<string, any>();
 
   constructor(props: MicroServerProps = {}) {
     const workspace = resolve(homedir(), '.registry');
     if (!existsSync(workspace)) {
       mkdirSync(workspace, { recursive: true });
     }
-    const envFile = resolve(workspace, '.env');
-    if (existsSync(envFile)) {
-      process.loadEnvFile(envFile);
-    }
-    if (!props.advertiseHost && process.env.REGISTRY_HOST) {
-      props.advertiseHost = process.env.REGISTRY_HOST;
-    }
     super('registry', props);
-    this._envfile = envFile;
+    this.workspace = workspace;
     this.events.on('connect', (client: Client, extras: string[]) => {
       const key = client.host + ':' + client.port;
       this.heartbeats.set(key, Date.now());
@@ -99,14 +94,22 @@ export class Registry extends Server {
   }
 
   public watchEnvFile() {
-    if (!existsSync(this._envfile)) return;
-    const workspace = resolve(this._envfile, '..');
-    return watch(workspace, (_, filename) => {
-      if (filename !== '.env') return;
+    const configFile = resolve(this.workspace, 'configs');
+    if (!existsSync(configFile)) return;
+    const configFiles = readdirSync(configFile).filter(filename => filename.endsWith(this.configFileSuffix));
+    for (const filename of configFiles) {
       try {
-        dotenv.config({ path: this._envfile, override: true });
-        process.env.REGISTRY_PORT = this.port?.toString() || '';
-        process.env.REGISTRY_HOST = this.host;
+        const config = YAML.parse(readFileSync(resolve(configFile, filename), 'utf8'));
+        if (typeof config !== 'object' || config === null) continue;
+        this.configs.set(filename.slice(0, -this.configFileSuffix.length), config);
+      } catch { }
+    }
+    return watch(configFile, (_, filename) => {
+      if (!filename?.endsWith(this.configFileSuffix)) return;
+      try {
+        const config = YAML.parse(readFileSync(resolve(configFile, filename), 'utf8'));
+        if (typeof config !== 'object' || config === null) return;
+        this.configs.set(filename.slice(0, -this.configFileSuffix.length), config);
       } catch { /* vim 替换文件时的中间态读错误，忽略 */ }
     });
   }
@@ -128,9 +131,6 @@ export class Registry extends Server {
         }
       }
     }, Registry.HEARTBEAT_INTERVAL);
-
-    process.env.REGISTRY_PORT = this.port?.toString() || '';
-    process.env.REGISTRY_HOST = this.host;
 
     const watcher = this.watchEnvFile();
 
@@ -168,9 +168,19 @@ export class Registry extends Server {
   }
 
   private registerEnvVariables() {
-    this.register<string[]>('/-/env', async ({ data }) => {
-      const names = data || [];
-      return names.map(name => process.env[name]);
+    this.register<{ namespace: string, fields?: string[] }[]>('/-/env/variables', async ({ data }) => {
+      return data.map(({ namespace, fields }) => {
+        if (!this.configs.has(namespace)) {
+          return { namespace, value: null };
+        }
+        if (!fields?.length) return { namespace, value: this.configs.get(namespace) };
+        const config = this.configs.get(namespace);
+        const value: Record<string, any> = {};
+        for (const field of fields) {
+          value[field] = config[field];
+        }
+        return { namespace, value };
+      });
     })
   }
 }

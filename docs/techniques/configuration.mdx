@@ -16,17 +16,18 @@ hile start --env-file .env --env-file .env.local
 
 ## Registry 工作目录
 
-**`hile registry`** 启动时自动创建 `~/.registry/` 目录，并从 `~/.registry/.env` 加载环境变量：
+**`hile registry`** 启动时自动创建 `~/.registry/` 工作目录。YAML 配置文件存放在 `~/.registry/configs/` 下，按 namespace 分文件管理：
 
-```bash
-# ~/.registry/.env
-REGISTRY_PORT=9876
-REGISTRY_HOST=192.168.1.100
+```yaml
+# ~/.registry/configs/service-a.config.yaml
+db:
+  host: 10.0.0.2
+  port: 3306
 ```
 
-Registry 监听 `.env` 文件变化并自动热加载（兼容 vim/vi 保存方式），无需重启。
+Registry 监听 `configs/` 目录的文件变化，新增或修改 `*.config.yaml` 文件时自动加载（兼容 vim/vi 保存方式），无需重启。
 
-已连服务可通过 `getEnvVariables()` 远程读取 Registry 的环境变量：
+已连服务可通过 `getEnvVariables()` 远程读取 Registry 的配置：
 
 ```typescript
 import { Application } from '@hile/micro';
@@ -36,8 +37,11 @@ const app = new Application({
   registry: { host: '127.0.0.1', port: 9876 },
 });
 
-// 启动后从 Registry 远程读取环境变量
-const [dbHost, dbPort] = await app.getEnvVariables('DB_HOST', 'DB_PORT');
+// 启动后从 Registry 远程读取配置
+const config = await app.getEnvVariables(
+  { namespace: 'service-a', fields: ['db.host', 'db.port'] },
+);
+// => { 'service-a': { 'db.host': '10.0.0.2', 'db.port': 3306 } }
 ```
 
 详见 [@hile/micro](/packages/micro)。

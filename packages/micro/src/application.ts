@@ -38,6 +38,34 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
+type UnionToIntersection<U> =
+  (U extends any ? (x: U) => void : never) extends (x: infer I) => void ? I : never;
+
+type EnvRequest<T extends Record<string, Record<string, any>>> = {
+  [N in keyof T]: {
+    namespace: N;
+    fields?: readonly (keyof T[N])[];
+  };
+}[keyof T];
+
+type EnvFieldsForRequest<
+  T extends Record<string, Record<string, any>>,
+  N extends keyof T,
+  F,
+> = F extends readonly (infer K extends keyof T[N])[] ? Pick<T[N], K> : T[N];
+
+type EnvRequestResult<
+  T extends Record<string, Record<string, any>>,
+  R,
+> = R extends { namespace: infer N extends keyof T, fields?: infer F }
+  ? { [K in N]: EnvFieldsForRequest<T, N, F> }
+  : never;
+
+export type GetEnvVariablesResult<
+  T extends Record<string, Record<string, any>>,
+  Requests extends readonly EnvRequest<T>[],
+> = UnionToIntersection<EnvRequestResult<T, Requests[number]>>;
+
 export type ApplicationProps = {
   namespace: string;
   registry: RegistryAddress;
@@ -310,9 +338,17 @@ export class Application extends Server {
     }
   }
 
-  public getEnvVariables(...names: string[]) {
+  public async getEnvVariables<
+    T extends Record<string, Record<string, any>>,
+    const Requests extends readonly EnvRequest<T>[] = readonly EnvRequest<T>[],
+  >(...data: Requests): Promise<GetEnvVariablesResult<T, Requests>> {
     if (!this.registry) throw new Error('Registry not found');
-    const { response } = this.registry.request('/-/env', names);
-    return response<string[]>();
+    const { response } = this.registry.request('/-/env/variables', data);
+    const configs = await response<{ namespace: string, value: Record<string, any> }[]>();
+    const out: any = {};
+    for (const { namespace, value } of configs) {
+      out[namespace] = value;
+    }
+    return out;
   }
 }

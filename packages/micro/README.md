@@ -247,31 +247,39 @@ const health = await app.dispatch('/-/health', {});
 
 ### Registry 工作目录
 
-Registry 启动时自动创建 `~/.registry/` 目录并加载其中的 `.env` 文件到 `process.env`：
+Registry 启动时自动创建 `~/.registry/` 工作目录。YAML 配置文件存放在 `~/.registry/configs/` 下，按 namespace 分文件管理：
 
-```bash
-# ~/.registry/.env
-REGISTRY_PORT=9876
-REGISTRY_HOST=192.168.1.100
+```
+~/.registry/
+  └── configs/
+        ├── service-a.config.yaml
+        ├── service-b.config.yaml
+        └── global.config.yaml
 ```
 
-### 环境变量热加载
+### 配置文件热加载
 
-`.env` 文件发生变化时 Registry 自动重新加载（兼容 vim 原子写入）：
+Regsitry 监听 `configs/` 目录的文件变化，新增或修改 `*.config.yaml` 文件时自动加载（兼容 vim 原子写入），无需重启：
 
 ```bash
-# 修改 ~/.registry/.env
-# Registry 自动检测变化并更新 process.env
+# 创建或修改 ~/.registry/configs/my-service.config.yaml
+# Registry 自动检测变化并更新内存中的配置
 ```
 
-### 远程读取环境变量
+### 远程读取配置
 
-通过 `/-/env` 端点，已连服务可从 Registry 远程读取环境变量：
+通过 `/-/env/variables` 端点，已连服务可按 namespace 和字段从 Registry 远程读取配置：
 
 ```typescript
 // Application 侧
-const [dbHost, dbPort] = await app.getEnvVariables('DB_HOST', 'DB_PORT');
-// => ['10.0.0.2', '3306']
+const result = await app.getEnvVariables(
+  { namespace: 'service-a', fields: ['db.host', 'db.port'] },
+  { namespace: 'global' },
+);
+// result = {
+//   'service-a': { 'db.host': '10.0.0.2', 'db.port': 3306 },
+//   'global': { featureFlag: true },
+// }
 ```
 
 ---
@@ -286,7 +294,7 @@ const [dbHost, dbPort] = await app.getEnvVariables('DB_HOST', 'DB_PORT');
 # 使用默认配置
 hile registry
 
-# 指定端口（覆盖 ~/.registry/.env 中的 REGISTRY_PORT）
+# 指定端口
 hile registry --port 8888
 
 # 指定宣告地址
@@ -360,8 +368,11 @@ class Application extends Server {
   // 同进程调用路由
   dispatch(url: string, data: any): Promise<any>;
 
-  // 远程读取 Registry 的环境变量
-  getEnvVariables(...names: string[]): Promise<(string | undefined)[]>;
+  // 远程读取 Registry 的配置（强类型）
+  getEnvVariables<
+    T extends Record<string, Record<string, any>>,
+    const Requests extends readonly EnvRequest<T>[],
+  >(...data: Requests): Promise<GetEnvVariablesResult<T, Requests>>;
 }
 ```
 
@@ -372,7 +383,7 @@ class Registry extends Server {
   constructor(props?: MicroServerProps);
   listen(port: number): Promise<() => Promise<void>>;
   onFind(): void; // 幂等地挂载 /-/find 路由
-  watchEnvFile(): fs.FSWatcher | undefined; // 监听 ~/.registry/.env 文件变化
+  watchEnvFile(): fs.FSWatcher | undefined; // 监听 ~/.registry/configs/ 目录内的 *.config.yaml 文件变化
 }
 ```
 

@@ -101,18 +101,18 @@ export class Registry extends Server {
   //   HEARTBEAT_INTERVAL = 1000   (1s 轮询)
   //   HEARTBEAT_TIMEOUT = 20000   (20s 未收到心跳则剔除)
   // 工作目录: ~/.registry/ (自动创建)
-  //   - 自动加载 .env 文件到 process.env
-  //   - 文件变化时通过 dotenv.config({ override: true }) 热重载
-  //   - 监听 workspace 目录，兼容 vim 原子写入
+  //   - configs/ 目录存放 *.config.yaml 配置文件
+  //   - watchEnvFile() 监听 configs/ 目录，兼容 vim 原子写入
+  //   - configs Map<string, any> 按 namespace 存储解析后的 YAML 内容
   // 内部路由:
-  //   /-/find       — 按 namespace 随机返回地址 (支持 exclude)
-  //   /-/heartbeat  — 更新实例心跳时间戳
-  //   /-/env        — 返回请求的环境变量值 (通过 getEnvVariables 调用)
+  //   /-/find             — 按 namespace 随机返回地址 (支持 exclude)
+  //   /-/heartbeat        — 更新实例心跳时间戳
+  //   /-/env/variables    — 按 namespace + fields 返回配置 (通过 getEnvVariables 调用)
 
   constructor(props?: MicroServerProps);
   listen(port: number): Promise<() => Promise<void>>;
   onFind(): void; // 幂等，可重复调用
-  watchEnvFile(): fs.FSWatcher | undefined; // 监听 ~/.registry/.env 文件变化
+  watchEnvFile(): fs.FSWatcher | undefined; // 监听 ~/.registry/configs/ 目录
 }
 ```
 
@@ -147,8 +147,11 @@ export class Application extends Server {
     retries?: number,     // 重试次数, 默认 1
   ): Promise<T>;
 
-  // 远程读取 Registry 的环境变量
-  getEnvVariables(...names: string[]): Promise<(string | undefined)[]>;
+  // 远程读取 Registry 的配置（强类型，按 namespace + fields）
+  getEnvVariables<
+    T extends Record<string, Record<string, any>>,
+    const Requests extends readonly EnvRequest<T>[],
+  >(...data: Requests): Promise<GetEnvVariablesResult<T, Requests>>;
 
   // 继承自 Server/MessageLoader:
   // register<T, E>(url, handler): () => void;
@@ -369,36 +372,55 @@ listen() teardown 触发:
 
 **不处理的情况：** 全新 namespace（无缓存）、缓存 Client 已断连。
 
-### 3.10 环境变量管理
+### 3.10 配置管理
+
+**存储结构：**
+
+```
+~/.registry/
+  └── configs/
+        ├── service-a.config.yaml
+        ├── service-b.config.yaml
+        └── global.config.yaml
+```
 
 **Registry 侧：**
 
 ```
 Registry 构造:
   1. 创建 ~/.registry/ 目录 (自动)
-  2. 加载 ~/.registry/.env → process.loadEnvFile()
-  3. REGISTRY_HOST 环境变量回退 advertiseHost
 
 Registry listen():
-  1. process.env.REGISTRY_PORT 回退 listen 端口
-  2. 启动 watchEnvFile() — 监听 ~/.registry/ 目录
-     ├─ vim 兼容: 监听目录而非文件 (inode 变化不影响)
-     ├─ dotenv.config({ override: true }) 覆盖全部变量
-     └─ 显式写回 REGISTRY_PORT / REGISTRY_HOST (运行时值)
+  1. 调用 watchEnvFile()
+     └─ 读取 ~/.registry/configs/ 下所有 *.config.yaml → YAML.parse
+     └─ 按 namespace 存入 this.configs Map
+     └─ 监听 configs/ 目录 (兼容 vim 原子写入)
+         └─ 文件变化 → 重新 YAML.parse 并更新 this.configs
 
-/-/env 端点:
-  register('/-/env', async ({ data }) => {
-    names = data || []
-    return names.map(name => process.env[name])
+/-/env/variables 端点:
+  register('/-/env/variables', async ({ data }) => {
+    data.map(({ namespace, fields }) => {
+      if (!this.configs.has(namespace))
+        return { namespace, value: null }
+      if (!fields?.length)
+        return { namespace, value: this.configs.get(namespace) }
+      // 按 fields 过滤
+      return { namespace, value: filteredConfig }
+    })
   })
 ```
 
 **Application 侧：**
 
-```
-getEnvVariables(...names):
-  → registry.request('/-/env', names)
-  → response<string[]>()
+```typescript
+// 强类型查询
+type EnvRequest<T> = {
+  [N in keyof T]: { namespace: N; fields?: readonly (keyof T[N])[] };
+}[keyof T];
+
+type GetEnvVariablesResult<T, Requests> = UnionToIntersection<...>;
+
+getEnvVariables(...data: EnvRequest<T>[]): Promise<GetEnvVariablesResult<T, Requests>>
 ```
 
 ---
@@ -512,12 +534,12 @@ pnpm --filter @hile/micro test     # 必须全部通过
 | 超时 reject | `request timeout > rejects when request exceeds the timeout` |
 | 超时充足则成功 | `request timeout > succeeds when timeout is long enough` |
 | 缓存降级 | `cache degradation > uses cached client when registry lookup fails due to exclusion` |
-| env 文件加载 | `env file from workspace > loads env file on construction` |
-| env 文件热加载 | `env file from workspace > reloads env vars when .env file changes` |
-| env 文件不存在 | `env file from workspace > does not crash when env file does not exist` |
-| /-/env 端点 | `/-/env endpoint > returns requested env vars` |
-| /-/env 不存在的变量 | `/-/env endpoint > returns undefined for non-existent env vars` |
-| /-/env 空列表 | `/-/env endpoint > handles empty names list` |
+| 配置加载 | `env file from workspace > loads env file on construction` |
+| 配置热加载 | `env file from workspace > reloads env vars when .env file changes` |
+| configs 目录不存在 | `env file from workspace > does not crash when env file does not exist` |
+| /-/env/variables 端点 | `/-/env endpoint > returns requested env vars` |
+| 不存在的 namespace | `/-/env endpoint > returns undefined for non-existent env vars` |
+| /-/env/variables 空列表 | `/-/env endpoint > handles empty names list` |
 | getEnvVariables 集成 | `Application.getEnvVariables > fetches env vars from Registry` |
 
 ### 5.3 测试规范（必须遵守）
@@ -564,7 +586,7 @@ pnpm --filter @hile/micro test     # 必须全部通过
 
 | 文件 | 用途 |
 |------|------|
-| `packages/micro/src/application.ts` | 完整实现（共 ~310 行） |
-| `packages/micro/src/index.test.ts` | 28 个测试用例 |
-| `docs/superpowers/specs/2026-05-14-micro-improvements-design.md` | 四种改进的设计规约 |
-| `docs/superpowers/plans/2026-05-14-micro-improvements.md` | 实施计划 |
+| `packages/micro/src/registry.ts` | 注册中心（含配置管理） |
+| `packages/micro/src/application.ts` | 应用服务（含 getEnvVariables） |
+| `packages/micro/src/index.test.ts` | 主测试文件（28 个用例） |
+| `packages/micro/src/env-config.test.ts` | 配置管理测试文件（7 个用例） |
