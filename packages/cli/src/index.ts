@@ -118,6 +118,7 @@ program
 
 const registryCmd = program.command('registry');
 registryCmd
+  .allowExcessArguments(true)
   .option('--port <port>', '注册中心端口', '9876')
   .option('--host <host>', '注册中心主机')
   .description('启动注册中心')
