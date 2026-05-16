@@ -46,6 +46,37 @@ const config = await app.getEnvVariables(
 
 详见 [@hile/micro](/packages/micro)。
 
+## CLI 管理配置
+
+通过 `hile registry configs` 子命令可直接管理本机 `~/.registry/configs/` 下的 YAML 配置文件，无需手动编辑：
+
+```bash
+# 列出所有 namespace
+hile registry configs
+
+# 查看配置（YAML 输出）
+hile registry configs get my-service
+
+# 查看配置（JSON 输出）
+hile registry configs get my-service --json
+
+# 设置配置项（值自动推断类型）
+hile registry configs set my-service port=8080
+hile registry configs set my-service debug=true
+hile registry configs set my-service name=hello
+
+# 删除整个 namespace（需确认）
+hile registry configs del my-service
+
+# 删除某个字段（需确认）
+hile registry configs del my-service port
+
+# 跳过确认
+hile registry configs del my-service -y
+```
+
+运行中的 Registry 通过 `fs.watch` 自动感知文件变化，无需重启。
+
 ## `package.json` 中的 `hile` 字段
 
 常用字段：**`auto_load_packages`** —— 字符串数组，列出要在启动时 **`import()`** 的包名（用于触发包侧注册逻辑，例如自动注册服务）。

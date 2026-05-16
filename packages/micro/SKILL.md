@@ -95,6 +95,10 @@ export interface RegistryFindData {
 
 export function parseAddressKey(key: string): RegistryAddress | undefined;
 export function selectRandomRegistryAddress(keys: Iterable<string>): RegistryAddress | undefined;
+// 配置文件路径工具：
+export function getRegistryConfigsDir(): string;         // 返回 ~/.registry/configs/
+export function namespaceToConfigFile(ns: string): string;  // 返回 ~/.registry/configs/{ns}.config.yaml
+export function parseConfigFilename(filename: string): string | null;  // 解析 ".config.yaml" 后缀，提取 namespace
 
 export class Registry extends Server {
   // heartbeat 常量:
@@ -423,6 +427,21 @@ type GetEnvVariablesResult<T, Requests> = UnionToIntersection<...>;
 getEnvVariables(...data: EnvRequest<T>[]): Promise<GetEnvVariablesResult<T, Requests>>
 ```
 
+**CLI 管理配置：**
+
+通过 `hile registry configs` 子命令直接管理 `~/.registry/configs/` 下的 YAML 文件：
+
+```
+hile registry configs                              # 列出所有 namespace
+hile registry configs get <namespace>               # 查看配置（YAML/--json）
+hile registry configs set <namespace> <key>=<value> # 设置配置项
+hile registry configs del <namespace> [key]         # 删除（带确认，-y 跳过）
+```
+
+- CLI 直接读写 YAML 文件，运行中的 Registry 通过 `fs.watch` 自动感知
+- 值类型自动推断：`true/false` → boolean, `null` → null, 纯数字 → number, 其余 → string
+- 实现代码在 `packages/cli/src/configs.ts`，工具函数在 `packages/micro/src/registry.ts`
+
 ---
 
 ## 4. 代码生成模板
@@ -534,13 +553,19 @@ pnpm --filter @hile/micro test     # 必须全部通过
 | 超时 reject | `request timeout > rejects when request exceeds the timeout` |
 | 超时充足则成功 | `request timeout > succeeds when timeout is long enough` |
 | 缓存降级 | `cache degradation > uses cached client when registry lookup fails due to exclusion` |
-| 配置加载 | `env file from workspace > loads env file on construction` |
-| 配置热加载 | `env file from workspace > reloads env vars when .env file changes` |
-| configs 目录不存在 | `env file from workspace > does not crash when env file does not exist` |
-| /-/env/variables 端点 | `/-/env endpoint > returns requested env vars` |
-| 不存在的 namespace | `/-/env endpoint > returns undefined for non-existent env vars` |
-| /-/env/variables 空列表 | `/-/env endpoint > handles empty names list` |
-| getEnvVariables 集成 | `Application.getEnvVariables > fetches env vars from Registry` |
+| YAML 配置加载 | `config file loading > loads yaml config files on watchEnvFile` |
+| YAML 配置热加载 | `config file loading > reloads config when yaml file changes` |
+| configs 目录不存在 | `config file loading > does not crash when configs directory does not exist` |
+| /-/env/variables 按字段过滤 | `/-/env/variables endpoint > returns requested config by namespace and fields` |
+| /-/env/variables 全字段 | `/-/env/variables endpoint > returns all config when fields not specified` |
+| 不存在的 namespace | `/-/env/variables endpoint > returns null value for non-existent namespace` |
+| /-/env/variables 空列表 | `/-/env/variables endpoint > handles empty data list` |
+| getEnvVariables 集成 | `Application.getEnvVariables > fetches config from Registry` |
+| getEnvVariables 不存在 namespace | `Application.getEnvVariables > returns null when namespace config does not exist` |
+| getRegistryConfigsDir | `config file utilities > getRegistryConfigsDir returns path ending with .registry/configs` |
+| namespaceToConfigFile | `config file utilities > namespaceToConfigFile returns path with .config.yaml suffix` |
+| parseConfigFilename 正例 | `config file utilities > parseConfigFilename extracts namespace from valid filename` |
+| parseConfigFilename 反例 | `config file utilities > parseConfigFilename returns null for non-config file` |
 
 ### 5.3 测试规范（必须遵守）
 
@@ -561,7 +586,7 @@ pnpm --filter @hile/micro test     # 必须全部通过
 4. **不要假设 `host:port` 可无损表达 IPv6** — 使用 `[IPv6]:port` 格式，`parseAddressKey` 按最后一个 `:` 切分
 5. **不要传错 Registry 端口** — 丢失 Registry 连接时依赖 `reconnectToRegistry`，不要在外部缓存 registry Client
 6. **不要在 call() 中修改原始 data 对象** — 必须使用浅拷贝 `{ ...data, _correlationId }`
-7. **不要在其他文件中重复 `selectRandomRegistryAddress` 或 `parseAddressKey`** — 这些是 Registry 的内部 helper
+7. **不要在其他文件中重复 Registry 的 helper 函数** — `selectRandomRegistryAddress`、`parseAddressKey`、`getRegistryConfigsDir`、`namespaceToConfigFile`、`parseConfigFilename` 都在 `registry.ts` 中导出复用
 8. **不要给 call() 增加非可选参数** — `timeout` 和 `retries` 都在尾部且保持可选，不影响现有调用
 
 ---
@@ -575,10 +600,14 @@ pnpm --filter @hile/micro test     # 必须全部通过
 | `packages/micro/src/env-config.test.ts` | ✅ | 测试（环境变量配置测试） |
 | `packages/micro/src/server.ts` | ❌ | 底层协议，不动 |
 | `packages/micro/src/client.ts` | ❌ | 底层协议，不动 |
-| `packages/micro/src/registry.ts` | ✅ | 注册中心（环境变量管理） |
+| `packages/micro/src/registry.ts` | ✅ | 注册中心（配置管理、路径工具函数） |
 | `packages/micro/src/utils.ts` | ❌ | 工具函数，不动 |
 | `packages/micro/README.md` | ✅ | 用户文档 |
 | `packages/micro/SKILL.md` | ✅ | AI 参考文档 |
+| `packages/cli/src/index.ts` | ✅ | CLI 入口（registry configs 子命令组） |
+| `packages/cli/src/configs.ts` | ✅ | CLI 配置管理 handler（list/get/set/del） |
+| `packages/cli/src/start.ts` | ❌ | 启动逻辑，不动 |
+| `packages/cli/src/exitHook.ts` | ❌ | 退出钩子，不动 |
 
 ---
 
@@ -586,7 +615,9 @@ pnpm --filter @hile/micro test     # 必须全部通过
 
 | 文件 | 用途 |
 |------|------|
-| `packages/micro/src/registry.ts` | 注册中心（含配置管理） |
+| `packages/micro/src/registry.ts` | 注册中心（含配置管理、路径工具函数） |
 | `packages/micro/src/application.ts` | 应用服务（含 getEnvVariables） |
 | `packages/micro/src/index.test.ts` | 主测试文件（28 个用例） |
-| `packages/micro/src/env-config.test.ts` | 配置管理测试文件（7 个用例） |
+| `packages/micro/src/env-config.test.ts` | 配置管理测试文件（13 个用例） |
+| `packages/cli/src/index.ts` | CLI 入口（含 registry configs 子命令组） |
+| `packages/cli/src/configs.ts` | CLI 配置管理 handler（list/get/set/del） |

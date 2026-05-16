@@ -51,6 +51,9 @@ importers:
       tsx:
         specifier: ^4.21.0
         version: 4.21.0
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
     devDependencies:
       '@types/async-exit-hook':
         specifier: ^2.0.2

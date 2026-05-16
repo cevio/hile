@@ -1,7 +1,7 @@
 import { Server, type MicroServerProps } from './server';
 import { Client } from './client';
 import { homedir } from 'node:os';
-import { resolve } from 'node:path';
+import { resolve, join } from 'node:path';
 import { existsSync, mkdirSync, readdirSync, readFileSync, watch } from 'node:fs';
 import YAML from 'yaml';
 
@@ -42,6 +42,19 @@ export function selectRandomRegistryAddress(keys: Iterable<string>): RegistryAdd
 
   const index = Math.floor(Math.random() * addresses.length);
   return addresses[index];
+}
+
+export function getRegistryConfigsDir(): string {
+  return resolve(homedir(), '.registry', 'configs');
+}
+
+export function namespaceToConfigFile(ns: string): string {
+  return join(getRegistryConfigsDir(), `${ns}.config.yaml`);
+}
+
+export function parseConfigFilename(filename: string): string | null {
+  if (!filename.endsWith('.config.yaml')) return null;
+  return filename.slice(0, -'.config.yaml'.length);
 }
 
 export class Registry extends Server {
@@ -101,7 +114,7 @@ export class Registry extends Server {
       try {
         const config = YAML.parse(readFileSync(resolve(configFile, filename), 'utf8'));
         if (typeof config !== 'object' || config === null) continue;
-        this.configs.set(filename.slice(0, -this.configFileSuffix.length), config);
+        this.configs.set(parseConfigFilename(filename)!, config);
       } catch { }
     }
     return watch(configFile, (_, filename) => {
@@ -109,7 +122,7 @@ export class Registry extends Server {
       try {
         const config = YAML.parse(readFileSync(resolve(configFile, filename), 'utf8'));
         if (typeof config !== 'object' || config === null) return;
-        this.configs.set(filename.slice(0, -this.configFileSuffix.length), config);
+        this.configs.set(parseConfigFilename(filename)!, config);
       } catch { /* vim 替换文件时的中间态读错误，忽略 */ }
     });
   }

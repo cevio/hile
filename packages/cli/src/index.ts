@@ -9,6 +9,7 @@ import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { Registry } from '@hile/micro';
 import { useExit } from './exitHook';
+import { listConfigs, getConfig, setConfig, delConfig } from './configs.js';
 
 type NodeRequire = ReturnType<typeof createRequire>;
 
@@ -115,7 +116,8 @@ program
     })
   });
 
-program.command('registry')
+const registryCmd = program.command('registry');
+registryCmd
   .option('--port <port>', '注册中心端口', '9876')
   .option('--host <host>', '注册中心主机')
   .description('启动注册中心')
@@ -124,6 +126,34 @@ program.command('registry')
     const registry = new Registry({ advertiseHost: options.host ?? undefined });
     useExit(await registry.listen(port));
     console.log(`+ [registry] started on port ${port}`);
+  });
+
+// Registry configs subcommands
+const configs = registryCmd.command('configs');
+configs
+  .description('管理注册中心配置')
+  .action(async () => {
+    await listConfigs();
+  });
+
+configs.command('get <namespace>')
+  .option('--json', 'JSON 格式输出')
+  .description('查看配置')
+  .action(async (namespace, options) => {
+    await getConfig(namespace, options.json);
+  });
+
+configs.command('set <namespace> <keyvalue>')
+  .description('设置配置项，如 hile registry configs set my-svc port=8080')
+  .action(async (namespace, keyvalue) => {
+    await setConfig(namespace, keyvalue);
+  });
+
+configs.command('del <namespace> [key]')
+  .option('-y, --yes', '跳过确认')
+  .description('删除配置')
+  .action(async (namespace, key, options) => {
+    await delConfig(namespace, key, options.yes);
   });
 
 program.parseAsync(process.argv);

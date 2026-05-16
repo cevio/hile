@@ -300,7 +300,34 @@ hile registry --port 8888
 # 指定宣告地址
 hile registry --host 10.0.0.1
 ```
-`
+
+### `hile registry configs`
+
+管理 `~/.registry/configs/` 下的 YAML 配置文件：
+
+```bash
+# 列出所有 namespace
+hile registry configs
+
+# 查看配置（YAML 输出）
+hile registry configs get my-service
+
+# 查看配置（JSON 输出）
+hile registry configs get my-service --json
+
+# 设置配置项
+hile registry configs set my-service port=8080
+hile registry configs set my-service debug=true
+
+# 删除整个 namespace
+hile registry configs del my-service
+
+# 删除某个字段（需确认）
+hile registry configs del my-service port
+
+# 跳过确认删除
+hile registry configs del my-service -y
+```
 
 ## 连接协议
 

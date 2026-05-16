@@ -9,7 +9,7 @@ vi.mock('node:os', () => ({
   homedir: () => testDir,
 }));
 
-import { Registry } from './registry';
+import { Registry, getRegistryConfigsDir, namespaceToConfigFile, parseConfigFilename } from './registry';
 import { Application } from './application';
 
 const testAdvertise = { advertiseHost: '127.0.0.1' as const };
@@ -195,5 +195,25 @@ describe('@hile/micro Application.getEnvVariables', () => {
       await disposeApp();
       await disposeRegistry();
     }
+  });
+});
+
+describe('config file utilities', () => {
+  it('getRegistryConfigsDir returns path ending with .registry/configs', () => {
+    const dir = getRegistryConfigsDir();
+    expect(dir).toMatch(/\.registry\/configs$/);
+  });
+
+  it('namespaceToConfigFile returns path with .config.yaml suffix', () => {
+    const file = namespaceToConfigFile('my-svc');
+    expect(file).toMatch(new RegExp(`my-svc\\.config\\.yaml$`));
+  });
+
+  it('parseConfigFilename extracts namespace from valid filename', () => {
+    expect(parseConfigFilename('my-svc.config.yaml')).toBe('my-svc');
+  });
+
+  it('parseConfigFilename returns null for non-config file', () => {
+    expect(parseConfigFilename('my-svc.yaml')).toBeNull();
   });
 });
