@@ -57,7 +57,7 @@ create-hile create my-app
     pnpm run dev
     ```
 
-    这条命令会先构建 Next.js，再以开发模式启动 Hile 服务（具体脚本以生成项目的 `package.json` 为准，通常包含 `next build` 与 `hile start --dev`）。
+    这条命令以开发模式启动 Hile 服务（具体脚本以生成项目的 `package.json` 为准）。Next.js 在 `HttpNext.start()` 内部以 dev 模式运行，支持 HMR，无需预构建。
 
     浏览器打开 `http://localhost:3000` 即可看到页面。
   </Step>
@@ -176,7 +176,7 @@ my-app/
 
 | 命令 | 内部执行 | 说明 |
 |------|---------|------|
-| `pnpm run dev` | `next build` 后执行 `hile start --dev`（可带 `--env-file .env`） | 构建 Next.js + 开发模式启动 |
+| `pnpm run dev` | `hile start --dev --env-file .env` | 开发模式启动（Next.js 以 dev 模式运行，无需预构建） |
 | `pnpm run build` | 编译 TypeScript（含控制器）+ Next.js 生产构建 | 产出 `dist/` 与 `.next/` |
 | `pnpm run start` | `hile start`（生产模式，可带 `--env-file .env.prod`） | 使用编译后的 `dist/` 与 `.next/` 启动 |
 

@@ -110,30 +110,36 @@ const cache = defineCache(
 ```
 read(params)
   → EXISTS key
-    ├─ true  → GET key → JSON.parse → 返回数据
+    ├─ true  → GET key
+    │          ├─ 有数据 → JSON.parse → 返回
+    │          └─ 空数据 → write(params) → 回源重写
     └─ false → write(params) → handler 回源 → SET/SETEX → 返回
 ```
 
 - **缓存命中**：2 次 Redis 操作（EXISTS + GET）
 - **缓存 miss**：handler 执行耗时 + 写入开销
-- **竞态保护**：EXISTS 返回 true 但 GET 为空时，自动回源重写
+- **竞态保护**：EXISTS 返回 true 但 GET 为空时（如 key 刚过期），自动回源重写
 
 ### write — 强制回源写入
 
 ```
 write(params)
   → handler(params) → Cache<R>
-  ├─ data === undefined → DEL key (若存在) → return undefined
+  ├─ data === undefined → EXISTS key? DEL → return undefined
   └─ data !== undefined →
-       ├─ expire > 0 → SETEX(key, expire, JSON.stringify(data))
-       └─ expire = 0 → SET(key, JSON.stringify(data))
+       ├─ expire > 0  → SETEX(key, expire, JSON.stringify(data))
+       └─ expire = 0  → SET(key, JSON.stringify(data))
 ```
+
+`new Cache(undefined)` 表示该 key 无数据，回源时会在 Redis 中删除对应 key（若存在）。
 
 ### remove — 删除
 
 ```
 remove(params)
-  → EXISTS key → DEL key → 返回删除数量 (0 或 1)
+  → EXISTS key
+    ├─ true  → DEL key → 返回 1
+    └─ false → 返回 0
 ```
 
 ### has — 存在判断
@@ -162,6 +168,8 @@ has(params)
 
 ## 与 @hile/cli 集成
 
+`@hile/cache` 运行时依赖 Redis，需要在 `package.json` 中配置 `@hile/ioredis` 自动加载：
+
 ```json
 {
   "hile": {
@@ -170,7 +178,7 @@ has(params)
 }
 ```
 
-`@hile/cache` 内部通过 `loadService(ioredisService)` 自动获取 Redis 连接，应用启动时自动建立，退出时自动断开。
+`@hile/cache` 自身通过 `import { RedisCache, defineCache } from '@hile/cache'` 直接使用，无需加入 `auto_load_packages`。内部自动调用 `loadService(ioredisService)` 获取 Redis 连接，应用启动时自动建立，退出时自动断开。
 
 ---
 

@@ -39,10 +39,10 @@ description: "从零到运行：5 分钟搭建你的第一个 Hile 项目"
     ```
 
     这条命令会：
-    1. 执行 `next build` 构建 Next.js 应用
-    2. 执行 `hile start --dev` 以开发模式启动服务
-    3. 自动设置 `NODE_ENV=development`
-    4. 使用 tsx 运行 TypeScript（无需预编译）
+    1. 执行 `hile start --dev` 以开发模式启动服务
+    2. 自动设置 `NODE_ENV=development`
+    3. 使用 tsx 运行 TypeScript（无需预编译）
+    4. Next.js 在 `HttpNext.start()` 内以 dev 模式自动运行，支持 HMR
 
     浏览器打开 `http://localhost:3000` 即可看到页面。
   </Step>
@@ -331,5 +331,10 @@ export default [getUsers, createUser]
 | `hile start --dev` | 开发模式（使用 tsx，扫描 src/） |
 | `hile start --env-file .env` | 加载 env 文件 |
 | `hile start --env-file .env --env-file .env.local` | 加载多个 env 文件 |
+| `hile registry` | 启动注册中心 |
+| `hile registry configs` | 管理注册中心配置 |
+| `hile registry configs get <ns>` | 查看某个 namespace 的配置 |
+| `hile registry configs set <ns> <key>=<value>` | 设置配置项 |
+| `hile registry configs del <ns> [key]` | 删除配置 |
 | `hile -v` | 查看版本 |
 | `hile -h` | 查看帮助 |

@@ -161,7 +161,7 @@ Shutdown 回调的规则：
 
 | 规则 | 说明 |
 |------|------|
-| 全部执行 | `container.shutdown()` 会执行每个在 defineService 中注册的 shutdown 回调；在 shutdown 期间才完成启动并注册的回调，也会在让出一次事件循环后被关掉 |
+| 全部执行 | `container.shutdown()` 会循环执行 shutdown 队列，每次让出事件循环以捕获关闭期间新注册的回调，直到队列清空 |
 | LIFO 顺序 | 后注册的回调先执行。上例中执行顺序：`cache.flush()` → `replica.disconnect()` → `primary.disconnect()` |
 | 支持异步 | 回调可以是 `async` 函数，容器会 `await` 每个回调 |
 | 去重 | 同一个函数引用多次注册只执行一次 |
@@ -294,7 +294,7 @@ process.on('SIGTERM', async () => {
 })
 ```
 
-<Note>shutdown() 会循环处理队列直到清空，并让出一次事件循环（setImmediate），确保在关闭过程中才完成启动并注册的 teardown 也会被执行。</Note>
+<Note>shutdown() 会循环处理队列直到清空，每轮通过 setImmediate 让出事件循环，确保关闭过程中新注册的 teardown 也会被执行。</Note>
 
 ---
 

@@ -193,7 +193,7 @@ close()
 
 ## 文件系统路由
 
-这是 `@hile/http` 最强大的功能之一：从目录自动加载控制器文件，文件路径即路由路径。
+这是 `@hile/http` 最强大的功能之一：从目录自动加载控制器文件，文件路径即路由路径。底层由 `Loader` 类驱动，`Http.load()` 是对 `Loader.from()` 的便捷封装。
 
 ### 定义控制器
 
@@ -380,7 +380,7 @@ defineResponsePlugin(async (ctx, result, next) => {
 
 ### 多个插件
 
-插件按注册顺序串行执行，采用 onion 模型：
+插件按注册顺序串行执行，采用 onion 模型（后注册的在外层）：
 
 ```typescript
 // 插件 1：添加时间戳
@@ -486,8 +486,8 @@ export const httpService = defineService('http', async (shutdown) => {
 | `defineController` | 控制器定义（含 Zod 元数据重载） |
 | `createControllerMetadata` | 构造控制器元数据（method / middlewares / schema） |
 | `defineResponsePlugin` | 响应插件定义函数 |
-| `Loader` | 路由加载器类 |
-| `compileRoutePath` | 路径编译纯函数 |
+| `Loader` | 路由加载器类。`from(directory, options)` 批量加载文件路由；`compile(path, controllers, options)` 编程式注册单条路由 |
+| `compileRoutePath` | 路径编译纯函数（文件路径 → 路由路径） |
 | `toRouterPath` | `[param]` → `:param` 转换函数 |
 
 类型导出包括 **`ControllerContext`**、**`ControllerFunction`** 等与控制器相关的类型。

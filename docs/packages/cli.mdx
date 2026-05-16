@@ -94,6 +94,55 @@ hile start --dev --env-file .env.development
 
 <Note>非 TTY（如重定向到文件或管道）时自动禁用颜色，输出为纯文本便于日志采集。</Note>
 
+### hile registry
+
+启动注册中心（Registry），提供服务注册与发现、心跳检测、配置存储等功能：
+
+```bash
+# 使用默认配置（端口 9876）
+hile registry
+
+# 指定端口和宣告地址
+hile registry --port 8888 --host 10.0.0.1
+```
+
+| 选项 | 说明 | 默认值 |
+|------|------|--------|
+| `--port <port>` | 监听端口 | `9876` |
+| `--host <host>` | 宣告地址（其他服务连接的地址） | 自动获取的 IPv4 |
+
+Registry 启动后自动在 `~/.registry/configs/` 下按 namespace 管理 YAML 配置文件，支持热加载。
+
+### hile registry configs
+
+管理本机 Registry 的 YAML 配置文件，无需手动编辑文件：
+
+```bash
+# 列出所有 namespace
+hile registry configs
+
+# 查看配置（YAML 输出）
+hile registry configs get my-service
+
+# 查看配置（JSON 输出）
+hile registry configs get my-service --json
+
+# 设置配置项（值自动推断类型）
+hile registry configs set my-service port=8080
+hile registry configs set my-service debug=true
+
+# 删除整个 namespace（需确认）
+hile registry configs del my-service
+
+# 删除某个字段（需确认）
+hile registry configs del my-service port
+
+# 跳过确认
+hile registry configs del my-service -y
+```
+
+创建或修改的配置文件会被运行中的 Registry 通过 `fs.watch` 自动感知，无需重启。详细说明见 [@hile/micro](/packages/micro)。
+
 ### hile -v
 
 查看版本号。

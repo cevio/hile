@@ -237,8 +237,9 @@ try {
 
 ```
 @hile/message-modem              ← 抽象基类（传输无关）
-  ├── @hile/message-ipc          ← Node.js IPC 实现（fork 父子进程）
-  └── @hile/message-worker-thread ← Worker Threads 实现（worker_threads）
+  ├── @hile/message-ipc          ← Node.js IPC（fork 父子进程）
+  ├── @hile/message-worker-thread ← Worker Threads（worker_threads）
+  └── @hile/message-ws           ← WebSocket（ws 模块）
 ```
 
 三者均不依赖 `@hile/core` 容器，可以独立使用。

@@ -227,9 +227,10 @@ export abstract class MessageIpc extends MessageModem { ... }
 ## 与其他模块的关系
 
 ```
-@hile/message-modem        ← 抽象基类（传输无关）
-  └── @hile/message-ipc    ← Node.js IPC 抽象实现
-        └── 用户子类        ← 实现 exec
+@hile/message-modem              ← 抽象基类（传输无关）
+  ├── @hile/message-ipc          ← Node.js IPC（fork 父子进程）
+  ├── @hile/message-worker-thread ← Worker Threads（worker_threads）
+  └── @hile/message-ws           ← WebSocket（ws 模块）
 ```
 
 `@hile/message-ipc` 不依赖 `@hile/core` 容器，可以独立于 Hile 体系使用。

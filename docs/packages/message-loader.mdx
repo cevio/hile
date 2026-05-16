@@ -258,12 +258,12 @@ interface MessageRegisterProps<T = any> {
 |------|------|------|
 | `params` | `Record<string, string>` | 路由匹配提取的动态参数 |
 | `data` | `any` | 调用方传入的消息数据 |
-| `url` | `string` | 原始请求路径 |
+| `url` | `string` | 原始请求路径（包含 prefix） |
 | （其它） | `extras` 中的键 | `dispatch` **第三参** 会展开并入同一对象，例如 `client` |
 
-<Note>
-  与 `defineMessage` 通过 `load` 注册的 **文件路由** 并列；`register` 注册的 handler 使用同一套 `dispatch` 语义。
-</Note>
+<Warning>`extras` 展开在 `params`、`data`、`url` 之后，如果用了同名字段会覆盖前者。避免使用 `data`、`params`、`url` 作为 `extras` 的键名。</Warning>
+
+<Note>`load()` 注册的 **文件路由** 与 `register()` 注册的 **编程式路由** 共用同一张 `rou3` 路由表，`dispatch` 语义完全一致。</Note>
 
 ---
 
@@ -277,7 +277,7 @@ interface MessageRegisterProps<T = any> {
 | HTTP 方法 | 支持 GET/POST/PUT 等 | 仅 GET（内部路由键） |
 | 冲突处理 | error/warn/override | 无（后注册覆盖） |
 | 中间件 | 支持 | 不支持 |
-| 依赖容器 | 是（`@hile/core`） | 否（独立使用） |
+| 依赖 HTTP 框架 | 是（`@hile/http`） | 否（独立使用） |
 
 ---
 

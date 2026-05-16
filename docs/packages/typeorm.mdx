@@ -191,6 +191,7 @@ const result = await transaction(ds, async (runner, rollback) => {
 ② 按 LIFO 顺序执行 rollback 回调    ← 补偿外部操作
     │  ├── 撤回通知
     │  └── 退款
+    │  ⚠ 单个回调抛错会中断后续回调
     │
     ▼
 ③ runner.release()                  ← 释放 QueryRunner
@@ -205,7 +206,7 @@ const result = await transaction(ds, async (runner, rollback) => {
 |------|------|
 | LIFO 顺序 | 后注册的先执行 |
 | 支持异步 | 回调可以是 `async` 函数 |
-| 错误隔离 | 如果某个补偿回调抛错，不会阻止其他回调执行 |
+| 错误中断 | 如果某个补偿回调抛错，后续回调不会执行，该错误会替换原始异常 |
 | 只在失败时执行 | 事务成功提交后不会执行补偿回调 |
 
 ---

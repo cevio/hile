@@ -15,12 +15,14 @@ Hile 的命令行工具分两类：**项目脚手架**与**进程启动器**。
 
 **`hile start`** 是已存在项目中的启动入口：扫描 **`*.boot.{ts,js}`**（约定在 **`src/services/`**），对其中导出的服务执行 **`loadService`**，订阅容器事件（开发模式），并注册信号处理以 **优雅关闭**。
 
+**`hile registry`** 启动注册中心，提供服务注册与发现、心跳检测、配置热加载等功能；配套的 **`hile registry configs`** 子命令用于管理 YAML 配置文件。
+
 常用选项：
 
 - **`--dev`** — 开发模式：`NODE_ENV=development`，**tsx** 直接跑 TypeScript，扫描 **`src/`**，打印容器事件。
 - **`--env-file <path>`** — 加载 env；可多次指定。
 
-完整选项表、`auto_load_packages`、目录扫描规则见 [@hile/cli](/packages/cli)。
+完整选项表、`auto_load_packages`、目录扫描规则见 [@hile/cli](/packages/cli)；Registry 使用见 [@hile/micro](/packages/micro)。
 
 ## 阅读路径建议
 
