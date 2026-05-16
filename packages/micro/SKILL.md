@@ -439,7 +439,7 @@ hile registry configs del <namespace> [key]         # 删除（带确认，-y �
 ```
 
 - CLI 直接读写 YAML 文件，运行中的 Registry 通过 `fs.watch` 自动感知
-- 值类型自动推断：`true/false` → boolean, `null` → null, 纯数字 → number, 其余 → string
+- 值类型自动推断：`true/false` → boolean, `null` → null, 纯数字 → number, 以 `{`/`[` 开头 → JSON 解析为 object/array, 其余 → string
 - 实现代码在 `packages/cli/src/configs.ts`，工具函数在 `packages/micro/src/registry.ts`
 
 ---

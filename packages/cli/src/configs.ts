@@ -3,7 +3,14 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync, rmSync
 import { createInterface } from 'node:readline';
 import YAML from 'yaml';
 
-function parseValue(raw: string): any {
+export function parseValue(raw: string): any {
+  // 以 { 或 [ 开头时尝试 JSON 解析
+  const first = raw.charCodeAt(0);
+  if (first === 0x7b /* { */ || first === 0x5b /* [ */) {
+    try {
+      return JSON.parse(raw);
+    } catch { /* fall through — 不是合法 JSON 则当作字符串 */ }
+  }
   if (raw === 'true') return true;
   if (raw === 'false') return false;
   if (raw === 'null') return null;

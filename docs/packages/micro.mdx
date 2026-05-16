@@ -280,6 +280,10 @@ hile registry configs get my-service --json
 hile registry configs set my-service port=8080
 hile registry configs set my-service debug=true
 
+# 设置数组/对象（值以 { 或 [ 开头时自动 JSON 解析）
+hile registry configs set my-service whitelist='["10.0.0.1","10.0.0.2"]'
+hile registry configs set my-service db='{"host":"localhost","port":3306}'
+
 # 删除整个 namespace（需确认）
 hile registry configs del my-service
 

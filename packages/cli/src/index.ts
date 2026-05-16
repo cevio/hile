@@ -120,11 +120,11 @@ const registryCmd = program.command('registry');
 registryCmd
   .allowExcessArguments(true)
   .option('--port <port>', '注册中心端口', '9876')
-  .option('--host <host>', '注册中心主机')
+  .option('--host <host>', '注册中心主机', '127.0.0.1')
   .description('启动注册中心')
   .action(async (options: { port?: number, host?: string }) => {
     const port = options.port ? Number(options.port) : 9876;
-    const registry = new Registry({ advertiseHost: options.host ?? undefined });
+    const registry = new Registry({ advertiseHost: options.host });
     useExit(await registry.listen(port));
     console.log(`+ [registry] started on port ${port}`);
   });
@@ -145,7 +145,7 @@ configs.command('get <namespace>')
   });
 
 configs.command('set <namespace> <keyvalue>')
-  .description('设置配置项，如 hile registry configs set my-svc port=8080')
+  .description('设置配置项。值以 { 或 [ 开头时自动 JSON 解析。示例: set my-svc port=8080 / set my-svc whitelist=\'["10.0.0.1","10.0.0.2"]\'')
   .action(async (namespace, keyvalue) => {
     await setConfig(namespace, keyvalue);
   });
