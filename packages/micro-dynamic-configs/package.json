@@ -1,6 +1,6 @@
 {
   "name": "@hile/micro-dynamic-configs",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
@@ -8,7 +8,11 @@
     "dev": "tsc -b --watch",
     "test": "vitest run"
   },
-  "files": ["dist", "README.md", "SKILL.md"],
+  "files": [
+    "dist",
+    "README.md",
+    "SKILL.md"
+  ],
   "license": "MIT",
   "publishConfig": {
     "access": "public"
@@ -18,9 +22,9 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
-    "@hile/micro": "workspace:^",
     "@hile/ioredis": "workspace:^",
-    "zod": "^4.4.3",
-    "ioredis": "^5.10.0"
+    "@hile/micro": "workspace:^",
+    "ioredis": "^5.10.0",
+    "zod": "^4.4.3"
   }
 }
