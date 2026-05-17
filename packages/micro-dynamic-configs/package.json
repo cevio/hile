@@ -1,0 +1,26 @@
+{
+  "name": "@hile/micro-dynamic-configs",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
+    "dev": "tsc -b --watch",
+    "test": "vitest run"
+  },
+  "files": ["dist", "README.md", "SKILL.md"],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "fix-esm-import-path": "^1.10.3",
+    "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "@hile/micro": "workspace:^",
+    "@hile/ioredis": "workspace:^",
+    "zod": "^4.4.3",
+    "ioredis": "^5.10.0"
+  }
+}

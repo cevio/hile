@@ -21,7 +21,7 @@ export type MicroServerProps = MessageLoaderProps & {
 export class Server extends MessageLoader {
   private wss?: WebSocketServer;
   public port?: number;
-  protected readonly clients = new Map<string, Client>();
+  public readonly clients = new Map<string, Client>();
   private readonly announceHost: string;
   public readonly events = new EventEmitter();
 
@@ -29,7 +29,7 @@ export class Server extends MessageLoader {
     return this.announceHost;
   }
 
-  constructor(private readonly namespace: string, props: MicroServerProps = {}) {
+  constructor(public readonly namespace: string, props: MicroServerProps = {}) {
     const { advertiseHost, ...loaderProps } = props;
     super(loaderProps);
     const resolved = advertiseHost?.trim() || getLocalIPv4();
@@ -79,9 +79,9 @@ export class Server extends MessageLoader {
     ws.on('close', () => {
       if (this.clients.get(key) === client) {
         this.clients.delete(key);
+        client.dispose();
+        this.events.emit('disconnect', client, extras);
       }
-      client.dispose();
-      this.events.emit('disconnect', client, extras);
     });
     this.clients.set(key, client);
     this.events.emit('connect', client, extras);
