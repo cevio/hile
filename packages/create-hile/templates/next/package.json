@@ -21,10 +21,10 @@
     "fix-esm-import-path": "^1.10.3"
   },
   "dependencies": {
-    "@hile/cli": "^1.0.23",
-    "@hile/core": "^1.1.0",
-    "@hile/http": "^1.1.0",
-    "@hile/http-next": "^1.1.1",
+    "@hile/cli": "^1.1.17",
+    "@hile/core": "^1.1.2",
+    "@hile/http": "^1.1.3",
+    "@hile/http-next": "^1.1.12",
     "next": "^16.2.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"

@@ -17,7 +17,9 @@
     "test": "lerna run test",
     "dev": "lerna run dev",
     "publish": "lerna publish",
-    "create": "bash scripts/create-package.sh"
+    "create": "bash scripts/create-package.sh",
+    "update-template-hile-deps": "node scripts/update-template-hile-deps.mjs",
+    "update-template-hile-deps:dry-run": "node scripts/update-template-hile-deps.mjs --dry-run"
   },
   "devDependencies": {
     "lerna": "^8.2.2",
