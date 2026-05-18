@@ -89,7 +89,7 @@ export async function start(options: {
 
   // 开发模式下，使用 tsx 运行
   if (options.dev) {
-    await import('tsx/esm');
+    // await import('tsx/esm');
     process.env.NODE_ENV = 'development';
   } else {
     process.env.NODE_ENV = 'production';
@@ -129,7 +129,9 @@ export async function start(options: {
     const _file = file.startsWith(AUTO_TAG)
       ? file.substring(AUTO_TAG.length)
       : pathToFileURL(file).href;
-    const target: { default: ServiceRegisterProps<any> } = await import(_file);
+    const target = options.dev && _file.endsWith('.ts')
+      ? await (await import('tsx/esm/api')).tsImport(_file, import.meta.url)
+      : await import(_file);
     const fn = target?.default ?? target;
     if (!fn || !isService(fn)) throw new Error(`invalid service file: ${file}`);
     await loadService(fn);
