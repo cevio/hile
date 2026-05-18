@@ -16,6 +16,9 @@ export class Client extends MessageWs {
   public readonly host: string;
   public readonly port: number;
   private _online = true;
+  private lastHeartbeat = Date.now();
+  private heartbeatTimer?: ReturnType<typeof setInterval>;
+  private checkTimer?: ReturnType<typeof setInterval>;
   public readonly events = new EventEmitter();
 
   constructor(props: ClientProps) {
@@ -27,9 +30,35 @@ export class Client extends MessageWs {
     this.port = port;
     this.events.on('connect', () => this._online = true);
     this.events.on('disconnect', () => this._online = false);
+    this.lastHeartbeat = Date.now();
+    this.startHeartbeat();
+  }
+
+  private startHeartbeat() {
+    const interval = Number(process.env.MICRO_HEARTBEAT_INTERVAL) || 10_000;
+    const timeout = Number(process.env.MICRO_HEARTBEAT_TIMEOUT) || 20_000;
+    const checkInterval = Number(process.env.MICRO_HEARTBEAT_CHECK_INTERVAL) || 5_000;
+
+    this.heartbeatTimer = setInterval(() => {
+      try {
+        this._push({ url: '/-/heartbeat', data: {} });
+      } catch {
+        // connection closed — will be cleaned up by checkTimer or close event
+      }
+    }, interval);
+
+    this.checkTimer = setInterval(() => {
+      if (Date.now() - this.lastHeartbeat > timeout) {
+        this.dispose();
+      }
+    }, checkInterval);
   }
 
   protected async exec(data: { url: string; data: any }): Promise<any> {
+    if (data.url === '/-/heartbeat') {
+      this.lastHeartbeat = Date.now();
+      return;
+    }
     if (!this._online) throw new Error('Client is not online');
     return this.server.dispatch(data.url, data.data, {
       client: this,
@@ -47,6 +76,8 @@ export class Client extends MessageWs {
   }
 
   public dispose(): void {
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    if (this.checkTimer) clearInterval(this.checkTimer);
     super.dispose();
     if (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING) {
       this.socket.close();

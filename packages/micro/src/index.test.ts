@@ -339,7 +339,6 @@ describe('@hile/micro heartbeat', () => {
       await new Promise(r => setTimeout(r, 2500));
       const entryKey = `127.0.0.1:${appPort}`;
       expect((registry as any).clients.has(entryKey)).toBe(true);
-      expect((registry as any).heartbeats.has(entryKey)).toBe(true);
     } finally {
       await disposeApp();
       await disposeRegistry();
@@ -347,31 +346,95 @@ describe('@hile/micro heartbeat', () => {
   });
 
   it('disconnects client that stops sending heartbeats', async () => {
-    const registryPort = await getAvailablePort();
-
-    const registry = new Registry(testAdvertise);
-    const disposeRegistry = await registry.listen(registryPort);
-
-    // A raw Server connected to Registry sends no heartbeats
-    const silent = new Server('silent', testAdvertise);
-    silent.setPort(1);
-    // Use type assertion to access protected connect method
-    const silentClient = await (silent as any).connect('127.0.0.1', registryPort);
-    // The Registry-side Client records silent's host:port (from the WS path), not registry's
-    const entryKey = '127.0.0.1:1';
+    // Speed up detection via env vars before creating connections
+    process.env.MICRO_HEARTBEAT_INTERVAL = '30000'; // no hb in test window
+    process.env.MICRO_HEARTBEAT_TIMEOUT = '2000';   // timeout after 2s
+    process.env.MICRO_HEARTBEAT_CHECK_INTERVAL = '500'; // check every 500ms
 
     try {
-      // Set last heartbeat to 25s ago to simulate timeout
-      (registry as any).heartbeats.set(entryKey, Date.now() - 25000);
-      // Wait for polling cycle (1s interval + buffer)
-      await new Promise(r => setTimeout(r, 1500));
-      // Client should be evicted
-      expect((registry as any).clients.has(entryKey)).toBe(false);
+      const registryPort = await getAvailablePort();
+      const registry = new Registry(testAdvertise);
+      const disposeRegistry = await registry.listen(registryPort);
+
+      // A bare Server connected to Registry — its outbound Client
+      // sends heartbeats on a 30s interval, but timeout is 2s.
+      const silent = new Server('silent', testAdvertise);
+      silent.setPort(1);
+      await (silent as any).connect('127.0.0.1', registryPort);
+      const entryKey = '127.0.0.1:1';
+
+      try {
+        // Wait for Registry-side inbound Client to detect timeout
+        await new Promise(r => setTimeout(r, 2500));
+        expect((registry as any).clients.has(entryKey)).toBe(false);
+      } finally {
+        await disposeRegistry();
+      }
     } finally {
-      silentClient.dispose();
-      await disposeRegistry();
+      delete process.env.MICRO_HEARTBEAT_INTERVAL;
+      delete process.env.MICRO_HEARTBEAT_TIMEOUT;
+      delete process.env.MICRO_HEARTBEAT_CHECK_INTERVAL;
     }
   });
+
+  it('detects peer timeout and cleans up on provider side', async () => {
+    process.env.MICRO_HEARTBEAT_INTERVAL = '30000';
+    process.env.MICRO_HEARTBEAT_TIMEOUT = '2000';
+    process.env.MICRO_HEARTBEAT_CHECK_INTERVAL = '500';
+
+    try {
+      const registryPort = await getAvailablePort();
+      const providerPort = await getAvailablePort();
+      const consumerPort = await getAvailablePort();
+
+      const registry = new Registry(testAdvertise);
+      const provider = new Application({
+        namespace: 'peer-svc',
+        registry: { host: '127.0.0.1', port: registryPort },
+        ...testAdvertise,
+      });
+      const consumer = new Application({
+        namespace: 'consumer',
+        registry: { host: '127.0.0.1', port: registryPort },
+        ...testAdvertise,
+      });
+
+      const disposeRegistry = await registry.listen(registryPort);
+      const disposeProvider = await provider.listen(providerPort);
+      const disposeConsumer = await consumer.listen(consumerPort);
+
+      const unregister = provider.register('/echo', async ({ data }: any) => {
+        return { value: data.value };
+      });
+
+      try {
+        // Establish consumer → provider connection
+        const client = await consumer.get('peer-svc');
+        const { response } = client.request('/echo', { value: 'ok' });
+        await expect(response()).resolves.toEqual({ value: 'ok' });
+
+        // Verify provider has the consumer's Client
+        const consumerClientKey = `127.0.0.1:${consumerPort}`;
+        expect((provider as any).clients.has(consumerClientKey)).toBe(true);
+
+        // Wait for timeout (consumer's Client sends at 30s, timeout 2s)
+        // Extra buffer to ensure the >2000ms strict-greater check triggers
+        await new Promise(r => setTimeout(r, 3000));
+
+        // Provider should have disposed the consumer's Client
+        expect((provider as any).clients.has(consumerClientKey)).toBe(false);
+      } finally {
+        unregister();
+        await disposeConsumer();
+        await disposeProvider();
+        await disposeRegistry();
+      }
+    } finally {
+      delete process.env.MICRO_HEARTBEAT_INTERVAL;
+      delete process.env.MICRO_HEARTBEAT_TIMEOUT;
+      delete process.env.MICRO_HEARTBEAT_CHECK_INTERVAL;
+    }
+  }, 10000);
 });
 
 describe('@hile/micro circuit breaker', () => {

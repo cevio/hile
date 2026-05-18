@@ -91,8 +91,6 @@ export class Application extends Server {
     status: RegistryLookupStatus;
     handlers: Set<[(value: Client) => void, (reason?: any) => void]>
   }>();
-  private static readonly HEARTBEAT_INTERVAL = 10000;
-  private heartbeatTimer?: ReturnType<typeof setInterval>;
   private static readonly CB_COOLDOWN_MS = 30_000;
   private readonly circuitBreakers = new Map<string, Map<string, number>>();
 
@@ -116,7 +114,6 @@ export class Application extends Server {
     const callback = await super.listen(port);
     try {
       await this.reconnectToRegistry();
-      this.startHeartbeat();
     } catch (err) {
       try {
         await callback();
@@ -127,7 +124,6 @@ export class Application extends Server {
     }
     return async () => {
       this.stopped = true;
-      this.stopHeartbeat();
       if (this.reconnectTimeout) {
         clearTimeout(this.reconnectTimeout);
         this.reconnectTimeout = undefined;
@@ -174,25 +170,6 @@ export class Application extends Server {
     });
 
     return this.registryReconnectPromise;
-  }
-
-  private startHeartbeat() {
-    this.stopHeartbeat();
-    this.heartbeatTimer = setInterval(() => {
-      if (!this.registry) return;
-      try {
-        this.registry.push('/-/heartbeat', {});
-      } catch {
-        // registry connection may have dropped between null-check and push
-      }
-    }, Application.HEARTBEAT_INTERVAL);
-  }
-
-  private stopHeartbeat() {
-    if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = undefined;
-    }
   }
 
   private recordSuccess(ns: string, host: string, port: number) {
