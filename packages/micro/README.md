@@ -1,6 +1,6 @@
 # @hile/micro
 
-基于 `@hile/message-loader` 与 `@hile/message-ws` 的轻量级 **WebSocket 微服务框架**。提供服务注册与发现、心跳保活、熔断、请求超时、自动重试、调用链路追踪等功能。
+基于 `@hile/message-loader` 与 `@hile/message-ws` 的轻量级 **WebSocket 微服务框架**。提供服务注册与发现、心跳保活、熔断、请求超时、自动重试等功能。
 
 ## 架构分层
 
@@ -16,7 +16,7 @@ MessageLoader (路由) + MessageWs (请求/响应传输)
 | **Server** | WebSocket 监听、连接管理、消息路由。不关心注册中心 |
 | **Client** | 远端 Server 的代理，提供 `request()` / `push()` 通信接口 |
 | **Registry** | 注册中心。维护 namespace → 实例列表，心跳检测剔除死实例 |
-| **Application** | 应用服务。集成注册发现、熔断、重试、追踪等功能 |
+| **Application** | 应用服务。集成注册发现、熔断、重试等功能 |
 
 一个 `Application` 实例 **同时** 扮演 provider（`register` 暴露接口）和 consumer（`get` / `call` 调用其它服务）。
 
@@ -175,28 +175,6 @@ await app.call('svc', '/api', data, 5000, 0); // 超时 5s, 不重试
 ```
 
 重试策略：失败 → `recordFailure`（peer 被排除）→ 递归 `call(retries-1)` → `getActiveExcludes` 排除已失败的 peer → Registry `/‑/find` 返回其他 peer。
-
-### Correlation ID 链路追踪
-
-`call()` 自动为每次调用注入唯一 `_correlationId`：
-
-```typescript
-provider.register('/api', async ({ data }) => {
-  console.log(data._correlationId); // 自动注入的 UUID
-});
-```
-
-行为规则：
-
-| 入参 data | 结果 |
-|-----------|------|
-| `null / undefined` | 包装为 `{ _correlationId, data: null }` |
-| 字符串 / 数字 | 包装为 `{ _correlationId, data: '原始值' }` |
-| 数组 | 包装为 `{ _correlationId, data: [原始数组] }` |
-| `{ value: 1 }` (无 `_correlationId`) | 扩展为 `{ value: 1, _correlationId: 'uuid' }` |
-| `{ _correlationId: 'trace-1' }` | 保留已有 ID，**不覆盖** |
-
-> **注意：** 原 data 对象不会被修改（使用浅拷贝 `{ ...data, _correlationId }`）。
 
 ### 健康检查
 
@@ -380,7 +358,7 @@ class Application extends Server {
   // 获取 namespace 对应的远端 Client（缓存 + 自动发现）
   get(namespace: string, exclude?: string[]): Promise<Client>;
 
-  // 一站式调用：get + request + response + 熔断 + 重试 + 追踪
+  // 一站式调用：get + request + response + 熔断 + 重试
   call<T = any>(
     namespace: string,
     url: string,

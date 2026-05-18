@@ -15,12 +15,29 @@ import { Application } from './application';
 const testAdvertise = { advertiseHost: '127.0.0.1' as const };
 
 async function getAvailablePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve) => server.listen(0, resolve));
-  const address = server.address();
-  await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
-  if (!address || typeof address === 'string') throw new Error('Unable to allocate test port');
-  return address.port;
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const server = createServer();
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    if (!address || typeof address === 'string') throw new Error('Unable to allocate test port');
+    const port = address.port;
+
+    // 验证端口确实可用：快速 bind 一次确认没有被残留的 TIME_WAIT 占用
+    const verify = createServer();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        verify.on('error', reject);
+        verify.listen(port, resolve);
+      });
+      await new Promise<void>((resolve, reject) => verify.close((err) => err ? reject(err) : resolve()));
+      return port;
+    } catch {
+      verify.close();
+      continue;
+    }
+  }
+  throw new Error('Unable to allocate test port after 20 attempts');
 }
 
 describe('@hile/micro config file loading', () => {

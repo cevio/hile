@@ -189,6 +189,6 @@ export class MessageLoader {
 
 function formatRouterWithIgnoreDuplicateSlashes(path: string) {
   let id = path.replace(/\\/g, '/');
-  id = id.replace(/\([^\)]+\)/g, '').replace('//', '/');
+  id = id.replace(/\([^\)]+\)/g, '').replace(/\/{2,}/g, '/');
   return id;
 }

@@ -9,14 +9,32 @@ import { Server } from './server';
 const testAdvertise = { advertiseHost: '127.0.0.1' as const };
 
 async function getAvailablePort(): Promise<number> {
-  const server = createServer();
-  await new Promise<void>((resolve) => server.listen(0, resolve));
-  const address = server.address();
-  await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
-  if (!address || typeof address === 'string') {
-    throw new Error('Unable to allocate test port');
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const server = createServer();
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const address = server.address();
+    await new Promise<void>((resolve, reject) => server.close((err) => err ? reject(err) : resolve()));
+    if (!address || typeof address === 'string') {
+      throw new Error('Unable to allocate test port');
+    }
+    const port = address.port;
+
+    // 验证端口确实可用：快速 bind 一次确认没有被残留的 TIME_WAIT 占用
+    const verify = createServer();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        verify.on('error', reject);
+        verify.listen(port, resolve);
+      });
+      await new Promise<void>((resolve, reject) => verify.close((err) => err ? reject(err) : resolve()));
+      return port;
+    } catch {
+      // 端口不可用，换一个重试
+      verify.close();
+      continue;
+    }
   }
-  return address.port;
+  throw new Error('Unable to allocate test port after 20 attempts');
 }
 
 async function startHangingServer() {
@@ -572,80 +590,6 @@ describe('@hile/micro circuit breaker', () => {
       unregisterA();
       await disposeConsumer();
       await disposeA();
-      await disposeRegistry();
-    }
-  });
-});
-
-describe('@hile/micro correlation ID', () => {
-  it('injects _correlationId into call() data', async () => {
-    const registryPort = await getAvailablePort();
-    const providerPort = await getAvailablePort();
-    const consumerPort = await getAvailablePort();
-
-    const registry = new Registry(testAdvertise);
-    const provider = new Application({
-      namespace: 'svc',
-      registry: { host: '127.0.0.1', port: registryPort },
-      ...testAdvertise,
-    });
-    const consumer = new Application({
-      namespace: 'consumer',
-      registry: { host: '127.0.0.1', port: registryPort },
-      ...testAdvertise,
-    });
-
-    const disposeRegistry = await registry.listen(registryPort);
-    const disposeProvider = await provider.listen(providerPort);
-    const disposeConsumer = await consumer.listen(consumerPort);
-    const unregister = provider.register<{ _correlationId: string }>('/echo', async ({ data }) => {
-      return { id: data._correlationId };
-    });
-
-    try {
-      const result = await consumer.call<{ id: string }>('svc', '/echo', {});
-      expect(result.id).toBeDefined();
-      expect(typeof result.id).toBe('string');
-      expect(result.id.length).toBeGreaterThan(0);
-    } finally {
-      unregister();
-      await disposeConsumer();
-      await disposeProvider();
-      await disposeRegistry();
-    }
-  });
-
-  it('preserves existing _correlationId', async () => {
-    const registryPort = await getAvailablePort();
-    const providerPort = await getAvailablePort();
-    const consumerPort = await getAvailablePort();
-
-    const registry = new Registry(testAdvertise);
-    const provider = new Application({
-      namespace: 'svc',
-      registry: { host: '127.0.0.1', port: registryPort },
-      ...testAdvertise,
-    });
-    const consumer = new Application({
-      namespace: 'consumer',
-      registry: { host: '127.0.0.1', port: registryPort },
-      ...testAdvertise,
-    });
-
-    const disposeRegistry = await registry.listen(registryPort);
-    const disposeProvider = await provider.listen(providerPort);
-    const disposeConsumer = await consumer.listen(consumerPort);
-    const unregister = provider.register<{ _correlationId: string }>('/echo', async ({ data }) => {
-      return { id: data._correlationId };
-    });
-
-    try {
-      const result = await consumer.call<{ id: string }>('svc', '/echo', { _correlationId: 'my-trace-id' });
-      expect(result.id).toBe('my-trace-id');
-    } finally {
-      unregister();
-      await disposeConsumer();
-      await disposeProvider();
       await disposeRegistry();
     }
   });

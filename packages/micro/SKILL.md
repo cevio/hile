@@ -30,7 +30,7 @@ description: Code generation and contribution rules for @hile/micro. Use when ed
 | `Server` | `server.ts` | WebSocketServer 生命周期, 出入站连接, Client Map | 不感知 Registry |
 | `Client` | `client.ts` | 远端 Server 的 WebSocket 会话代理 | `dispose()` 必须关闭底层 socket |
 | `Registry` | `registry.ts` | namespace → Set\<host:port\>, 心跳检测, /-/find 随机返回, 环境变量管理 | 自动创建 `~/.registry/` 工作目录 |
-| `Application` | `application.ts` | 注册发现 + 熔断 + 重试 + 追踪 + 心跳 + 远程环境变量读取 | `listen()` 后自动连 Registry |
+| `Application` | `application.ts` | 注册发现 + 熔断 + 重试 + 心跳 + 远程环境变量读取 | `listen()` 后自动连 Registry |
 
 ### 应用模型
 
@@ -142,7 +142,7 @@ export class Application extends Server {
   listen(port: number): Promise<() => Promise<void>>; // 自动连 Registry + 启心跳
 
   get(namespace: string, exclude?: string[]): Promise<Client>;
-  // call() = get + request + response + correlationId + 熔断 + 重试 + 超时
+  // call() = get + request + response + 熔断 + 重试 + 超时
   call<T = any>(
     namespace: string,
     url: string,
@@ -226,27 +226,7 @@ peer 首次失败
 
 **冷卻期:** `CB_COOLDOWN_MS = 30000` (30 秒)。到期后 `getActiveExcludes` 自动清除旧条目。
 
-### 3.3 Correlation ID
-
-`call()` 自动处理 `_correlationId`：
-
-```typescript
-// 非对象/假值/数组 → 包装
-!data || typeof data !== 'object' || Array.isArray(data)
-  → data = { _correlationId: randomUUID(), data }
-
-// 对象无 _correlationId → 浅拷贝注入
-else if (!data._correlationId)
-  → data = { ...data, _correlationId: randomUUID() }
-
-// 对象已有 _correlationId → 保留（透传）
-```
-
-- 使用 `import { randomUUID } from 'node:crypto'`（Node >= 14.17）
-- 永远不修改原始 data 对象（浅拷贝 `{ ...data }`）
-- retry 递归时 data 已包含 `_correlationId`，自动透传
-
-### 3.4 请求超时
+### 3.3 请求超时
 
 **配置链：**
 
@@ -547,8 +527,6 @@ pnpm --filter @hile/micro test     # 必须全部通过
 | call() 基本调用 | `circuit breaker > call() returns data on success` |
 | 熔断排除 | `circuit breaker > excludes a failing peer and selects a different one` |
 | 全排除重置 | `circuit breaker > resets breaker when all peers are excluded` |
-| Correlation ID 注入 | `correlation ID > injects _correlationId into call() data` |
-| Correlation ID 透传 | `correlation ID > preserves existing _correlationId` |
 | 健康检查 | `health endpoint > /-/health returns status and registry state` |
 | 超时 reject | `request timeout > rejects when request exceeds the timeout` |
 | 超时充足则成功 | `request timeout > succeeds when timeout is long enough` |
@@ -585,9 +563,8 @@ pnpm --filter @hile/micro test     # 必须全部通过
 3. **不要在 `Client.dispose()` 中删除 `socket.close()`**（会导致 WebSocketServer.close 长时间等待）
 4. **不要假设 `host:port` 可无损表达 IPv6** — 使用 `[IPv6]:port` 格式，`parseAddressKey` 按最后一个 `:` 切分
 5. **不要传错 Registry 端口** — 丢失 Registry 连接时依赖 `reconnectToRegistry`，不要在外部缓存 registry Client
-6. **不要在 call() 中修改原始 data 对象** — 必须使用浅拷贝 `{ ...data, _correlationId }`
-7. **不要在其他文件中重复 Registry 的 helper 函数** — `selectRandomRegistryAddress`、`parseAddressKey`、`getRegistryConfigsDir`、`namespaceToConfigFile`、`parseConfigFilename` 都在 `registry.ts` 中导出复用
-8. **不要给 call() 增加非可选参数** — `timeout` 和 `retries` 都在尾部且保持可选，不影响现有调用
+6. **不要在其他文件中重复 Registry 的 helper 函数** — `selectRandomRegistryAddress`、`parseAddressKey`、`getRegistryConfigsDir`、`namespaceToConfigFile`、`parseConfigFilename` 都在 `registry.ts` 中导出复用
+7. **不要给 call() 增加非可选参数** — `timeout` 和 `retries` 都在尾部且保持可选，不影响现有调用
 
 ---
 
@@ -617,7 +594,7 @@ pnpm --filter @hile/micro test     # 必须全部通过
 |------|------|
 | `packages/micro/src/registry.ts` | 注册中心（含配置管理、路径工具函数） |
 | `packages/micro/src/application.ts` | 应用服务（含 getEnvVariables） |
-| `packages/micro/src/index.test.ts` | 主测试文件（28 个用例） |
+| `packages/micro/src/index.test.ts` | 主测试文件（27 个用例） |
 | `packages/micro/src/env-config.test.ts` | 配置管理测试文件（13 个用例） |
 | `packages/cli/src/index.ts` | CLI 入口（含 registry configs 子命令组） |
 | `packages/cli/src/configs.ts` | CLI 配置管理 handler（list/get/set/del） |

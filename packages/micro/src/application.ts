@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { Client } from './client';
 import { Server, type MicroServerProps } from './server';
 import { RegistryAddress } from './registry';
@@ -284,13 +283,6 @@ export class Application extends Server {
   }
 
   public async call<T = any>(namespace: string, url: string, data: any, timeout?: number, retries = 1): Promise<T> {
-    // Inject or preserve correlation ID (no mutation of original data)
-    if (!data || typeof data !== 'object' || Array.isArray(data)) {
-      data = { _correlationId: randomUUID(), data };
-    } else if (!data._correlationId) {
-      data = { ...data, _correlationId: randomUUID() };
-    }
-
     const exclude = this.getActiveExcludes(namespace);
     let client: Client;
 

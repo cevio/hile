@@ -109,8 +109,14 @@ export class Registry extends Server {
     }
     return watch(configFile, (_, filename) => {
       if (!filename?.endsWith(this.configFileSuffix)) return;
+      const fullPath = resolve(configFile, filename);
+      // 文件被删除（或重命名）：移除对应配置
+      if (!existsSync(fullPath)) {
+        this.configs.delete(parseConfigFilename(filename)!);
+        return;
+      }
       try {
-        const config = YAML.parse(readFileSync(resolve(configFile, filename), 'utf8'));
+        const config = YAML.parse(readFileSync(fullPath, 'utf8'));
         if (typeof config !== 'object' || config === null) return;
         this.configs.set(parseConfigFilename(filename)!, config);
       } catch { /* vim 替换文件时的中间态读错误，忽略 */ }
