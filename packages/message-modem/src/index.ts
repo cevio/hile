@@ -1,4 +1,5 @@
 import { AbortException, Exception, TimeoutException } from "./exception";
+import { Readable } from 'node:stream';
 export * from './exception';
 export enum MESSAGE_MODEM_TYPE {
   REQUEST,
@@ -10,6 +11,7 @@ export interface MessageTransferFormat<T = any> {
   id: number,
   mode: MESSAGE_MODEM_TYPE,
   twoway: boolean,
+  // stream?: boolean,
   data?: T
 }
 
@@ -19,21 +21,29 @@ export interface MessageReturnFormat<T = any> {
   message: string,
 }
 
+// export interface MessageStreamChunk<T = any> {
+//   seq: number,
+//   payload: T,
+//   final: boolean,
+// }
+
 export abstract class MessageModem {
   private id = 0;
 
-  private readonly aborts = new Map<number, (reason?: any) => void>();
+  private readonly aborts = new Map<number, AbortController>();
   private readonly stacks = new Map<number, {
     resolve: (value?: any) => void,
     reject: (reason?: any) => void
   }>();
 
+  // private readonly streams = new Map<number, Readable>();
+
   protected _dispose() {
     for (const { reject } of this.stacks.values()) {
       reject(new AbortException());
     }
-    for (const reject of this.aborts.values()) {
-      reject(new AbortException());
+    for (const controller of this.aborts.values()) {
+      controller.abort();
     }
     this.aborts.clear();
     this.stacks.clear();
@@ -63,7 +73,7 @@ export abstract class MessageModem {
    * @param data - 消息数据
    * @returns 
    */
-  protected abstract exec(data: any): Promise<any>;
+  protected abstract exec(data: any, signal?: AbortSignal): Promise<any>;
 
   /**
    * 创建发送消息数据
@@ -71,13 +81,14 @@ export abstract class MessageModem {
    * @param data - 消息数据
    * @returns 消息数据
    */
-  private createPostData<T = any>(mode: MESSAGE_MODEM_TYPE, data?: T, twoway = true) {
+  private createPostData<T = any>(mode: MESSAGE_MODEM_TYPE, data?: T, twoway = true, stream = false) {
     const id = this.createIncrementId();
     const state: MessageTransferFormat<T> = {
-      id, twoway, data, mode,
+      id, twoway, data, mode, /*stream,*/
     }
     if (mode === MESSAGE_MODEM_TYPE.ABORT) {
       state.twoway = false;
+      // state.stream = false;
     }
     return state;
   }
@@ -86,24 +97,45 @@ export abstract class MessageModem {
    * 发送消息
    * @param data - 消息数据
    * @param timeout - 超时时间
+   * @param signal - 中止信号
    * @returns 消息响应
    */
-  protected _send<T = any>(data: T, timeout = 30000): {
-    abort: () => void;
-    response: <U = any>() => Promise<U>;
-  } {
-    return this._write(data, timeout, true)!;
+  protected _send<T = any>(data: any, options?: {
+    timeout: number,
+    signal: AbortSignal,
+  }) {
+    return this._write<T>(data, {
+      timeout: options?.timeout ?? 30000,
+      twoway: true,
+      signal: options?.signal,
+    })!;
   }
 
   /**
    * 推送消息
    * @param data - 消息数据
    * @param timeout - 超时时间
+   * @param signal - 中止信号
    * @returns 消息响应
    */
-  protected _push<T = any>(data: T, timeout = 30000): void {
-    this._write(data, timeout, false);
+  protected _push<T = any>(data: T, options?: {
+    timeout: number,
+    signal: AbortSignal,
+  }): void {
+    this._write(data, {
+      timeout: options?.timeout ?? 30000,
+      twoway: false,
+      signal: options?.signal,
+    });
   }
+
+  // protected _stream<T = any>(data: T) {
+  //   const state = this.createPostData(MESSAGE_MODEM_TYPE.REQUEST, data, true, true);
+  //   const stream = new Readable();
+  //   this.streams.set(state.id, stream);
+  //   this.post(state);
+  //   return stream;
+  // }
 
   /**
    * 写入消息
@@ -111,7 +143,15 @@ export abstract class MessageModem {
    * @param timeout - 超时时间
    * @returns 消息响应
    */
-  private _write<T = any>(data: T, timeout = 30000, twoway = false) {
+  private _write<U = any>(data: any, options?: {
+    timeout: number,
+    twoway: boolean,
+    signal?: AbortSignal,
+  }) {
+    const timeout = options?.timeout ?? 30000;
+    const twoway = !!options?.twoway;
+    const signal = options?.signal;
+
     // 创建请求消息数据
     const state = this.createPostData(MESSAGE_MODEM_TYPE.REQUEST, data, twoway);
     // 发送消息
@@ -120,70 +160,51 @@ export abstract class MessageModem {
     // 如果消息是单向的，则直接返回
     if (!twoway) return;
 
-    const controller = new AbortController();
-    return {
-      // 终止请求
-      abort: () => controller.abort(),
-      // 等待响应
-      response: <U = any>() => new Promise<U>((resolve, reject) => {
-        // 清理 stacks
-        const clear = () => {
-          if (this.stacks.has(state.id)) {
-            this.stacks.delete(state.id);
-          }
+    return new Promise<U>((resolve, reject) => {
+      const clear = () => {
+        if (this.stacks.has(state.id)) {
+          this.stacks.delete(state.id);
         }
+      }
 
-        const clean = () => {
-          clearTimeout(timer);
-          controller.signal.removeEventListener('abort', aborthandler);
+      const clean = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', onAbort);
+        clear();
+      }
+
+      const onAbort = () => {
+        clearTimeout(timer);
+        try {
+          this.post(this.createPostData(MESSAGE_MODEM_TYPE.ABORT, state.id));
+        } catch {
+          /* 例如 WebSocket 已关闭时 send 可能抛错 */
+        } finally {
+          signal?.removeEventListener('abort', onAbort);
           clear();
+          reject(new AbortException());
         }
+      }
+      // 成功处理
+      const _resolve = (data: U) => {
+        clean();
+        resolve(data);
+      }
 
-        // Abort 处理函数（post 失败时仍须 reject，否则调用方会一直挂起）
-        const aborthandler = () => {
-          clearTimeout(timer);
-          try {
-            this.post(this.createPostData(MESSAGE_MODEM_TYPE.ABORT, state.id));
-          } catch {
-            /* 例如 WebSocket 已关闭时 send 可能抛错 */
-          } finally {
-            controller.signal.removeEventListener('abort', aborthandler);
-            clear();
-            reject(new AbortException());
-          }
-        }
+      // 失败处理
+      const _reject = (e: any) => {
+        clean();
+        reject(e);
+      }
 
-        // 成功处理
-        const _resolve = (data: U) => {
-          clean();
-          resolve(data);
-        }
+      const timer = setTimeout(() => _reject(new TimeoutException()), timeout).unref();
+      signal?.addEventListener('abort', onAbort);
 
-        // 失败处理
-        const _reject = (e: any) => {
-          clean();
-          reject(e);
-        }
-
-        // 超时处理
-        const timer = setTimeout(() => {
-          if (!controller.signal.aborted) {
-            controller.abort();
-          } else {
-            _reject(new TimeoutException());
-          }
-        }, timeout).unref();
-
-        // 添加 Abort 处理函数
-        controller.signal.addEventListener('abort', aborthandler);
-
-        // 添加栈
-        this.stacks.set(state.id, {
-          resolve: _resolve,
-          reject: _reject,
-        });
-      })
-    }
+      this.stacks.set(state.id, {
+        resolve: _resolve,
+        reject: _reject,
+      });
+    })
   }
 
   /**
@@ -191,29 +212,16 @@ export abstract class MessageModem {
    * @param msg - 消息数据
    */
   private onRequest<T = any>(msg: MessageTransferFormat<T>) {
-    // 执行消息
-    // 使用 Promise.race 处理消息执行和 Abort 处理
-    Promise.race([
-      this.exec(msg.data).catch(e => ({ e })),
-      new Promise((_, reject) => this.aborts.set(msg.id, reject)),
-    ]).then(value => {
-      // 如果消息执行失败
-      if (value?.e) {
-        // 如果消息是双向的，则发送响应消息
-        if (msg.twoway) {
-          this.post({
-            id: msg.id,
-            mode: MESSAGE_MODEM_TYPE.RESPONSE,
-            twoway: false,
-            data: {
-              status: value.e instanceof Exception ? value.e.status : 500,
-              data: null,
-              message: value.e.message,
-            }
-          })
-        }
-      } else {
-        // 如果消息是双向的，则发送响应消息
+    const controller = new AbortController();
+    this.aborts.set(msg.id, controller);
+    controller.signal.addEventListener('abort', () => {
+      if (this.aborts.has(msg.id)) {
+        this.aborts.delete(msg.id);
+      }
+    });
+    this.exec(msg.data, controller.signal)
+      .then(value => {
+        if (controller.signal.aborted) return;
         if (msg.twoway) {
           this.post({
             id: msg.id,
@@ -225,34 +233,28 @@ export abstract class MessageModem {
             }
           })
         }
-      }
-    }).catch(e => {
-      if (e instanceof AbortException) return;
-      // 如果消息是双向的，则发送响应消息
-      if (msg.twoway) {
-        // 发送响应消息
-        const code = e instanceof Exception ? e.status : 500;
-        this.post({
-          id: msg.id,
-          mode: MESSAGE_MODEM_TYPE.RESPONSE,
-          twoway: false,
-          data: {
-            status: code,
-            data: null,
-            message: e.message,
-          }
-        })
-      }
-    }).finally(() => {
-      // 删除 Abort 处理函数
-      if (this.aborts.has(msg.id)) {
-        this.aborts.delete(msg.id);
-      }
-      // 清理栈
-      if (this.stacks.has(msg.id)) {
-        this.stacks.delete(msg.id);
-      }
-    });
+      })
+      .catch(e => {
+        if (controller.signal.aborted) return;
+        if (msg.twoway) {
+          this.post({
+            id: msg.id,
+            mode: MESSAGE_MODEM_TYPE.RESPONSE,
+            twoway: false,
+            data: {
+              status: e instanceof Exception ? e.status : 500,
+              data: null,
+              message: e.message,
+            }
+          })
+        }
+      })
+      .finally(() => {
+        // 删除 Abort 处理函数
+        if (this.aborts.has(msg.id)) {
+          this.aborts.delete(msg.id);
+        }
+      });
   }
 
   /**
@@ -291,12 +293,14 @@ export abstract class MessageModem {
         break;
       // 处理终止消息
       case MESSAGE_MODEM_TYPE.ABORT:
-        const id: number = msg.data as number;
+        const id: number = msg.data;
         if (this.aborts.has(id)) {
-          const reject = this.aborts.get(id);
-          reject!(new AbortException());
-          break;
+          const controller = this.aborts.get(id)!;
+          if (!controller.signal.aborted) {
+            controller.abort();
+          }
         }
+        break;
     }
   }
 }
