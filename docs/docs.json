@@ -72,7 +72,8 @@
               "packages/message-worker-thread",
               "packages/message-ws",
               "packages/message-loader",
-              "packages/micro"
+              "packages/micro",
+              "packages/micro-dynamic-configs"
             ]
           },
           {
