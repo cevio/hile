@@ -20,12 +20,12 @@ pnpm add -g @hile/cli
 
 `@hile/cli` 是 Hile 应用的启动入口。运行 `hile start` 时，它会：
 
-1. 加载 `.env` 文件（如果指定了 `--env-file`）
+1. 加载指定的 `--env-file`（先加载的优先，已存在的 key 不被覆盖）
 2. 设置 `NODE_ENV`（`--dev` 时为 `development`，否则为 `production`）
-3. 在开发模式下加载 `tsx`（直接运行 TypeScript，无需预编译）
-4. 在开发模式下订阅容器事件并输出日志
+3. 开发模式下使用 tsx 直接运行 TypeScript，无需预编译
+4. 开发模式下订阅容器事件并输出日志
 5. 读取 `package.json` 的 `hile.auto_load_packages`，加载指定模块
-6. 扫描运行时目录下的 `*.boot.{ts,js}` 文件
+6. 扫描 `src/`（开发）或 `dist/`（生产）目录下的 `*.boot.{ts,js}` 文件
 7. 加载所有找到的服务（`await loadService()`）
 8. 注册进程退出钩子，确保优雅关闭
 
@@ -43,7 +43,7 @@ hile start [name] [options]
 |------|------|------|--------|
 | `--dev` | `-d` | 开发模式 | `false` |
 | `--silent` | `-s` | 静默模式，关闭开发模式下的容器事件日志 | `false` |
-| `--env-file <path>` | `-e` | 加载 env 文件（可多次指定） | — |
+| `--env-file <path>` | `-e` | 加载 env 文件（可多次指定，先加载的不被后覆盖） | — |
 
 `name` 参数可选，指定要启动的包名或路径。不传时使用当前目录。
 
@@ -82,8 +82,6 @@ hile start --dev --env-file .env.development
 [hile] service(database) ready (1203ms)
 ```
 
-（实际标签为 `service(<key>)`，`<key>` 来自各 boot / 集成包注册的 `ServiceKey`，开发模式下经 `formatServiceKey` 格式化。）
-
 按 Ctrl+C 关闭时：
 
 ```
@@ -99,7 +97,7 @@ hile start --dev --env-file .env.development
 
 ### hile registry
 
-启动注册中心（Registry），提供服务注册与发现、心跳检测、配置存储等功能：
+启动注册中心（Registry），提供服务注册与发现：
 
 ```bash
 # 使用默认配置（端口 9876）
@@ -112,9 +110,7 @@ hile registry --port 8888 --host 10.0.0.1
 | 选项 | 说明 | 默认值 |
 |------|------|--------|
 | `--port <port>` | 监听端口 | `9876` |
-| `--host <host>` | 宣告地址（其他服务连接的地址） | 自动获取的 IPv4 |
-
-Registry 启动后自动在 `~/.registry/configs/` 下按 namespace 管理 YAML 配置文件，支持热加载。
+| `--host <host>` | 宣告地址（其他服务连接的地址） | `127.0.0.1` |
 
 ### hile registry configs
 
@@ -136,7 +132,6 @@ hile registry configs set my-service debug=true
 
 # 设置数组/对象（值以 { 或 [ 开头时自动 JSON 解析）
 hile registry configs set my-service whitelist='["10.0.0.1","10.0.0.2"]'
-hile registry configs set my-service db='{"host":"localhost","port":3306}'
 
 # 删除整个 namespace（需确认）
 hile registry configs del my-service
@@ -148,7 +143,7 @@ hile registry configs del my-service port
 hile registry configs del my-service -y
 ```
 
-创建或修改的配置文件会被运行中的 Registry 通过 `fs.watch` 自动感知，无需重启。详细说明见 [@hile/micro](/packages/micro)。
+配置文件存储在 `~/.registry/configs/<namespace>.config.yaml`。
 
 ### hile -v
 
@@ -164,7 +159,7 @@ hile registry configs del my-service -y
 
 Boot 文件是 Hile 应用的服务入口点。CLI 会扫描运行时目录下的所有 `*.boot.{ts,js}` 文件并加载。
 
-**约定**：**`src/services/`** 下 **`*.boot.*`** 与 **`*.service.*`** **同属 service 模块**（均 **`defineService`**）：**`.boot`** 由 CLI **自启动**；**`.service`** 由 **`loadService`** **依赖加载**。二者**必须**放在 **`src/services/`**，**禁止**放在 **`src/`** 根目录。
+**约定**：建议将 `*.boot.*` 与 `*.service.*` 文件放在 **`src/services/`** 下。`.boot` 由 CLI **自启动**；`.service` 由 **`loadService`** **依赖加载**。
 
 ### 编写 Boot 文件
 
@@ -175,11 +170,6 @@ import { Http } from '@hile/http'
 
 export default defineService('http', async (shutdown) => {
   const http = new Http({ port: 3000 })
-
-  await http.load('./src/controllers', {
-    suffix: 'controller',
-    prefix: '/api',
-  })
 
   const close = await http.listen()
   shutdown(close)
@@ -192,10 +182,9 @@ export default defineService('http', async (shutdown) => {
 
 | 规则 | 说明 |
 |------|------|
-| **`*.boot.*`** | **自启动** service 模块；必须以 **`.boot.ts`** 或 **`.boot.js`** 结尾 |
-| **`*.service.*`** | **依赖加载** service 模块；必须以 **`.service.ts`** 或 **`.service.js`** 结尾 |
-| 导出 | Boot 必须有 `export default`（或 `module.exports`） |
-| 导出类型 | 必须是 `defineService(key, fn)` 的返回值 |
+| **`*.boot.*`** | **自启动** service 模块；必须以 `.boot.ts` 或 `.boot.js` 结尾 |
+| **`*.service.*`** | **依赖加载** service 模块；必须以 `.service.ts` 或 `.service.js` 结尾 |
+| 导出 | Boot 必须有 `export default`（或 `module.exports`），必须是 `defineService(key, fn)` 的返回值 |
 | 校验 | CLI 使用 `isService()` 校验，不合法则抛出 `invalid service file` |
 
 ### 多个 Boot 文件
@@ -204,6 +193,8 @@ export default defineService('http', async (shutdown) => {
 
 ```
 src/
+├── controllers/
+├── models/
 └── services/
     ├── http.boot.ts        # HTTP 服务
     ├── database.boot.ts    # 数据库连接
@@ -242,37 +233,33 @@ src/
 1. auto_load_packages[0]
 2. auto_load_packages[1]
 3. ...
-4. *.boot.ts (并发加载)
+4. *.boot.{ts,js} (并发加载，从 src/ 或 dist/ 根目录扫描)
 ```
 
 ---
 
 ## 运行时目录
 
-CLI 按以下优先级确定扫描哪个目录：
+CLI 按以下规则确定扫描目录：
 
-| 优先级 | 来源 | 目录 |
-|--------|------|------|
-| 1 | `HILE_RUNTIME_DIR` 环境变量 | 环境变量值 |
-| 2 | `--dev` 模式 | `src/` |
-| 3 | 生产模式 | `dist/` |
+| 模式 | 目录 |
+|------|------|
+| `--dev` 模式 | `src/` |
+| 生产模式 | `dist/` |
 
-```bash
-# 自定义运行时目录
-HILE_RUNTIME_DIR=./custom hile start
-```
+扫描目录为 `resolve(cwd, src|dist)`，在此目录下递归查找 `*.boot.{ts,js}` 文件。
 
 ---
 
 ## 优雅关闭
 
-CLI 通过 `registerExitHook(container, offEvent)` 注册进程退出钩子（内部使用 `async-exit-hook`）。当收到 `SIGTERM`、`SIGINT` 等信号时：
+CLI 通过 `registerExitHook` 注册进程退出钩子（内部使用 `async-exit-hook`）。当收到 `SIGTERM`、`SIGINT` 等信号时：
 
-1. **await** `container.shutdown()`（容器按 LIFO 顺序执行所有在 defineService 中注册的 shutdown 回调，含晚注册回调）
+1. **await** `container.shutdown()`（容器按 LIFO 顺序执行所有 shutdown 回调）
 2. **仅在其完成后**执行 `offEvent()` 取消容器事件订阅
 3. 调用 `exit()` 退出进程
 
-若 `shutdown()` 未完成，进程会挂起不退出；强制退出超时被设为极大值，等效于「等 shutdown 完成再退出」。
+强制退出超时被设为极大值（约 24 天），等效于「等 shutdown 完成再退出」。
 
 ```
 SIGTERM/SIGINT → exitHook → await container.shutdown() → 执行所有 shutdown 回调 → offEvent() → exit
@@ -281,46 +268,3 @@ SIGTERM/SIGINT → exitHook → await container.shutdown() → 执行所有 shut
 <Warning>
   如果没有任何服务可加载（`auto_load_packages` 为空且无 boot 文件），CLI 会输出 `no services to load` 并直接退出。
 </Warning>
-
----
-
-## 完整项目示例
-
-```
-my-app/
-├── src/
-│   ├── controllers/
-│   │   ├── users/
-│   │   │   └── index.controller.ts
-│   │   └── hello.controller.ts
-│   └── services/
-│       ├── http.boot.ts       # HTTP 服务入口（*.boot 须在此目录）
-│       ├── database.boot.ts   # 数据库服务入口
-│       ├── config.service.ts  # defineService（通过 loadService 按需加载）
-│       └── cache.service.ts
-├── .env                       # 环境变量
-├── package.json
-└── tsconfig.json
-```
-
-```json
-// package.json
-{
-  "name": "my-app",
-  "type": "module",
-  "scripts": {
-    "dev": "hile start --dev --env-file .env",
-    "build": "tsc -b",
-    "start": "hile start --env-file .env"
-  },
-  "hile": {
-    "auto_load_packages": ["@hile/ioredis"]
-  },
-  "dependencies": {
-    "@hile/core": "^1.1.2",
-    "@hile/http": "^1.1.0",
-    "@hile/cli": "^1.1.3",
-    "@hile/ioredis": "^1.1.2"
-  }
-}
-```

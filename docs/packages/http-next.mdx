@@ -9,8 +9,6 @@ description: "将 Next.js 作为渲染引擎嵌入 @hile/http，API 路由与 SS
 pnpm add @hile/http-next
 ```
 
-依赖：`@hile/http`、`koa`、`koa-static`、`next`。
-
 ---
 
 ## 它解决什么问题？
@@ -42,7 +40,7 @@ const close = await httpNext.start();
 ### 与 @hile/core 集成（推荐用法）
 
 ```typescript
-// src/services/index.boot.ts（*.boot 必须放在 src/services/）
+// src/services/index.boot.ts
 import HttpNext from "@hile/http-next";
 import { defineService } from "@hile/core";
 import { fileURLToPath } from "node:url";
@@ -55,16 +53,10 @@ export default defineService('http.next', async (shutdown) => {
   const httpNext = new HttpNext({
     port: 3000,
     cwd: resolve(__dirname, "../.."),
-    publicPath: "public", // 或 ["public", "static"] 等多目录
-    // 可选：控制器仍在 src/app 下时：controllerDirectory: "app"
+    publicPath: "public",
   });
 
-  // 可选：在 start() 前注册全局中间件（如请求日志、CORS 等）
-  // httpNext.use(async (ctx, next) => { ... await next(); });
-
-  // start() 返回关闭函数，注册到 shutdown
   shutdown(await httpNext.start());
-
   return httpNext;
 });
 ```
@@ -79,58 +71,46 @@ export default defineService('http.next', async (shutdown) => {
 
 ```
 客户端请求
-    │
+    |
     ▼
-① koa-static(publicPath…)      匹配 `publicPath` 配置的静态根（`string` 或 `string[]`，相对 cwd）
-    │ 未命中
+① koa-static(publicPath…)      匹配 `publicPath` 配置的静态根（string 或 string[]，相对 cwd）
+    | 未命中
     ▼
 ② koa-static(.next/static/)    匹配 Next.js 构建产物（JS、CSS chunk）
-    │ 未命中
+    | 未命中
     ▼
-③ hile-http 路由(默认同 `controllerPrefix`，默认 `/-*`)  匹配 `*.controller.ts` 注册的 API 路由
-    │ 未命中
+③ hile-http 路由(默认 controllerPrefix 为 `/-`，即 `/-*`)  匹配 *.controller.ts 注册的 API 路由
+    | 未命中
     ▼
 ④ Next.js handler               处理页面渲染、Next.js 内部路由、404
 ```
 
 **关键规则：**
-- API 控制器路由默认前缀为 `/-`（可用 `controllerPrefix` 修改）；`http.load` 使用 **`conflict: "error"`**，路由冲突会直接抛错
+- API 控制器路由默认前缀为 `/-`（可用 `controllerPrefix` 修改）；`http.load` 使用 **`conflict: "error"`**，路由冲突直接抛错
 - Next.js handler 是最后一个中间件，处理所有未被前面层匹配的请求
-- Next.js handler 在 `prepare()` 完成后才注册为中间件，因此不存在未就绪的问题
+- Next.js handler 在 `prepare()` 完成后才注册为中间件，不存在未就绪问题
 
 ---
 
 ## API 路由（控制器）
 
-控制器默认放在 **`src/controllers/`**（`NODE_ENV === 'development'` 时）或 **`dist/controllers/`**（生产构建后），使用 `@hile/http` 的 `defineController`（可选 **`createControllerMetadata` + Zod** 校验入参，行为与纯 `@hile/http` 一致）。这样与 Next.js 的 **`src/app/`**（页面、`layout.tsx` 等）目录分离，避免混在同一文件夹。
+控制器默认放在 **`src/controllers/`**（`NODE_ENV === 'development'` 时）或 **`dist/controllers/`**（生产构建后），使用 `@hile/http` 的 `defineController`（可选 `createControllerMetadata` + Zod 校验入参）。与 Next.js 的 **`src/app/`** 目录分离，避免混在同一文件夹。
 
-若你希望继续把控制器放在 **`src/app/`**（与旧版行为一致），在构造 `HttpNext` 时传入 **`controllerDirectory: "app"`**。
-
-**数据分层**（以包内 **`SKILL.md`** 为准）：
-
-- **业务逻辑**全部在 **`src/models/<领域>/*.model.ts`**：单文件**一个** **`defineModel`**，**`export default`**；**`app` / `controllers` / `services`** 取数**只**通过 **`import m from "…/….model"`** + **`loadModel(m, …)`**（**禁止**命名导出当取数入口）。
-- **`src/app/**`**：**`loadModel`** + UI；**凡 `page.tsx` 内调用 `loadModel`，同文件须** **`export const dynamic = "force-dynamic"`**（强制，见 **`SKILL.md`**）；**禁止** **`loadService`**、**`defineModel`**、业务逻辑、直引 **`src/services`**。
-- **`src/controllers/**`**：薄 HTTP，**`loadModel`** / **`loadService`**；**禁止**在控制器写业务逻辑。
-- **`src/services/**`**：系统/基础设施（**`*.boot.*`** / **`*.service.*`**）；需要领域数据时同样 **`loadModel`**，**不**写业务规则。
-
-### 页面与 `defineModel` / `loadModel`
+### defineModel / loadModel
 
 ```typescript
 // src/models/foo/foo.model.ts
 import { defineModel } from "@hile/http-next";
 
 export default defineModel(async (slug: string) => {
-  // 内可 await loadService(...)
   return { slug };
 });
 ```
 
 ```typescript
-// src/app/foo/page.tsx — default import + loadModel（须 force-dynamic）
+// src/app/foo/page.tsx
 import { loadModel } from "@hile/http-next";
 import fooModel from "@/models/foo/foo.model";
-
-export const dynamic = "force-dynamic";
 
 export default async function Page() {
   const data = await loadModel(fooModel, "x");
@@ -145,15 +125,11 @@ export default async function Page() {
 import { defineController } from "@hile/http";
 
 export default defineController("GET", async (ctx) => {
-  return {
-    id: 1,
-    title: "Hello from API",
-    url: ctx.url,
-  };
+  return { id: 1, title: "Hello from API", url: ctx.url };
 });
 ```
 
-这个文件会被自动映射到 `GET /-/post`（在默认 `controllerPrefix` 为 `"/-"` 时）。
+映射到 `GET /-/post`（默认 `controllerPrefix` 为 `"/-"`）。
 
 ### 带中间件的控制器
 
@@ -161,20 +137,15 @@ export default defineController("GET", async (ctx) => {
 // src/controllers/admin/users.controller.ts
 import { defineController } from "@hile/http";
 
-const auth = async (ctx: any, next: any) => {
+const auth = async (ctx, next) => {
   if (!ctx.headers.authorization) ctx.throw(401);
   await next();
 };
 
-const getUsers = defineController("GET", [auth], async (ctx) => {
-  return { users: [{ id: 1, name: "Admin" }] };
-});
-
-const createUser = defineController("POST", [auth], async (ctx) => {
-  return { created: true };
-});
-
-export default [getUsers, createUser];
+export default [
+  defineController("GET", [auth], async (ctx) => ({ users: [] })),
+  defineController("POST", [auth], async (ctx) => ({ created: true })),
+];
 ```
 
 映射结果：
@@ -183,7 +154,7 @@ export default [getUsers, createUser];
 
 ### 路径映射表
 
-（以下路径相对于默认控制器根目录 `src/controllers/`，前缀为默认的 `/-`。）
+（路径相对于默认控制器根目录 `src/controllers/`，前缀为默认的 `/-`。）
 
 | 文件路径 | HTTP 路由 |
 |---------|----------|
@@ -194,162 +165,8 @@ export default [getUsers, createUser];
 | `src/controllers/[category]/[id].controller.ts` | `/-/:category/:id` |
 
 <Note>
-  默认前缀为 `/-`，可通过 **`controllerPrefix`** 覆盖。使用非默认前缀时，需自行保证不与 Next.js 页面路由冲突。
+  默认前缀为 `/-`，可通过 **`controllerPrefix`** 覆盖。
 </Note>
-
----
-
-## Next.js 页面路由
-
-Next.js 使用标准的 App Router，页面文件放在 `src/app/` 下：
-
-```typescript
-// src/app/page.tsx — 首页 /
-export default function Home() {
-  return <h1>Hello, Next.js!</h1>;
-}
-
-// src/app/about/page.tsx — /about
-export default function About() {
-  return <h1>About</h1>;
-}
-
-// src/app/[id]/page.tsx — 动态路由 /1, /2, ...
-export default async function IdPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
-  return <h1>Page {id}</h1>;
-}
-```
-
-推荐布局：**页面**在 `src/app/`，**API 控制器**在 `src/controllers/`，**业务 model** 按领域放在 **`src/models/<领域>/`**：
-
-```
-src/
-├── app/                      # Next.js App Router
-│   ├── layout.tsx
-│   ├── page.tsx
-│   └── about/
-│       └── page.tsx
-├── controllers/              # hile-http API 控制器（默认目录名，可配置）
-│   ├── post.controller.ts    # GET /-/post
-│   └── users/
-│       ├── index.controller.ts
-│       └── [id].controller.ts
-├── models/                   # 业务：单文件单 defineModel，export default
-│   └── foo/
-│       └── foo.model.ts
-└── services/
-    └── index.boot.ts           # 所有 *.boot 须在 src/services/
-```
-
-若使用 **`controllerDirectory: "app"`**，则控制器可与页面同目录；Next.js 仍只处理 `page.tsx`、`layout.tsx` 等，hile-http 只加载匹配 `controllerSuffix` 的 `*.controller.ts`。
-
----
-
-## SEO 优化
-
-### 静态 Metadata
-
-在 `layout.tsx` 或 `page.tsx` 中导出 `metadata`：
-
-```typescript
-// src/app/layout.tsx
-export const metadata = {
-  title: {
-    default: "我的应用",
-    template: "%s | 我的应用",  // 子页面标题套用模板
-  },
-  description: "应用描述",
-};
-
-// src/app/about/page.tsx
-export const metadata = {
-  title: "关于我们",           // 浏览器标题变为「关于我们 | 我的应用」
-  description: "关于页描述",
-  openGraph: {
-    title: "关于我们",
-    description: "关于页描述",
-  },
-};
-```
-
-### 动态 Metadata
-
-```typescript
-// src/app/[id]/page.tsx
-export async function generateMetadata({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
-  return {
-    title: `页面 ${id}`,
-    description: `动态页面，当前 id: ${id}`,
-  };
-}
-```
-
----
-
-## TypeScript 配置
-
-项目需要两份 tsconfig：
-
-### tsconfig.json（Node.js 编译）
-
-编译控制器、boot 文件等 Node.js 代码：
-
-```json
-{
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "outDir": "./dist",
-    "rootDir": "./src",
-    "jsx": "react-jsx"
-  },
-  "include": ["src"],
-  "exclude": ["node_modules", "dist"]
-}
-```
-
-### tsconfig.next.json（Next.js 编译）
-
-Next.js 专用，通过 `next.config` 指定：
-
-```json
-{
-  "compilerOptions": {
-    "target": "ES2022",
-    "lib": ["DOM", "DOM.Iterable", "ES2022"],
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "jsx": "react-jsx",
-    "strict": true,
-    "noEmit": true,
-    "plugins": [{ "name": "next" }]
-  },
-  "include": ["src/app/**/*", "src/models/**/*", "next.config.mjs", ".next/types/**/*.ts"]
-}
-```
-
-在 `next.config` 中指定：
-
-```javascript
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  typescript: {
-    tsconfigPath: "tsconfig.next.json",
-  },
-};
-export default nextConfig;
-```
 
 ---
 
@@ -361,21 +178,23 @@ export default nextConfig;
     - 如果指定了 `publicPath`（`string` 或 `string[]`），对每个路径注册 `koa-static(resolve(cwd, path))`
     - 判断 `NODE_ENV` 设置 `isDevelopment`
     - 解析控制器根路径：`resolve(cwd, src|dist, controllerDirectory || "controllers")`，以及默认的 `controllerPrefix`、`controllerSuffix`
+    - 解析 `.next` 产物目录：`nextArtifactsDir || resolve(cwd, ".next")`
   </Step>
   <Step title="注册构建产物静态资源">
     注册 `koa-static(.next/static/)` — 提供 Next.js 构建的 JS/CSS chunk
   </Step>
   <Step title="加载 API 控制器">
-    在 `start()` 内先对**主**控制器根调用 `http.load(…, { suffix, defaultSuffix, prefix: controllerPrefix, conflict: "error" })`。若配置了 **`specialControllers`**（`{ directory, prefix }[]`），再**按顺序**对每一项执行 `http.load(resolve(cwd, src|dist, directory), { …同 suffix/defaultSuffix/conflict, prefix: 该项的 prefix })`。默认主根目录为 `src/controllers`（开发）或 `dist/controllers`（生产）；`conflict` 为 **`error`**，路由冲突会抛错
+    先对主控制器根调用 `http.load(…, { suffix, defaultSuffix, prefix: controllerPrefix, conflict: "error" })`。若配置了 `specialControllers`（`{ directory, prefix }[]`），再按顺序对每一项执行 `http.load(resolve(cwd, src|dist, directory), { …同, prefix: 该项的 prefix })`。conflict 为 `error`，路由冲突直接抛错。
   </Step>
   <Step title="启动 HTTP 服务">
     调用 `http.listen()` 启动 Koa，传入 `onListen` 回调
   </Step>
   <Step title="初始化 Next.js">
     在 `onListen` 回调中：
-    - 创建 `NextServer({ dev, httpServer })` — 与 Koa 共用同一 `http.Server`
+    - 调用用户传入的 `onListen(server)`（如果有）
+    - 创建 `NextServer({ dev, httpServer, dir })` — 与 Koa 共用同一 `http.Server`
     - 调用 `app.prepare()` — Next.js 编译页面、开发模式下 HMR 等
-    - 获取 `app.getRequestHandler()` — 保存为 Next 请求处理函数
+    - 获取 `app.getRequestHandler()`
     - 注册 Next.js 转发中间件（此后未匹配请求由 Next.js 处理）
   </Step>
 </Steps>
@@ -390,27 +209,38 @@ export default nextConfig;
 |------|------|------|--------|------|
 | `port` | `number` | 是 | — | 监听端口 |
 | `cwd` | `string` | 否 | `process.cwd()` | 项目根目录 |
-| `publicPath` | `string \| string[]` | 否 | — | 静态资源根目录（相对于 `cwd`）；传数组时可挂载多个目录 |
-| `controllerDirectory` | `string` | 否 | `"controllers"` | 相对于 `src/`（开发）或 `dist/`（生产）的子目录名，控制器根路径为 `resolve(cwd, src\|dist, controllerDirectory)` |
+| `publicPath` | `string \| string[]` | 否 | — | 静态资源根目录（相对 cwd） |
+| `controllerDirectory` | `string` | 否 | `"controllers"` | 相对于 `src/`（开发）或 `dist/`（生产）的子目录名 |
 | `controllerPrefix` | `string` | 否 | `"/-"` | 传给 `http.load` 的 `prefix`，API 路由前缀 |
-| `controllerSuffix` | `string` | 否 | `"controller"` | 传给 `http.load` 的 `suffix`，即 `*.controller.ts` 中的 `controller` 段 |
-| `specialControllers` | `SpecialController[]` | 否 | — | 额外控制器根，见下表 **`SpecialController`**；主 `load` 完成后再逐项 `load` |
+| `controllerSuffix` | `string` | 否 | `"controller"` | 传给 `http.load` 的 `suffix`，即 `*.controller.ts` 中的 `controller` |
+| `specialControllers` | `SpecialController[]` | 否 | — | 额外控制器根，主 load 完成后逐项 load |
+| `nextArtifactsDir` | `string` | 否 | `resolve(cwd, ".next")` | Next.js 构建产物目录（.next 路径） |
 | `keys` | `string[]` | 否 | 随机生成 | Koa 签名密钥 |
 
-### `SpecialController`
+其余属性继承自 `@hile/http` 的 `HttpProps`（`ignoreDuplicateSlashes`、`ignoreTrailingSlash` 等）。
+
+### SpecialController
 
 | 字段 | 说明 |
 |------|------|
 | `directory` | 相对 `src/`（开发）或 `dist/`（生产）的子目录名，如 `"admin-api"` → `src/admin-api/*.controller.ts` |
-| `prefix` | 该组控制器的 `http.load` 的 `prefix`，如 `"/admin"` |
+| `prefix` | 该组控制器的路由前缀，如 `"/admin"` |
 
-继承 `@hile/http` 的 `HttpProps`（`ignoreDuplicateSlashes`、`ignoreTrailingSlash` 等）。
-
-路由加载使用 **`conflict: "error"`**（与旧版 `warn` + `onConflict` 不同），重复路由会直接失败。主路由与 **`specialControllers`** 各组之间若出现**相同**完整路由也会冲突失败。
+路由加载使用 `conflict: "error"`，重复路由直接抛错。
 
 ### HttpNext
 
-| 属性/方法 | 类型 | 说明 |
-|----------|------|------|
-| `use(middleware)` | `(middleware: Middleware) => HttpNext` | 注册 Koa 中间件，返回当前实例以支持链式调用 |
-| `start(onListen?)` | `(onListen?: (server: Server) => void \| Promise<void>) => Promise<() => void>` | 启动服务，`onListen` 可选回调，在 HTTP 服务启动后、Next.js prepare 前调用，接收 `http.Server` 实例。返回关闭函数 |
+| 属性/方法 | 说明 |
+|----------|------|
+| `use(middleware)` | 注册 Koa 中间件，返回当前实例支持链式调用 |
+| `load(directory)` | 便捷加载路由，固定使用 `controllerSuffix` / `controllerPrefix` / `conflict: error` |
+| `start(onListen?)` | 启动服务，`onListen` 可选回调在 HTTP 启动后、Next.js prepare 前调用，接收 `http.Server`。返回关闭函数 |
+
+### 导出
+
+| 导出 | 说明 |
+|------|------|
+| `HttpNext`（默认导出） | 主类 |
+| `defineModel` | 定义业务 model（不含 Hile 生命周期） |
+| `loadModel` | 调用 model.create(...args) 并返回 Promise 结果 |
+| `ModelDefinition` | model 类型 |

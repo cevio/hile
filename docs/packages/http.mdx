@@ -9,8 +9,6 @@ description: "基于 Koa + find-my-way 的 HTTP 服务框架，支持中间件�
 pnpm add @hile/http
 ```
 
-依赖：`koa`、`find-my-way`、`koa-compose`、`glob`、`zod`。
-
 ---
 
 ## 快速开始
@@ -48,18 +46,15 @@ const http = new Http({
 })
 ```
 
-如果不传 `keys`，会自动生成两个随机密钥（`randomBytes(32)` 和 `randomBytes(64)`），用于 Koa 的 cookie 签名。
+`HttpProps` 包含 `port`、`keys`，其余属性继承自 `find-my-way` 的 `Config`（排除 `defaultRoute`）。如果不传 `keys`，会自动生成两个随机密钥（`randomBytes(32)` 和 `randomBytes(64)`），用于 Koa 的 cookie 签名。
 
 ---
 
 ## 全局中间件
 
-<Warning>中间件必须在 `listen()` 之前注册。</Warning>
-
 中间件按注册顺序执行，支持链式调用：
 
 ```typescript
-// 请求日志中间件
 http.use(async (ctx, next) => {
   const start = Date.now()
   await next()
@@ -67,72 +62,39 @@ http.use(async (ctx, next) => {
   console.log(`${ctx.method} ${ctx.url} ${ctx.status} - ${ms}ms`)
 })
 
-// 响应时间头
 http.use(async (ctx, next) => {
   const start = Date.now()
   await next()
-  ctx.set('X-Response-Time', `${Date.now() - start}ms`)
-})
-
-// 错误处理
-http.use(async (ctx, next) => {
-  try {
-    await next()
-  } catch (err: any) {
-    ctx.status = err.status || 500
-    ctx.body = { error: err.message }
-  }
+  ctx.set('X-Response-Time', `${Date.now() - ms}ms`)
 })
 ```
 
-中间件是标准的 Koa 中间件，签名为 `(ctx, next) => Promise<void>`。
+`use()` 返回 `this`，支持链式调用。中间件是标准的 Koa 中间件，签名为 `(ctx, next) => Promise<void>`。
 
 ---
 
 ## 手动路由注册
 
-### 基本用法
+### 快捷方法
 
 ```typescript
-// GET 请求
-http.get('/users', async (ctx) => {
-  ctx.body = [{ id: 1, name: 'Alice' }]
-})
-
-// POST 请求
-http.post('/users', async (ctx) => {
-  ctx.body = { created: true }
-})
-
-// 带路径参数
-http.get('/users/:id', async (ctx) => {
-  ctx.body = { id: ctx.params.id }
-})
-
-// PUT 请求
-http.put('/users/:id', async (ctx) => {
-  ctx.body = { updated: true }
-})
-
-// DELETE 请求
-http.delete('/users/:id', async (ctx) => {
-  ctx.body = { deleted: true }
-})
+http.get('/users', async (ctx) => { ctx.body = [{ id: 1 }] })
+http.post('/users', async (ctx) => { ctx.body = { created: true } })
+http.get('/users/:id', async (ctx) => { ctx.body = { id: ctx.params.id } })
+http.put('/users/:id', async (ctx) => { ctx.body = { updated: true } })
+http.delete('/users/:id', async (ctx) => { ctx.body = { deleted: true } })
 ```
+
+支持的快捷方法：`get`、`post`、`put`、`delete`、`trace`、`patch`。每个方法都返回注销函数。
 
 ### 路由级中间件
 
-可以在路由上挂载专属中间件：
-
 ```typescript
-const auth = async (ctx: any, next: any) => {
-  if (!ctx.headers.authorization) {
-    ctx.throw(401, 'Unauthorized')
-  }
+const auth = async (ctx, next) => {
+  if (!ctx.headers.authorization) ctx.throw(401)
   await next()
 }
 
-// auth 中间件只在这个路由上生效
 http.post('/users', auth, async (ctx) => {
   ctx.body = { created: true }
 })
@@ -140,15 +102,12 @@ http.post('/users', auth, async (ctx) => {
 
 ### 注销路由
 
-所有路由注册方法都返回一个注销函数：
-
 ```typescript
 const off = http.get('/temporary', async (ctx) => {
   ctx.body = 'This route will be removed'
 })
 
-// 之后可以注销这个路由
-off()
+off() // 注销路由
 ```
 
 ### 任意 HTTP 方法
@@ -157,14 +116,9 @@ off()
 http.route('PATCH', '/users/:id', async (ctx) => {
   ctx.body = { patched: true }
 })
-
-http.route('OPTIONS', '/users', async (ctx) => {
-  ctx.set('Allow', 'GET, POST, OPTIONS')
-  ctx.status = 204
-})
 ```
 
-支持的快捷方法：`get`、`post`、`put`、`delete`、`patch`、`trace`。其他方法使用 `route(method, url, ...middlewares)`。
+`route(method, url, ...middlewares)` 是通用注册方法，返回注销函数。
 
 ---
 
@@ -173,8 +127,8 @@ http.route('OPTIONS', '/users', async (ctx) => {
 ```typescript
 const close = await http.listen((server) => {
   // server 是 Node.js 原生 http.Server
-  // 这个回调在端口绑定之前执行
-  // 适合传递 server 给其他库（如 Socket.IO、Next.js）
+  // 回调在端口绑定之前、createServer 之后执行
+  // 适合传递 server 给其他库（如 Next.js）
   console.log(`Listening on port ${http.port}`)
 })
 
@@ -193,7 +147,7 @@ close()
 
 ## 文件系统路由
 
-这是 `@hile/http` 最强大的功能之一：从目录自动加载控制器文件，文件路径即路由路径。底层由 `Loader` 类驱动，`Http.load()` 是对 `Loader.from()` 的便捷封装。
+通过 `Loader` 类从目录自动加载控制器文件，文件路径即路由路径。`Http.load()` 是对 `Loader.from()` 的便捷封装。
 
 ### 定义控制器
 
@@ -208,59 +162,38 @@ export default defineController('GET', async (ctx) => {
 })
 ```
 
-**控制器 vs 普通路由的区别：**
-
-- 控制器的返回值会自动赋值给 `ctx.body`（经过响应插件链处理后）
-- 控制器函数签名是 `(ctx)` 而不是 `(ctx, next)`
-- 控制器只处理业务逻辑，不需要调用 `next()`
+控制器返回值经过响应插件链处理后自动赋值给 `ctx.body`。控制器函数签名为 `(ctx)`，无需调用 `next()`。
 
 ### 带中间件的控制器
 
 ```typescript
 import { defineController } from '@hile/http'
 
-const auth = async (ctx: any, next: any) => {
+const auth = async (ctx, next) => {
   if (!ctx.headers.authorization) ctx.throw(401)
   await next()
 }
 
-const validate = async (ctx: any, next: any) => {
-  if (!ctx.request.body?.name) ctx.throw(400, 'name is required')
-  await next()
-}
-
 // 中间件数组，按顺序执行
-export default defineController('POST', [auth, validate], async (ctx) => {
-  return { created: true, name: ctx.request.body.name }
+export default defineController('POST', [auth], async (ctx) => {
+  return { created: true }
 })
 ```
 
 ### 同文件多控制器
 
-一个文件可以导出多个控制器（共享同一路由路径，不同 HTTP 方法）：
-
 ```typescript
 import { defineController } from '@hile/http'
 
-const getUsers = defineController('GET', async (ctx) => {
-  return { users: [{ id: 1, name: 'Alice' }] }
-})
+const getUsers = defineController('GET', async (ctx) => ({ users: [] }))
+const createUser = defineController('POST', [auth], async (ctx) => ({ created: true }))
 
-const createUser = defineController('POST', [auth], async (ctx) => {
-  return { created: true }
-})
-
-const deleteUser = defineController('DELETE', [auth], async (ctx) => {
-  return { deleted: true }
-})
-
-// 导出为数组
-export default [getUsers, createUser, deleteUser]
+export default [getUsers, createUser]
 ```
 
 ### 使用 Zod 校验 query / params / body（可选）
 
-使用 **`createControllerMetadata`** 传入 `method`、`middlewares` 与可选的 **`schema`**（`query`、`params`、`body` 均为可选 Zod schema），再以 **`defineController(metadata, fn)`** 注册。进入业务 handler 前会对已声明部分做 **`safeParse`**，失败则 **`ctx.throw(400, message)`**。传统的 **`defineController(method, fn)`** / **`defineController(method, [mw], fn)`** 使用内部占位 schema，**不会**执行 Zod 校验。
+`createControllerMetadata` 可构造包含 method、middlewares 和可选 Zod schema 的元数据。配合 `defineController(metadata, fn)` 注册，在进入业务 handler 前对已声明的字段执行 `safeParse`，失败则 `ctx.throw(400, message)`。
 
 ```typescript
 import { z } from "zod";
@@ -284,21 +217,31 @@ export default defineController(
 );
 ```
 
+传统 `defineController(method, fn)` 和 `defineController(method, [mw], fn)` 不执行 Zod 校验，内部使用占位空 schema。
+
+`defineController` 有三个重载：
+- `(method, fn)` — 无校验
+- `(method, [mw], fn)` — 无校验，带路由中间件
+- `(metadata, fn)` — 含 Zod 校验
+
 ### 加载路由
 
 ```typescript
-await http.load('./src/controllers', {
-  suffix: 'controller',       // 文件后缀标记（匹配 *.controller.{ts,js,tsx,jsx}）
+const off = await http.load('./src/controllers', {
+  suffix: 'controller',       // 匹配 *.controller.{ts,js,tsx,jsx}
   prefix: '/api',             // 路由前缀
   defaultSuffix: '/index',    // 默认后缀（index.controller.ts → /api）
-  conflict: 'warn',           // 冲突策略
+  conflict: 'warn',           // 冲突策略：error / warn / override
   onConflict: (ctx) => {      // 冲突回调
     console.warn(`路由冲突: ${ctx.routeKey}`)
   },
 })
+
+// 需要时注销所有加载的路由
+// off()
 ```
 
-<Note>`load()` 是异步的，必须 `await`。它使用 glob 扫描目录下的所有匹配文件。</Note>
+`load()` 是异步的，使用 glob 扫描目录下所有 `*.controller.{ts,js,tsx,jsx}` 文件。
 
 ### 路径映射规则
 
@@ -313,18 +256,15 @@ await http.load('./src/controllers', {
 | `users/[id].controller.ts` | `/api/users/:id` | `[param]` → `:param` |
 | `[category]/[id].controller.ts` | `/api/:category/:id` | 多层动态参数 |
 
-### 路由冲突处理
-
-当两个控制器映射到相同的 `method + path` 时：
+### 冲突策略
 
 | 策略 | 值 | 行为 |
 |------|---|------|
 | 抛错 | `'error'` | 抛出 `route conflict: GET:/api/users` 错误（默认） |
-| 警告 | `'warn'` | 保留旧路由，在控制台输出警告 |
+| 警告 | `'warn'` | 保留旧路由，输出警告 |
 | 覆盖 | `'override'` | 用新路由替换旧路由 |
 
-`onConflict` 回调接收的上下文：
-
+onConflict 回调上下文：
 ```typescript
 interface LoaderConflictContext {
   routeKey: string;      // 如 "GET:/api/users"
@@ -339,14 +279,13 @@ interface LoaderConflictContext {
 
 ## 响应插件
 
-响应插件让你统一处理控制器的返回值，避免在每个控制器里重复包装响应格式。
+响应插件统一处理控制器的返回值，避免在每个控制器里重复包装。
 
 ### 注册插件
 
 ```typescript
 import { defineResponsePlugin } from '@hile/http'
 
-// 统一响应包裹
 defineResponsePlugin(async (ctx, result, next) => {
   return await next({
     code: 0,
@@ -356,40 +295,23 @@ defineResponsePlugin(async (ctx, result, next) => {
 })
 ```
 
-处理后，所有控制器的响应会变成：
-
+处理后返回：
 ```json
-{
-  "code": 0,
-  "message": "success",
-  "data": { /* 控制器返回值 */ }
-}
-```
-
-### 条件处理
-
-```typescript
-defineResponsePlugin(async (ctx, result, next) => {
-  // 只对 JSON 请求包裹
-  if (ctx.accepts('json')) {
-    return await next({ code: 0, data: result })
-  }
-  return await next(result)
-})
+{ "code": 0, "message": "success", "data": { /* 控制器返回值 */ } }
 ```
 
 ### 多个插件
 
-插件按注册顺序串行执行，采用 onion 模型（后注册的在外层）：
+插件按注册顺序串行执行，采用 onion 模型（后注册的在外层），每层必须调用 `next(transformedResult)` 传递结果：
 
 ```typescript
-// 插件 1：添加时间戳
 defineResponsePlugin(async (ctx, result, next) => {
+  // 添加时间戳
   return await next({ ...result, timestamp: Date.now() })
 })
 
-// 插件 2：统一包裹
 defineResponsePlugin(async (ctx, result, next) => {
+  // 统一包裹
   return await next({ code: 0, data: result })
 })
 
@@ -397,43 +319,8 @@ defineResponsePlugin(async (ctx, result, next) => {
 ```
 
 <Warning>
-  插件必须调用 `next(transformedResult)` 传递结果。如果插件传了 `undefined`，`ctx.body` 不会被设置。
+  插件必须调用 `next(transformedResult)` 传递结果。如果 `next(undefined)`，`ctx.body` 不会被设置。
 </Warning>
-
----
-
-## 与 @hile/core 集成
-
-将 HTTP 服务注册为 Hile 服务，享受容器的生命周期管理：
-
-```typescript
-import { defineService } from '@hile/core'
-import { Http } from '@hile/http'
-
-export const httpService = defineService('http', async (shutdown) => {
-  const http = new Http({ port: 3000 })
-
-  // 注册中间件
-  http.use(async (ctx, next) => {
-    const start = Date.now()
-    await next()
-    console.log(`${ctx.method} ${ctx.url} - ${Date.now() - start}ms`)
-  })
-
-  // 加载文件系统路由
-  await http.load('./src/controllers', {
-    suffix: 'controller',
-    prefix: '/api',
-    conflict: 'error',
-  })
-
-  // 启动服务并注册关闭回调
-  const close = await http.listen()
-  shutdown(close)
-
-  return http
-})
-```
 
 ---
 
@@ -483,11 +370,9 @@ export const httpService = defineService('http', async (shutdown) => {
 | 导出 | 说明 |
 |------|------|
 | `Http` | HTTP 服务类 |
-| `defineController` | 控制器定义（含 Zod 元数据重载） |
+| `defineController` | 控制器定义（三种重载：method+fn / method+mw+fn / metadata+fn） |
 | `createControllerMetadata` | 构造控制器元数据（method / middlewares / schema） |
 | `defineResponsePlugin` | 响应插件定义函数 |
-| `Loader` | 路由加载器类。`from(directory, options)` 批量加载文件路由；`compile(path, controllers, options)` 编程式注册单条路由 |
+| `Loader` | 路由加载器类。`from(directory, options)` 批量加载文件路由；`compile(path, controllers, options)` 编程式注册 |
 | `compileRoutePath` | 路径编译纯函数（文件路径 → 路由路径） |
 | `toRouterPath` | `[param]` → `:param` 转换函数 |
-
-类型导出包括 **`ControllerContext`**、**`ControllerFunction`** 等与控制器相关的类型。

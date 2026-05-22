@@ -1,28 +1,51 @@
 ---
 title: CLI 概览
-description: "何时用 create-hile、何时用 hile start；与文档其它章节的衔接"
+description: "create-hile 与 hile 命令行的功能分工；与文档其它章节的衔接"
 ---
 
 Hile 的命令行工具分两类：**项目脚手架**与**进程启动器**。
 
 ## create-hile（脚手架）
 
-**`npx create-hile create <项目名>`** 用于生成带约定目录的完整应用（多种模板：默认、Next、micro-http 等）。适合「从零要一份可运行仓库」的场景。
+**`npx create-hile create <项目名>`** 用于生成带约定目录的完整应用（多种模板：`default`、`next`、`micro-http`、`micro`、`micro-http-next`）。适合「从零要一份可运行仓库」的场景。
 
-模板会把 **`_env`** / **`_gitignore`** 等重命名为 **`.env`** / **`.gitignore`**（若存在），并写入 **`package.json` name**。详见 [@hile/create-hile](/packages/create-hile)。
+模板会把 **`_env`** / **`_gitignore`** 等重命名为 **`.env`** / **`.gitignore`**（若存在），并自动将 `package.json` 的 `name` 写入你指定的项目名。生成后可选择是否自动安装依赖（使用 pnpm / yarn / npm）。
 
 ## hile（运行时 CLI）
 
-**`hile start`** 是已存在项目中的启动入口：扫描 **`*.boot.{ts,js}`**（约定在 **`src/services/`**），对其中导出的服务执行 **`loadService`**，订阅容器事件（开发模式），并注册信号处理以 **优雅关闭**。
+**`hile start`** 是已存在项目中的启动入口：递归扫描 **`*.boot.{ts,js}`**（通常在 `src/services/`，也可在 `src/` 下任意目录），加载 `package.json` 中 `hile.auto_load_packages` 数组指定的自动加载包，对其中导出的服务执行 `loadService`。开发模式下订阅容器事件并输出日志。最后注册退出钩子以 **优雅关闭**。
 
-**`hile registry`** 启动注册中心，提供服务注册与发现、心跳检测、配置热加载等功能；配套的 **`hile registry configs`** 子命令用于管理 YAML 配置文件。
+**`hile registry`** 启动注册中心：基于 WebSocket 的服务注册与发现、心跳检测、namespace 管理。配套的 **`hile registry configs`** 子命令用于管理位于 `~/.registry/configs/` 目录下的 YAML 配置文件（按 `{namespace}.config.yaml` 命名）。
 
-常用选项：
+**`hile registry configs` 子命令：**
 
-- **`--dev`** — 开发模式：`NODE_ENV=development`，**tsx** 直接跑 TypeScript，扫描 **`src/`**，打印容器事件。
-- **`--env-file <path>`** — 加载 env；可多次指定。
+| 命令 | 说明 |
+|------|------|
+| `hile registry configs` | 列出所有 namespace |
+| `hile registry configs get <ns>` | 查看配置（默认 YAML 输出） |
+| `hile registry configs get <ns> --json` | JSON 格式输出 |
+| `hile registry configs set <ns> <key>=<value>` | 设置配置项；值以 `{` 或 `[` 开头时自动 JSON 解析 |
+| `hile registry configs del <ns> [key]` | 删除配置（不加 key 时删除整个 namespace） |
 
-完整选项表、`auto_load_packages`、目录扫描规则见 [@hile/cli](/packages/cli)；Registry 使用见 [@hile/micro](/packages/micro)。
+### 启动选项
+
+- **`--dev`** / **`-d`** — 开发模式：设置 `NODE_ENV=development`，`tsx` 直接执行 `.ts` 文件，扫描 `src/` 目录，打印容器事件日志。
+- **`--env-file <path>`** / **`-e`** — 加载 env 文件。可多次指定：先加载的文件中已存在的 key 不会被后加载的文件覆盖（与 Node.js `--env-file` 语义一致）。
+- **`--silent`** / **`-s`** — 静默模式：即使在开发模式下也不输出容器事件日志。
+
+### 自动加载包（auto_load_packages）
+
+在 `package.json` 的 `hile` 字段中声明：
+
+```json
+{
+  "hile": {
+    "auto_load_packages": ["@hile/typeorm", "@hile/ioredis"]
+  }
+}
+```
+
+CLI 自动导入这些包的默认导出（需 `defineService` 注册的服务），并调用 `loadService` 初始化。
 
 ## 阅读路径建议
 

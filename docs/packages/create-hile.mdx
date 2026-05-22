@@ -39,14 +39,15 @@ create-hile create my-app
     脚手架会执行以下操作：
 
     1. 检查 `my-app` 目录是否已存在（如存在则报错）
-    2. 交互选择**内置模板**（默认、Next.js、Micro 相关等，以 CLI 列表为准）
+    2. 交互选择**内置模板**
     3. 创建目录并从所选模板复制所有文件到目标目录
     4. 若模板中存在 `_env` / `_env.prod` / `_gitignore`，则重命名为 `.env` / `.env.prod` / `.gitignore`
     5. 将 `package.json` 的 `name` 字段改为 `my-app`
-    6. 可选：是否立即安装依赖
+    6. 可选：是否立即安装依赖（支持 pnpm / yarn / npm）
     7. 输出后续操作提示
   </Step>
   <Step title="安装依赖">
+    如果上一步未安装依赖：
     ```bash
     cd my-app
     pnpm install
@@ -56,17 +57,6 @@ create-hile create my-app
     ```bash
     pnpm run dev
     ```
-
-    这条命令以开发模式启动 Hile 服务（具体脚本以生成项目的 `package.json` 为准）。Next.js 在 `HttpNext.start()` 内部以 dev 模式运行，支持 HMR，无需预构建。
-
-    浏览器打开 `http://localhost:3000` 即可看到页面。
-  </Step>
-  <Step title="验证 API">
-    ```bash
-    curl http://localhost:3000/-/post
-    ```
-
-    返回示例控制器的 JSON 响应。
   </Step>
 </Steps>
 
@@ -74,177 +64,13 @@ create-hile create my-app
 
 ## 内置模板
 
-| 目录名 | 说明（CLI 中展示文案以实际为准） |
-|--------|----------------------------------|
+| 目录名 | 说明 |
+|--------|------|
 | `default` | 默认 Hile + HTTP，无 Next.js |
-| `next` | Next.js + `@hile/http-next` 全栈（文档下文「项目结构」主要针对此模板） |
+| `next` | Next.js + `@hile/http-next` 全栈 |
 | `micro-http` | `@hile/micro` + HTTP（与 Registry 等集成） |
 | `micro` | 独立 Micro 服务骨架 |
 | `micro-http-next` | Next.js + Micro + HTTP 组合 |
-
-不同模板的目录结构、`pnpm run dev` 行为与依赖不完全相同，请以生成后的 **`package.json` 与 README** 为准。
-
----
-
-## 生成的项目结构
-
-以下为 **`next` 模板**（Next.js + `http-next`）的常见布局；其他模板可能无 `src/app/` 或 `public/` 等目录。
-
-```
-my-app/
-├── public/                      # 静态资源
-│   ├── next.svg                 # Next.js logo
-│   ├── vercel.svg               # Vercel logo
-│   ├── globe.svg                # 地球图标
-│   ├── file.svg                 # 文件图标
-│   └── window.svg               # 窗口图标
-├── src/
-│   ├── app/                     # Next.js App Router
-│   │   ├── layout.tsx           # 根布局（HTML 骨架、全局样式）
-│   │   ├── page.tsx             # 首页
-│   │   ├── page.module.css      # 首页 CSS Module
-│   │   ├── globals.css          # 全局 CSS
-│   │   ├── favicon.ico          # 网站图标
-│   │   ├── click.tsx            # Client 组件示例（按钮 + 弹出层）
-│   │   └── tsconfig.json        # app 目录专用 tsconfig
-│   ├── controllers/
-│   │   └── post.controller.ts   # API 示例 → GET /-/post（loadModel）
-│   ├── models/
-│   │   ├── home/
-│   │   │   └── home.model.ts    # 首页 defineModel（export default）
-│   │   └── post/
-│   │       └── post.model.ts    # /-/post defineModel（export default）
-│   └── services/
-│       └── index.boot.ts        # Hile 服务启动入口（*.boot 须在 src/services/）
-├── next.config.ts               # Next.js 配置
-├── tsconfig.json                # TypeScript 配置（Node.js）
-├── tsconfig.next.json           # TypeScript 配置（Next.js）
-├── eslint.config.mjs            # ESLint 配置
-├── .gitignore
-└── package.json
-```
-
-### 关键文件说明
-
-<AccordionGroup>
-  <Accordion title="src/services/index.boot.ts — 服务入口">
-    创建 `HttpNext` 实例，配置端口、项目根目录和静态资源路径，然后调用 `start()` 启动服务。CLI 会自动扫描并加载 `*.boot.ts`；**必须**放在 **`src/services/`** 下。`cwd` 为项目根时使用 **`resolve(__dirname, "../..")`**（相对 `src/services/`）。
-
-    ```typescript
-    import HttpNext from "@hile/http-next";
-    import { defineService } from "@hile/core";
-
-    export default defineService('http.next', async (shutdown) => {
-      const httpNext = new HttpNext({
-        port: 3000,
-        cwd: resolve(__dirname, "../.."),
-        publicPath: "public",
-        // 默认从 src/controllers 加载 *.controller.ts；若放在 src/app/ 需 controllerDirectory: "app"
-      });
-      shutdown(await httpNext.start());
-      return httpNext;
-    });
-    ```
-  </Accordion>
-  <Accordion title="src/controllers/post.controller.ts — API 控制器示例">
-    演示如何创建一个 API 控制器，它会被自动映射到 `GET /-/post`。
-
-    ```typescript
-    import { defineController } from "@hile/http";
-    import { loadModel } from "@hile/http-next";
-    import postModel from "../models/post/post.model";
-
-    export default defineController("GET", async (ctx) =>
-      loadModel(postModel, ctx.url),
-    );
-    ```
-  </Accordion>
-  <Accordion title="src/app/click.tsx — Client 组件示例">
-    演示 Next.js 的 Client Component，包含一个按钮点击后调用 API 并展示结果的弹出层。展示了前后端如何通过 `/-` 前缀的 API 路由交互。
-  </Accordion>
-  <Accordion title="业务数据与 defineModel / loadModel">
-    **业务逻辑**在 **`src/models/<领域>/*.model.ts`**：单文件 **`export default defineModel`**；**`app` / `controllers` / `services`** 取数**只**用 **`loadModel`**（**default** **import**）。**凡 `page.tsx` 使用 `loadModel`，同文件须 `export const dynamic = "force-dynamic"`**。**`loadService`** 不得在 **`src/app/**`** 使用。详见 **`packages/http-next/SKILL.md`**。
-  </Accordion>
-  <Accordion title="next.config.ts — Next.js 配置">
-    指定 `tsconfig.next.json` 作为 TypeScript 配置，让 Next.js 使用独立的编译配置。
-  </Accordion>
-</AccordionGroup>
-
----
-
-## 生成项目的可用命令
-
-| 命令 | 内部执行 | 说明 |
-|------|---------|------|
-| `pnpm run dev` | `hile start --dev --env-file .env` | 开发模式启动（Next.js 以 dev 模式运行，无需预构建） |
-| `pnpm run build` | 编译 TypeScript（含控制器）+ Next.js 生产构建 | 产出 `dist/` 与 `.next/` |
-| `pnpm run start` | `hile start`（生产模式，可带 `--env-file .env.prod`） | 使用编译后的 `dist/` 与 `.next/` 启动 |
-
----
-
-## 技术栈
-
-以下依赖**常见于**带 Next.js 的模板（如 `next`、`micro-http-next`）；纯 HTTP 或 Micro 模板以生成项目内的 `package.json` 为准。
-
-生成的项目依赖以下包：
-
-| 包名 | 作用 |
-|------|------|
-| `@hile/core` | 异步服务容器，管理服务生命周期 |
-| `@hile/http` | Koa + find-my-way HTTP 框架 |
-| `@hile/http-next` | Next.js 桥接层，API 与 SSR 共存 |
-| `@hile/cli` | 命令行启动器（`hile start`） |
-| `next` | Next.js 16，App Router + RSC |
-| `react` / `react-dom` | React 19 |
-| `eslint` + `eslint-config-next` | 代码检查 |
-
----
-
-## 如何扩展
-
-### 添加新页面
-
-在 `src/app/` 下创建目录和 `page.tsx`：
-
-```typescript
-// src/app/about/page.tsx
-export default function About() {
-  return <h1>About</h1>;
-}
-```
-
-访问 `http://localhost:3000/about`。
-
-### 添加新 API
-
-创建 `*.controller.ts` 文件：
-
-```typescript
-// src/app/users.controller.ts
-import { defineController } from "@hile/http";
-
-export default defineController("GET", async () => {
-  return { users: [] };
-});
-```
-
-访问 `http://localhost:3000/-/users`。
-
-### 添加数据库
-
-```bash
-pnpm add @hile/typeorm typeorm mysql2
-```
-
-配置环境变量后，在 **`src/models/*.model.*`**、**`src/services/*.service.*`** 或 **`src/controllers/**`** 内 **`loadService(typeormService)`**（**`src/app/**`** **禁止** **`loadService`**）。
-
-### 添加 Redis
-
-```bash
-pnpm add @hile/ioredis ioredis
-```
-
-在 `package.json` 添加自动加载或在 boot 文件中手动加载。
 
 ---
 

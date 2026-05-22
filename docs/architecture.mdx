@@ -8,47 +8,90 @@ description: "Hile 分层与职责鸟瞰；详细流程见基础与技巧各章"
 Hile 按职责分层，各层可按需引入：
 
 ```
-┌──────────────────────────────────────────────────────┐
-│                    应用层 (App)                        │
-│   services·controllers·pages；models 承载业务           │
-├─────────────────┬────────────────┬────────────────────┤
-│   @hile/cli     │   @hile/http   │  @hile/http-next   │
-│   命令行启动器   │   HTTP 框架    │   Next.js 桥接     │
-├─────────────────┼────────────────┼────────────────────┤
-│  @hile/typeorm  │  @hile/ioredis │ @hile/message-modem│
-│  数据库集成      │  Redis 集成    │  消息通信抽象       │
-├─────────────────┴────────────────┴────────────────────┤
-│                     @hile/core                         │
-│          异步服务容器 · 生命周期 · 依赖图               │
-└──────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│                       应用层 (App)                        │
+│   services · controllers · pages；models 承载业务         │
+├──────────┬──────────┬──────────┬──────────┬──────────────┤
+│ @hile/cli│@hile/http│@hile/    │@hile/     │@hile/         │
+│  CLI 启动│ HTTP 框架│http-next│typeorm   │ioredis        │
+├──────────┴──────────┴──────────┼──────────┼──────────────┤
+│ @hile/cache (类型安全 Redis    │ @hile/micro-dynamic-configs│
+│ 缓存，依赖 @hile/ioredis)      │ (动态配置，依赖 micro +   │
+│                               │  ioredis + Registry topic)│
+├───────────────────────────────┴──────────────────────────┤
+│ @hile/message-modem · message-ipc · message-worker-thread │
+│ message-ws · message-loader · @hile/micro                │
+│ 消息通信抽象与实现（可脱离容器独立使用）                    │
+├──────────────────────────────────────────────────────────┤
+│                     @hile/core                             │
+│          异步服务容器 · 生命周期 · 依赖图                   │
+└──────────────────────────────────────────────────────────┘
 ```
 
 <Note>
-上图强调 **经 `@hile/core` 编排** 的常见 Web/数据栈。**`@hile/message-loader`、`@hile/message-ws`、`@hile/micro`** 等可脱离容器在任意 Node 进程中单独使用。
+上图强调 **经 `@hile/core` 编排** 的常见 Web/数据栈。**`@hile/message-loader`、`@hile/message-ws`、`@hile/micro`** 等消息族可脱离容器在任意 Node 进程中单独使用。
 </Note>
 
-### 各层职责（摘要）
+### 各层职责
 
 <AccordionGroup>
   <Accordion title="基础层：@hile/core">
     **职责：** 管理服务的创建、缓存、依赖追踪与销毁。
 
-    深入：[服务容器](/fundamentals/container)、[生命周期与事件](/fundamentals/lifecycle-and-events)；API 细节：[@hile/core](/packages/core)。
+    核心 API：`defineService(key, fn)` 注册服务，`loadService(props)` 按需加载。容器自动追踪依赖图、检测循环依赖、合并并发请求。支持 `startTimeoutMs` 和 `shutdownTimeoutMs` 配置。提供事件监听：`service:init` / `service:ready` / `service:error` / `service:shutdown:start` / `container:shutdown:done` 等。
   </Accordion>
   <Accordion title="服务层：HTTP、数据、消息">
     **职责：** 具体基础设施。
 
-    - **`@hile/http`** — Koa + find-my-way，路由与中间件；流程见 [HTTP 请求管线](/fundamentals/http-pipeline)；[@hile/http](/packages/http)。
-    - **`@hile/http-next`** — 与 Next 共用端口；见 [HttpNext 与全栈分流](/fundamentals/http-next-pipeline)；[@hile/http-next](/packages/http-next)。
-    - **`@hile/typeorm`** / **`@hile/ioredis`** — 见 [数据库](/techniques/database)、[缓存](/techniques/caching)。
-    - **消息族** — modem / ipc / worker / ws / loader / micro；见 [消息与微服务发现](/techniques/messaging)。
+    - **`@hile/http`** — Koa + find-my-way（基于 `find-my-way` 的树形路由器），全局中间件（`http.use`）、手动路由注册（`http.get / post / route`）、文件系统路由（`http.load`，自动扫描 `*.controller.{ts,js,tsx,jsx}`）、响应插件链（`defineResponsePlugin`）。控制器支持 Zod 校验 query / params / body。
+    - **`@hile/http-next`** — 将 Next.js 渲染器嵌入 Koa 服务。`HttpNext` 构造函数接受 `HttpProps` 扩展（控制器目录/前缀、静态资源目录、特殊控制器、.next 产物目录），`start()` 方法在 `http.listen()` 回调中创建 NextServer 实例并注册转发中间件。
+    - **`@hile/typeorm`** — 默认导出 `defineService('Symbol.for(...)', ...)`，创建 TypeORM `DataSource` 实例。环境变量配置（`TYPEORM_TYPE`/`HOST`/`PORT`/`USERNAME`/`PASSWORD`/`DATABASE`/`ENTITIES`/`SYNCHRONIZE` 等）。还导出 `transaction(datasource, callback)` 辅助函数，支持 LIFO 补偿回调。
+    - **`@hile/ioredis`** — 默认导出 `defineService('Symbol.for(...)', ...)`，创建 `Redis`（ioredis）客户端。环境变量配置（`REDIS_HOST`/`PORT`/`USERNAME`/`PASSWORD`/`DB`）。
+    - **`@hile/cache`** — 基于 `@hile/ioredis` 的类型安全缓存。`defineCache` 定义带模板字符串键的缓存规则，`RedisCache.loadCache(target)` 返回 `{ read, write, remove, has }` 操作对象。运行时类型推导。
+    - **消息族** — `message-modem` 定义请求/响应/中止协议与 `receive()` 路由；`message-ipc` / `message-worker-thread` / `message-ws` 分别实现不同传输层的消息通信；`message-loader` 从文件系统加载 `*.msg.{ts,js,tsx,jsx}` 路由处理器，支持 `register()` 和 `dispatch()`；`micro` 的 `Server` 继承 `MessageLoader` 并附加 WebSocket 服务端，`Application` 继承 `Server` 添加 Registry 客户端、namespace 发现、流式调用和 topic 发布/订阅。
+    - **`@hile/micro-dynamic-configs`** — 接收 `@hile/micro` 的 `Application` 实例和 `ioredis` 的 Redis 客户端，通过 `publish(topic, payload)` 将 Zod schema 校验后的配置项以 topic 形式发布到 Registry；`save()` 方法写入 Redis 并通过 topic 更新实时推送给所有订阅方。
   </Accordion>
   <Accordion title="编排：CLI">
-    **职责：** 扫描 **`*.boot`**、加载服务、信号与日志。
-
-    见 [CLI 概览](/cli/overview)；[@hile/cli](/packages/cli)。
+    **职责：** 扫描 **`*.boot.{ts,js}`**（递归搜索 `src/` 或 `dist/`）、加载自动加载包（`package.json` 的 `hile.auto_load_packages`）、订阅容器事件日志（开发模式）、注册信号处理以优雅关闭。
   </Accordion>
 </AccordionGroup>
+
+---
+
+## 消息通信体系
+
+消息通信包（message-*）可完全脱离 `@hile/core` 容器独立使用，也可在 boot 中通过容器集成。
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                     @hile/message-modem                       │
+│   MessageModem (abstract): _send() / _push() / _stream()      │
+│   receive() 根据消息类型分发 REQUEST / RESPONSE / ABORT       │
+├──────────────┬──────────────┬───────────────┬─────────────────┤
+│ message-ipc  │ message-ws  │ message-      │ message-loader   │
+│ Node IPC     │ WebSocket   │ worker-thread │ 文件系统路由     │
+│ 实现          │ 实现         │ Worker Threads│ defineMessage() │
+│              │              │ 实现           │ dispatch()       │
+└──────────────┴──────────────┴───────────────┴─────────────────┘
+                      │
+                      ▼
+               @hile/micro
+          Server (extends MessageLoader + WebSocketServer)
+          Client  (extends MessageWs + 心跳检测)
+          Registry(extends Server + topic pub/sub + 配置文件监听)
+          Application (extends Server + Registry 客户端 + 断路器)
+```
+
+## Registry 配置管理
+
+`@hile/cli` 提供 `hile registry configs` 子命令，管理位于 `~/.registry/configs/` 的 YAML 配置文件：
+- 文件按 namespace 命名（`<ns>.config.yaml`）
+- Registry 通过 `watchEnvFile()` 监听文件变更并发布 topic 更新
+- `@hile/micro-dynamic-configs` 可作为独立服务，通过 Redis 持久化 + Registry topic 发布/订阅实现运行时动态配置
+
+## 配置热加载
+
+`@hile/micro-dynamic-configs` 的 `MicroDynamicConfigsServer` 基于 Zod schema 校验配置结构，通过 `Application.publish()` 以 topic 推送到 Registry，所有订阅方实时收到变更。配置值持久化在 Redis 中。
 
 ---
 

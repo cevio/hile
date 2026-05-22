@@ -43,7 +43,7 @@ const userCache = defineCache('user:{id:string}:info', async ({ id }) => {
 });
 ```
 
-`defineCache` 的类型推导确保 `params` 的类型与 key 模板一一对应。
+`defineCache` 返回 `{ fn, key }`，类型推导确保 `params` 的类型与 key 模板一一对应。
 
 ### 读写缓存
 
@@ -54,13 +54,11 @@ const { read, write, remove, has } = await cache.loadCache(userCache);
 // 读穿透 — miss 时自动回源
 const user = await read({ id: 'u-001' });
 
-// 强制刷新
+// 强制回源写入
 await write({ id: 'u-001' });
 
 // 检查存在
-if (await has({ id: 'u-001' })) {
-  // ...
-}
+if (await has({ id: 'u-001' })) { /* ... */ }
 
 // 删除
 await remove({ id: 'u-001' });
@@ -87,7 +85,6 @@ const cache = defineCache(
   'user:{id:string}:posts:{page:number}:{verified:boolean}',
   async (params) => {
     // params 类型: { id: string; page: number; verified: boolean }
-    // 所有占位符按名称匹配，与顺序无关
     const data = await db.query(
       'SELECT * FROM posts WHERE user_id = $1 AND verified = $2 LIMIT 10 OFFSET $3',
       [params.id, params.verified, (params.page - 1) * 10]
@@ -99,7 +96,7 @@ const cache = defineCache(
 
 ### 宽松模式
 
-当模板是宽泛的 `string` 类型（非字面量）时，参数退化为 `Record<string, string | number | boolean>`。
+当 key 模板是宽泛的 `string` 类型（非字面量）时，参数退化为 `Record<string, string | number | boolean>`。
 
 ---
 
@@ -110,23 +107,22 @@ const cache = defineCache(
 ```
 read(params)
   → EXISTS key
-    ├─ true  → GET key
-    │          ├─ 有数据 → JSON.parse → 返回
-    │          └─ 空数据 → write(params) → 回源重写
-    └─ false → write(params) → handler 回源 → SET/SETEX → 返回
+    ├─ false → write(params) → 回源写入
+    └─ true  → GET key
+               ├─ 有数据 → JSON.parse → 返回
+               └─ 空数据 → write(params) → 回源重写
 ```
 
-- **缓存命中**：2 次 Redis 操作（EXISTS + GET）
-- **缓存 miss**：handler 执行耗时 + 写入开销
-- **竞态保护**：EXISTS 返回 true 但 GET 为空时（如 key 刚过期），自动回源重写
+- 缓存 miss：自动调用回源函数并写入
+- 缓存存在但 GET 为空（如 key 刚过期）：自动回源重写
 
 ### write — 强制回源写入
 
 ```
 write(params)
   → handler(params) → Cache<R>
-  ├─ data === undefined → EXISTS key? DEL → return undefined
-  └─ data !== undefined →
+    ├─ data === undefined → EXISTS key? DEL → return undefined
+    └─ data !== undefined →
        ├─ expire > 0  → SETEX(key, expire, JSON.stringify(data))
        └─ expire = 0  → SET(key, JSON.stringify(data))
 ```
@@ -178,7 +174,7 @@ has(params)
 }
 ```
 
-`@hile/cache` 自身通过 `import { RedisCache, defineCache } from '@hile/cache'` 直接使用，无需加入 `auto_load_packages`。内部自动调用 `loadService(ioredisService)` 获取 Redis 连接，应用启动时自动建立，退出时自动断开。
+`@hile/cache` 内部通过 `loadService(ioredisService)` 获取 Redis 连接，应用启动时自动建立，退出时自动断开。
 
 ---
 
@@ -206,14 +202,6 @@ const [userOps, postOps] = await Promise.all([
   cache.loadCache(userCache),
   cache.loadCache(postCache),
 ]);
-
-// 在控制器中使用
-export default defineController('GET', async (ctx) => {
-  const userId = ctx.query.id as string;
-  const user = await userOps.read({ id: userId });
-  if (!user) return { error: 'not found' };
-  return { data: user };
-});
 ```
 
 ---
@@ -225,14 +213,15 @@ export default defineController('GET', async (ctx) => {
 | 导出 | 类型 | 说明 |
 |------|------|------|
 | `RedisCache` | `class` | 缓存操作入口，构造函数接收 key 前缀 |
-| `defineCache(key, fn)` | `function` | 定义一条缓存的 key 模板和回源 handler |
-| `Cache<R>` | `class` | 数据包装类，提供 `setExpire` 设置 TTL |
+| `defineCache(key, fn)` | `function` | 定义一条缓存的 key 模板和回源 handler，返回 `{ fn, key }` |
+| `Cache<R>` | `class` | 数据包装类，提供 `setExpire(seconds)` 设置 TTL |
 | `ExtractParams` | `type` | 从 key 模板推导参数类型的工具类型 |
 
-### RedisCache 方法
+### RedisCache
 
 | 方法 | 返回值 | 说明 |
 |------|--------|------|
+| `constructor(prefix: string)` | `RedisCache` | 创建实例，prefix 为所有 key 的前缀 |
 | `loadCache(target)` | `Promise<{read, write, remove, has}>` | 加载一条缓存定义，返回操作对象 |
 
 ### 操作对象

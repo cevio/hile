@@ -58,10 +58,6 @@ export const databaseService = defineService('database', async (shutdown) => {
 
 集成包常用 `Symbol.for('包名')` 作为 key，避免与用户字符串冲突；应用内可用 `'http'`、`'database'` 等可读字符串。
 
-<Warning>
-  服务函数必须是 `async` 函数（或返回 Promise）。同步函数可能无法正确触发错误路径的清理机制。
-</Warning>
-
 ### 第二步：加载服务
 
 使用 `loadService` 获取服务实例。容器保证同一服务只执行一次。
@@ -325,7 +321,7 @@ process.on('SIGTERM', async () => {
 | `getStartupOrder()` | `ServiceKey[]` | 获取服务启动顺序（首次启动顺序） |
 | `hasService(key)` | `boolean` | 是否已对该 key 执行过 `register` |
 | `hasMeta(key)` | `boolean` | 该 key 是否已有运行时元数据（已触发过 resolve） |
-| `getMetaByKey(key)` | `Paddings \| undefined` | 按 key 获取运行时元数据 |
+| `getMetaByKey(key)` | `object \| undefined` | 按 key 获取运行时元数据（status, lifecycle, value, error 等） |
 
 ### ContainerOptions
 
@@ -390,11 +386,6 @@ type ContainerEvent =
     - 检查服务函数内的异步操作是否有死锁或无限等待
     - 适当增加 `startTimeoutMs` 的值
     - 检查网络连接（数据库、Redis 等是否可达）
-  </Accordion>
-  <Accordion title="invalid service file: xxx">
-    CLI 加载 `*.boot.ts` 文件时发现默认导出不是合法的 Hile 服务。检查：
-    - 确保文件使用 `export default defineService(...)` 导出
-    - 确保 `defineService` 从 `@hile/core` 导入
   </Accordion>
 </AccordionGroup>
 

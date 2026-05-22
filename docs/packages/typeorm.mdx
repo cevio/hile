@@ -39,8 +39,6 @@ pnpm add better-sqlite3
 3. 注册 `shutdown(() => connection.destroy())` — 进程退出时自动关闭连接
 4. 返回初始化后的 `DataSource` 实例
 
-你只需要配置环境变量，然后 `loadService` 即可获得可用的数据库连接。
-
 ---
 
 ## 快速开始
@@ -77,21 +75,6 @@ const repo = ds.getRepository(UserEntity)
 const manager = ds.manager
 ```
 
-### 第三步：在控制器中使用
-
-```typescript
-// src/controllers/users/index.controller.ts
-import { defineController } from '@hile/http'
-import { loadService } from '@hile/core'
-import typeormService from '@hile/typeorm'
-
-export default defineController('GET', async (ctx) => {
-  const ds = await loadService(typeormService)
-  const users = await ds.query('SELECT id, name, email FROM users LIMIT 20')
-  return { users }
-})
-```
-
 ---
 
 ## 环境变量详解
@@ -113,7 +96,7 @@ export default defineController('GET', async (ctx) => {
 
 | 特性 | 说明 |
 |------|------|
-| `synchronize` | 仅当 `TYPEORM_SYNCHRONIZE=true` 时为 `true`（自动同步表结构），否则为 `false` |
+| `synchronize` | 仅当环境变量值为字符串 `"true"` 时为 `true`，否则为 `false` |
 | `logging` | `NODE_ENV === 'development'` 时为 `true`（输出 SQL 日志） |
 | `entities` | 未配置 `TYPEORM_ENTITIES` 时为空数组 |
 | `shutdown` | 进程退出时自动调用 `connection.destroy()` |
@@ -139,7 +122,6 @@ const ds = await loadService(typeormService)
 const result = await transaction(ds, async (runner, rollback) => {
   // runner 是 TypeORM 的 QueryRunner，已开启事务
 
-  // 执行数据库操作
   await runner.query('INSERT INTO users (name) VALUES (?)', ['Alice'])
   await runner.query('INSERT INTO logs (action) VALUES (?)', ['create_user'])
 
@@ -189,15 +171,13 @@ const result = await transaction(ds, async (runner, rollback) => {
     │
     ▼
 ② 按 LIFO 顺序执行 rollback 回调    ← 补偿外部操作
-    │  ├── 撤回通知
-    │  └── 退款
     │  ⚠ 单个回调抛错会中断后续回调
     │
     ▼
 ③ runner.release()                  ← 释放 QueryRunner
     │
     ▼
-④ throw 原始错误                    ← 将原始错误抛给调用者
+④ throw 原始错误或补偿回调错误
 ```
 
 补偿回调的规则：
@@ -211,40 +191,9 @@ const result = await transaction(ds, async (runner, rollback) => {
 
 ---
 
-## 与 @hile/cli 集成
-
-方式一：通过 `package.json` 自动加载：
-
-```json
-{
-  "hile": {
-    "auto_load_packages": ["@hile/typeorm"]
-  }
-}
-```
-
-方式二：在 boot 文件中手动加载：
-
-```typescript
-// src/services/database.boot.ts
-import { loadService } from '@hile/core'
-import typeormService from '@hile/typeorm'
-
-import { defineService } from '@hile/core'
-
-export default defineService('database.boot', async () => {
-  const ds = await loadService(typeormService)
-  console.log(`数据库已连接: ${ds.options.database}`)
-  return ds
-})
-```
-
----
-
 ## 在服务中使用
 
 ```typescript
-// src/services/order.service.ts
 import { defineService, loadService } from '@hile/core'
 import typeormService, { transaction } from '@hile/typeorm'
 

@@ -27,7 +27,11 @@ db:
 
 Registry 监听 `configs/` 目录的文件变化，新增或修改 `*.config.yaml` 文件时自动加载（兼容 vim/vi 保存方式），无需重启。
 
-已连服务可通过 `getEnvVariables()` 远程读取 Registry 的配置：
+## Registry 配置分发
+
+Registry 将 YAML 配置文件中的每个字段发布为 **topic**，格式为 `registry:{namespace}/{key}`。已连接 Registry 的 Application 可通过 **subscribe** 订阅这些 topic 来获取配置变更。
+
+例如，`service-a.config.yaml` 中的 `db.host` 会被发布为 `registry:service-a/db.host`：
 
 ```typescript
 import { Application } from '@hile/micro';
@@ -37,14 +41,16 @@ const app = new Application({
   registry: { host: '127.0.0.1', port: 9876 },
 });
 
-// 启动后从 Registry 远程读取配置
-const config = await app.getEnvVariables(
-  { namespace: 'service-a', fields: ['db.host', 'db.port'] },
-);
-// => { 'service-a': { 'db.host': '10.0.0.2', 'db.port': 3306 } }
+// 订阅配置变更
+const unsubscribe = await app.subscribe('registry:service-a/db.host', (payload) => {
+  console.log('db.host updated:', payload);
+});
+
+// 应用关闭时取消订阅
+unsubscribe();
 ```
 
-详见 [@hile/micro](/packages/micro)。
+首次 `subscribe` 时回调会立即收到当前值，后续文件变更时自动推送新值。详见 [@hile/micro](/packages/micro)。
 
 ## CLI 管理配置
 
@@ -79,7 +85,7 @@ hile registry configs del my-service port
 hile registry configs del my-service -y
 ```
 
-运行中的 Registry 通过 `fs.watch` 自动感知文件变化，无需重启。
+运行中的 Registry 通过 `fs.watch` 自动感知文件变化，无需重启。修改 YAML 文件后，Registry 会自动将新值推送到所有已订阅的客户端。
 
 ## `package.json` 中的 `hile` 字段
 

@@ -29,7 +29,7 @@ MessageModem (abstract)              ← post + exec 均抽象
 
 - **双端支持** — 主线程传入 `Worker` 或 `MessagePort`，Worker 线程端自动使用 `parentPort`
 - **继承模式** — 子类实现 `exec` 定义请求处理逻辑
-- **请求/响应** — 继承 `MessageModem` 全部能力（超时、中止、错误传播）
+- **请求/响应** — 继承 `MessageModem` 全部能力（超时、中止、stream、错误传播）
 - **资源清理** — `dispose()` 移除监听，避免内存泄漏
 
 ---
@@ -39,9 +39,9 @@ MessageModem (abstract)              ← post + exec 均抽象
 ```
 主线程                            Worker 线程
   │                                 │
-  │  wt.request(data)               │
+  │  wt._send(data)                 │
   │───── REQUEST ──────────────────►│
-  │                                 │ exec(data)
+  │                                 │ exec(data, signal)
   │                                 │
   │◄───── RESPONSE ─────────────────│
   │  resolve(result)                │
@@ -68,7 +68,7 @@ import { MessageWorkerThread } from '@hile/message-worker-thread';
 import { Exception } from '@hile/message-modem';
 
 class ComputeWorker extends MessageWorkerThread {
-  protected async exec(data: any): Promise<any> {
+  protected async exec(data: any, signal?: AbortSignal): Promise<any> {
     switch (data?.action) {
       case 'compute':
         return data.value * 2;
@@ -91,7 +91,7 @@ class ComputeWorker extends MessageWorkerThread {
 import { Worker } from 'node:worker_threads';
 
 class MainThread extends MessageWorkerThread {
-  protected async exec(data: any): Promise<any> {
+  protected async exec(data: any, signal?: AbortSignal): Promise<any> {
     return { reply: 'from main', query: data };
   }
 
@@ -148,7 +148,7 @@ port2.close();
 try {
   const result = await wt.request(data, { timeout: 5000 });
 } catch (e) {
-  // 超时后触发 abort → AbortException
+  // 超时后触发 abort → TimeoutException
 }
 ```
 
@@ -177,7 +177,7 @@ try {
 import { Exception } from '@hile/message-modem';
 
 class MyWorker extends MessageWorkerThread {
-  protected async exec(data: any): Promise<any> {
+  protected async exec(data: any, signal?: AbortSignal): Promise<any> {
     if (!data.token) {
       throw new Exception(401, 'Unauthorized');
       // status 401 透传到对端
@@ -218,11 +218,12 @@ try {
 
 | 方法 | 签名 | 说明 |
 |------|------|------|
-| `constructor` | `new SubClass(port?: Worker \| MessagePort)` | 主线程传 Worker/MessagePort；Worker 线程不传参数 |
-| `exec` | `protected abstract exec(data: any): Promise<any>` | 子类必须实现：处理对端请求 |
-| `_send` | `protected _send<T>(data: T, options?: { timeout?: number, signal?: AbortSignal }): Promise<T>` | 发送双向请求（`twoway: true`），返回 Promise。子类自行暴露为 public |
+| `constructor` | `new SubClass(port?: Worker \| MessagePort)` | 主线程传 Worker/MessagePort；Worker 线程不传参数（自动使用 parentPort） |
+| `exec` | `protected abstract exec(data: any, signal?: AbortSignal): Promise<any>` | 子类必须实现：处理对端请求。`signal` 在请求被中止时触发 |
+| `_send` | `protected _send<T>(data: T, options?: { timeout?: number, signal?: AbortSignal }): Promise<T>` | 发送双向请求（`twoway: true`），返回 Promise。子类自行暴露为 public。默认超时 30s |
 | `_push` | `protected _push<T>(data: T, options?: { timeout?: number, signal?: AbortSignal }): void` | 发送单向推送（`twoway: false`），接收方不回复 RESPONSE |
-| `dispose` | `dispose(): void` | 移除消息监听，释放资源 |
+| `_stream` | `protected _stream(data: any, options?: { signal?: AbortSignal }): Readable` | 发送流式请求，返回 `Readable`。远端 `exec` 需返回 `AsyncIterable` |
+| `dispose` | `dispose(): void` | 移除消息监听，拒绝所有待处理请求，释放资源 |
 
 ### `_send` 返回值
 
@@ -250,6 +251,7 @@ try {
 | 底层 API | `process.send` / `child.send` | `port.postMessage` |
 | 进程模型 | 独立进程（`fork`） | 同进程多线程（`new Worker`） |
 | 内存 | 独立堆，JSON 序列化 | 可共享 `SharedArrayBuffer` |
+| 序列化 | JSON（默认） | structured clone |
 | 传输通道 | `ChildProcess` | `Worker` / `MessagePort` |
 | 构造参数 | `ChildProcess \| 不传` | `Worker \| MessagePort \| 不传` |
 
@@ -278,11 +280,11 @@ try {
     这表示代码在主线程中运行，不在 Worker 线程内。主线程端必须传入 `Worker` 或 `MessagePort` 实例：
 
     ```typescript
-    // ✅ 主线程
+    //  主线程
     const worker = new Worker('./worker.js');
     const wt = new MyWT(worker);
 
-    // ✅ Worker 线程内
+    //   Worker 线程内
     const wt = new MyWT(); // 自动使用 parentPort
     ```
   </Accordion>
@@ -300,7 +302,7 @@ try {
     ```
   </Accordion>
   <Accordion title="可以传递 SharedArrayBuffer 吗？">
-    `postMessage` 支持 transferable objects，但当前 `MessageWorkerThread` 的 `post` 实现只调用 `postMessage(data)` 不传 transfer list。如需传递 SharedArrayBuffer 或 transferable objects，可在子类中覆写 `post` 方法。
+    `postMessage` 支持 transferable objects，但当前 `MessageWorkerThread` 的 `post` 实现只调用 `postMessage(data, [])` 不传 transfer list（空数组）。如需传递 SharedArrayBuffer 或 transferable objects，可在子类中覆写 `post` 方法。
   </Accordion>
   <Accordion title="和 MessageChannel 有什么区别？">
     `MessageChannel` 创建一对 `MessagePort`，可以在同进程内使用。`Worker` 则是独立线程。两者都可以作为 `MessageWorkerThread` 的通道参数，因为 `Worker` 和 `MessagePort` 都支持 `postMessage` + `on('message')` 接口。

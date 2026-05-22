@@ -7,12 +7,26 @@ Hile 通过 **`@hile/core`** 提供异步服务容器：所有经 `defineService
 
 ## 注册与加载
 
-- **`defineService(key, fn)`** — 将异步工厂 `fn` 注册到容器；**此时不会执行** `fn`，直到有人 `loadService`。
-- **`loadService(props)`** — 首次调用时执行工厂并缓存返回值；后续调用返回同一实例。
+- **`defineService(key, fn)`** — 将异步工厂 `fn` 注册到容器；**此时不会执行** `fn`，直到有人 `loadService`。返回 `ServiceRegisterProps` 对象（含 `key`、`fn` 与 `flag`）。
+- **`loadService(props)`** — 接收 `defineService` 的返回值；首次调用时执行工厂并缓存返回值；后续调用返回同一实例。并发调用期间，后续请求加入等待队列，服务就绪后统一 resolve。
+
+```typescript
+const db = defineService('database', async (onTeardown) => {
+  const conn = await createConnection()
+  onTeardown(() => conn.close()) // 注册清理回调
+  return conn
+})
+
+const conn = await loadService(db)
+```
 
 集成包通常用 `Symbol.for('包名')` 作为 key，避免与用户自定义字符串冲突；应用内可用 `'http'`、`'database'` 等可读 key。
 
-工厂函数接收 **`shutdown`**，用于注册进程退出时的清理回调（与 [生命周期与事件](/fundamentals/lifecycle-and-events) 一致）。
+工厂函数接收 **teardown 注册函数**（即 `(fn: () => unknown | Promise<unknown>) => void`），用于注册容器关闭时的清理回调。注册后的 teardowns 按 **LIFO** 顺序执行（后注册的先执行）。
+
+## 并发合并
+
+当多个调用者同时 `loadService` 同一未就绪的服务时，仅首次调用执行工厂函数，其余调用者自动加入等待队列；服务就绪后所有等待者同时收到结果，失败时全部 reject。此机制通过 `Paddings` 内部状态（`status: -1 | 0 | 1`）实现——`0` 表示运行中，`1` 表示已缓存，`-1` 表示已失败。
 
 ## 依赖图与循环检测
 
@@ -21,12 +35,12 @@ Hile 通过 **`@hile/core`** 提供异步服务容器：所有经 `defineService
 ```typescript
 const serviceC = defineService('c', async () => ({}))
 
-const serviceB = defineService('b', async (shutdown) => {
+const serviceB = defineService('b', async (onTeardown) => {
   const c = await loadService(serviceC) // B → C
   return { c }
 })
 
-const serviceA = defineService('a', async (shutdown) => {
+const serviceA = defineService('a', async (onTeardown) => {
   const b = await loadService(serviceB) // A → B
   const c = await loadService(serviceC) // A → C
   return { b, c }
@@ -40,15 +54,19 @@ A → B → C
 A → C
 ```
 
-若 **C 再次 load A**，会形成环路，容器立即抛出 `circular dependency detected` 类错误。
+若 **C 再次 load A**，容器在 `trackDependency` 中通过 `hasPath(childKey, parentKey)` 检测到环路，立即抛出 `circular dependency detected` 错误并发出 `container:error` 事件。
 
 可随时 introspect：
 
 ```typescript
-const graph = container.getDependencyGraph()
-const order = container.getStartupOrder()
+const graph = container.getDependencyGraph() // { nodes, edges }
+const order = container.getStartupOrder()     // 启动顺序 array
 ```
+
+## 其他查询方法
+
+容器实例还提供 `hasService(key)`（是否注册）、`hasMeta(key)`（是否已运行或正在运行）、`getMetaByKey(key)`（内部 Paddings 数据，含 `status`、`lifecycle`、`value`、`error`、`startedAt` 等）以及 `getLifecycle(key)`（返回 `'init' | 'ready' | 'stopping' | 'stopped'` 或 `undefined`）。
 
 ## 何时深入 API 参考
 
-容器还支持自定义 `Container` 实例、超时、事件订阅等；选项类型与边界行为见 [@hile/core](/packages/core)。
+容器还支持自定义 `Container` 实例、启动/关闭超时、事件订阅等；选项类型与边界行为见 [@hile/core](/packages/core)。

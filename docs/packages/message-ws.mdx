@@ -30,8 +30,8 @@ MessageModem (abstract)     ← post + exec 均抽象
 - **客户端/服务端通用** — 两端各自包装 `WebSocket` 实例
 - **JSON 传输** — 消息自动 `JSON.stringify` / `JSON.parse`
 - **连接状态检查** — 发送前检查 `readyState`，未连接时抛出明确错误
-- **继承 MessageModem** — 超时、中止、错误传播全部支持
-- **资源清理** — `dispose()` 移除监听
+- **继承 MessageModem** — 超时、中止、stream、错误传播全部支持
+- **资源清理** — `dispose()` 移除监听，释放等待中的请求
 
 ---
 
@@ -40,9 +40,9 @@ MessageModem (abstract)     ← post + exec 均抽象
 ```
 客户端                            服务端
   │                                 │
-  │  modem.request(data)            │
+  │  modem._send(data)              │
   │───── REQUEST ──────────────────►│
-  │                                 │ exec(data)
+  │                                 │ exec(data, signal)
   │                                 │
   │◄───── RESPONSE ─────────────────│
   │  resolve(result)                │
@@ -69,7 +69,7 @@ import { MessageWs } from '@hile/message-ws';
 import { Exception } from '@hile/message-modem';
 
 class AppWs extends MessageWs {
-  protected async exec(data: any): Promise<any> {
+  protected async exec(data: any, signal?: AbortSignal): Promise<any> {
     switch (data?.action) {
       case 'getUser':
         return { id: data.id, name: 'Alice' };
@@ -139,7 +139,7 @@ wss.on('connection', (ws) => {
 ```typescript
 // 客户端
 class ClientWs extends MessageWs {
-  protected async exec(data: any): Promise<any> {
+  protected async exec(data: any, signal?: AbortSignal): Promise<any> {
     if (data.type === 'notification') {
       showNotification(data.message);
       return { ack: true };
@@ -163,7 +163,7 @@ class ClientWs extends MessageWs {
 try {
   const result = await modem.request(data, { timeout: 5000 });
 } catch (e) {
-  // 超时后触发 abort → AbortException
+  // 超时后触发 abort → TimeoutException
 }
 ```
 
@@ -192,7 +192,7 @@ try {
 import { Exception } from '@hile/message-modem';
 
 class MyWs extends MessageWs {
-  protected async exec(data: any): Promise<any> {
+  protected async exec(data: any, signal?: AbortSignal): Promise<any> {
     if (!data.token) {
       throw new Exception(401, 'Unauthorized');
       // status 401 透传到对端
@@ -233,11 +233,12 @@ try {
 
 | 方法 | 签名 | 说明 |
 |------|------|------|
-| `constructor` | `new SubClass(ws: WebSocket)` | 传入已连接的 WebSocket 实例 |
-| `exec` | `protected abstract exec(data: any): Promise<any>` | 子类必须实现：处理对端请求 |
-| `_send` | `protected _send<T>(data: T, options?: { timeout?: number, signal?: AbortSignal }): Promise<T>` | 发送双向请求（`twoway: true`），返回 Promise。子类自行暴露为 public |
+| `constructor` | `new SubClass(ws: WebSocket)` | 传入已连接的 WebSocket 实例，自动绑定 message 事件 |
+| `exec` | `protected abstract exec(data: any, signal?: AbortSignal): Promise<any>` | 子类必须实现：处理对端请求。`signal` 在请求被中止时触发 |
+| `_send` | `protected _send<T>(data: T, options?: { timeout?: number, signal?: AbortSignal }): Promise<T>` | 发送双向请求（`twoway: true`），返回 Promise。子类自行暴露为 public。默认超时 30s |
 | `_push` | `protected _push<T>(data: T, options?: { timeout?: number, signal?: AbortSignal }): void` | 发送单向推送（`twoway: false`），接收方不回复 RESPONSE |
-| `dispose` | `dispose(): void` | 移除消息监听，释放资源 |
+| `_stream` | `protected _stream(data: any, options?: { signal?: AbortSignal }): Readable` | 发送流式请求，返回 `Readable`。远端 `exec` 需返回 `AsyncIterable` |
+| `dispose` | `dispose(): void` | 移除消息监听，拒绝所有待处理请求，释放资源 |
 
 ### `_send` 返回值
 
@@ -261,7 +262,7 @@ try {
 | 特性 | message-ipc | message-worker-thread | message-ws |
 |------|-------------|----------------------|------------|
 | 底层 API | `process.send` | `port.postMessage` | `ws.send` |
-| 序列化 | 自动（V8） | 自动（structured clone） | JSON |
+| 序列化 | 自动（JSON，Node.js IPC 默认） | 自动（structured clone） | JSON |
 | 网络 | 同机器 | 同进程 | 跨网络 |
 | 依赖 | 无 | 无 | `ws` |
 | 传输通道 | `ChildProcess` | `Worker` / `MessagePort` | `WebSocket` |
@@ -298,7 +299,7 @@ try {
     const ws = new WebSocket('ws://...');
     ws.on('open', () => {
       const modem = new MyWs(ws);
-      modem.request(data); // ✅ 连接已建立
+      modem.request(data); // 连接已建立
     });
     ```
   </Accordion>

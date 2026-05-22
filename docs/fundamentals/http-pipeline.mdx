@@ -3,7 +3,7 @@ title: HTTP 请求管线
 description: "纯 API 模式下 Koa 中间件、find-my-way 路由与响应插件链"
 ---
 
-在 **`@hile/http`** 模式下，请求依次经过全局中间件、路由器与控制器；返回值可经 **响应插件链** 整形后写入 `ctx.body`。
+**`@hile/http`** 基于 Koa 与 find-my-way 提供 HTTP 服务。请求依次经过 Koa 全局中间件、路由器与控制器；控制器返回值经 **全局响应插件链** 整形后写入 `ctx.body`。
 
 ## 流程概览
 
@@ -11,32 +11,96 @@ description: "纯 API 模式下 Koa 中间件、find-my-way 路由与响应插�
 客户端请求
     │
     ▼
-Koa 全局中间件（注册顺序）
+Koa 全局中间件（use 注册顺序）
     │  ├── 日志
     │  ├── 鉴权
     │  └── ...
     ▼
+router.routes()（listen 时自动注入为最后一道 Koa 中间件）
+    │
+    ▼
 find-my-way 路由匹配
     │
-    ├── 匹配成功 ──→ 路由级中间件 ──→ 控制器
-    │                                        │
-    │                                        ▼
-    │                                  响应插件链
-    │                                        │
-    │                                        ▼
-    │                               result → ctx.body
+    ├── 匹配成功 ──→ 路由级中间件 ──→ 控制器 ──→ 响应插件链 ──→ ctx.body
     │
-    └── 未匹配 ──→ defaultRoute（next）──→ 404
+    └── 未匹配 ──→ defaultRoute（next()）──→ Koa 默认 404
+```
+
+## 全局中间件
+
+通过 `http.use(middleware)` 注册 Koa 标准中间件，按注册顺序执行。在 `http.listen()` 时，路由中间件 `router.routes()` 被自动追加为最后一道中间件。
+
+```typescript
+import { Http } from '@hile/http'
+
+const http = new Http({ port: 3000 })
+http.use(async (ctx, next) => {
+  const start = Date.now()
+  await next()
+  console.log(`${ctx.method} ${ctx.url} ${Date.now() - start}ms`)
+})
+```
+
+## 路由注册
+
+### 命令式
+
+`http.get(url, ...middlewares)` / `http.post(url, ...middlewares)` / `http.route(method, url, ...middlewares)` 等方法直接注册路由，返回注销回调。
+
+```typescript
+http.get('/hello', async (ctx) => { ctx.body = 'world' })
+```
+
+### 文件路由（自动加载）
+
+`http.load(directory, options)` 扫描指定目录下符合后缀约定的文件（默认 `*.controller.{ts,js,tsx,jsx}`），每个文件须 `export default` 一个 `defineController(...)` 的返回值（单个或数组）。
+
+路径中的 `[param]` 段自动转换为 find-my-way 的 `:param` 参数。支持 `prefix`、`defaultSuffix`、`conflict` 策略等选项。
+
+## 控制器定义
+
+`defineController` 提供三种重载：
+
+1. **`defineController(method, fn)`** — 最简单形式，无 Zod 校验
+2. **`defineController(method, [mw1, mw2], fn)`** — 带前置路由级中间件
+3. **`defineController(metadata, fn)`** — 使用 `createControllerMetadata` 传入完整配置（含 method、middlewares、Zod schema）
+
+**Zod 校验**：当 metadata 中提供了 schema（query/params/body），控制器中间件会在调用 fn 前对对应字段做 `safeParse`；校验失败则 `ctx.throw(400)`，不会改写 ctx 上的原始值。
+
+```typescript
+import { z } from 'zod'
+import { defineController, createControllerMetadata } from '@hile/http'
+
+const meta = createControllerMetadata({
+  method: 'GET',
+  schema: { query: z.object({ page: z.coerce.number().default(1) }) },
+})
+
+export default defineController(meta, (ctx) => {
+  // ctx.query.page 仍是原始字符串；校验仅保证格式合法
+  return { data: [] }
+})
 ```
 
 ## 响应插件链
 
-插件串行执行，语义接近 Koa 洋葱模型：可对控制器返回值变换后再交给下一个插件；传给 `next()` 的非 `undefined` 结果最终会写入 **`ctx.body`**。
+插件通过 **`defineResponsePlugin(fn)`** **全局注册**（全局数组，不区分 Http 实例），在控制器返回值后串行执行。每个插件接收 `(ctx, result, next)`，调用 `await next(transformed)` 将结果传给下一个插件。最终非 `undefined` 的结果写入 `ctx.body`。
 
 ```typescript
+import { defineResponsePlugin } from '@hile/http'
+
+// 包裹统一响应格式
 defineResponsePlugin(async (ctx, result, next) => {
   return await next({ code: 0, data: result })
 })
 ```
 
-文件系统路由、`defineController`、Zod 校验、中间件注册等完整 API 见 [@hile/http](/packages/http)。
+插件按注册顺序依次执行：`plugin[0] → plugin[1] → ... → last → ctx.body`。插件内 `await next()` 之后的代码可在下游插件完成后执行（类似洋葱模型），但典型用法是单向变换管道。
+
+## 其他
+
+- Koa 签名 cookie keys 自动生成或通过 `props.keys` 传入
+- `http.listen(onListen?)` 启动服务，`onListen` 可选回调（接收 `http.Server`），返回 close 函数
+- Listen 流程：注入路由中间件 → 创建 HTTP Server → 调用 onListen → 调用 `server.listen(port)`
+
+完整 API 与选项类型见 [@hile/http](/packages/http)。

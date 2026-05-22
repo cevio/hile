@@ -3,7 +3,41 @@ title: HttpNext 与全栈分流
 description: "同一端口下静态资源、API 与 Next.js 页面的请求顺序与约定"
 ---
 
-**`@hile/http-next`** 把 **Koa + `@hile/http`** 与 **Next.js** 绑在同一 HTTP Server：先尝试静态与 API，最后交给 Next 做 SSR/RSC。
+**`@hile/http-next`** 将 **Koa + `@hile/http`** 与 **Next.js** 绑定在同一 HTTP Server：先尝试静态与 API，最后交给 Next 做 SSR/RSC。
+
+## 构建与启动时序
+
+```
+HttpNext 构造函数
+  1. new Http(httpOptions)
+  2. koa-static(publicPath)         ← 用户静态资源（可配置，支持多目录）
+
+HttpNext.start()
+  3. koa-static(<nextArtifactsDir>/static)   ← Next 静态构建产物
+  4. http.load(controllerDirectory, {
+       prefix: controllerPrefix,    ← 默认 /-
+       suffix: controllerSuffix,    ← 默认 controller
+       conflict: "error"
+     })
+  5. http.load(specialControllers)          ← 额外控制器目录
+  6. http.listen(onListen):
+     a. 注入 router.routes() 为最后一道 Koa 中间件
+     b. 创建 HTTP Server
+     c. 调用 onListen(server):
+        i.   创建 NextServer({ dev, httpServer, dir: cwd })
+        ii.  await app.prepare()
+        iii. this.http.use(Next.js handler)  ← 注册为最后一道 Koa 中间件
+     d. server.listen(port)
+```
+
+最终 Koa 中间件执行顺序：
+
+```
+koa-static(publicPath)
+    → koa-static(.next/static/)
+    → router.routes()（find-my-way）
+    → Next.js handler
+```
 
 ## 请求顺序
 
@@ -11,25 +45,37 @@ description: "同一端口下静态资源、API 与 Next.js 页面的请求顺�
 客户端请求
     │
     ▼
-koa-static(public/)
+koa-static(publicPath)        ← 配置项，多为 public/，可多目录
     │ 未命中
     ▼
-koa-static(.next/static/)
+koa-static(<nextArtifactsDir>/static)  ← 默认 .next/static/
     │ 未命中
     ▼
-hile-http 路由（默认前缀 /-*）
-    │ 未命中
+find-my-way 路由匹配          ← 控制器前缀默认 /-
+    │ 未匹配（defaultRoute → next()）
     ▼
-Next.js handler（SSR / RSC）
-    │
-    ├── 命中 page.tsx ──→ 渲染 HTML
-    └── 未命中 ──→ Next 404
+Next.js handler               ← SSR / RSC / Next 404
 ```
 
-## 关键约定
+## 关键配置
 
-- **API 路径**：默认 **`/-`** 前缀（`controllerPrefix`），与页面路由如 `/about` 隔离；控制器目录默认 **`src/controllers`**（可用 `controllerDirectory`、`specialControllers` 扩展多目录与多前缀，见包文档）。
-- **业务数据**：**`defineModel`** 放在 **`src/models/<领域>/*.model.ts`**，**`export default`**；**`app` / `controllers` / `services`** 侧只 **`loadModel`**。**`page.tsx`** 若使用 **`loadModel`**，须 **`export const dynamic = "force-dynamic"`**。**`src/controllers/**`** 可 **`loadService`**；**不在 `src/app/**` 使用 `loadService`**（细化约定见仓库内 `packages/http-next/SKILL.md`）。
-- **集成细节**：Next handler 作为最后一个 Koa 中间件；通过 **`ctx.respond = false`** 交还原生 **`req`/`res`**；在 **`prepare()`** 完成后再挂载，避免未就绪接流。
+- **`controllerPrefix`** — API 路由前缀，默认 **`/-`**（不含通配符），与 `/about` 等页面路由隔离
+- **`controllerDirectory`** — 控制器目录名，开发时基于 `src/`，生产基于 `dist/`，默认 **`controllers`**
+- **`controllerSuffix`** — 控制器文件后缀，默认 **`controller`**（即 `*.controller.ts`）
+- **`publicPath`** — 用户静态资源目录，相对于 `cwd`，支持 `string | string[]`
+- **`nextArtifactsDir`** — Next 构建产物目录，默认 `cwd/.next`
+- **`specialControllers`** — 额外控制器配置数组 `{ directory: string, prefix: string }[]`，在默认控制器加载后依次 `http.load`
+
+## 模型（Model）
+
+`@hile/http-next` 导出 **`defineModel`** 与 **`loadModel`**，用于定义可复用的业务数据创建逻辑。`defineModel(create)` 接收一个工厂函数，返回 `ModelDefinition` 对象；`loadModel(model, ...args)` 调用 `model.create(...args)` 并返回 Promise。
+
+**与 `defineService` 的区别**：Model **无容器 key、不参与容器生命周期、不缓存结果**——每次 `loadModel` 都会重新执行 `create`。适合在 controllers 与 pages 中按需构造数据。
+
+在 `page.tsx` 中使用 `loadModel` 时，须 `export const dynamic = "force-dynamic"` 以保持响应性。
+
+## 关于下一跳
+
+Next handler 作为最后一道 Koa 中间件，通过 **`ctx.respond = false`** 与 **`ctx.status = 200`** 将请求交还给原生 `req`/`res`。handler 在 **`app.prepare()`** 完成后才注册，避免未就绪时接流。
 
 完整构造参数与示例见 [@hile/http-next](/packages/http-next)。

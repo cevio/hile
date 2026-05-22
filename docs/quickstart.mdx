@@ -41,13 +41,13 @@ description: "从零到运行：5 分钟搭建你的第一个 Hile 项目"
     这条命令会：
     1. 执行 `hile start --dev` 以开发模式启动服务
     2. 自动设置 `NODE_ENV=development`
-    3. 使用 tsx 运行 TypeScript（无需预编译）
+    3. 使用 `tsx` 运行 TypeScript（无需预编译）
     4. Next.js 在 `HttpNext.start()` 内以 dev 模式自动运行，支持 HMR
 
     浏览器打开 `http://localhost:3000` 即可看到页面。
   </Step>
   <Step title="验证 API 路由">
-    示例 API 控制器在 **`src/controllers/post.controller.ts`**（`HttpNext` 默认从 **`src/controllers/`** 加载，见 **`packages/http-next/SKILL.md`**）。访问：
+    示例 API 控制器在 **`src/controllers/post.controller.ts`**（`HttpNext` 默认从 **`src/controllers/`** 加载）。访问：
 
     ```bash
     curl http://localhost:3000/-/post
@@ -92,7 +92,7 @@ my-app/
 │   │   └── post/
 │   │       └── post.model.ts    # /-/post defineModel（export default）
 │   └── services/
-│       └── index.boot.ts      # Hile 服务启动入口（*.boot 须在 src/services/）
+│       └── index.boot.ts      # Hile 服务启动入口（*.boot.ts 须在 src/ 下）
 ├── next.config.ts             # Next.js 配置
 ├── tsconfig.json              # TypeScript 配置（Node.js 代码）
 ├── tsconfig.next.json         # TypeScript 配置（Next.js）
@@ -102,10 +102,10 @@ my-app/
 
 关键文件说明：
 
-- **`src/services/index.boot.ts`**：Hile 服务入口。CLI 会自动扫描并加载 `*.boot.ts`（**必须**在 **`src/services/`**）。创建 **`HttpNext`** 并 **`start()`**；默认 API 根为 **`src/controllers/`**。
+- **`src/services/index.boot.ts`**：Hile 服务入口。CLI 会自动扫描并加载 `*.boot.{ts,js}` 文件（递归搜索 `src/` 目录，通常约定放在 `src/services/`）。创建 **`HttpNext`** 并 **`start()`**；默认 API 根为 **`src/controllers/`**。
 - **`src/models/<领域>/*.model.ts`**：业务数据，**`export default defineModel`**；示例 **`home/home.model.ts`**、**`post/post.model.ts`**。
-- **`src/controllers/post.controller.ts`**：API 示例（**`GET /-/post`**），内 **`loadModel`** + **default** **import**。约定见 **`packages/http-next/SKILL.md`**。
-- **`src/app/page.tsx`**：首页 SSR，示范 **`loadModel`** + **`export const dynamic = "force-dynamic"`**（凡 **`page.tsx`** 使用 **`loadModel`** 时强制，见 **`packages/http-next/SKILL.md`**）。
+- **`src/controllers/post.controller.ts`**：API 示例（**`GET /-/post`**），内 **`loadModel`** + **default** **import**。
+- **`src/app/page.tsx`**：首页 SSR，示范 **`loadModel`** + **`export const dynamic = "force-dynamic"`**（凡 **`page.tsx`** 使用 **`loadModel`** 时需要）。
 
 ---
 
@@ -159,7 +159,7 @@ my-app/
     ```
   </Step>
   <Step title="创建服务入口">
-    创建 `src/services/http.boot.ts`（**`*.boot` 必须放在 `src/services/`**）：
+    创建 `src/services/http.boot.ts`（`*.boot.ts` 文件会被 CLI 自动加载）：
 
     ```typescript
     import { defineService } from '@hile/core'

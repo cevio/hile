@@ -27,9 +27,9 @@ MessageModem (abstract)        ← post + exec 均抽象
 
 核心能力：
 
-- **双端支持** — 父进程端传入 `ChildProcess`，子进程端零配置
+- **双端支持** — 父进程端传入 `ChildProcess`，子进程端零配置（自动使用 `process`）
 - **继承模式** — 子类实现 `exec` 定义请求处理逻辑
-- **请求/响应** — 继承 `MessageModem` 的全部能力（超时、中止、错误传播）
+- **请求/响应** — 继承 `MessageModem` 的全部能力（超时、中止、stream、错误传播）
 - **资源清理** — `dispose()` 移除监听，避免内存泄漏
 
 ---
@@ -39,9 +39,9 @@ MessageModem (abstract)        ← post + exec 均抽象
 ```
 父进程                            子进程
   │                                 │
-  │  ipc.request(data)              │
+  │  ipc._send(data)                │
   │───── REQUEST ──────────────────►│
-  │                                 │ exec(data)
+  │                                 │ exec(data, signal)
   │                                 │
   │◄───── RESPONSE ─────────────────│
   │  resolve(result)                │
@@ -68,7 +68,7 @@ import { MessageIpc } from '@hile/message-ipc';
 import { Exception } from '@hile/message-modem';
 
 class WorkerIpc extends MessageIpc {
-  protected async exec(data: any): Promise<any> {
+  protected async exec(data: any, signal?: AbortSignal): Promise<any> {
     switch (data?.action) {
       case 'compute':
         return data.value * 2;
@@ -91,7 +91,7 @@ class WorkerIpc extends MessageIpc {
 import { fork } from 'node:child_process';
 
 class ParentIpc extends MessageIpc {
-  protected async exec(data: any): Promise<any> {
+  protected async exec(data: any, signal?: AbortSignal): Promise<any> {
     // 处理子进程发来的请求（可选）
     return { reply: 'from parent', query: data };
   }
@@ -131,7 +131,7 @@ const ipc = new WorkerIpc();
 try {
   const result = await ipc.request(data, { timeout: 5000 });
 } catch (e) {
-  // 超时后会触发 abort → AbortException
+  // 超时后会触发 abort → TimeoutException
 }
 ```
 
@@ -160,7 +160,7 @@ try {
 import { Exception } from '@hile/message-modem';
 
 class MyIpc extends MessageIpc {
-  protected async exec(data: any): Promise<any> {
+  protected async exec(data: any, signal?: AbortSignal): Promise<any> {
     if (!data.token) {
       throw new Exception(401, 'Unauthorized');
       // status 401 会透传到对端
@@ -202,11 +202,12 @@ try {
 
 | 方法 | 签名 | 说明 |
 |------|------|------|
-| `constructor` | `new SubClass(channel?: ChildProcess)` | 父进程传 `fork()` 返回值；子进程不传参数 |
-| `exec` | `protected abstract exec(data: any): Promise<any>` | 子类必须实现：处理对端请求 |
-| `_send` | `protected _send<T>(data: T, options?: { timeout?: number, signal?: AbortSignal }): Promise<T>` | 发送双向请求（`twoway: true`），返回 Promise。子类自行暴露为 public |
+| `constructor` | `new SubClass(channel?: ChildProcess)` | 父进程传 `fork()` 返回值；子进程不传参数（自动使用 `process`） |
+| `exec` | `protected abstract exec(data: any, signal?: AbortSignal): Promise<any>` | 子类必须实现：处理对端请求。`signal` 在请求被中止时触发 |
+| `_send` | `protected _send<T>(data: T, options?: { timeout?: number, signal?: AbortSignal }): Promise<T>` | 发送双向请求（`twoway: true`），返回 Promise。子类自行暴露为 public。默认超时 30s |
 | `_push` | `protected _push<T>(data: T, options?: { timeout?: number, signal?: AbortSignal }): void` | 发送单向推送（`twoway: false`），接收方不回复 RESPONSE |
-| `dispose` | `dispose(): void` | 移除消息监听，释放资源 |
+| `_stream` | `protected _stream(data: any, options?: { signal?: AbortSignal }): Readable` | 发送流式请求，返回 `Readable`。远端 `exec` 需返回 `AsyncIterable` |
+| `dispose` | `dispose(): void` | 移除消息监听，拒绝所有待处理请求，释放资源 |
 
 ### `_send` 返回值
 
@@ -257,10 +258,10 @@ export abstract class MessageIpc extends MessageModem { ... }
     确保子进程是通过 `child_process.fork()` 启动的，而不是 `spawn()` 或 `exec()`。
 
     ```typescript
-    // ✅ 正确
+    //  正确
     const child = fork('./worker.js');
 
-    // ❌ 错误
+    //  错误
     const child = spawn('node', ['./worker.js']);
     ```
   </Accordion>
@@ -278,7 +279,7 @@ export abstract class MessageIpc extends MessageModem { ... }
     ```
   </Accordion>
   <Accordion title="可以传递 Buffer 或复杂对象吗？">
-    IPC 通道通过 JSON 序列化传输数据。Buffer、Date、Map、Set 等会在序列化时丢失类型信息。建议只传递 JSON 安全的数据。
+    默认的 IPC 通道通过 JSON 序列化传输数据。Buffer、Date、Map、Set 等会在序列化时丢失类型信息。建议只传递 JSON 安全的数据。如需支持复杂对象，可使用 `fork()` 的 `serialization: 'advanced'` 选项。
   </Accordion>
   <Accordion title="为什么不用组合模式（onExec）而用继承？">
     继承模式让 `exec` 成为类契约的一部分，TypeScript 编译期就能检查是否实现。同时子类可以拥有自己的状态和依赖注入，更适合复杂场景。
