@@ -11,7 +11,7 @@ export interface MessageTransferFormat<T = any> {
   id: number,
   mode: MESSAGE_MODEM_TYPE,
   twoway: boolean,
-  // stream?: boolean,
+  stream?: boolean,
   data?: T
 }
 
@@ -21,11 +21,12 @@ export interface MessageReturnFormat<T = any> {
   message: string,
 }
 
-// export interface MessageStreamChunk<T = any> {
-//   seq: number,
-//   payload: T,
-//   final: boolean,
-// }
+export interface MessageStreamChunk<T = any> {
+  status: string | number,
+  seq: number,
+  payload: T,
+  final: boolean,
+}
 
 export abstract class MessageModem {
   private id = 0;
@@ -36,7 +37,7 @@ export abstract class MessageModem {
     reject: (reason?: any) => void
   }>();
 
-  // private readonly streams = new Map<number, Readable>();
+  private readonly streams = new Map<number, Readable>();
 
   protected _dispose() {
     for (const { reject } of this.stacks.values()) {
@@ -45,8 +46,12 @@ export abstract class MessageModem {
     for (const controller of this.aborts.values()) {
       controller.abort();
     }
+    for (const stream of this.streams.values()) {
+      stream.destroy(new AbortException());
+    }
     this.aborts.clear();
     this.stacks.clear();
+    this.streams.clear();
   }
 
   /**
@@ -84,11 +89,11 @@ export abstract class MessageModem {
   private createPostData<T = any>(mode: MESSAGE_MODEM_TYPE, data?: T, twoway = true, stream = false) {
     const id = this.createIncrementId();
     const state: MessageTransferFormat<T> = {
-      id, twoway, data, mode, /*stream,*/
+      id, twoway, data, mode, stream,
     }
     if (mode === MESSAGE_MODEM_TYPE.ABORT) {
       state.twoway = false;
-      // state.stream = false;
+      state.stream = false;
     }
     return state;
   }
@@ -101,8 +106,8 @@ export abstract class MessageModem {
    * @returns 消息响应
    */
   protected _send<T = any>(data: any, options?: {
-    timeout: number,
-    signal: AbortSignal,
+    timeout?: number,
+    signal?: AbortSignal,
   }) {
     return this._write<T>(data, {
       timeout: options?.timeout ?? 30000,
@@ -119,8 +124,8 @@ export abstract class MessageModem {
    * @returns 消息响应
    */
   protected _push<T = any>(data: T, options?: {
-    timeout: number,
-    signal: AbortSignal,
+    timeout?: number,
+    signal?: AbortSignal,
   }): void {
     this._write(data, {
       timeout: options?.timeout ?? 30000,
@@ -129,13 +134,29 @@ export abstract class MessageModem {
     });
   }
 
-  // protected _stream<T = any>(data: T) {
-  //   const state = this.createPostData(MESSAGE_MODEM_TYPE.REQUEST, data, true, true);
-  //   const stream = new Readable();
-  //   this.streams.set(state.id, stream);
-  //   this.post(state);
-  //   return stream;
-  // }
+  protected _stream(data: any, options?: {
+    signal?: AbortSignal,
+  }) {
+    const state = this.createPostData(MESSAGE_MODEM_TYPE.REQUEST, data, true, true);
+    const stream = new Readable({ objectMode: true, read() { } });
+    this.streams.set(state.id, stream);
+    this.post(state);
+    const onAbort = () => {
+      this.post(this.createPostData(MESSAGE_MODEM_TYPE.ABORT, state.id));
+      stream.destroy(new AbortException());
+      this.streams.delete(state.id);
+    };
+    if (options?.signal) {
+      options.signal.addEventListener('abort', onAbort);
+    }
+    stream.on('close', () => {
+      if (this.streams.has(state.id)) {
+        this.streams.delete(state.id);
+      }
+      options?.signal?.removeEventListener('abort', onAbort);
+    });
+    return stream;
+  }
 
   /**
    * 写入消息
@@ -144,8 +165,8 @@ export abstract class MessageModem {
    * @returns 消息响应
    */
   private _write<U = any>(data: any, options?: {
-    timeout: number,
-    twoway: boolean,
+    timeout?: number,
+    twoway?: boolean,
     signal?: AbortSignal,
   }) {
     const timeout = options?.timeout ?? 30000;
@@ -222,6 +243,9 @@ export abstract class MessageModem {
     this.exec(msg.data, controller.signal)
       .then(value => {
         if (controller.signal.aborted) return;
+        if (isAsyncIterable(value)) {
+          throw new Exception(500, 'Async iterable is not supported');
+        }
         if (msg.twoway) {
           this.post({
             id: msg.id,
@@ -276,6 +300,93 @@ export abstract class MessageModem {
     }
   }
 
+  private onStreamRequest<T = any>(msg: MessageTransferFormat<T>) {
+    const controller = new AbortController();
+    this.aborts.set(msg.id, controller);
+    controller.signal.addEventListener('abort', () => {
+      if (this.aborts.has(msg.id)) {
+        this.aborts.delete(msg.id);
+      }
+    });
+    this.exec(msg.data, controller.signal)
+      .then(async (value: AsyncIterable<any>) => {
+        if (!isAsyncIterable(value)) {
+          throw new Exception(500, 'Invalid async iterable');
+        }
+        let i = 0
+        for await (const chunk of value) {
+          if (controller.signal.aborted) return;
+          this.post<MessageStreamChunk>({
+            id: msg.id,
+            mode: MESSAGE_MODEM_TYPE.RESPONSE,
+            stream: true,
+            data: {
+              status: 200,
+              seq: i++,
+              payload: chunk,
+              final: false,
+            },
+            twoway: false,
+          });
+        }
+        if (controller.signal.aborted) return;
+        this.post<MessageStreamChunk>({
+          id: msg.id,
+          mode: MESSAGE_MODEM_TYPE.RESPONSE,
+          stream: true,
+          data: {
+            status: 200,
+            seq: i++,
+            payload: undefined,
+            final: true,
+          },
+          twoway: false,
+        });
+      })
+      .catch(e => {
+        if (controller.signal.aborted) return;
+        this.post<MessageStreamChunk>({
+          id: msg.id,
+          mode: MESSAGE_MODEM_TYPE.RESPONSE,
+          stream: true,
+          data: {
+            status: e instanceof Exception ? e.status : 500,
+            seq: 0,
+            payload: e instanceof Exception ? e.message : 'Unknown error',
+            final: true,
+          },
+          twoway: false,
+        });
+      })
+      .finally(() => {
+        if (this.aborts.has(msg.id)) {
+          this.aborts.delete(msg.id);
+        }
+      });
+  }
+
+  private onStreamResponse<T = any>(msg: MessageTransferFormat<MessageStreamChunk<T>>) {
+    const id = msg.id;
+    const res = msg.data;
+    // 如果栈中存在该消息，则处理响应消息
+    if (this.streams.has(id)) {
+      const stream = this.streams.get(id)!;
+      if (res) {
+        if (res.status === 200) {
+          if (res.final) {
+            stream.push(null);
+          } else {
+            stream.push(res.payload);
+          }
+        } else {
+          stream.destroy(new Exception(res.status, res.payload as string));
+        }
+      } else {
+        stream.destroy(new Exception(404, 'Empty chunk data'));
+      }
+    }
+  }
+
   /**
    * 接收消息
    * @param msg - 消息数据
@@ -285,11 +396,19 @@ export abstract class MessageModem {
     switch (msg.mode) {
       // 处理请求消息
       case MESSAGE_MODEM_TYPE.REQUEST:
-        this.onRequest(msg);
+        if (msg.stream) {
+          this.onStreamRequest(msg);
+        } else {
+          this.onRequest(msg);
+        }
         break;
       // 处理响应消息
       case MESSAGE_MODEM_TYPE.RESPONSE:
-        this.onResponse(msg);
+        if (msg.stream) {
+          this.onStreamResponse(msg);
+        } else {
+          this.onResponse(msg);
+        }
         break;
       // 处理终止消息
       case MESSAGE_MODEM_TYPE.ABORT:
@@ -304,3 +423,7 @@ export abstract class MessageModem {
     }
   }
 }
+
+function isAsyncIterable<T = any>(value: any): value is AsyncIterable<T> {
+  return value != null && typeof value[Symbol.asyncIterator] === 'function';
+}    

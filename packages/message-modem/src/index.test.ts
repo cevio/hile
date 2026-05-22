@@ -23,12 +23,23 @@ class TestModem extends MessageModem {
     return data;
   }
 
-  public send<T>(data: T, timeout?: number) {
-    return super._send(data, timeout);
+  public send<T>(data: T, options?: number | { timeout?: number; signal?: AbortSignal }) {
+    if (typeof options === 'number') {
+      return super._send(data, { timeout: options });
+    }
+    return super._send(data, { timeout: options?.timeout, signal: options?.signal });
   }
 
-  public push<T>(data: T, timeout?: number): void {
-    super._push(data, timeout);
+  public push<T>(data: T, options?: number | { timeout?: number; signal?: AbortSignal }): void {
+    if (typeof options === 'number') {
+      super._push(data, { timeout: options });
+    } else {
+      super._push(data, { timeout: options?.timeout, signal: options?.signal });
+    }
+  }
+
+  public stream<T>(data: T, options?: { signal?: AbortSignal }) {
+    return super._stream(data, options);
   }
 }
 
@@ -70,22 +81,22 @@ describe('@hile/message-modem', () => {
   describe('basic request/response', () => {
     it('round trip returns exec result from peer', async () => {
       const { a, b } = createPair();
-      const result = await a.send('hello').response();
+      const result = await a.send('hello');
       expect(result).toBe('hello');
     });
 
     it('handles complex data', async () => {
       const { a, b } = createPair();
       const payload = { user: 'test', items: [1, 2, 3] };
-      const result = await a.send(payload).response();
+      const result = await a.send(payload);
       expect(result).toEqual(payload);
     });
 
     it('multiple sequential requests', async () => {
       const { a, b } = createPair();
-      const r1 = await a.send(1).response();
-      const r2 = await a.send(2).response();
-      const r3 = await a.send(3).response();
+      const r1 = await a.send(1);
+      const r2 = await a.send(2);
+      const r3 = await a.send(3);
       expect(r1).toBe(1);
       expect(r2).toBe(2);
       expect(r3).toBe(3);
@@ -94,9 +105,9 @@ describe('@hile/message-modem', () => {
     it('multiple concurrent requests', async () => {
       const { a, b } = createPair();
       const [r1, r2, r3] = await Promise.all([
-        a.send('a').response(),
-        a.send('b').response(),
-        a.send('c').response(),
+        a.send('a'),
+        a.send('b'),
+        a.send('c'),
       ]);
       expect(r1).toBe('a');
       expect(r2).toBe('b');
@@ -106,8 +117,8 @@ describe('@hile/message-modem', () => {
     it('bidirectional communication', async () => {
       const pair1 = createPair();
       const pair2 = createPair();
-      const fromA = await pair1.a.send('from-a').response();
-      const fromB = await pair2.b.send('from-b').response();
+      const fromA = await pair1.a.send('from-a');
+      const fromB = await pair2.b.send('from-b');
       expect(fromA).toBe('from-a');
       expect(fromB).toBe('from-b');
     });
@@ -116,7 +127,7 @@ describe('@hile/message-modem', () => {
   describe('message format', () => {
     it('REQUEST message has correct format', () => {
       const modem = new TestModem();
-      modem.send('test');
+      modem.send('test').catch(() => {});
       const msg = modem.posted[0];
       expect(msg.mode).toBe(MESSAGE_MODEM_TYPE.REQUEST);
       expect(msg.twoway).toBe(true);
@@ -126,9 +137,9 @@ describe('@hile/message-modem', () => {
 
     it('message IDs auto-increment', () => {
       const modem = new TestModem();
-      modem.send('a');
-      modem.send('b');
-      modem.send('c');
+      modem.send('a').catch(() => {});
+      modem.send('b').catch(() => {});
+      modem.send('c').catch(() => {});
       expect(modem.posted[0].id).toBe(0);
       expect(modem.posted[1].id).toBe(1);
       expect(modem.posted[2].id).toBe(2);
@@ -140,9 +151,9 @@ describe('@hile/message-modem', () => {
       const { a, b } = createPair();
       b['exec'] = async () => { throw new Exception(403, 'forbidden'); };
 
-      await expect(a.send('x').response()).rejects.toThrow('forbidden');
+      await expect(a.send('x')).rejects.toThrow('forbidden');
       try {
-        await a.send('x').response();
+        await a.send('x');
       } catch (e) {
         expect(e).toBeInstanceOf(Exception);
         expect((e as Exception).status).toBe(403);
@@ -154,7 +165,7 @@ describe('@hile/message-modem', () => {
       b['exec'] = async () => { throw new Error('internal'); };
 
       try {
-        await a.send('x').response();
+        await a.send('x');
       } catch (e) {
         expect(e).toBeInstanceOf(Exception);
         expect((e as Exception).status).toBe(500);
@@ -166,17 +177,17 @@ describe('@hile/message-modem', () => {
   describe('abort', () => {
     it('abort rejects with AbortException on sender side', async () => {
       const a = new TestModem();
-      const req = a.send('test');
-      const promise = req.response();
-      req.abort();
+      const controller = new AbortController();
+      const promise = a.send('test', { signal: controller.signal });
+      controller.abort();
       await expect(promise).rejects.toThrow('Abort');
     });
 
     it('abort sends ABORT message to peer', async () => {
       const a = new TestModem();
-      const req = a.send('test');
-      const promise = req.response().catch(() => {});
-      req.abort();
+      const controller = new AbortController();
+      const promise = a.send('test', { signal: controller.signal }).catch(() => {});
+      controller.abort();
       await promise;
       const abortMsg = a.posted.find(m => m.mode === MESSAGE_MODEM_TYPE.ABORT);
       expect(abortMsg).toBeDefined();
@@ -194,11 +205,11 @@ describe('@hile/message-modem', () => {
       });
 
       b.peer = a;
-      const req = a.send('slow');
-      const promise = req.response();
+      const controller = new AbortController();
+      const promise = a.send('slow', { signal: controller.signal });
 
       await new Promise(r => setTimeout(r, 50));
-      req.abort();
+      controller.abort();
 
       await expect(promise).rejects.toThrow('Abort');
     });
@@ -207,7 +218,7 @@ describe('@hile/message-modem', () => {
   describe('timeout', () => {
     it('times out if no response within timeout period', async () => {
       const modem = new TestModem();
-      await expect(modem.send('data', 50).response()).rejects.toThrow();
+      await expect(modem.send('data', 50)).rejects.toThrow();
     });
   });
 
@@ -241,7 +252,7 @@ describe('@hile/message-modem', () => {
 
     it('send sends REQUEST with twoway=true', () => {
       const modem = new TestModem();
-      modem.send('request');
+      modem.send('request').catch(() => {});
       const msg = modem.posted[0];
       expect(msg.twoway).toBe(true);
     });
@@ -270,6 +281,133 @@ describe('@hile/message-modem', () => {
           data: 88888,
         });
       }).not.toThrow();
+    });
+  });
+
+  describe('stream', () => {
+    it('sends REQUEST with stream flag', () => {
+      const modem = new TestModem();
+      modem.stream('data');
+      const msg = modem.posted.find(m => m.mode === MESSAGE_MODEM_TYPE.REQUEST);
+      expect(msg?.stream).toBe(true);
+      expect(msg?.twoway).toBe(true);
+    });
+
+    it('delivers multiple chunks from peer', async () => {
+      const a = new TestModem();
+      const b = new TestModem();
+      a.peer = b;
+      b.peer = a;
+
+      b['exec'] = async () => ({
+        [Symbol.asyncIterator]: async function* () {
+          yield 'a';
+          yield 'b';
+          yield 'c';
+        }
+      });
+
+      const stream = a.stream('data');
+      const chunks: any[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+      expect(chunks).toEqual(['a', 'b', 'c']);
+    });
+
+    it('delivers single chunk', async () => {
+      const a = new TestModem();
+      const b = new TestModem();
+      a.peer = b;
+      b.peer = a;
+
+      b['exec'] = async () => ({
+        [Symbol.asyncIterator]: async function* () {
+          yield 'only';
+        }
+      });
+
+      const stream = a.stream('data');
+      const chunks: any[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+      expect(chunks).toEqual(['only']);
+    });
+
+    it('handles empty iterator (no yield)', async () => {
+      const a = new TestModem();
+      const b = new TestModem();
+      a.peer = b;
+      b.peer = a;
+
+      b['exec'] = async () => ({
+        [Symbol.asyncIterator]: async function* () {
+          // no yields
+        }
+      });
+
+      const stream = a.stream('data');
+      const chunks: any[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+      expect(chunks).toEqual([]);
+    });
+
+    it('sends error RESPONSE when exec throws', async () => {
+      const a = new TestModem();
+      const b = new TestModem();
+      a.peer = b;
+      b.peer = a;
+
+      b['exec'] = async () => ({
+        [Symbol.asyncIterator]: async function* () {
+          throw new Exception(400, 'bad data');
+        }
+      });
+
+      const stream = a.stream('data');
+      const errorSpy = vi.fn();
+      stream.on('error', errorSpy);
+      await new Promise<void>(r => stream.on('close', () => r()));
+
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(errorSpy).toHaveBeenCalledWith(expect.any(Exception));
+    });
+
+    it('non-stream onRequest rejects AsyncIterable return with 500', async () => {
+      const { a, b } = createPair();
+
+      b['exec'] = async () => ({
+        [Symbol.asyncIterator]: async function* () {
+          yield 'x';
+        }
+      });
+
+      a.send('x').catch(() => {});
+      await new Promise(r => setTimeout(r, 50));
+
+      const resp = b.posted.find(m => m.mode === MESSAGE_MODEM_TYPE.RESPONSE);
+      expect(resp).toBeDefined();
+      expect(resp!.data).toMatchObject({
+        status: 500,
+        message: expect.stringContaining('Async iterable'),
+      });
+    });
+
+    it('external abort signal sends ABORT message', async () => {
+      const a = new TestModem();
+
+      const controller = new AbortController();
+      const stream = a.stream('data', { signal: controller.signal });
+      stream.on('error', () => {});
+      controller.abort();
+
+      await new Promise<void>(r => stream.on('close', () => r()));
+
+      const abortMsg = a.posted.find(m => m.mode === MESSAGE_MODEM_TYPE.ABORT);
+      expect(abortMsg).toBeDefined();
     });
   });
 });

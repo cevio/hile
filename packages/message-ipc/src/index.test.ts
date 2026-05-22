@@ -8,8 +8,11 @@ class EchoIpc extends MessageIpc {
     return Promise.resolve(data);
   }
 
-  public request<T = any>(data: T, timeout?: number) {
-    return this._send(data, timeout);
+  public request<T = any>(data: any, options?: number | { timeout?: number; signal?: AbortSignal }) {
+    if (typeof options === 'number') {
+      return this._send<T>(data, { timeout: options });
+    }
+    return this._send<T>(data, { timeout: options?.timeout, signal: options?.signal });
   }
 }
 
@@ -19,8 +22,11 @@ class CustomIpc extends MessageIpc {
     return this.execFn(data);
   }
 
-  public request<T = any>(data: T, timeout?: number) {
-    return this._send(data, timeout);
+  public request<T = any>(data: any, options?: number | { timeout?: number; signal?: AbortSignal }) {
+    if (typeof options === 'number') {
+      return this._send<T>(data, { timeout: options });
+    }
+    return this._send<T>(data, { timeout: options?.timeout, signal: options?.signal });
   }
 }
 
@@ -89,7 +95,7 @@ describe('@hile/message-ipc', () => {
       const { parent, child } = createEchoPair();
       track(parent, child);
 
-      const result = await parent.request('hello').response();
+      const result = await parent.request('hello');
       expect(result).toBe('hello');
     });
 
@@ -98,7 +104,7 @@ describe('@hile/message-ipc', () => {
       track(parent, child);
 
       const payload = { users: [{ id: 1, name: 'Alice' }], total: 1 };
-      const result = await parent.request(payload).response();
+      const result = await parent.request(payload);
       expect(result).toEqual(payload);
     });
 
@@ -106,7 +112,7 @@ describe('@hile/message-ipc', () => {
       const { parent, child } = createCustomPair(async (n) => n * 2);
       track(parent, child);
 
-      const result = await parent.request(21).response();
+      const result = await parent.request(21);
       expect(result).toBe(42);
     });
 
@@ -114,9 +120,9 @@ describe('@hile/message-ipc', () => {
       const { parent, child } = createEchoPair();
       track(parent, child);
 
-      expect(await parent.request(1).response()).toBe(1);
-      expect(await parent.request(2).response()).toBe(2);
-      expect(await parent.request(3).response()).toBe(3);
+      expect(await parent.request(1)).toBe(1);
+      expect(await parent.request(2)).toBe(2);
+      expect(await parent.request(3)).toBe(3);
     });
 
     it('multiple concurrent requests', async () => {
@@ -124,9 +130,9 @@ describe('@hile/message-ipc', () => {
       track(parent, child);
 
       const [a, b, c] = await Promise.all([
-        parent.request('a').response(),
-        parent.request('b').response(),
-        parent.request('c').response(),
+        parent.request('a'),
+        parent.request('b'),
+        parent.request('c'),
       ]);
       expect(a).toBe('a');
       expect(b).toBe('b');
@@ -140,7 +146,7 @@ describe('@hile/message-ipc', () => {
       const child = new EchoIpc(childSide);
       track(parent, child);
 
-      const result = await child.request('ping').response();
+      const result = await child.request('ping');
       expect(result).toBe('parent got: ping');
     });
 
@@ -148,7 +154,7 @@ describe('@hile/message-ipc', () => {
       const { parent, child } = createCustomPair(async () => ({ id: 1, name: 'test' }));
       track(parent, child);
 
-      const result = await parent.request(null).response<{ id: number; name: string }>();
+      const result = await parent.request<{ id: number; name: string }>(null);
       expect(result.id).toBe(1);
       expect(result.name).toBe('test');
     });
@@ -162,7 +168,7 @@ describe('@hile/message-ipc', () => {
       track(parent, child);
 
       try {
-        await parent.request('x').response();
+        await parent.request('x');
         expect.unreachable();
       } catch (e) {
         expect(e).toBeInstanceOf(Exception);
@@ -178,7 +184,7 @@ describe('@hile/message-ipc', () => {
       track(parent, child);
 
       try {
-        await parent.request('x').response();
+        await parent.request('x');
         expect.unreachable();
       } catch (e) {
         expect(e).toBeInstanceOf(Exception);
@@ -195,9 +201,9 @@ describe('@hile/message-ipc', () => {
       );
       track(parent, child);
 
-      const req = parent.request('data');
-      const promise = req.response();
-      req.abort();
+      const controller = new AbortController();
+      const promise = parent.request('data', { signal: controller.signal });
+      controller.abort();
       await expect(promise).rejects.toThrow('Abort');
     });
   });
@@ -210,8 +216,7 @@ describe('@hile/message-ipc', () => {
       track(parent, child);
 
       await expect(
-        parent.request('data', 50).response()
-      ).rejects.toThrow();
+        parent.request('data', 50)      ).rejects.toThrow();
     });
   });
 

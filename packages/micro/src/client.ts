@@ -65,14 +65,19 @@ export class Client extends MessageWs {
     });
   }
 
-  public request(url: string, data: any, timeout?: number) {
+  public request(url: string, data: any, options?: { timeout?: number; signal?: AbortSignal }) {
     if (!this._online) throw new Error('Client is not online');
-    return this._send({ url, data }, timeout);
+    return this._send({ url, data }, options);
   }
 
-  public push(url: string, data: any, timeout?: number) {
+  public push(url: string, data: any, options?: { timeout?: number; signal?: AbortSignal }) {
     if (!this._online) throw new Error('Client is not online');
-    return this._push({ url, data }, timeout);
+    return this._push({ url, data }, options);
+  }
+
+  public stream(url: string, data: any, options?: { signal?: AbortSignal }) {
+    if (!this._online) throw new Error('Client is not online');
+    return this._stream({ url, data }, options);
   }
 
   public dispose(): void {

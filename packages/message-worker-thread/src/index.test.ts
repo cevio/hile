@@ -8,8 +8,11 @@ class EchoWorkerThread extends MessageWorkerThread {
     return Promise.resolve(data);
   }
 
-  public request<T = any>(data: T, timeout?: number) {
-    return this._send(data, timeout);
+  public request<T = any>(data: any, options?: number | { timeout?: number; signal?: AbortSignal }) {
+    if (typeof options === 'number') {
+      return this._send<T>(data, { timeout: options });
+    }
+    return this._send<T>(data, { timeout: options?.timeout, signal: options?.signal });
   }
 }
 
@@ -19,8 +22,11 @@ class CustomWorkerThread extends MessageWorkerThread {
     return this.execFn(data);
   }
 
-  public request<T = any>(data: T, timeout?: number) {
-    return this._send(data, timeout);
+  public request<T = any>(data: any, options?: number | { timeout?: number; signal?: AbortSignal }) {
+    if (typeof options === 'number') {
+      return this._send<T>(data, { timeout: options });
+    }
+    return this._send<T>(data, { timeout: options?.timeout, signal: options?.signal });
   }
 }
 
@@ -68,7 +74,7 @@ describe('@hile/message-worker-thread', () => {
       const { main, worker, port1, port2 } = createPair();
       track(main, worker, port1, port2);
 
-      const result = await main.request('hello').response();
+      const result = await main.request('hello');
       expect(result).toBe('hello');
     });
 
@@ -77,7 +83,7 @@ describe('@hile/message-worker-thread', () => {
       track(main, worker, port1, port2);
 
       const payload = { users: [{ id: 1, name: 'Alice' }], total: 1 };
-      const result = await main.request(payload).response();
+      const result = await main.request(payload);
       expect(result).toEqual(payload);
     });
 
@@ -85,7 +91,7 @@ describe('@hile/message-worker-thread', () => {
       const { main, worker, port1, port2 } = createCustomPair(async (n) => n * 2);
       track(main, worker, port1, port2);
 
-      const result = await main.request(21).response();
+      const result = await main.request(21);
       expect(result).toBe(42);
     });
 
@@ -93,9 +99,9 @@ describe('@hile/message-worker-thread', () => {
       const { main, worker, port1, port2 } = createPair();
       track(main, worker, port1, port2);
 
-      expect(await main.request(1).response()).toBe(1);
-      expect(await main.request(2).response()).toBe(2);
-      expect(await main.request(3).response()).toBe(3);
+      expect(await main.request(1)).toBe(1);
+      expect(await main.request(2)).toBe(2);
+      expect(await main.request(3)).toBe(3);
     });
 
     it('multiple concurrent requests', async () => {
@@ -103,9 +109,9 @@ describe('@hile/message-worker-thread', () => {
       track(main, worker, port1, port2);
 
       const [a, b, c] = await Promise.all([
-        main.request('a').response(),
-        main.request('b').response(),
-        main.request('c').response(),
+        main.request('a'),
+        main.request('b'),
+        main.request('c'),
       ]);
       expect(a).toBe('a');
       expect(b).toBe('b');
@@ -119,7 +125,7 @@ describe('@hile/message-worker-thread', () => {
       const worker = new EchoWorkerThread(port2);
       track(main, worker, port1, port2);
 
-      const result = await worker.request('ping').response();
+      const result = await worker.request('ping');
       expect(result).toBe('main got: ping');
     });
 
@@ -127,7 +133,7 @@ describe('@hile/message-worker-thread', () => {
       const { main, worker, port1, port2 } = createCustomPair(async () => ({ id: 1, name: 'test' }));
       track(main, worker, port1, port2);
 
-      const result = await main.request(null).response<{ id: number; name: string }>();
+      const result = await main.request<{ id: number; name: string }>(null);
       expect(result.id).toBe(1);
       expect(result.name).toBe('test');
     });
@@ -141,7 +147,7 @@ describe('@hile/message-worker-thread', () => {
       track(main, worker, port1, port2);
 
       try {
-        await main.request('x').response();
+        await main.request('x');
         expect.unreachable();
       } catch (e) {
         expect(e).toBeInstanceOf(Exception);
@@ -157,7 +163,7 @@ describe('@hile/message-worker-thread', () => {
       track(main, worker, port1, port2);
 
       try {
-        await main.request('x').response();
+        await main.request('x');
         expect.unreachable();
       } catch (e) {
         expect(e).toBeInstanceOf(Exception);
@@ -174,9 +180,9 @@ describe('@hile/message-worker-thread', () => {
       );
       track(main, worker, port1, port2);
 
-      const req = main.request('data');
-      const promise = req.response();
-      req.abort();
+      const controller = new AbortController();
+      const promise = main.request('data', { signal: controller.signal });
+      controller.abort();
       await expect(promise).rejects.toThrow('Abort');
     });
   });
@@ -189,8 +195,7 @@ describe('@hile/message-worker-thread', () => {
       track(main, worker, port1, port2);
 
       await expect(
-        main.request('data', 50).response()
-      ).rejects.toThrow();
+        main.request('data', 50)      ).rejects.toThrow();
     });
   });
 
