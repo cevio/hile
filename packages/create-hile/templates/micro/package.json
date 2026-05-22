@@ -15,11 +15,11 @@
   "type": "module",
   "dependencies": {
     "@hile/core": "^1.1.2",
-    "@hile/micro": "^1.0.10",
+    "@hile/micro": "^2.0.0",
     "@hile/message-loader": "^1.0.9",
     "detect-port": "^2.1.0"
   },
   "devDependencies": {
-    "@hile/cli": "^1.1.17"
+    "@hile/cli": "^2.0.0"
   }
 }

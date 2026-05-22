@@ -6,9 +6,7 @@ import appService from "../services/app.boot";
 
 export default defineController("GET", async (ctx) => {
   const { app } = await loadService(appService);
-  const micro = await app.get('com.zlooks.micro');
-  const { response } = micro.request('/ping', {});
-  const data = await response();
+  const data = await app.call('com.zlooks.micro', 'ping', {});
   const x = await loadModel(postModel, ctx.url);
   return {
     ...x,

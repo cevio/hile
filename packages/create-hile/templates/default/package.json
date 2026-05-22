@@ -18,6 +18,6 @@
     "@hile/http": "^1.1.3"
   },
   "devDependencies": {
-    "@hile/cli": "^1.1.17"
+    "@hile/cli": "^2.0.0"
   }
 }
