@@ -65,9 +65,9 @@ export class Client extends MessageWs {
     });
   }
 
-  public request(url: string, data: any, options?: { timeout?: number; signal?: AbortSignal }) {
+  public request<T = any>(url: string, data: any, options?: { timeout?: number; signal?: AbortSignal }) {
     if (!this._online) throw new Error('Client is not online');
-    return this._send({ url, data }, options);
+    return this._send<T>({ url, data }, options);
   }
 
   public push(url: string, data: any, options?: { timeout?: number; signal?: AbortSignal }) {

@@ -206,8 +206,8 @@ export class Application extends Server {
 
   private async findFromRegistry(namespace: string, exclude?: string[]) {
     if (!this.registry) throw new Error('Registry not found');
-    const { response } = this.registry.request('/-/find', { namespace, exclude });
-    return await withTimeout(response<{ host: string, port: number } | undefined>(), this._registryLookupTimeoutMs, 'Registry /-/find');
+    const promise = this.registry.request<{ host: string, port: number } | undefined>('/-/find', { namespace, exclude });
+    return await withTimeout(promise, this._registryLookupTimeoutMs, 'Registry /-/find');
   }
 
   public get(namespace: string, exclude?: string[]) {
@@ -294,8 +294,7 @@ export class Application extends Server {
     }
 
     try {
-      const { response } = client.request(url, data, timeout ?? this._requestTimeoutMs);
-      const result = await response<T>();
+      const result = await client.request<T>(url, data, { timeout: timeout ?? this._requestTimeoutMs });
       this.recordSuccess(namespace, client.host, client.port);
       return result;
     } catch (err) {
@@ -312,8 +311,7 @@ export class Application extends Server {
     const Requests extends readonly EnvRequest<T>[] = readonly EnvRequest<T>[],
   >(...data: Requests): Promise<GetEnvVariablesResult<T, Requests>> {
     if (!this.registry) throw new Error('Registry not found');
-    const { response } = this.registry.request('/-/env/variables', data);
-    const configs = await response<{ namespace: string, value: Record<string, any> }[]>();
+    const configs = await this.registry.request<{ namespace: string, value: Record<string, any> }[]>('/-/env/variables', data);
     const out: any = {};
     for (const { namespace, value } of configs) {
       out[namespace] = value;

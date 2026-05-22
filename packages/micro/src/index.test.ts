@@ -179,9 +179,8 @@ describe('@hile/micro application discovery', () => {
 
     try {
       const client = await consumer.get('provider');
-      const { response } = client.request('/echo', { value: 'ok' });
-
-      await expect(response<{ value: string }>()).resolves.toEqual({ value: 'ok' });
+      const result = await client.request<{ value: string }>('/echo', { value: 'ok' });
+      expect(result).toEqual({ value: 'ok' });
     } finally {
       unregisterEcho();
       await disposeConsumer();
@@ -218,8 +217,8 @@ describe('@hile/micro application discovery', () => {
 
     try {
       const client = await app.get('peer');
-      const { response } = client.request('/x', {});
-      await expect(response()).resolves.toEqual({ ok: true });
+      const result = await client.request('/x', {});
+      expect(result).toEqual({ ok: true });
     } finally {
       unregister();
       await dispose2();
@@ -428,8 +427,8 @@ describe('@hile/micro heartbeat', () => {
       try {
         // Establish consumer → provider connection
         const client = await consumer.get('peer-svc');
-        const { response } = client.request('/echo', { value: 'ok' });
-        await expect(response()).resolves.toEqual({ value: 'ok' });
+        const result = await client.request('/echo', { value: 'ok' });
+        expect(result).toEqual({ value: 'ok' });
 
         // Verify provider has the consumer's Client
         const consumerClientKey = `127.0.0.1:${consumerPort}`;
@@ -800,7 +799,7 @@ describe('@hile/micro request timeout', () => {
       // timeout=50ms but handler takes 500ms → rejects
       await expect(
         consumer.call('svc', '/slow', {}, 50, 0)
-      ).rejects.toThrow('Abort');
+      ).rejects.toThrow('Timeout');
     } finally {
       unregister();
       await disposeConsumer();
