@@ -138,10 +138,8 @@ describe('@hile/micro registry selection', () => {
     });
   });
 
-  it('find handler survives repeated onFind()', async () => {
+  it('find handler registered in constructor', async () => {
     const r = new Registry(testAdvertise);
-    r.onFind();
-    r.onFind();
     const p = await getAvailablePort();
     const d = await r.listen(p);
     try {
@@ -702,7 +700,7 @@ describe('@hile/micro call retry', () => {
     });
 
     try {
-      await expect(consumer.call('svc', '/api', {}, undefined, 0)).rejects.toThrow('no-retry');
+      await expect(consumer.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('no-retry');
     } finally {
       unregister();
       await disposeConsumer();
@@ -747,7 +745,7 @@ describe('@hile/micro cache degradation', () => {
       });
 
       // Call fails with retries=0; failure is recorded in circuit breaker
-      await expect(consumer.call('svc', '/api', {}, undefined, 0)).rejects.toThrow('fail');
+      await expect(consumer.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('fail');
       unregisterFail();
 
       // Re-register working handler
@@ -756,7 +754,7 @@ describe('@hile/micro cache degradation', () => {
       // Second call: cached peer is excluded by circuit breaker → registry lookup
       // fails (find excludes the only peer) → cache degradation returns the
       // still-connected cached client → succeeds
-      const result2 = await consumer.call('svc', '/api', {}, undefined, 0);
+      const result2 = await consumer.call('svc', '/api', {}, { retries: 0 });
       expect(result2).toEqual({ ok: true });
 
       unregisterOk();
@@ -798,7 +796,7 @@ describe('@hile/micro request timeout', () => {
     try {
       // timeout=50ms but handler takes 500ms → rejects
       await expect(
-        consumer.call('svc', '/slow', {}, 50, 0)
+        consumer.call('svc', '/slow', {}, { timeout: 50, retries: 0 })
       ).rejects.toThrow('Timeout');
     } finally {
       unregister();
@@ -833,8 +831,93 @@ describe('@hile/micro request timeout', () => {
     });
 
     try {
-      const result = await consumer.call<{ value: string }>('svc', '/echo', { value: 'ok' }, 5000);
+      const result = await consumer.call<{ value: string }>('svc', '/echo', { value: 'ok' }, { timeout: 5000 });
       expect(result).toEqual({ value: 'ok' });
+    } finally {
+      unregister();
+      await disposeConsumer();
+      await disposeProvider();
+      await disposeRegistry();
+    }
+  });
+});
+
+describe('@hile/micro stream', () => {
+  it('streams chunks from provider', async () => {
+    const registryPort = await getAvailablePort();
+    const providerPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const provider = new Application({
+      namespace: 'stream-svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const consumer = new Application({
+      namespace: 'consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeProvider = await provider.listen(providerPort);
+    const disposeConsumer = await consumer.listen(consumerPort);
+    const unregister = provider.register('/stream', async function* () {
+      yield { seq: 1 };
+      yield { seq: 2 };
+      yield { seq: 3 };
+    });
+
+    try {
+      const stream = await consumer.stream('stream-svc', '/stream', {});
+      const chunks: any[] = [];
+      for await (const chunk of stream) {
+        chunks.push(chunk);
+      }
+      expect(chunks).toEqual([{ seq: 1 }, { seq: 2 }, { seq: 3 }]);
+    } finally {
+      unregister();
+      await disposeConsumer();
+      await disposeProvider();
+      await disposeRegistry();
+    }
+  });
+
+  it('handles stream error from provider', async () => {
+    const registryPort = await getAvailablePort();
+    const providerPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const provider = new Application({
+      namespace: 'stream-svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const consumer = new Application({
+      namespace: 'consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeProvider = await provider.listen(providerPort);
+    const disposeConsumer = await consumer.listen(consumerPort);
+    const unregister = provider.register('/stream', async function* () {
+      yield { seq: 1 };
+      throw new Error('stream fail');
+    });
+
+    try {
+      const stream = await consumer.stream('stream-svc', '/stream', {});
+      const chunks: any[] = [];
+      await expect(async () => {
+        for await (const chunk of stream) {
+          chunks.push(chunk);
+        }
+      }).rejects.toThrow('Unknown error');
+      expect(chunks).toEqual([{ seq: 1 }]);
     } finally {
       unregister();
       await disposeConsumer();

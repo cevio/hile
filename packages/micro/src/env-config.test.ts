@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { vi, describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
@@ -10,7 +10,6 @@ vi.mock('node:os', () => ({
 }));
 
 import { Registry, getRegistryConfigsDir, namespaceToConfigFile, parseConfigFilename } from './registry';
-import { Application } from './application';
 
 const testAdvertise = { advertiseHost: '127.0.0.1' as const };
 
@@ -91,129 +90,6 @@ describe('@hile/micro config file loading', () => {
   });
 });
 
-describe('@hile/micro /-/env/variables endpoint', () => {
-  const configsDir = join(testDir, '.registry', 'configs');
-  let configFile: string;
-
-  beforeEach(() => {
-    mkdirSync(configsDir, { recursive: true });
-    configFile = join(configsDir, 'test-svc.config.yaml');
-    writeFileSync(configFile, 'host: localhost\nport: 8080\ndebug: true');
-  });
-
-  afterAll(() => {
-    rmSync(join(testDir, '.registry'), { recursive: true, force: true });
-  });
-
-  it('returns requested config by namespace and fields', async () => {
-    const registry = new Registry(testAdvertise);
-    registry.watchEnvFile();
-
-    const result = await registry.dispatch('/-/env/variables', [
-      { namespace: 'test-svc', fields: ['host', 'port'] },
-    ]);
-    expect(result).toEqual([
-      { namespace: 'test-svc', value: { host: 'localhost', port: 8080 } },
-    ]);
-  });
-
-  it('returns all config when fields not specified', async () => {
-    const registry = new Registry(testAdvertise);
-    registry.watchEnvFile();
-
-    const result = await registry.dispatch('/-/env/variables', [
-      { namespace: 'test-svc' },
-    ]);
-    expect(result).toEqual([
-      { namespace: 'test-svc', value: { host: 'localhost', port: 8080, debug: true } },
-    ]);
-  });
-
-  it('returns null value for non-existent namespace', async () => {
-    const registry = new Registry(testAdvertise);
-    registry.watchEnvFile();
-
-    const result = await registry.dispatch('/-/env/variables', [
-      { namespace: 'no-such-svc' },
-    ]);
-    expect(result).toEqual([
-      { namespace: 'no-such-svc', value: null },
-    ]);
-  });
-
-  it('handles empty data list', async () => {
-    const registry = new Registry(testAdvertise);
-    registry.watchEnvFile();
-
-    const result = await registry.dispatch('/-/env/variables', []);
-    expect(result).toEqual([]);
-  });
-});
-
-describe('@hile/micro Application.getEnvVariables', () => {
-  const configsDir = join(testDir, '.registry', 'configs');
-
-  beforeEach(() => {
-    mkdirSync(configsDir, { recursive: true });
-  });
-
-  afterAll(() => {
-    rmSync(join(testDir, '.registry'), { recursive: true, force: true });
-  });
-
-  it('fetches config from Registry', async () => {
-    const registryPort = await getAvailablePort();
-    const appPort = await getAvailablePort();
-
-    // Write config
-    writeFileSync(join(configsDir, 'test-app.config.yaml'), 'db_host: localhost\ndb_port: 3306');
-
-    const registry = new Registry(testAdvertise);
-    const app = new Application({
-      namespace: 'env-app',
-      registry: { host: '127.0.0.1', port: registryPort },
-      ...testAdvertise,
-    });
-
-    const disposeRegistry = await registry.listen(registryPort);
-    const disposeApp = await app.listen(appPort);
-
-    try {
-      const result = await app.getEnvVariables(
-        { namespace: 'test-app', fields: ['db_host'] },
-      );
-      expect(result).toEqual({ 'test-app': { db_host: 'localhost' } });
-    } finally {
-      await disposeApp();
-      await disposeRegistry();
-    }
-  });
-
-  it('returns null when namespace config does not exist', async () => {
-    const registryPort = await getAvailablePort();
-    const appPort = await getAvailablePort();
-
-    const registry = new Registry(testAdvertise);
-    const app = new Application({
-      namespace: 'env-app',
-      registry: { host: '127.0.0.1', port: registryPort },
-      ...testAdvertise,
-    });
-
-    const disposeRegistry = await registry.listen(registryPort);
-    const disposeApp = await app.listen(appPort);
-
-    try {
-      const result = await app.getEnvVariables(
-        { namespace: 'no-such-svc' },
-      );
-      expect(result).toEqual({ 'no-such-svc': null });
-    } finally {
-      await disposeApp();
-      await disposeRegistry();
-    }
-  });
-});
 
 describe('config file utilities', () => {
   it('getRegistryConfigsDir returns path ending with .registry/configs', () => {

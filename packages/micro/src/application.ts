@@ -92,6 +92,8 @@ export class Application extends Server {
   }>();
   private static readonly CB_COOLDOWN_MS = 30_000;
   private readonly circuitBreakers = new Map<string, Map<string, number>>();
+  private readonly fallbacks = new Set<() => void>();
+  private readonly topics = new Map<string, (data: any) => any>();
 
   constructor(props: ApplicationProps) {
     const { namespace, registry, registryLookupTimeoutMs = 10_000, requestTimeoutMs = 30_000, ...microAndLoader } = props;
@@ -100,12 +102,16 @@ export class Application extends Server {
     this._registry_address = registry;
     this._registryLookupTimeoutMs = registryLookupTimeoutMs;
     this._requestTimeoutMs = requestTimeoutMs;
-    this.register('/-/health', async () => ({
+    this.fallbacks.add(this.register('/-/health', async () => ({
       status: 'ok' as const,
       registry: !!this.registry,
       uptime: process.uptime(),
       namespaces: [...this.namespaces.keys()],
-    }));
+    })))
+    this.fallbacks.add(this.register<{ topic: string, payload: any }>('/-/topic/update', async ({ data }) => {
+      this.events.emit('topic:' + data.topic, data.payload);
+      return Date.now();
+    }))
   }
 
   public async listen(port: number = 0) {
@@ -121,7 +127,13 @@ export class Application extends Server {
       }
       throw err;
     }
+    // 这里不清理 topics 由业务方自己清理
+    // 这里也不清理 declare 和 undeclare 由业务方自己清理
     return async () => {
+      for (const fallback of this.fallbacks) {
+        fallback();
+      }
+      this.fallbacks.clear();
       this.stopped = true;
       if (this.reconnectTimeout) {
         clearTimeout(this.reconnectTimeout);
@@ -164,6 +176,10 @@ export class Application extends Server {
         });
       });
       this.registry = registry;
+      // 重新订阅所有 topic
+      for (const [topic, callback] of this.topics) {
+        await this.subscribe(topic, callback, true);
+      }
     })().finally(() => {
       this.registryReconnectPromise = undefined;
     });
@@ -282,7 +298,12 @@ export class Application extends Server {
     })
   }
 
-  public async call<T = any>(namespace: string, url: string, data: any, timeout?: number, retries = 1): Promise<T> {
+  public async call<T = any>(namespace: string, url: string, data: any, options?: {
+    timeout?: number,
+    retries?: number,
+    signal?: AbortSignal
+  }): Promise<T> {
+    const { timeout = this._requestTimeoutMs, retries = 1, signal } = options || {};
     const exclude = this.getActiveExcludes(namespace);
     let client: Client;
 
@@ -294,28 +315,91 @@ export class Application extends Server {
     }
 
     try {
-      const result = await client.request<T>(url, data, { timeout: timeout ?? this._requestTimeoutMs });
+      const result = await client.request<T>(url, data, {
+        timeout: timeout ?? this._requestTimeoutMs,
+        signal,
+      });
       this.recordSuccess(namespace, client.host, client.port);
       return result;
     } catch (err) {
       this.recordFailure(namespace, client.host, client.port);
       if (retries > 0) {
-        return this.call(namespace, url, data, timeout, retries - 1);
+        return this.call(namespace, url, data, { timeout, retries: retries - 1, signal });
       }
       throw err;
     }
   }
 
-  public async getEnvVariables<
-    T extends Record<string, Record<string, any>>,
-    const Requests extends readonly EnvRequest<T>[] = readonly EnvRequest<T>[],
-  >(...data: Requests): Promise<GetEnvVariablesResult<T, Requests>> {
-    if (!this.registry) throw new Error('Registry not found');
-    const configs = await this.registry.request<{ namespace: string, value: Record<string, any> }[]>('/-/env/variables', data);
-    const out: any = {};
-    for (const { namespace, value } of configs) {
-      out[namespace] = value;
+  public async stream(
+    namespace: string,
+    url: string,
+    data: any,
+    options?: {
+      signal?: AbortSignal,
+      retries?: number
+    },
+  ): Promise<import('stream').Readable> {
+    const { signal, retries = 1 } = options || {};
+    const exclude = this.getActiveExcludes(namespace);
+    let client: Client;
+
+    try {
+      client = await this.get(namespace, exclude);
+    } catch {
+      this.circuitBreakers.delete(namespace);
+      client = await this.get(namespace);
     }
-    return out;
+
+    try {
+      const readable = client.stream(url, data, { signal });
+      this.recordSuccess(namespace, client.host, client.port);
+      return readable;
+    } catch (err) {
+      this.recordFailure(namespace, client.host, client.port);
+      if (retries > 0) {
+        return this.stream(namespace, url, data, { signal, retries: retries - 1 });
+      }
+      throw err;
+    }
+  }
+
+  public async publish<T = any>(topic: string, data: T) {
+    if (!this.registry) throw new Error('Registry not found');
+    await this.registry.request<number>('/-/declare', { topic, payload: data });
+    const ref = {
+      update: async (payload: T) => {
+        if (!this.registry) throw new Error('Registry not found');
+        await this.registry.request<number>('/-/topic/update', { topic, payload });
+        return ref;
+      },
+      unpublish: async () => {
+        if (!this.registry) throw new Error('Registry not found');
+        await this.registry.request<number>('/-/undeclare', { topic });
+        return ref;
+      }
+    }
+    return ref;
+  }
+
+  /** 对同一 topic 重复 subscribe 是幂等的：第二次调用只返回 unsubscribe 函数，不会注册第二个 callback */
+  public async subscribe<T = any>(topic: string, callback: (data: T) => any, isReconnect = false) {
+    if (!this.registry) throw new Error('Registry not found');
+    const fallback = async () => {
+      if (!this.registry) throw new Error('Registry not found');
+      await this.registry.request<number>('/-/unsubscribe', { topic });
+      if (this.topics.has(topic)) {
+        const _callback = this.topics.get(topic)!;
+        this.events.off('topic:' + topic, _callback);
+        this.topics.delete(topic);
+      }
+    }
+    if (this.topics.has(topic) && !isReconnect) return fallback;
+    const payload = await this.registry.request<T>('/-/subscribe', { topic });
+    if (!isReconnect) {
+      this.events.on('topic:' + topic, callback);
+      this.topics.set(topic, callback);
+      callback(payload);
+    }
+    return fallback;
   }
 }
