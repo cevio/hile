@@ -10,7 +10,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Registry, Application, Client } from '@hile/micro';
 import { MicroDynamicConfigsServer } from './server.js';
-import { MicroDynamicConfigClients, DynamicConfigClient } from './client.js';
 import Redis from 'ioredis';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
@@ -44,22 +43,20 @@ function isMatch(value: Record<string, any>, expected: Record<string, any>): boo
   );
 }
 
-async function waitForValue<T extends Record<string, any>>(
-  configs: MicroDynamicConfigClients,
-  namespace: string,
-  fields: (keyof T)[],
-  expected: Partial<T>,
+async function waitForValue(
+  getValues: () => Record<string, any>,
+  expected: Record<string, any>,
   timeout = 5000,
-): Promise<T> {
+): Promise<Record<string, any>> {
   const deadline = Date.now() + timeout;
-  let lastValue: T | undefined;
   while (Date.now() < deadline) {
-    lastValue = await configs.subscribe<T>(namespace, fields);
-    if (isMatch(lastValue as any, expected)) return lastValue;
+    const current = getValues();
+    if (isMatch(current, expected)) return { ...current };
     await new Promise(r => setTimeout(r, 50));
   }
+  const last = getValues();
   throw new Error(
-    `Timed out waiting for ${JSON.stringify(expected)}, last value: ${JSON.stringify(lastValue)}`,
+    `Timed out waiting for ${JSON.stringify(expected)}, last value: ${JSON.stringify(last)}`,
   );
 }
 
@@ -87,7 +84,6 @@ describe.skipIf(!isIntegration)('integration | real Redis + WebSocket', () => {
   let subscriberApp: Application;
 
   let server: MicroDynamicConfigsServer<Application, typeof schema>;
-  let configs: MicroDynamicConfigClients;
 
   let teardownRegistry: () => Promise<void>;
   let teardownConfig: () => Promise<void>;
@@ -145,7 +141,6 @@ describe.skipIf(!isIntegration)('integration | real Redis + WebSocket', () => {
     teardownSubscriber = await subscriberApp.listen(subscriberPort);
 
     // 5. Config Clients (subscriber side)
-    configs = new MicroDynamicConfigClients(subscriberApp);
   }, 30_000);
 
   // -----------------------------------------------------------------------
@@ -153,7 +148,6 @@ describe.skipIf(!isIntegration)('integration | real Redis + WebSocket', () => {
   // -----------------------------------------------------------------------
 
   afterAll(async () => {
-    await configs?.close();
     serverTeardown?.();
     await teardownSubscriber?.();
     await teardownConfig?.();
@@ -197,22 +191,23 @@ describe.skipIf(!isIntegration)('integration | real Redis + WebSocket', () => {
     // Reset to known state
     await server.save({ name: 'initial', port: 8080, debug: true, labels: ['a'] });
 
-    // Subscribe — registers the subscriber on the config server
-    const value = await configs.subscribe<z.infer<typeof schema>>(
-      'config-svc',
-      ['name', 'port', 'debug', 'labels'],
-    );
-    expect(value.name).toBe('initial');
-    expect(value.port).toBe(8080);
-    expect(value.debug).toBe(true);
-    expect(value.labels).toEqual(['a']);
+    const values: Record<string, any> = {};
+    await subscriberApp.subscribe('config-svc:name', (v) => values.name = v);
+    await subscriberApp.subscribe('config-svc:port', (v) => values.port = v);
+    await subscriberApp.subscribe('config-svc:debug', (v) => values.debug = v);
+    await subscriberApp.subscribe('config-svc:labels', (v) => values.labels = v);
+
+    expect(values.name).toBe('initial');
+    expect(values.port).toBe(8080);
+    expect(values.debug).toBe(true);
+    expect(values.labels).toEqual(['a']);
 
     // Publish a single-field change — server pushes to subscriber
     await server.save({ name: 'pushed' });
 
     // Wait for push to arrive and update subscriber cache
-    const updated = await waitForValue<z.infer<typeof schema>>(
-      configs, 'config-svc', ['name', 'port', 'debug', 'labels'],
+    const updated = await waitForValue(
+      () => values,
       { name: 'pushed' },
     );
     expect(updated.name).toBe('pushed');
@@ -229,8 +224,11 @@ describe.skipIf(!isIntegration)('integration | real Redis + WebSocket', () => {
   it('receives push for array-typed field', async () => {
     await server.save({ labels: ['x', 'y', 'z'] });
 
-    const updated = await waitForValue<z.infer<typeof schema>>(
-      configs, 'config-svc', ['labels'],
+    const values: Record<string, any> = {};
+    await subscriberApp.subscribe('config-svc:labels', (v) => values.labels = v);
+
+    const updated = await waitForValue(
+      () => values,
       { labels: ['x', 'y', 'z'] },
     );
     expect(updated.labels).toEqual(['x', 'y', 'z']);
@@ -241,12 +239,15 @@ describe.skipIf(!isIntegration)('integration | real Redis + WebSocket', () => {
   // -----------------------------------------------------------------------
 
   it('handles rapid sequential saves', async () => {
+    const values: Record<string, any> = {};
+    await subscriberApp.subscribe('config-svc:port', (v) => values.port = v);
+
     for (let i = 0; i < 5; i++) {
       await server.save({ port: 9000 + i });
     }
 
-    const updated = await waitForValue<z.infer<typeof schema>>(
-      configs, 'config-svc', ['port'],
+    const updated = await waitForValue(
+      () => values,
       { port: 9004 },
     );
     expect(updated.port).toBe(9004);
@@ -277,13 +278,10 @@ describe.skipIf(!isIntegration)('integration | real Redis + WebSocket', () => {
       advertiseHost: '127.0.0.1',
     });
     teardownSubscriber = await subscriberApp.listen(newPort);
-    configs = new MicroDynamicConfigClients(subscriberApp);
+    const values2: Record<string, any> = {};
+    await subscriberApp.subscribe('config-svc:name', (v) => values2.name = v);
+    await subscriberApp.subscribe('config-svc:port', (v) => values2.port = v);
 
-    // Subscribe again — should get latest value
-    const value = await configs.subscribe<z.infer<typeof schema>>(
-      'config-svc',
-      ['name', 'port'],
-    );
-    expect(value.name).toBe('after-disconnect');
+    expect(values2.name).toBe('after-disconnect');
   }, 15_000);
 });

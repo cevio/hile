@@ -79,8 +79,8 @@ class ComputeWorker extends MessageWorkerThread {
     }
   }
 
-  public request<T = any>(data: T, timeout?: number) {
-    return this._send(data, timeout);
+  public request<T = any>(data: T, options?: { timeout?: number, signal?: AbortSignal }) {
+    return this._send(data, options);
   }
 }
 ```
@@ -95,15 +95,15 @@ class MainThread extends MessageWorkerThread {
     return { reply: 'from main', query: data };
   }
 
-  public request<T = any>(data: T, timeout?: number) {
-    return this._send(data, timeout);
+  public request<T = any>(data: T, options?: { timeout?: number, signal?: AbortSignal }) {
+    return this._send(data, options);
   }
 }
 
 const worker = new Worker('./worker.js');
 const wt = new MainThread(worker);
 
-const result = await wt.request({ action: 'compute', value: 42 }).response();
+const result = await wt.request({ action: 'compute', value: 42 });
 console.log(result); // 84
 
 wt.dispose();
@@ -129,7 +129,7 @@ const { port1, port2 } = new MessageChannel();
 const side1 = new MySide(port1);
 const side2 = new MySide(port2);
 
-const result = await side1.request('hello').response();
+const result = await side1.request('hello');
 console.log(result);
 
 side1.dispose();
@@ -146,7 +146,7 @@ port2.close();
 
 ```typescript
 try {
-  const result = await wt.request(data, 5000).response();
+  const result = await wt.request(data, { timeout: 5000 });
 } catch (e) {
   // 超时后触发 abort → AbortException
 }
@@ -155,10 +155,10 @@ try {
 ### 主动中止
 
 ```typescript
-const req = wt.request(data);
-const promise = req.response();
+const ac = new AbortController();
+const promise = wt.request(data, { signal: ac.signal });
 
-setTimeout(() => req.abort(), 3000);
+setTimeout(() => ac.abort(), 3000);
 
 try {
   await promise;
@@ -186,8 +186,8 @@ class MyWorker extends MessageWorkerThread {
     // 普通 Error → status 500
   }
 
-  public request<T = any>(data: T, timeout?: number) {
-    return this._send(data, timeout);
+  public request<T = any>(data: T, options?: { timeout?: number, signal?: AbortSignal }) {
+    return this._send(data, options);
   }
 }
 ```
@@ -198,7 +198,7 @@ class MyWorker extends MessageWorkerThread {
 import { Exception, AbortException } from '@hile/message-modem';
 
 try {
-  await wt.request(data).response();
+  await wt.request(data);
 } catch (e) {
   if (e instanceof AbortException) {
     console.log('请求被中止或超时');
@@ -220,16 +220,13 @@ try {
 |------|------|------|
 | `constructor` | `new SubClass(port?: Worker \| MessagePort)` | 主线程传 Worker/MessagePort；Worker 线程不传参数 |
 | `exec` | `protected abstract exec(data: any): Promise<any>` | 子类必须实现：处理对端请求 |
-| `_send` | `protected _send<T>(data: T, timeout?: number)` | 发送双向请求（`twoway: true`），返回 `{ abort, response }`。子类自行暴露为 public |
-| `_push` | `protected _push<T>(data: T, timeout?: number)` | 发送单向推送（`twoway: false`），接收方不回复 RESPONSE |
+| `_send` | `protected _send<T>(data: T, options?: { timeout?: number, signal?: AbortSignal }): Promise<T>` | 发送双向请求（`twoway: true`），返回 Promise。子类自行暴露为 public |
+| `_push` | `protected _push<T>(data: T, options?: { timeout?: number, signal?: AbortSignal }): void` | 发送单向推送（`twoway: false`），接收方不回复 RESPONSE |
 | `dispose` | `dispose(): void` | 移除消息监听，释放资源 |
 
 ### `_send` 返回值
 
-| 属性 | 类型 | 说明 |
-|------|------|------|
-| `abort` | `() => void` | 中止本次请求 |
-| `response` | `<U = any>() => Promise<U>` | 等待对端响应，支持泛型 |
+`_send` 返回 `Promise<T>`，直接在 Promise 中 resolve 远端 `exec` 的返回值，reject 远端错误或本地超时/中止。
 
 ---
 
@@ -299,7 +296,7 @@ try {
     const workers = Array.from({ length: 4 }, () => new Worker('./worker.js'));
     const wts = workers.map(w => new MyWT(w));
 
-    await Promise.all(wts.map(wt => wt.request('ping').response()));
+    await Promise.all(wts.map(wt => wt.request('ping')));
     ```
   </Accordion>
   <Accordion title="可以传递 SharedArrayBuffer 吗？">

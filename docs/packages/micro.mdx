@@ -99,8 +99,7 @@ console.log(result); // { charged: true, amount: 100 }
 
 ```typescript
 const client = await consumer.get('payments');
-const { response } = client.request('/charge', { amount: 100 });
-const result = await response();
+const result = await client.request('/charge', { amount: 100 });
 ```
 
 - 首次查询通过 Registry `/-/find` 获取地址
@@ -131,23 +130,23 @@ const app = new Application({
 });
 
 // 单次调用覆盖
-await app.call('svc', '/api', data, 5_000);    // 5s 超时
-await app.call('svc', '/api', data, 1_000, 0);  // 1s 超时，不重试
+await app.call('svc', '/api', data, { timeout: 5_000 });       // 5s 超时
+await app.call('svc', '/api', data, { timeout: 1_000, retries: 0 }); // 1s 超时，不重试
 ```
 
 ### 手动取消请求
 
-使用 `get()` 拿到 Client 后，`request()` 返回的 `abort()` 可主动取消正在等待响应的请求：
+使用 `get()` 拿到 Client 后，`request()` 通过 `AbortSignal` 可主动取消正在等待响应的请求：
 
 ```typescript
 const client = await consumer.get('payments');
-const { response, abort } = client.request('/charge', { amount: 100 });
+const ac = new AbortController();
 
 // 例如 5 秒后主动取消
-setTimeout(() => abort(), 5000);
+setTimeout(() => ac.abort(), 5000);
 
 try {
-  const result = await response();
+  const result = await client.request('/charge', { amount: 100 }, { signal: ac.signal });
 } catch (err) {
   // 超时或手动 abort 都会 reject
 }
@@ -162,9 +161,9 @@ try {
 `call()` 默认 retries=1，失败后自动换 peer 重试：
 
 ```typescript
-await app.call('svc', '/api', data);            // 默认重试 1 次
-await app.call('svc', '/api', data, 5000, 3);   // 超时 5s，重试 3 次
-await app.call('svc', '/api', data, 5000, 0);   // 超时 5s，不重试
+await app.call('svc', '/api', data);                          // 默认重试 1 次
+await app.call('svc', '/api', data, { timeout: 5000, retries: 3 });  // 超时 5s，重试 3 次
+await app.call('svc', '/api', data, { timeout: 5000, retries: 0 });  // 超时 5s，不重试
 ```
 
 重试策略：失败 → 该 peer 被排除 → 递归 `call(retries-1)` → 从排除列表中选其他 peer。
@@ -328,9 +327,23 @@ class Application extends Server {
     namespace: string,
     url: string,
     data: any,
-    timeout?: number,     // 请求超时（ms），默认 requestTimeoutMs
-    retries?: number,     // 失败重试次数，默认 1
+    options?: {
+      timeout?: number,     // 请求超时（ms），默认 requestTimeoutMs
+      retries?: number,     // 失败重试次数，默认 1
+      signal?: AbortSignal, // 中止信号
+    },
   ): Promise<T>;
+
+  // 流式调用：获取远端 AsyncIterable 数据流
+  stream(
+    namespace: string,
+    url: string,
+    data: any,
+    options?: {
+      signal?: AbortSignal,
+      retries?: number,
+    },
+  ): Promise<Readable>;
 
   // 注册路由（provider 侧）
   register<T = any>(url: string, handler: Function): () => void;
@@ -361,11 +374,8 @@ class Registry extends Server {
 
 ```typescript
 class Client extends MessageWs {
-  request(url: string, data: any, timeout?: number): {
-    abort(): void;
-    response<T>(): Promise<T>;
-  };
-  push(url: string, data: any, timeout?: number): void;
+  request<T = any>(url: string, data: any, options?: { timeout?: number; signal?: AbortSignal }): Promise<T>;
+  push(url: string, data: any, options?: { timeout?: number; signal?: AbortSignal }): void;
   dispose(): void;
 }
 ```

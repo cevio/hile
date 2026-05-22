@@ -141,8 +141,8 @@ class AppWs extends MessageWs {
     return loader.dispatch(data.url, data.data);
   }
 
-  public request(url: string, data: any, timeout?: number) {
-    return this._send({ url, data }, timeout);
+  public request(url: string, data: any, options?: { timeout?: number, signal?: AbortSignal }) {
+    return this._send({ url, data }, options);
   }
 }
 ```
@@ -162,7 +162,7 @@ wss.on('connection', (ws) => {
 const ws = new WebSocket('ws://localhost:8080');
 ws.on('open', async () => {
   const modem = new AppWs(ws);
-  const result = await modem.request('/-/hello', { name: 'world' }).response();
+  const result = await modem.request('/-/hello', { name: 'world' });
   console.log(result); // { greeting: 'Hello, world!' }
   modem.dispose();
   ws.close();
@@ -179,15 +179,15 @@ class AppWorker extends MessageWorkerThread {
     return loader.dispatch(data.url, data.data);
   }
 
-  public request(url: string, data: any, timeout?: number) {
-    return this._send({ url, data }, timeout);
+  public request(url: string, data: any, options?: { timeout?: number, signal?: AbortSignal }) {
+    return this._send({ url, data }, options);
   }
 }
 
 // 主线程
 const worker = new Worker('./worker.js');
 const wt = new AppWorker(worker);
-const result = await wt.request('/-/hello', { name: 'world' }).response();
+const result = await wt.request('/-/hello', { name: 'world' });
 wt.dispose();
 await worker.terminate();
 ```
@@ -202,13 +202,13 @@ class AppIpc extends MessageIpc {
     return loader.dispatch(data.url, data.data);
   }
 
-  public request(url: string, data: any, timeout?: number) {
-    return this._send({ url, data }, timeout);
+  public request(url: string, data: any, options?: { timeout?: number, signal?: AbortSignal }) {
+    return this._send({ url, data }, options);
   }
 }
 
 const ipc = new AppIpc();
-const result = await ipc.request('/-/hello', { name: 'world' }).response();
+const result = await ipc.request('/-/hello', { name: 'world' });
 ipc.dispose();
 ```
 

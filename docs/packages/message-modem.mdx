@@ -20,6 +20,7 @@ import {
   MESSAGE_MODEM_TYPE,
   type MessageTransferFormat,
   type MessageReturnFormat,
+  type MessageStreamChunk,
 } from '@hile/message-modem';
 ```
 
@@ -76,7 +77,7 @@ import {
 
 <Steps>
   <Step title="发送方调用 _send(data)">
-    框架生成自增 ID，构造 `REQUEST` 消息，通过 `post()` 发出。返回 `{ abort, response }` 对象。
+    框架生成自增 ID，构造 `REQUEST` 消息，通过 `post()` 发出。返回 `Promise<T>`。
   </Step>
   <Step title="接收方 receive 分发">
     接收方通过 `receive(msg)` 入口收到消息，根据 `mode` 分发到 `onRequest` / `onResponse` / `onAbort`。
@@ -123,8 +124,8 @@ class WebSocketModem extends MessageModem {
   }
 
   // 对外暴露发送方法
-  public request<T>(data: T, timeout?: number) {
-    return this._send(data, timeout);
+  public request<T>(data: T, options?: { timeout?: number, signal?: AbortSignal }) {
+    return this._send(data, options);
   }
 }
 ```
@@ -135,15 +136,15 @@ class WebSocketModem extends MessageModem {
 const modem = new WebSocketModem(ws);
 
 // 发送请求并等待响应
-const user = await modem.request({ action: 'getUser', id: 1 }).response();
+const user = await modem.request({ action: 'getUser', id: 1 });
 
 // 发送请求并设置超时
-const result = await modem.request(data, 5000).response();
+const result = await modem.request(data, { timeout: 5000 });
 
 // 发送请求并支持中止
-const req = modem.request(data);
-setTimeout(() => req.abort(), 3000); // 3 秒后中止
-const res = await req.response();
+const ac = new AbortController();
+setTimeout(() => ac.abort(), 3000); // 3 秒后中止
+const res = await modem.request(data, { signal: ac.signal });
 ```
 
 ### 场景二：iframe postMessage
@@ -239,7 +240,7 @@ protected async exec(data: any): Promise<any> {
 import { Exception, AbortException } from '@hile/message-modem';
 
 try {
-  const result = await modem.request(data, 5000).response();
+  const result = await modem.request(data, { timeout: 5000 });
 } catch (e) {
   if (e instanceof AbortException) {
     console.log('请求被中止或超时');
@@ -258,17 +259,11 @@ try {
 | 方法 | 可见性 | 签名 | 说明 |
 |------|--------|------|------|
 | `post` | `protected abstract` | `post<T>(data: MessageTransferFormat<T>): void` | 子类实现：如何将消息发送到远端 |
-| `exec` | `protected abstract` | `exec(data: any): Promise<any>` | 子类实现：如何处理收到的请求 |
-| `_send` | `protected` | `_send<T>(data: T, timeout?: number): { abort, response }` | 发送双向请求（`twoway: true`）。timeout 默认 30000ms |
-| `_push` | `protected` | `_push<T>(data: T, timeout?: number): void` | 发送单向推送（`twoway: false`），无返回值，接收方不回复 RESPONSE |
+| `exec` | `protected abstract` | `exec(data: any, signal?: AbortSignal): Promise<any>` | 子类实现：如何处理收到的请求，可选接收中止信号 |
+| `_send` | `protected` | `_send<T>(data: T, options?: { timeout?: number, signal?: AbortSignal }): Promise<T>` | 发送双向请求（`twoway: true`），返回 Promise。timeout 默认 30000ms |
+| `_push` | `protected` | `_push<T>(data: T, options?: { timeout?: number, signal?: AbortSignal }): void` | 发送单向推送（`twoway: false`），无返回值，接收方不回复 RESPONSE |
+| `_stream` | `protected` | `_stream<T>(data: T, options?: { signal?: AbortSignal }): Readable` | 发送流式请求，返回 `Readable` 流（objectMode），逐块消费远端 `AsyncIterable` |
 | `receive` | `public` | `receive(msg: MessageTransferFormat): void` | 接收消息入口，根据 mode 分发处理 |
-
-### `_send` 返回值
-
-| 属性 | 类型 | 说明 |
-|------|------|------|
-| `abort` | `() => void` | 中止本次请求。发送方 reject `AbortException`，同时向远端发送 `ABORT` 消息 |
-| `response` | `<U = any>() => Promise<U>` | 返回 Promise，resolve 远端 `exec` 的返回值，reject 远端错误或本地超时/中止 |
 
 ### 消息类型枚举 `MESSAGE_MODEM_TYPE`
 
@@ -285,6 +280,7 @@ interface MessageTransferFormat<T = any> {
   id: number;               // 自增消息 ID
   mode: MESSAGE_MODEM_TYPE; // 消息类型
   twoway: boolean;          // 是否需要响应
+  stream?: boolean;          // 是否为流式消息
   data?: T;                 // 消息数据
 }
 
@@ -292,6 +288,13 @@ interface MessageReturnFormat<T = any> {
   status: string | number;  // 200 成功，其他为错误码
   data: T;                  // 响应数据
   message: string;          // 错误消息（成功时可能为空）
+}
+
+interface MessageStreamChunk<T = any> {
+  status: string | number;  // 200 成功，其他为错误码
+  seq: number;              // 块序号
+  payload: T;               // 块数据
+  final: boolean;           // 是否为最后一个块
 }
 ```
 
@@ -345,15 +348,15 @@ interface MessageReturnFormat<T = any> {
     每个请求通过唯一 ID 追踪，并发请求互不影响。ID 超过 `Number.MAX_SAFE_INTEGER` 时自动归零。在极端场景下，如果旧请求的 ID 仍未清理而新 ID 重复，可能导致冲突，但在实际使用中几乎不会发生。
   </Accordion>
   <Accordion title="远端无响应会怎样？">
-    默认 30 秒后触发超时。超时会先触发 abort（发送 ABORT 消息到远端），然后 reject AbortException。你可以通过 `_send(data, ms)` 自定义超时时间。
+    默认 30 秒后触发超时。超时会先触发 abort（发送 ABORT 消息到远端），然后 reject AbortException。你可以通过 `_send(data, { timeout: ms })` 自定义超时时间。
   </Accordion>
   <Accordion title="可以发送单向消息吗？">
     可以。使用 `_push` 方法发送单向消息（`twoway: false`），接收方执行 `exec` 后不会回复 RESPONSE。适用于通知、日志上报等 fire-and-forget 场景。`_send` 仍用于需要响应的双向请求。
   </Accordion>
   <Accordion title="支持 TypeScript 类型推导吗？">
-    `response<U>()` 支持泛型，你可以这样使用：
+    `_send` 返回 `Promise<T>`，泛型由 `_send<T>(data)` 传入，你可以这样使用：
     ```typescript
-    const user = await modem.request(data).response<User>();
+    const user = await modem.request<User>(data);
     ```
   </Accordion>
 </AccordionGroup>

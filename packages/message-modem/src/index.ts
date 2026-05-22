@@ -379,10 +379,12 @@ export abstract class MessageModem {
             stream.push(res.payload);
           }
         } else {
-          stream.destroy(new Exception(res.status, res.payload as string));
+          const err = new Exception(res.status, res.payload as string);
+          setImmediate(() => stream.destroy(err));
         }
       } else {
-        stream.destroy(new Exception(404, 'Empty chunk data'));
+        const err = new Exception(404, 'Empty chunk data');
+        setImmediate(() => stream.destroy(err));
       }
     }
   }

@@ -36,13 +36,16 @@ pnpm add -g @hile/cli
 ### hile start
 
 ```bash
-hile start [options]
+hile start [name] [options]
 ```
 
 | 选项 | 缩写 | 说明 | 默认值 |
 |------|------|------|--------|
 | `--dev` | `-d` | 开发模式 | `false` |
+| `--silent` | `-s` | 静默模式，关闭开发模式下的容器事件日志 | `false` |
 | `--env-file <path>` | `-e` | 加载 env 文件（可多次指定） | — |
+
+`name` 参数可选，指定要启动的包名或路径。不传时使用当前目录。
 
 #### 开发模式 vs 生产模式
 

@@ -11,24 +11,24 @@ description: Code generation and contribution rules for @hile/micro-dynamic-conf
 
 ## 1. 架构总览
 
-三个角色，通过 `@hile/micro` 的 WebSocket 通信：
+通过 `@hile/micro` 的 pub/sub 机制推送配置变更，每个 schema 字段一个独立 topic。
 
 ```
-APP_3 (Publisher)          APP_1 (Config Server)         APP_2 (Subscriber)
-    │                            │                              │
-    │    save({ key: val })      │                              │
-    ├──────────────────────────► │                              │
-    │                            │   push /-/dynamic-configs/   │
-    │                            │   change { key, newValue }   │
-    │                            ├─────────────────────────────►│
-    │                            │                              │
-    │                            │◄── subscribe(fields) ───────┤
-    │                            │───── initial values ────────►│
+Publisher                    Config Server                       Subscriber
+    │                             │                                  │
+    │   save({ key: val })        │                                  │
+    ├──────────────────────────►  │                                  │
+    │                             │  publisher.update(newValue)      │
+    │                             │  ──────────────────────────────► │
+    │                             │  (通过 Registry 广播 topic)       │
+    │                             │                                  │
+    │                             │  app.subscribe('ns:key', cb)     │
+    │                             │  ◄────────────────────────────── │
 ```
 
-- **Config Server** (`MicroDynamicConfigsServer`) — 持有配置数据，管理订阅者列表，推送变更
-- **Subscriber** (`MicroDynamicConfigClients`) — 订阅某个 namespace 的配置字段，接收实时推送
-- **Publisher** — 调用 `server.save()` 修改配置，数据流向是：validate → Redis 持久化 → 内存更新 → 推送通知
+- **Config Server** (`MicroDynamicConfigsServer`) — 持有配置数据，校验、持久化，通过 `app.publish` 注册 publisher
+- **Subscriber** — 直接用 `app.subscribe(topic, callback)` 接收推送，无需客户端层
+- **Publisher** — 调用 `server.save()` 修改配置，数据流：validate → Redis 持久化 → 内存更新 → `publisher.update()` → `change:key` 事件
 
 ---
 
@@ -49,8 +49,8 @@ constructor(options: {
   redis_key: string // Redis 存储键名
 })
 
-// 从 Redis 加载持久化数据，返回 teardown 函数
-initialize(): Promise<() => void>
+// 从 Redis 加载持久化数据，为每个 schema 字段注册 publisher，返回 teardown 函数
+initialize(): Promise<() => Promise<void>>
 
 // 持久化并推送变更
 save(value: Partial<z.infer<Z>>): Promise<number>
@@ -59,56 +59,35 @@ save(value: Partial<z.infer<Z>>): Promise<number>
 get value(): z.infer<Z>
 ```
 
-### MicroDynamicConfigClients
+### 事件
 
-```typescript
-class MicroDynamicConfigClients
-
-constructor(app: Application)
-
-subscribe<T extends Record<string, any>>(
-  namespace: string,
-  fields: (keyof T)[]
-): Promise<T>
-
-close(): Promise<void>
-```
-
-### DynamicConfigClient (通常不直接使用)
-
-```typescript
-class DynamicConfigClient<T extends Record<string, any>>
-
-getValue(): Promise<T>
-close(): Promise<void>
-setValue<K extends keyof T>(k: K, v: T[K]): this  // 由 push handler 调用
-```
+| 事件 | 参数 | 说明 |
+|------|------|------|
+| `change:{field}` | `(newValue, oldValue)` | 字段变更时触发，每个字段独立事件名 |
 
 ---
 
-## 3. 通信协议
+## 3. Topic 约定
 
-### 路由端点
+每个 schema 字段一个 topic，格式为：
 
-| 方向 | 路径 | 数据 | 返回 |
-|------|------|------|------|
-| Subscriber → Server | `/-/dynamic-configs/subscribe` | `string[]` (字段名) | `Record<string, any>` (字段值) |
-| Subscriber → Server | `/-/dynamic-configs/unsubscribe` | `string[]` (字段名) | `number` (timestamp) |
-| Server → Subscriber | `/-/dynamic-configs/change` (push) | `{ key, newValue, oldValue, namespace }` | — |
+```
+{namespace}:{field}
+```
 
-### 订阅流程
+例如 namespace `config-svc`、字段 `name`、`port`、`debug`：
 
-1. 客户端通过 Registry 发现目标 namespace 的 `host:port`
-2. 建立 WebSocket 连接
-3. 发送 subscribe 请求，服务端注册并返回初始值
-4. 服务端数据变更时，遍历 `stacks` 中该字段的订阅者，逐个 push
-5. 客户端收到 push 后更新本地缓存
+- `config-svc:name`
+- `config-svc:port`
+- `config-svc:debug`
 
-### 退订与断连
+### 订阅
 
-- 显式退订：调用 `close()` → 发送 unsubscribe 请求
-- 被动断连：WebSocket close → 服务端 `onClientDisconnect` 清理所有 `stacks`
-- 客户端断连后 `_status = 0`，下次 `getValue()` 重新走完整订阅流程
+```typescript
+const values: Record<string, any> = {};
+const unsub = await app.subscribe('config-svc:name', (v) => values.name = v);
+// unsub() 取消订阅
+```
 
 ---
 
@@ -124,10 +103,10 @@ for (const key of keys) {
   const parsed = schema.parse(value[key]);
   if (!deepEqual(old, parsed)) entries.push({ key, parsed });
 }
-// Pass 2: persist → memory → emit
+// Pass 2: persist → memory → publish + emit
 await redis.set(key, JSON.stringify(next));
 update memory;
-emit events;
+emit 'change:{key}' events;
 
 // ✗ 禁止：validate 和 mutate 混在一轮
 for (const key of keys) {
@@ -135,87 +114,47 @@ for (const key of keys) {
 }
 ```
 
-### 4.2 客户端状态机
-
-```
-_status: 0 (uninit) ──getValue()──→ 1 (loading)
-    ↑                                    │
-    │                           subscribe()
-    │                              │
-    │                         ┌────┴────┐
-    │                    fail │         │ success
-    │                    ┌────┘         └────┐
-    │                    ↓                   ↓
-    │                    0 (retry)           2 (ready)
-    │                                        │
-    │                            disconnect  │
-    │                              ────────→ 0
-    │                              close()
-    └────────────────────────────────── closed
-```
-
-- `close()` 设 `_closed = true`，pending subscribe 完成时检测标记并 dispose 连接
-- `close()` 后 `getValue()` 直接 reject
-
-### 4.3 生命周期
+### 4.2 initialize() 中注册 publisher
 
 ```typescript
-// 服务端初始化
-const teardown = await server.initialize();
-// ... 运行 ...
-teardown(); // 清理所有监听器和订阅
+// ✓ 正确：initialize 时调用 app.publish 注册所有字段
+const publisher = await this.app.publish(`${namespace}:${key}`, initialValue);
+this.publishers.set(key, publisher);
 
-// 客户端创建
-const configs = new MicroDynamicConfigClients(app);
-const value = await configs.subscribe("ns", ["key1"]);
-// ... 使用 ...
-await configs.close(); // 清理所有订阅连接
+// save 时通过 publisher.update 推送
+await this.publishers.get(key)!.update(newValue);
+
+// teardown 时 unpublish
+await publisher.unpublish();
+
+// ✗ 禁止：save 中每次调用 app.publish（应复用 initialize 时注册的 publisher）
+```
+
+### 4.3 teardown 必须清理所有资源
+
+```typescript
+// ✓ 正确：teardown 需 unpublish + clear + removeAllListeners
+return async () => {
+  for (const publisher of this.publishers.values()) {
+    await publisher.unpublish();
+  }
+  this.publishers.clear();
+  this.removeAllListeners();
+};
+```
+
+### 4.4 deep diff 避免无效推送
+
+```typescript
+// ✓ 正确：值未变化时跳过 publish
+if (isDeepStrictEqual(oldValue, parsed)) {
+  continue;  // 不写入 entries，不触发 publish 和事件
+}
 ```
 
 ---
 
-## 5. 反模式（禁止）
-
-### 5.1 save() 中字段校验失败后保留脏状态
-
-```typescript
-// ✗
-for (const key of keys) {
-  this._value[key] = parsed;  // 后续失败 → 脏数据
-}
-await redis.set(...);
-
-// ✓ 先全部校验，再统一写入
-```
-
-### 5.2 close() 前不检查 pending subscribe
-
-```typescript
-// ✗ close() 不设标记，pending subscribe 完成导致 client 复活
-async close() {
-  await this.unsubscribe();
-  this._client = undefined;
-}
-
-// ✓ close() 先设 _closed 标记
-async close() {
-  this._closed = true;
-  await this.unsubscribe();
-  this._client = undefined;
-}
-```
-
-### 5.3 多个 MicroDynamicConfigClients 实例共享同一 app
-
-rou3 `dispatch()` 只执行第一个匹配的 handler，第二个实例的 `/-/dynamic-configs/change` 不会触发。一个 app 只应创建一个 `MicroDynamicConfigClients` 实例。
-
-### 5.4 在 push handler 中做耗时的同步操作
-
-push handler 在 message 调度线程中执行，不应包含耗时操作。`setValue()` 仅是内存写入，保持轻量。
-
----
-
-## 6. 边界条件清单
+## 5. 边界条件清单
 
 - [ ] `save()` 传入空对象 `{}` — 返回 0，无操作
 - [ ] `save()` 传入 schema 中不存在的字段 — 跳过，不报错
@@ -223,10 +162,13 @@ push handler 在 message 调度线程中执行，不应包含耗时操作。`set
 - [ ] `save()` 中所有字段值与当前一致 — 返回 0，不写 Redis 不推送
 - [ ] `save()` Redis 写入失败 — throw，`_value` 不变
 - [ ] `initialize()` 时 Redis 无数据 — 使用 schema 默认值
-- [ ] `close()` 在 subscribe 完成前调用 — `_closed` 标记防止复活，新连接被 dispose
-- [ ] `close()` 后调用 `getValue()` — 直接 reject
-- [ ] 订阅不存在的字段 — 服务器静默跳过，不返回该字段
-- [ ] 同一 namespace 重复 subscribe — 复用已有 client，`fields` 不会合并
-- [ ] 断连后重新 subscribe — `_status = 0` → 全量重新拉取
-- [ ] 服务端推送时订阅者已断连 — `has(client)` 检查跳过，等待 `onClientDisconnect` 清理
-- [ ] 多个字段同时变更 — 一轮 `save()` 中多次 `change:key` 事件，订阅者逐个收到
+- [ ] 多个字段同时变更 — 一轮 `save()` 中逐个 `publisher.update()` + `change:key` 事件
+- [ ] Deep diff 检测嵌套对象变化 — 嵌套字段内容不变时跳过 publish
+
+---
+
+## 6. 依赖
+
+- `@hile/micro` — 提供 `Application`、`app.publish`/`app.subscribe`
+- `ioredis` — Redis 持久化
+- `zod` — Schema 定义与校验

@@ -13,30 +13,27 @@ pnpm add @hile/micro-dynamic-configs
 
 ## 概述
 
-`@hile/micro-dynamic-configs` 是基于 `@hile/micro` WebSocket 通信的动态配置服务。提供**三个角色**：
+`@hile/micro-dynamic-configs` 是基于 `@hile/micro` WebSocket 通信的动态配置服务。提供**配置服务端**组件：
 
 | 角色 | 组件 | 职责 |
 |------|------|------|
 | **Config Server** | `MicroDynamicConfigsServer` | 持有配置数据，管理订阅者列表，推送变更 |
-| **Subscriber** | `MicroDynamicConfigClients` | 订阅配置字段，接收实时推送，本地缓存 |
 | **Publisher** | 直接调用 `server.save()` | 修改配置，触发持久化和推送 |
 
 ### 架构
 
 ```
-APP_3 (Publisher)          APP_1 (Config Server)         APP_2 (Subscriber)
-    │                            │                              │
-    │    save({ key: val })      │                              │
-    ├──────────────────────────► │                              │
-    │                            │   push change { key, val }   │
-    │                            ├─────────────────────────────►│
-    │                            │                              │
-    │                            │◄──── subscribe(fields) ──────┤
-    │                            │───── initial values ────────►│
+Publisher                 Config Server
+    │                            │
+    │    save({ key: val })      │
+    ├──────────────────────────► │
+    │                            │── redis.set (持久化)
+    │                            │── emit change (推送)
+    │                            │
 ```
 
-- **Config Server** 通过 WebSocket 接受订阅、持久化到 Redis、在数据变更时推送
-- **Subscriber** 通过 Application 的服务发现连接远端配置服务，本地缓存配置值
+- **Config Server** 通过 WebSocket 主题推送变更、持久化到 Redis
+- 订阅方通过 `@hile/micro` 的 `Application` 直连 Config Server，使用 `app.subscribe()` 接收变更推送
 - 使用 `@hile/micro` 的 `Application` 做服务发现和通信，独立包，仅需 Redis
 
 ---
@@ -77,33 +74,6 @@ const teardown = await server.initialize();
 // 服务端就绪，等待订阅和写入
 ```
 
-### 订阅配置
-
-```typescript
-import { Application } from '@hile/micro';
-import { MicroDynamicConfigClients } from '@hile/micro-dynamic-configs';
-
-const app = new Application({
-  namespace: 'my-app',
-  registry: { host: '127.0.0.1', port: 9000 },
-});
-await app.listen(9200);
-
-const configs = new MicroDynamicConfigClients(app);
-
-// 订阅配置字段，返回当前值
-const value = await configs.subscribe<{
-  featureX: boolean;
-  maxRetries: number;
-}>('config-svc', ['featureX', 'maxRetries']);
-
-console.log(value);
-// { featureX: false, maxRetries: 3 }
-
-// 此后配置变更时，本地缓存自动更新
-// 再次调用 getValue() 获取最新缓存
-```
-
 ### 修改配置
 
 ```typescript
@@ -119,48 +89,19 @@ const updated = await server.save({
 
 ## 核心功能
 
-### 订阅生命周期
-
-```
-_status: 0 (uninit) ──getValue()──→ 1 (loading)
-    ↑                                    │
-    │                           subscribe()
-    │                              │
-    │                         ┌────┴────┐
-    │                    fail │         │ success
-    │                    ┌────┘         └────┐
-    │                    ↓                   ↓
-    │                    0 (retry)           2 (ready)
-    │                                        │
-    │                            disconnect  │
-    │                              ────────→ 0
-    │                              close()
-    └────────────────────────────────── closed
-```
-
-- **status=0**：未初始化，首次调用 `getValue()` 启动订阅
-- **status=1**：订阅中，后续调用复用同一 Promise
-- **status=2**：已就绪，返回本地缓存
-- **disconnect**：WebSocket 断连后自动回退到 status=0
-- **close()**：设 `_closed=true`，防止 pending subscribe 复活
-
 ### 实时推送
 
 服务端 `save()` 写入数据时的处理流程：
 
 1. **第一轮（validate & diff）**：逐个字段校验 schema，对比新旧值，收集变更条目
 2. **第二轮（apply）**：构建全量快照 → `redis.set` 持久化 → 更新内存 → 逐个字段 `emit('change:key', newValue, oldValue)`
-3. 每个字段的 `change:key` 事件遍历订阅者，通过 WebSocket 推送变更
-4. 订阅方收到推送后更新本地缓存
+3. 每个字段的 `change:key` 事件通过 `app.publish()` 推送变更到订阅方
 
 ### 断连与清理
 
 | 场景 | 处理 |
 |------|------|
-| 订阅方 WebSocket 断连 | Server 端 `onClientDisconnect` 清理所有 `stacks` |
-| 订阅方主动 close | 发送 unsubscribe 请求，Server 端移除 |
-| Server 端主动关闭 | `initialize()` 返回的 teardown 清理所有监听器和订阅 |
-| 订阅方奔溃 | Server 端 WebSocket close → 自动清理 |
+| Server 端主动关闭 | `initialize()` 返回的 teardown 清理所有 publisher 和监听器 |
 
 ---
 
@@ -192,60 +133,17 @@ save(value: Partial<z.infer<Z>>): Promise<number>
 get value(): z.infer<Z>
 ```
 
-### MicroDynamicConfigClients
-
-```typescript
-class MicroDynamicConfigClients
-
-// 构造（一个 app 只需一个实例）
-constructor(app: Application)
-
-// 订阅某个 namespace 的配置字段
-subscribe<T extends Record<string, any>>(
-  namespace: string,
-  fields: (keyof T)[]
-): Promise<T>
-
-// 关闭所有订阅
-close(): Promise<void>
-```
-
-### DynamicConfigClient
-
-```typescript
-class DynamicConfigClient<T extends Record<string, any>>
-
-getValue(): Promise<T>
-setValue<K extends keyof T>(k: K, v: T[K]): this
-close(): Promise<void>
-```
-
 ### 通信端点
 
-| 方向 | 路径 | 说明 |
-|------|------|------|
-| Subscriber → Server | `/-/dynamic-configs/subscribe` | 发送字段名数组，返回字段值 |
-| Subscriber → Server | `/-/dynamic-configs/unsubscribe` | 取消订阅 |
-| Server → Subscriber | `/-/dynamic-configs/change` (push) | 推送变更 `{ key, newValue, oldValue, namespace }` |
+| 端点 | 说明 |
+|------|------|
+| `/-/dynamic-configs/subscribe` | 订阅方发送字段名数组，返回字段值 |
+| `/-/dynamic-configs/unsubscribe` | 取消订阅 |
+| `/-/dynamic-configs/change` (push) | 服务端推送变更 `{ key, newValue, oldValue }` |
 
 ---
 
 ## 最佳实践
-
-### 一个 app 一个 MicroDynamicConfigClients 实例
-
-多个实例会在 rou3 中注册同一 path 的 handler，但 `dispatch()` 只执行第一个。应当创建**一个**实例并复用：
-
-```typescript
-// ✓ 正确：一个 app 一个实例
-const configs = new MicroDynamicConfigClients(app);
-const cfg1 = await configs.subscribe('ns-a', ['key1']);
-const cfg2 = await configs.subscribe('ns-b', ['key2']);
-
-// ✗ 禁止：多个实例共享同一 app
-const mgr1 = new MicroDynamicConfigClients(app);
-const mgr2 = new MicroDynamicConfigClients(app); // mgr2 收不到推送
-```
 
 ### schema 设计
 

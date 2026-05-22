@@ -413,4 +413,4 @@ export default nextConfig;
 | 属性/方法 | 类型 | 说明 |
 |----------|------|------|
 | `use(middleware)` | `(middleware: Middleware) => HttpNext` | 注册 Koa 中间件，返回当前实例以支持链式调用 |
-| `start()` | `Promise<() => void>` | 启动服务，返回关闭函数 |
+| `start(onListen?)` | `(onListen?: (server: Server) => void \| Promise<void>) => Promise<() => void>` | 启动服务，`onListen` 可选回调，在 HTTP 服务启动后、Next.js prepare 前调用，接收 `http.Server` 实例。返回关闭函数 |
