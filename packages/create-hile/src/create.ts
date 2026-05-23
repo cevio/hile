@@ -70,6 +70,7 @@ async function choose(skipInstall: boolean) {
     { name: 'micro-http', message: 'Micro + HTTP 模板' },
     { name: 'micro', message: 'Micro 独立服务模板' },
     { name: 'micro-http-next', message: 'Next.js + Micro + HTTP 模板' },
+    { name: 'monorepo', message: 'Monorepo 模板（Lerna + pnpm workspace）' },
   ];
   const { template } = await Enquirer.prompt<{ template: string }>({
     type: 'select',

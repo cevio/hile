@@ -1,0 +1,22 @@
+{
+  "name": "monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A lerna-based monorepo",
+  "scripts": {
+    "build": "lerna run build",
+    "test": "lerna run test",
+    "clean": "lerna run clean",
+    "publish": "lerna publish",
+    "changed": "lerna changed",
+    "create": "node scripts/create-package.mjs",
+    "add": "node scripts/add-dependency.mjs",
+    "dev": "node scripts/dev-server.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^25.8.0",
+    "enquirer": "^2.4.1",
+    "lerna": "^8.1.9",
+    "typescript": "^6.0.3"
+  }
+}
