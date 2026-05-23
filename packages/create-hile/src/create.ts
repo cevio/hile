@@ -11,7 +11,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const __templates = resolve(__dirname, '../templates');
 
-export async function CreateHileHttpNextProject(projectName: string) {
+export async function CreateHileHttpNextProject(projectName: string, options: {
+  skipInstall: boolean
+}) {
   const cwd = process.cwd();
   const targetDir = resolve(cwd, projectName);
 
@@ -19,7 +21,7 @@ export async function CreateHileHttpNextProject(projectName: string) {
     throw new Error(`目录 ${projectName} 已存在`);
   }
 
-  const { template, install } = await choose();
+  const { template, install } = await choose(options.skipInstall);
   if (!template) {
     throw new Error('未选择模板');
   }
@@ -61,7 +63,7 @@ export async function CreateHileHttpNextProject(projectName: string) {
   console.log(`  $ pnpm run dev\n`);
 }
 
-async function choose() {
+async function choose(skipInstall: boolean) {
   const templates = [
     { name: 'default', message: '默认模板' },
     { name: 'next', message: 'Next.js 模板' },
@@ -75,6 +77,9 @@ async function choose() {
     message: '请选择模板',
     choices: templates,
   });
+  if (skipInstall) {
+    return { template: resolve(__templates, template), install: false };
+  }
   const { install } = await Enquirer.prompt<{ install: boolean }>({
     type: 'confirm',
     name: 'install',
