@@ -1,7 +1,7 @@
 import Image from "next/image";
 import styles from "./page.module.css";
 import { ClickTest } from "./click";
-import { loadModel } from "@hile/http-next";
+import { loadModel } from "@hile/model";
 import homeModel from "@/models/home/home.model";
 
 export const dynamic = "force-dynamic";

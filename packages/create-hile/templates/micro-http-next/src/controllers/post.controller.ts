@@ -1,5 +1,5 @@
 import { defineController } from "@hile/http";
-import { loadModel } from "@hile/http-next";
+import { loadModel } from "@hile/model";
 import postModel from "../models/post/post.model";
 import { loadService } from "@hile/core";
 import appService from "../services/app.boot";

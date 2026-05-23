@@ -1,4 +1,4 @@
-import { defineModel } from "@hile/http-next";
+import { defineModel } from "@hile/model";
 
 export default defineModel(async () => ({
   heading: "Hile + Next.js",
