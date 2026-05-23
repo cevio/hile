@@ -1,6 +1,6 @@
 ---
 name: http-next
-description: "@hile/http-next：业务只在 src/models；page.tsx+loadModel 须 dynamic=force-dynamic；HttpNext 可选 specialControllers 多 API 根；app/controllers/services 仅 loadModel；见本文。"
+description: "@hile/http-next: Koa + 文件路由与 Next 同端口。model 定义见 @hile/model。业务放 src/models, page.tsx+loadModel 须 dynamic=force-dynamic。"
 ---
 
 # @hile/http-next
@@ -26,9 +26,12 @@ description: "@hile/http-next：业务只在 src/models；page.tsx+loadModel 须
 
 **额外 API 根（可选）**：**`specialControllers?: { directory: string; prefix: string }[]`**。在默认 **`load`** 之后，对每一项依次 **`resolve(cwd, src|dist, directory)`** 再 **`http.load`**，**`suffix` / `defaultSuffix` / `conflict`** 与主控制器相同，**`prefix`** 取该项的 **`prefix`**。用于同一项目里多套 API 前缀（如主 **`/-`** +  **`/admin`**）。
 
-## `defineModel` / `loadModel`
+## Model（`@hile/model`）
 
-- 自 **`@hile/http-next`** 导出；**非**容器单例；**每次** **`loadModel`** 都跑 **`create`**。
+model 定义与消费由独立包 **`@hile/model`** 提供：
+
+- **`defineModel`** / **`loadModel`** / **`isModel`** / **`ModelDefinition`** 自 **`@hile/model`** 导入。
+- 非容器单例；**每次** **`loadModel`** 都重新执行 `defineModel` 中的 `main`。
 - **`app` / `controllers` / `services`** 消费 model：**只认** **`loadModel(defaultImport, …)`**；首参非法 → **`TypeError`**。
 - 基础设施 → **`defineService` + `loadService`**；领域结果 → **`defineModel` + `loadModel`**。
 
@@ -36,11 +39,11 @@ description: "@hile/http-next：业务只在 src/models；page.tsx+loadModel 须
 
 ```typescript
 // src/models/foo/foo.model.ts
-import { defineModel } from "@hile/http-next";
+import { defineModel } from "@hile/model";
 export default defineModel(async (slug: string) => ({ slug }));
 
 // src/app/foo/page.tsx
-import { loadModel } from "@hile/http-next";
+import { loadModel } from "@hile/model";
 import fooModel from "@/models/foo/foo.model";
 
 export const dynamic = "force-dynamic";
@@ -93,4 +96,4 @@ export default defineService("http.next", async (shutdown) => {
 
 ## 测试
 
-**`src/index.test.ts`**：**`load`** 路径、**`specialControllers`** 追加 **`load`**、**`conflict`**；**`src/model.test.ts`**：**`loadModel`** 行为与非法首参。
+**`src/index.test.ts`**：**`load`** 路径、**`specialControllers`** 追加 **`load`**、**`conflict`**。

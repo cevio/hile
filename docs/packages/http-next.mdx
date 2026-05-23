@@ -96,11 +96,13 @@ export default defineService('http.next', async (shutdown) => {
 
 控制器默认放在 **`src/controllers/`**（`NODE_ENV === 'development'` 时）或 **`dist/controllers/`**（生产构建后），使用 `@hile/http` 的 `defineController`（可选 `createControllerMetadata` + Zod 校验入参）。与 Next.js 的 **`src/app/`** 目录分离，避免混在同一文件夹。
 
-### defineModel / loadModel
+### Model 层
+
+Model 定义与消费由独立包 **`@hile/model`** 提供，详见 [@hile/model](./model)。
 
 ```typescript
 // src/models/foo/foo.model.ts
-import { defineModel } from "@hile/http-next";
+import { defineModel } from "@hile/model";
 
 export default defineModel(async (slug: string) => {
   return { slug };
@@ -109,7 +111,7 @@ export default defineModel(async (slug: string) => {
 
 ```typescript
 // src/app/foo/page.tsx
-import { loadModel } from "@hile/http-next";
+import { loadModel } from "@hile/model";
 import fooModel from "@/models/foo/foo.model";
 
 export default async function Page() {
@@ -241,6 +243,4 @@ export default [
 | 导出 | 说明 |
 |------|------|
 | `HttpNext`（默认导出） | 主类 |
-| `defineModel` | 定义业务 model（不含 Hile 生命周期） |
-| `loadModel` | 调用 model.create(...args) 并返回 Promise 结果 |
-| `ModelDefinition` | model 类型 |
+| `SpecialController` | 额外控制器根配置类型 |

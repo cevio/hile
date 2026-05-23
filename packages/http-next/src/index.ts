@@ -7,8 +7,6 @@ import type { Middleware } from "koa";
 import { resolve, relative } from "node:path";
 import type { Server } from "http";
 
-export { defineModel, loadModel, type ModelDefinition } from "./model";
-
 /** 额外控制器根目录：相对 `src/`（开发）或 `dist/`（生产），使用独立 `prefix` 再 `http.load` 一次 */
 export interface SpecialController {
   directory: string;

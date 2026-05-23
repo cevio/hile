@@ -73,6 +73,7 @@
       "group": "核心包",
       "pages": [
         "packages/core",
+        "packages/model",
         "packages/http",
         "packages/http-next",
         "packages/cli"

@@ -68,11 +68,13 @@ Next.js handler               ← SSR / RSC / Next 404
 
 ## 模型（Model）
 
-`@hile/http-next` 导出 **`defineModel`** 与 **`loadModel`**，用于定义可复用的业务数据创建逻辑。`defineModel(create)` 接收一个工厂函数，返回 `ModelDefinition` 对象；`loadModel(model, ...args)` 调用 `model.create(...args)` 并返回 Promise。
+Model 定义与消费由独立包 **`@hile/model`** 提供。**`defineModel`** 用于封装业务逻辑，**`loadModel`** 执行模型并返回结果。
 
-**与 `defineService` 的区别**：Model **无容器 key、不参与容器生命周期、不缓存结果**——每次 `loadModel` 都会重新执行 `create`。适合在 controllers 与 pages 中按需构造数据。
+**与 `defineService` 的区别**：Model **无容器 key、不参与容器生命周期、不缓存结果**——每次 `loadModel` 都会重新执行 `main`。适合在 controllers 与 pages 中按需构造数据。
 
 在 `page.tsx` 中使用 `loadModel` 时，须 `export const dynamic = "force-dynamic"` 以保持响应性。
+
+详见 [@hile/model](/packages/model)。
 
 ## 关于下一跳
 

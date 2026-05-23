@@ -1,0 +1,349 @@
+---
+title: "@hile/model"
+description: "定义和调用业务模型，支持 services 依赖注入和中间件 pipeline"
+---
+
+## 安装
+
+```bash
+pnpm add @hile/model
+```
+
+依赖 `@hile/core`（workspace peer dependency）。
+
+---
+
+## 它解决什么问题？
+
+应用中的业务逻辑如果散落在 API 控制器、页面组件和服务中，会变得难以测试和复用。`@hile/model` 提供一个统一的层来封装领域逻辑：
+
+1. **业务逻辑集中** — 每个模型文件包含一个 `defineModel`，业务逻辑不再散落在控制器和页面中
+2. **可选依赖注入** — 支持声明 services 依赖，自动 `loadService` 后透传给 `main` 函数
+3. **中间件 pipeline** — Koa 风格中间件链，可在业务逻辑前后执行横切关注点（日志、鉴权、事务等）
+4. **与服务容器解耦** — 不同于 `@hile/core` 的容器单例，每次 `loadModel` 都重新执行 `main`，适合请求级别的上下文
+
+---
+
+## 快速开始
+
+```typescript
+import { defineModel, loadModel } from '@hile/model'
+
+const greetModel = defineModel(async (input: { name: string }) => {
+  return `Hello, ${input.name}!`
+})
+
+const result = await loadModel(greetModel, { name: 'World' })
+console.log(result) // Hello, World!
+```
+
+---
+
+## 使用指南
+
+### 基础模型（无 services）
+
+最简单的模型——一个输入、一个输出：
+
+```typescript
+// src/models/greet.model.ts
+import { defineModel } from '@hile/model'
+export default defineModel(async (input: { name: string }) => {
+  return { greeting: `Hello, ${input.name}!` }
+})
+```
+
+```typescript
+// src/app/page.tsx
+import { loadModel } from '@hile/model'
+import greetModel from '@/models/greet.model'
+
+export const dynamic = 'force-dynamic'
+
+export default async function Page() {
+  const result = await loadModel(greetModel, { name: 'World' })
+  return <div>{result.greeting}</div>
+}
+```
+
+### 注入 services
+
+通过 `services` 声明依赖，`main` 的第一个参数是加载后的 services 实例元组：
+
+```typescript
+import { defineModel } from '@hile/model'
+import { defineService } from '@hile/core'
+
+const userService = defineService('user', async () => ({
+  findById: async (id: number) => ({ id, name: 'Alice' }),
+}))
+
+const getUserModel = defineModel({
+  services: [userService],
+  async main([user], input: { id: number }) {
+    return user.findById(input.id)
+  },
+})
+```
+
+services 数组的顺序与 `main` 首参元组顺序一致。使用 `const` 类型参数保证字面量类型推断。
+
+### 中间件 pipeline
+
+通过 `pipelines` 注册 Koa 风格中间件，在 `main` 前后执行横切逻辑：
+
+```typescript
+import { defineModel, type PipelineMiddleware } from '@hile/model'
+
+const logger: PipelineMiddleware = async (ctx, next) => {
+  console.log('before:', ctx.args)
+  await next()
+  console.log('after')
+}
+
+const model = defineModel({
+  pipelines: [logger],
+  async main(input: { id: number }) {
+    return fetchUser(input.id)
+  },
+})
+```
+
+中间件特性：
+
+| 能力 | 说明 |
+|------|------|
+| 改写 `ctx.args` | 中间件可以修改入参，下游中间件和 `main` 读到修改后的值 |
+| `ctx.state` 传递数据 | 中间件间通过 `state` 共享数据（如鉴权结果） |
+| 短路 | 不调 `next()` 则跳过后续中间件和 `main` |
+| 后置处理 | `await next()` 之后可读取 `ctx.state.result` 做后处理 |
+
+### 函数简写
+
+当不需要 services 和 pipelines 时，可直接传入 `main` 函数：
+
+```typescript
+const model = defineModel(async (input: { id: number }) => input.id)
+// 等价于
+const model = defineModel({ main: async (input: { id: number }) => input.id })
+```
+
+### 与 @hile/http-next 集成
+
+推荐在 `@hile/http-next` 项目中使用 `@hile/model` 组织业务逻辑：
+
+```
+src/
+  models/           ← 业务模型，每个文件一个 defineModel
+    user.model.ts
+    post.model.ts
+  app/              ← Next.js 页面，通过 loadModel 消费模型
+    users/page.tsx
+  controllers/      ← API 控制器，通过 loadModel 消费模型
+    post.controller.ts
+```
+
+---
+
+## API 参考
+
+### 顶层导出
+
+| 导出 | 说明 |
+|------|------|
+| `defineModel` | 定义业务模型 |
+| `loadModel` | 执行模型，返回 `Promise<R>` |
+| `isModel` | 校验对象是否合法 `ModelDefinition` |
+| `Pipeline` | pipeline 类 |
+| `PipelineContext` | pipeline 上下文 |
+| `ModelDefinition` | 模型类型 |
+| `ModelProps` | `defineModel` 入参类型 |
+| `ModelFlag` | 模型内部标记类型 |
+| `PipelineMiddleware` | 中间件函数类型 |
+| `ModelPipeline` | `readonly PipelineMiddleware[]` |
+| `InferServiceResult` | 工具类型 |
+| `InferredServices` | 工具类型 |
+
+### defineModel
+
+```typescript
+// 简写形式
+defineModel<TInput extends object, R>(
+  main: (input: TInput) => R | Promise<R>,
+): ModelDefinition<TInput, R>
+
+// 完整形式
+defineModel<const S extends ..., TInput, R>(
+  options: ModelProps<S, TInput, R>,
+): ModelDefinition<TInput, R>
+```
+
+### ModelProps
+
+| 属性 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `main` | `function` | 是 | 业务函数。有 services 时首参为实例元组，次参为 input；否则仅 input |
+| `services` | `ServiceRegisterProps[]` | 否 | 依赖的服务列表，自动 `loadService` |
+| `pipelines` | `PipelineMiddleware[]` | 否 | Koa 风格中间件列表 |
+
+### ModelDefinition
+
+```typescript
+interface ModelDefinition<TInput extends object, R> {
+  readonly flag: symbol
+  readonly handler: (input: TInput) => Promise<R>
+}
+```
+
+### loadModel
+
+```typescript
+loadModel<TInput extends object, R>(
+  model: ModelDefinition<TInput, R>,
+  input: TInput,
+): Promise<R>
+```
+
+每次调用都重新执行 `main`，不缓存结果。首参非 `defineModel` 返回值时抛 `TypeError`。
+
+### Pipeline
+
+| 方法 | 说明 |
+|------|------|
+| `use(fn)` | 注册中间件 |
+| `dispatch(ctx)` | 启动中间件链，返回 `Promise<void>` |
+
+### PipelineContext
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `args` | `TInput` | 原始入参，中间件可改写 |
+| `state` | `Record<string, unknown>` | 中间件间共享状态 |
+
+---
+
+## 类型定义
+
+```typescript
+type PipelineMiddleware<TInput extends object = Record<string, unknown>> = (
+  ctx: PipelineContext<TInput>,
+  next: () => Promise<void>,
+) => Promise<void>
+
+type ModelPipeline = readonly PipelineMiddleware[]
+
+type ModelDefinition<
+  TInput extends object = Record<string, unknown>,
+  R = unknown,
+> = {
+  readonly flag: symbol
+  readonly handler: (input: TInput) => Promise<R>
+}
+
+type ModelProps<
+  S extends readonly ServiceRegisterProps<any>[] | undefined = undefined,
+  TInput extends object = Record<string, unknown>,
+  R = unknown,
+> = {
+  services?: S
+  pipelines?: ModelPipeline
+  main: S extends readonly ServiceRegisterProps<any>[]
+    ? (services: InferredServices<S>, input: TInput) => R | Promise<R>
+    : (input: TInput) => R | Promise<R>
+}
+```
+
+---
+
+## 与 @hile/core 对比
+
+| | `@hile/core`（Service） | `@hile/model` |
+|--|------------------------|---------------|
+| 生命周期 | 进程级单例 | 每次调用执行 |
+| 用途 | 基础设施（DB、Cache、HTTP） | 业务逻辑（领域操作） |
+| 依赖 | 可相互依赖，容器管理 | 可依赖 services |
+| 缓存 | 同一 key 全局单例 | 不缓存 |
+| 销毁 | 有 shutdown 机制 | 无 |
+
+---
+
+## 反模式
+
+<Warning>以下用法会导致问题，请避免使用。</Warning>
+
+### 请求内调用 defineModel
+
+```typescript
+// ❌ 错误：每次请求都创建新模型
+export default async function Page() {
+  const model = defineModel(async (input: { id: number }) => {
+    return fetchData(input.id)
+  })
+  return loadModel(model, { id: 1 })
+}
+
+// ✅ 正确：在模块顶层定义一次
+const model = defineModel(async (input: { id: number }) => {
+  return fetchData(input.id)
+})
+
+export default async function Page() {
+  return loadModel(model, { id: 1 })
+}
+```
+
+### 手动构造 ModelDefinition
+
+```typescript
+// ❌ 错误：isModel 会返回 false，loadModel 抛 TypeError
+const fake = { flag: Symbol.for('@hile/model'), handler: async (i: any) => i }
+
+// ✅ 正确：始终通过 defineModel 创建
+const real = defineModel(async (input: { id: number }) => input.id)
+```
+
+### Pipeline 中间件忘记调 next()
+
+```typescript
+// ❌ 错误：中间件不调 next()，后续中间件和 main 都不会执行
+defineModel({
+  pipelines: [
+    async (ctx, next) => {
+      // 忘记调 await next()
+      ctx.state.result = 'short-circuited'
+    },
+  ],
+  main: async (input) => input, // 永远不会执行
+})
+
+// ✅ 正确：除非有意短路，否则确保调 next()
+defineModel({
+  pipelines: [
+    async (ctx, next) => {
+      console.log('before')
+      await next()
+      console.log('after')
+    },
+  ],
+  main: async (input) => input,
+})
+```
+
+---
+
+## 常见错误
+
+<AccordionGroup>
+  <Accordion title="loadModel: first argument must be a return value of defineModel">
+    传给 `loadModel` 的第一个参数不是 `defineModel` 的返回值。检查是否手动构造了对象，或传入了未定义的值。
+  </Accordion>
+  <Accordion title="pipeline: last middleware called next(), it should be terminal">
+    pipeline 的最后一个中间件调用了 `next()`，但不存在下一个中间件。去掉最后一个中间件中的 `next()` 调用，或确保后续还有中间件能终结。
+  </Accordion>
+  <Accordion title="pipeline: no middleware registered">
+    调用了 `dispatch()` 但从未注册任何中间件。先调用 `use(fn)` 注册至少一个中间件。
+  </Accordion>
+  <Accordion title="next() called multiple times">
+    中间件中多次调用了 `next()`。每个中间件只能调一次 `next()`。
+  </Accordion>
+</AccordionGroup>
