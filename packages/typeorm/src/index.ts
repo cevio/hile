@@ -2,9 +2,10 @@ import pkg from '../package.json' with { type: 'json' }
 import { defineService } from '@hile/core';
 import { DataSource, DataSourceOptions, QueryRunner } from 'typeorm';
 
+export type { DataSourceOptions } from 'typeorm'
+
 /**
- * 创建数据源服务
- * 数据从环境变量中获取
+ * 从环境变量读取 TypeORM 配置
  * 环境变量：
  * - TYPEORM_TYPE: 数据库类型
  * - TYPEORM_HOST: 数据库主机
@@ -17,8 +18,8 @@ import { DataSource, DataSourceOptions, QueryRunner } from 'typeorm';
  * - TYPEORM_ENTITIES: 实体目录
  * - TYPEORM_SYNCHRONIZE: 是否同步数据库结构（环境变量值为字符串 "true" 时开启，否则关闭）
  */
-export default defineService(Symbol.for(pkg.name), async (shutdown) => {
-  const configs: DataSourceOptions = {
+function envOptions(): DataSourceOptions {
+  return {
     // @ts-ignore
     type: process.env.TYPEORM_TYPE,
     host: process.env.TYPEORM_HOST,
@@ -31,19 +32,29 @@ export default defineService(Symbol.for(pkg.name), async (shutdown) => {
     port: typeof process.env.TYPEORM_PORT === 'string'
       ? Number(process.env.TYPEORM_PORT)
       : process.env.TYPEORM_PORT,
-  };
-
-  const connection = new DataSource({
-    ...configs,
     synchronize: process.env.TYPEORM_SYNCHRONIZE === 'true',
     logging: process.env.NODE_ENV === 'development',
-  });
+  }
+}
 
-  shutdown(() => connection.destroy());
+/**
+ * 创建数据源（手动模式）
+ * @param options TypeORM 连接选项，不传则从环境变量读取
+ * @returns 等待初始化完成后的 DataSource 实例
+ */
+export async function createDataSource(options?: DataSourceOptions): Promise<DataSource> {
+  const connection = new DataSource(options ?? envOptions())
+  await connection.initialize()
+  return connection
+}
 
-  await connection.initialize();
-
-  return connection;
+/**
+ * 数据源服务（容器模式）
+ */
+export default defineService(Symbol.for(pkg.name), async (shutdown) => {
+  const connection = await createDataSource()
+  shutdown(() => connection.destroy())
+  return connection
 });
 
 /**

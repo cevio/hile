@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<coverage generated="1779722124800" clover="3.2.0">
+  <project timestamp="1779722124800" name="All files">
+    <metrics statements="21" coveredstatements="21" conditionals="6" coveredconditionals="6" methods="6" coveredmethods="6" elements="33" coveredelements="33" complexity="0" loc="21" ncloc="21" packages="2" files="2" classes="2"/>
+    <package name="typeorm">
+      <metrics statements="0" coveredstatements="0" conditionals="0" coveredconditionals="0" methods="0" coveredmethods="0"/>
+      <file name="package.json" path="/Users/evioshen/code/pulian/shenyunjie/artuctor/packages/typeorm/package.json">
+        <metrics statements="0" coveredstatements="0" conditionals="0" coveredconditionals="0" methods="0" coveredmethods="0"/>
+      </file>
+    </package>
+    <package name="typeorm.src">
+      <metrics statements="21" coveredstatements="21" conditionals="6" coveredconditionals="6" methods="6" coveredmethods="6"/>
+      <file name="index.ts" path="/Users/evioshen/code/pulian/shenyunjie/artuctor/packages/typeorm/src/index.ts">
+        <metrics statements="21" coveredstatements="21" conditionals="6" coveredconditionals="6" methods="6" coveredmethods="6"/>
+        <line num="22" count="8" type="stmt"/>
+        <line num="46" count="11" type="cond" truecount="2" falsecount="0"/>
+        <line num="47" count="11" type="stmt"/>
+        <line num="48" count="10" type="stmt"/>
+        <line num="55" count="1" type="stmt"/>
+        <line num="56" count="1" type="stmt"/>
+        <line num="57" count="1" type="stmt"/>
+        <line num="70" count="3" type="stmt"/>
+        <line num="71" count="3" type="stmt"/>
+        <line num="72" count="3" type="stmt"/>
+        <line num="73" count="3" type="stmt"/>
+        <line num="74" count="4" type="stmt"/>
+        <line num="75" count="3" type="stmt"/>
+        <line num="76" count="3" type="stmt"/>
+        <line num="77" count="1" type="stmt"/>
+        <line num="78" count="1" type="stmt"/>
+        <line num="80" count="2" type="stmt"/>
+        <line num="81" count="2" type="stmt"/>
+        <line num="82" count="4" type="stmt"/>
+        <line num="83" count="2" type="stmt"/>
+        <line num="85" count="3" type="stmt"/>
+      </file>
+    </package>
+  </project>
+</coverage>

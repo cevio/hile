@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<coverage generated="1779721493878" clover="3.2.0">
-  <project timestamp="1779721493878" name="All files">
+<coverage generated="1779722124059" clover="3.2.0">
+  <project timestamp="1779722124059" name="All files">
     <metrics statements="150" coveredstatements="150" conditionals="81" coveredconditionals="76" methods="37" coveredmethods="37" elements="268" coveredelements="263" complexity="0" loc="150" ncloc="150" packages="1" files="2" classes="2"/>
     <file name="exception.ts" path="/Users/evioshen/code/pulian/shenyunjie/artuctor/packages/message-modem/src/exception.ts">
       <metrics statements="6" coveredstatements="6" conditionals="2" coveredconditionals="2" methods="3" coveredmethods="3"/>

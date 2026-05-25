@@ -33,8 +33,8 @@ This document is a **code generation reference**, not an abstract design doc. Wh
 | Start app, scan boot files | `@hile/cli` | CLI `hile start` |
 | HTTP API (Koa + routing) | `@hile/http` | `Http` / `defineController` / `Loader` / `defineResponsePlugin` |
 | API + Next.js same port | `@hile/http-next` | `HttpNext` |
-| Database operations | `@hile/typeorm` | `transaction` / default export DataSource service |
-| Redis cache | `@hile/ioredis` | default export Redis client service |
+| Database operations | `@hile/typeorm` | `createDataSource` / `transaction` / default export DataSource service |
+| Redis cache | `@hile/ioredis` | `createRedis` / default export Redis client service |
 | Templated Redis cache keys | `@hile/cache` | `defineCache` / `RedisCache` |
 | Request/response message abstraction | `@hile/message-modem` | `MessageModem` (abstract, implement post/exec) |
 | Parent-child process IPC | `@hile/message-ipc` | `MessageIpc` (abstract) |
@@ -382,13 +382,32 @@ export default async function UserPage() {
 
 Environment variables: `TYPEORM_TYPE` / `TYPEORM_HOST` / `TYPEORM_USERNAME` / `TYPEORM_PASSWORD` / `TYPEORM_DATABASE` / `TYPEORM_PORT` / `TYPEORM_ENTITIES` / `TYPEORM_SYNCHRONIZE`
 
-### Usage inside a service
+### Container mode (recommended)
 
 ```typescript
 import { loadService } from '@hile/core';
 import typeormService from '@hile/typeorm';
 
 const ds = await loadService(typeormService);
+```
+
+### Manual mode
+
+```typescript
+import { createDataSource } from '@hile/typeorm';
+
+// From environment variables
+const ds = await createDataSource();
+
+// With explicit options
+const ds = await createDataSource({
+  type: 'mysql',
+  host: 'localhost',
+  username: 'root',
+  password: 'secret',
+  database: 'mydb',
+  entities: ['./entities/*.ts'],
+});
 ```
 
 ### Transaction with compensating callbacks
@@ -426,6 +445,8 @@ await transaction(ds, async (runner, rollback) => {
 
 Environment variables: `REDIS_HOST` / `REDIS_PORT` / `REDIS_USERNAME` / `REDIS_PASSWORD` / `REDIS_DB`
 
+### Container mode (recommended)
+
 ```typescript
 import { loadService } from '@hile/core';
 import redisService from '@hile/ioredis';
@@ -433,6 +454,18 @@ import redisService from '@hile/ioredis';
 const redis = await loadService(redisService);
 await redis.set('key', 'value');
 await redis.get('key');
+```
+
+### Manual mode
+
+```typescript
+import { createRedis } from '@hile/ioredis';
+
+// From environment variables
+const redis = await createRedis();
+
+// With explicit options
+const redis = await createRedis({ host: 'localhost', port: 6379 });
 ```
 
 ---

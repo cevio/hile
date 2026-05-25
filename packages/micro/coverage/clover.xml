@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<coverage generated="1779721506406" clover="3.2.0">
-  <project timestamp="1779721506406" name="All files">
+<coverage generated="1779722136137" clover="3.2.0">
+  <project timestamp="1779722136137" name="All files">
     <metrics statements="491" coveredstatements="442" conditionals="281" coveredconditionals="209" methods="104" coveredmethods="94" elements="876" coveredelements="745" complexity="0" loc="491" ncloc="491" packages="1" files="5" classes="5"/>
     <file name="application.ts" path="/Users/evioshen/code/pulian/shenyunjie/artuctor/packages/micro/src/application.ts">
       <metrics statements="193" coveredstatements="165" conditionals="120" coveredconditionals="90" methods="38" coveredmethods="32"/>
@@ -220,7 +220,7 @@
       <line num="43" count="0" type="stmt"/>
       <line num="44" count="0" type="stmt"/>
       <line num="50" count="140" type="stmt"/>
-      <line num="51" count="38" type="cond" truecount="2" falsecount="0"/>
+      <line num="51" count="36" type="cond" truecount="2" falsecount="0"/>
       <line num="52" count="8" type="stmt"/>
       <line num="58" count="62" type="cond" truecount="1" falsecount="1"/>
       <line num="59" count="0" type="stmt"/>
@@ -416,7 +416,7 @@
       <line num="42" count="91" type="stmt"/>
       <line num="43" count="140" type="stmt"/>
       <line num="45" count="91" type="stmt"/>
-      <line num="46" count="13" type="stmt"/>
+      <line num="46" count="12" type="stmt"/>
       <line num="51" count="73" type="stmt"/>
       <line num="52" count="73" type="cond" truecount="1" falsecount="1"/>
       <line num="53" count="73" type="cond" truecount="1" falsecount="1"/>
@@ -437,9 +437,9 @@
       <line num="78" count="140" type="stmt"/>
       <line num="79" count="140" type="stmt"/>
       <line num="80" count="140" type="cond" truecount="2" falsecount="0"/>
-      <line num="81" count="13" type="stmt"/>
-      <line num="82" count="13" type="stmt"/>
-      <line num="83" count="13" type="stmt"/>
+      <line num="81" count="12" type="stmt"/>
+      <line num="82" count="12" type="stmt"/>
+      <line num="83" count="12" type="stmt"/>
       <line num="86" count="140" type="stmt"/>
       <line num="87" count="140" type="stmt"/>
       <line num="88" count="140" type="stmt"/>
@@ -488,7 +488,7 @@
       <line num="151" count="77" type="stmt"/>
       <line num="152" count="77" type="stmt"/>
       <line num="153" count="77" type="stmt"/>
-      <line num="154" count="126" type="stmt"/>
+      <line num="154" count="127" type="stmt"/>
       <line num="156" count="77" type="stmt"/>
       <line num="157" count="77" type="cond" truecount="1" falsecount="1"/>
       <line num="158" count="77" type="stmt"/>

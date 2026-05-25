@@ -6,12 +6,12 @@
   "main": "./dist/index.js",
   "scripts": {
     "build": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
-    "dev": "tsc -b --watch"
+    "dev": "tsc -b --watch",
+    "test": "vitest run"
   },
   "files": [
     "dist",
-    "README.md",
-    "SKILL.md"
+    "README.md"
   ],
   "license": "MIT",
   "publishConfig": {
