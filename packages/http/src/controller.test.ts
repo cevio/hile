@@ -150,6 +150,19 @@ describe('defineController - 定义路由控制器', () => {
       const composed = result.middlewares[result.middlewares.length - 1]
       await expect(composed(ctx as any, async () => { })).rejects.toMatchObject({ status: 400 })
     })
+
+    it('params 校验通过后 handler 可获取 params', async () => {
+      const meta = createControllerMetadata({
+        method: 'GET',
+        middlewares: [],
+        schema: { params: z.object({ id: z.coerce.number().positive() }) },
+      })
+      const result = defineController(meta, (ctx) => ({ id: ctx.params.id }))
+      const ctx = mockCtx({ params: { id: '5' } })
+      const composed = result.middlewares[result.middlewares.length - 1]
+      await composed(ctx as any, async () => { })
+      expect(ctx.body).toEqual({ id: '5' })
+    })
   })
 
   it('body Zod 校验失败时 ctx.throw(400)', async () => {
@@ -190,5 +203,18 @@ describe('defineController - 定义路由控制器', () => {
     await result.middlewares[0](ctx, async () => { })
 
     expect(ctx.body).toEqual({ wrapped: { message: 'ok' } })
+  })
+
+  it('metadata 中没有 middlewares 时默认为空数组', () => {
+    const meta = createControllerMetadata({ method: 'GET' })
+    const result = defineController(meta, () => 'x')
+    expect(result.middlewares.length).toBe(1)
+  })
+
+  it('metadata 中 middlewares 非数组时抛出错误（defineControllerWithMetadata）', () => {
+    const meta = createControllerMetadata({ method: 'GET', middlewares: 'not-array' as any })
+    expect(() => {
+      defineController(meta, () => 'x')
+    }).toThrow('Middlewares must be an array')
   })
 })

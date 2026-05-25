@@ -232,6 +232,14 @@ describe('parseValue', () => {
       await getConfig('myapp');
       expect(logSpy).toHaveBeenCalled();
     });
+
+    it('json 参数为 true 时输出 JSON 格式', async () => {
+      mockExistsSync.mockReturnValue(true);
+      mockReadFileSync.mockReturnValue('host: localhost\nport: 8080\n');
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      await getConfig('myapp', true);
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('"host"'));
+    });
   });
 
   describe('setConfig - 设置配置', () => {
@@ -268,6 +276,13 @@ describe('parseValue', () => {
       mockExistsSync.mockReturnValue(true);
       mockReadFileSync.mockReturnValue('host: localhost\n');
       await setConfig('test', 'port=9090');
+      expect(mockWriteFileSync).toHaveBeenCalled();
+    });
+
+    it('已有配置内容为非对象时覆盖为新配置', async () => {
+      mockExistsSync.mockReturnValue(true);
+      mockReadFileSync.mockReturnValue('plain string');
+      await setConfig('test', 'key=value');
       expect(mockWriteFileSync).toHaveBeenCalled();
     });
   });
@@ -310,6 +325,40 @@ describe('parseValue', () => {
       mockExistsSync.mockReturnValue(true);
       await delConfig('test', undefined, true);
       expect(mockRmSync).toHaveBeenCalled();
+    });
+
+    it('不带 key 且 yes=false 且用户确认时删除整个文件', async () => {
+      mockExistsSync.mockReturnValue(true);
+      mockQuestion.mockImplementation((_msg, cb) => cb('y'));
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      await delConfig('test', undefined, false);
+      expect(mockRmSync).toHaveBeenCalled();
+      expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('Deleted'));
+    });
+
+    it('带 key 且 yes=false 且用户取消时打印 Cancelled', async () => {
+      mockExistsSync.mockReturnValue(true);
+      mockReadFileSync.mockReturnValue('key: value\n');
+      mockQuestion.mockImplementation((_msg, cb) => cb('n'));
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      await delConfig('test', 'key', false);
+      expect(logSpy).toHaveBeenCalledWith('Cancelled.');
+    });
+
+    it('不带 key 且 yes=false 且用户取消时打印 Cancelled', async () => {
+      mockExistsSync.mockReturnValue(true);
+      mockQuestion.mockImplementation((_msg, cb) => cb('n'));
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      await delConfig('test', undefined, false);
+      expect(logSpy).toHaveBeenCalledWith('Cancelled.');
+    });
+
+    it('带 key 且 yes=false 用户输入 Y（大写）时确认删除', async () => {
+      mockExistsSync.mockReturnValue(true);
+      mockReadFileSync.mockReturnValue('key: value\nother: keep\n');
+      mockQuestion.mockImplementation((_msg, cb) => cb('Y'));
+      await delConfig('test', 'key', false);
+      expect(mockWriteFileSync).toHaveBeenCalled();
     });
   });
 });

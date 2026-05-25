@@ -135,14 +135,10 @@ export async function start(options: {
     const fn = target?.default ?? target;
     if (!fn || !isService(fn)) throw new Error(`invalid service file: ${file}`);
     await loadService(fn);
-    if (!options.silent) {
-      console.info(`+ [bootstrap] ${file}`);
-    }
   }))
 
   // 如果没有服务要加载，则提示
   if (!files.length) {
-    console.warn('no services to load');
     offEvent();
     return;
   }

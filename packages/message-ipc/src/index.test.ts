@@ -88,6 +88,14 @@ describe('@hile/message-ipc', () => {
         (modem as any).post({ id: 0, mode: 0, twoway: true, data: null });
       }).toThrow('IPC channel is not available');
     });
+
+    it('uses process as default channel when none provided', () => {
+      const onSpy = vi.spyOn(process, 'on');
+      const modem = new EchoIpc();
+      track(modem);
+      expect(onSpy).toHaveBeenCalledWith('message', expect.any(Function));
+      onSpy.mockRestore();
+    });
   });
 
   describe('request / response', () => {

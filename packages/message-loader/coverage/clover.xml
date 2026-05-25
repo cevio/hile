@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<coverage generated="1779695050738" clover="3.2.0">
-  <project timestamp="1779695050738" name="All files">
+<coverage generated="1779708284748" clover="3.2.0">
+  <project timestamp="1779708284748" name="All files">
     <metrics statements="46" coveredstatements="46" conditionals="21" coveredconditionals="20" methods="14" coveredmethods="14" elements="81" coveredelements="80" complexity="0" loc="46" ncloc="46" packages="1" files="3" classes="3"/>
     <file name="index.ts" path="/Users/evioshen/code/pulian/shenyunjie/artuctor/packages/message-loader/src/index.ts">
       <metrics statements="41" coveredstatements="41" conditionals="21" coveredconditionals="20" methods="11" coveredmethods="11"/>

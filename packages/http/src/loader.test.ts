@@ -250,8 +250,98 @@ describe('Loader', () => {
       }
     })
 
+    it('空数组导出触发 summarizeExportType array(empty)', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'hile-http-loader-'))
+      try {
+        await mkdir(join(root, 'emptyarr'), { recursive: true })
+        const file = join(root, 'emptyarr', 'e.controller.js')
+        await writeFile(file, 'export default []\n', 'utf8')
+
+        const http = new Http({ port: 5018 })
+        const loader = new Loader(http)
+
+        await expect(loader.from(root)).rejects.toThrow(
+          'invalid service file: emptyarr/e.controller.js (array(empty))'
+        )
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+
+    it('非空数组导出触发 summarizeExportType array(len=N, first=...)', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'hile-http-loader-'))
+      try {
+        await mkdir(join(root, 'nonempty'), { recursive: true })
+        const file = join(root, 'nonempty', 'n.controller.js')
+        await writeFile(file, 'export default [42]\n', 'utf8')
+
+        const http = new Http({ port: 5019 })
+        const loader = new Loader(http)
+
+        await expect(loader.from(root)).rejects.toThrow(
+          'invalid service file: nonempty/n.controller.js (array(len=1, first=number))'
+        )
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+
+    it('对象导出触发 summarizeExportType object(keys=[...])', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'hile-http-loader-'))
+      try {
+        await mkdir(join(root, 'obj'), { recursive: true })
+        const file = join(root, 'obj', 'o.controller.js')
+        await writeFile(file, 'export default { myKey: "val" }\n', 'utf8')
+
+        const http = new Http({ port: 5021 })
+        const loader = new Loader(http)
+
+        await expect(loader.from(root)).rejects.toThrow(
+          'invalid service file: obj/o.controller.js (object(keys=[myKey]))'
+        )
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+
+    it('undefined 默认导出触发 summarizeExportType undefined', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'hile-http-loader-'))
+      try {
+        await mkdir(join(root, 'undef'), { recursive: true })
+        const file = join(root, 'undef', 'u.controller.js')
+        await writeFile(file, 'export const notDefault = 1\n', 'utf8')
+
+        const http = new Http({ port: 5022 })
+        const loader = new Loader(http)
+
+        await expect(loader.from(root)).rejects.toThrow(
+          'invalid service file: undef/u.controller.js (undefined)'
+        )
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+
+    it('null 默认导出触发 summarizeExportType null', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'hile-http-loader-'))
+      try {
+        await mkdir(join(root, 'nil'), { recursive: true })
+        const file = join(root, 'nil', 'l.controller.js')
+        await writeFile(file, 'export default null\n', 'utf8')
+
+        const http = new Http({ port: 5023 })
+        const loader = new Loader(http)
+
+        await expect(loader.from(root)).rejects.toThrow(
+          'invalid service file: nil/l.controller.js (null)'
+        )
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+
     it('空数组导出抛出错误', async () => {
-      const http = new Http({ port: 5020 })
+      const http = new Http({ port: 5025 })
       const loader = new Loader(http)
       expect(() => {
         (loader as any).compile('/empty', [])
@@ -259,7 +349,7 @@ describe('Loader', () => {
     })
 
     it('非法数组元素导出抛出错误', async () => {
-      const http = new Http({ port: 5021 })
+      const http = new Http({ port: 5026 })
       const loader = new Loader(http)
       expect(() => {
         (loader as any).compile('/bad-arr', [42])
@@ -267,7 +357,7 @@ describe('Loader', () => {
     })
 
     it('非法单对象导出抛出错误', async () => {
-      const http = new Http({ port: 5022 })
+      const http = new Http({ port: 5027 })
       const loader = new Loader(http)
       expect(() => {
         (loader as any).compile('/bad-obj', { not: 'valid' })

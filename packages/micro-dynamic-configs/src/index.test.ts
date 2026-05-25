@@ -153,6 +153,17 @@ describe('MicroDynamicConfigsServer', () => {
       await expect(server.save({ name: 'hello' })).rejects.toThrow('Redis unavailable');
       expect(server.value.name).toBe('');
     });
+
+    it('initialize 前 save 跳过 publisher update（分支 6[1]）', async () => {
+      const server = new MicroDynamicConfigsServer({ app, redis, schema, redis_key: 'test' });
+      // 不调用 initialize()，publishers Map 为空
+      const listener = vi.fn();
+      server.on('change:name', listener);
+      await server.save({ name: 'pre-init' });
+      expect(listener).toHaveBeenCalledWith('pre-init', '');
+      expect(app.publish).not.toHaveBeenCalled();
+      expect(redis.set).toHaveBeenCalled();
+    });
   });
 
   describe('initialize()', () => {
@@ -170,6 +181,15 @@ describe('MicroDynamicConfigsServer', () => {
       await server.initialize();
       expect(server.value.port).toBe(8080);
       expect(server.value.debug).toBe(false);
+    });
+
+    it('Redis key 存在但值为空时使用默认值（分支 1[1]）', async () => {
+      redis.exists.mockResolvedValue(1);
+      redis.get.mockResolvedValue(null);
+      const server = new MicroDynamicConfigsServer({ app, redis, schema, redis_key: 'test' });
+      await server.initialize();
+      expect(server.value.port).toBe(8080);
+      expect(server.value.name).toBe('');
     });
 
     it('teardown 清理监听器', async () => {

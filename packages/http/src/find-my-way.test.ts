@@ -144,6 +144,28 @@ describe('FindMyWay 包装器', () => {
     })
   })
 
+  describe('HTTP 方法快捷方式', () => {
+    it('.get() 快捷方式注册 GET 路由', async () => {
+      const router = createRouter()
+      router.get('/sg', async (ctx: any) => { ctx.body = 'shortcut' })
+
+      const routeMiddleware = router.routes()
+      const ctx: any = { method: 'GET', path: '/sg' }
+      await routeMiddleware(ctx, async () => {})
+      expect(ctx.body).toBe('shortcut')
+    })
+
+    it('.post()/.put()/.patch() 等方法存在', () => {
+      const router = createRouter()
+      expect(typeof router.get).toBe('function')
+      expect(typeof router.post).toBe('function')
+      expect(typeof router.put).toBe('function')
+      expect(typeof router.patch).toBe('function')
+      expect(typeof router.delete).toBe('function')
+      expect(typeof router.head).toBe('function')
+    })
+  })
+
   describe('prettyPrint - 打印路由树', () => {
     it('返回路由树字符串', () => {
       const router = createRouter()

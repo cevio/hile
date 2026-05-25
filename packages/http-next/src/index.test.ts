@@ -35,6 +35,7 @@ vi.mock('next', () => ({
 }))
 
 import { HttpNext } from './index'
+import NextServer from 'next'
 
 describe('HttpNext', () => {
   beforeEach(() => {
@@ -42,6 +43,7 @@ describe('HttpNext', () => {
     listenMock.mockClear()
     useMock.mockClear()
     nextPrepare.mockClear()
+    NextServer.mockClear()
   })
 
   it('start() 默认从 cwd/src/controllers 加载控制器，prefix /-、suffix controller、conflict error', async () => {
@@ -189,5 +191,74 @@ describe('HttpNext', () => {
         conflict: 'error',
       }),
     )
+  })
+
+  it('生产模式下 specialControllers 从 dist 加载', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    const httpNext = new HttpNext({
+      port: 3000,
+      cwd: '/proj',
+      specialControllers: [
+        { directory: 'admin-api', prefix: '/admin' },
+      ],
+    })
+    await httpNext.start()
+
+    expect(loadMock).toHaveBeenCalledWith(
+      '/proj/dist/admin-api',
+      expect.objectContaining({ prefix: '/admin' }),
+    )
+  })
+
+  it('不传 cwd 时默认使用 process.cwd()', () => {
+    vi.stubEnv('NODE_ENV', 'development')
+    const httpNext = new HttpNext({ port: 3000 })
+    expect(httpNext.cwd).toBe(process.cwd())
+  })
+
+  it('生产模式下 nextArtifactsDir 为当前目录时 distDir 为 .next', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    const httpNext = new HttpNext({ port: 3000, cwd: '/proj', nextArtifactsDir: '/proj' })
+    await httpNext.start()
+    expect(NextServer).toHaveBeenCalledWith(expect.objectContaining({
+      conf: { distDir: '.next' },
+    }))
+  })
+
+  it('生产模式默认不传 conf.distDir', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    const httpNext = new HttpNext({ port: 3000, cwd: '/proj' })
+    await httpNext.start()
+    expect(NextServer.mock.calls.at(-1)![0]).not.toHaveProperty('conf')
+  })
+
+  it('生产模式下自定义 nextArtifactsDir 时传递 conf.distDir', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    const httpNext = new HttpNext({
+      port: 3000,
+      cwd: '/myapp',
+      nextArtifactsDir: 'custom-next-dir',
+    })
+    await httpNext.start()
+
+    expect(NextServer).toHaveBeenCalledWith(expect.objectContaining({
+      dev: false,
+      dir: '/myapp',
+      conf: { distDir: expect.any(String) },
+    }))
+  })
+
+  it('forwardToNextMiddleware 设置 ctx.respond=false 和 ctx.status=200', async () => {
+    vi.stubEnv('NODE_ENV', 'development')
+    const httpNext = new HttpNext({ port: 3000, cwd: '/proj' })
+    await httpNext.start()
+
+    // start() 中第二个 use 调用是 createForwardToNextMiddleware 返回的中间件
+    const middleware = useMock.mock.calls[1][0]
+    const ctx: any = { respond: true, status: 404, req: {}, res: {} }
+    await middleware(ctx)
+
+    expect(ctx.respond).toBe(false)
+    expect(ctx.status).toBe(200)
   })
 })

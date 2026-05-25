@@ -213,6 +213,27 @@ describe('@hile/message-modem', () => {
 
       await expect(promise).rejects.toThrow('Abort');
     });
+
+    it('abort during exec error returns early without sending error response', async () => {
+      const a = new TestModem();
+      const b = new TestModem();
+      a.peer = b;
+
+      b['exec'] = (data: any, signal: AbortSignal) => new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(new Error('exec aborted')));
+      });
+
+      b.peer = a;
+      const controller = new AbortController();
+      const promise = a.send('will-fail', { signal: controller.signal }).catch(() => {});
+
+      await new Promise(r => setTimeout(r, 50));
+      controller.abort();
+      await new Promise(r => setTimeout(r, 50));
+
+      const resp = b.posted.find(m => m.mode === MESSAGE_MODEM_TYPE.RESPONSE);
+      expect(resp).toBeUndefined();
+    });
   });
 
   describe('timeout', () => {
@@ -410,6 +431,31 @@ describe('@hile/message-modem', () => {
       expect(abortMsg).toBeDefined();
     });
 
+    it('non-Exception stream error defaults to 500 status', async () => {
+      const a = new TestModem();
+      const b = new TestModem();
+      a.peer = b;
+      b.peer = a;
+
+      b['exec'] = async () => ({
+        [Symbol.asyncIterator]: async function* () {
+          yield 'chunk';
+          throw new Error('plain error');
+        }
+      });
+
+      const stream = a.stream('data');
+      stream.on('error', () => {});
+      stream.resume();
+      await new Promise<void>(r => stream.on('close', () => r()));
+
+      const errorResp = b.posted.find(
+        m => m.mode === MESSAGE_MODEM_TYPE.RESPONSE && m.stream && m.data?.status === 500
+      );
+      expect(errorResp).toBeDefined();
+      expect(errorResp!.data.payload).toBe('Unknown error');
+    });
+
     it('non-iterable exec return in stream throws 500', async () => {
       const a = new TestModem();
       const b = new TestModem();
@@ -452,9 +498,101 @@ describe('@hile/message-modem', () => {
       expect(chunks).toEqual(['ok']);
       expect(errorSpy).toHaveBeenCalledTimes(1);
     });
+
+    it('external abort during stream stops chunk delivery early', async () => {
+      const a = new TestModem();
+      const b = new TestModem();
+      a.peer = b;
+      b.peer = a;
+
+      b['exec'] = async () => ({
+        [Symbol.asyncIterator]: async function* () {
+          yield 'first';
+          await new Promise(r => setTimeout(r, 100));
+          yield 'second';
+        }
+      });
+
+      const controller = new AbortController();
+      const stream = a.stream('data', { signal: controller.signal });
+      const chunks: any[] = [];
+      stream.on('data', (chunk: any) => chunks.push(chunk));
+      stream.on('error', () => {});
+
+      await new Promise(r => setTimeout(r, 30));
+      controller.abort();
+      await new Promise(r => setTimeout(r, 200));
+
+      expect(chunks).toEqual(['first']);
+    });
+
+    it('abort after all chunks skips completion post', async () => {
+      const a = new TestModem();
+      const b = new TestModem();
+      a.peer = b;
+      b.peer = a;
+
+      b['exec'] = async () => ({
+        [Symbol.asyncIterator]: async function* () {
+          yield 'only';
+          await new Promise(r => setTimeout(r, 100));
+        }
+      });
+
+      const controller = new AbortController();
+      const stream = a.stream('data', { signal: controller.signal });
+      const chunks: any[] = [];
+      stream.on('data', (chunk: any) => chunks.push(chunk));
+      stream.on('error', () => {});
+
+      await new Promise(r => setTimeout(r, 30));
+      controller.abort();
+      await new Promise(r => setTimeout(r, 200));
+
+      expect(chunks).toEqual(['only']);
+    });
+
+    it('abort before stream error discards error response', async () => {
+      const a = new TestModem();
+      const b = new TestModem();
+      a.peer = b;
+      b.peer = a;
+
+      b['exec'] = async () => ({
+        [Symbol.asyncIterator]: async function* () {
+          yield 'first';
+          await new Promise(r => setTimeout(r, 100));
+          throw new Error('fail');
+        }
+      });
+
+      const controller = new AbortController();
+      const stream = a.stream('data', { signal: controller.signal });
+      const chunks: any[] = [];
+      stream.on('data', (chunk: any) => chunks.push(chunk));
+      stream.on('error', () => {});
+
+      await new Promise(r => setTimeout(r, 30));
+      controller.abort();
+      await new Promise(r => setTimeout(r, 200));
+
+      expect(chunks).toEqual(['first']);
+    });
   });
 
   describe('onStreamResponse - empty chunk data', () => {
+    it('ignores unknown stream response id', () => {
+      const modem = new TestModem();
+      modem.receive({
+        id: 999,
+        mode: MESSAGE_MODEM_TYPE.RESPONSE,
+        stream: true,
+        data: { status: 200, seq: 0, payload: 'data', final: true },
+        twoway: false,
+      });
+      // no throw = pass
+      expect(true).toBe(true);
+    });
     it('null chunk data destroys stream with 404', async () => {
       const modem = new TestModem();
       const stream = modem.stream('data');
@@ -515,6 +653,73 @@ describe('@hile/message-modem', () => {
       modem['_dispose']();
 
       await expect(promise).rejects.toThrow('Abort');
+    });
+
+    it('_dispose aborts active controllers and streams', async () => {
+      const a = new TestModem();
+      const b = new TestModem();
+      a.peer = b;
+      b.peer = a;
+
+      // Make b's exec never resolve so abort controllers stay in the map
+      b['exec'] = () => new Promise(() => {});
+
+      // a sends a request to b → b creates an abort controller
+      a.send('request').catch(() => {});
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(b['aborts'].size).toBe(1);
+
+      // a creates a stream → b creates another abort controller
+      const stream = a.stream('stream-data');
+      stream.on('error', () => {}); // prevent unhandled error on destroy
+      stream.resume();
+      await new Promise(r => setTimeout(r, 50));
+
+      expect(b['aborts'].size).toBe(2);
+      expect(a['streams'].size).toBe(1);
+
+      b['_dispose']();
+      expect(b['aborts'].size).toBe(0);
+      expect(b['stacks'].size).toBe(0);
+
+      // a has streams registered — disposing a covers stream.destroy
+      a['_dispose']();
+      expect(a['streams'].size).toBe(0);
+    });
+  });
+
+  describe('id overflow', () => {
+    it('createIncrementId resets after MAX_SAFE_INTEGER', () => {
+      const modem = new TestModem();
+      modem['id'] = Number.MAX_SAFE_INTEGER - 1;
+
+      // Post-increment makes this.id = MAX_SAFE_INTEGER, overflow check fires, resets to 0
+      const id1 = modem['createIncrementId']();
+      expect(id1).toBe(0);
+      expect(modem['id']).toBe(0);
+
+      // Second call starts fresh from 0
+      const id2 = modem['createIncrementId']();
+      expect(id2).toBe(0);
+      expect(modem['id']).toBe(1);
+    });
+  });
+
+  describe('push with error', () => {
+    it('push with exec error does not send RESPONSE', async () => {
+      const a = new TestModem();
+      const b = new TestModem();
+      a.peer = b;
+      b.peer = a;
+
+      b['exec'] = async () => { throw new Exception(500, 'push error'); };
+
+      a.push('will-fail');
+      await new Promise(r => setTimeout(r, 50));
+
+      const bResponses = b.posted.filter(m => m.mode === MESSAGE_MODEM_TYPE.RESPONSE);
+      expect(bResponses).toHaveLength(0);
     });
   });
 });

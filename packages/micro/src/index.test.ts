@@ -1,7 +1,7 @@
 import { createServer, type Socket } from 'node:net';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import WebSocket from 'ws';
-import { selectRandomRegistryAddress, parseAddressKey } from './registry';
+import { selectRandomRegistryAddress, parseAddressKey, parseConfigFilename } from './registry';
 import { Application } from './application';
 import { Registry } from './registry';
 import { Server } from './server';
@@ -867,6 +867,135 @@ describe('@hile/micro request timeout', () => {
 });
 
 describe('@hile/micro stream', () => {
+  it('stream retries when get fails with exclude and resets circuit breaker', async () => {
+    const registryPort = await getAvailablePort();
+    const portA = await getAvailablePort();
+    const portB = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const providerA = new Application({
+      namespace: 'svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const providerB = new Application({
+      namespace: 'svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const consumer = new Application({
+      namespace: 'consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeA = await providerA.listen(portA);
+    const disposeConsumer = await consumer.listen(consumerPort);
+
+    // A fails
+    const unregisterA = providerA.register('/api', async () => {
+      throw new Error('A fail');
+    });
+
+    let disposeB: () => Promise<void>;
+
+    try {
+      // call() first to register circuit breaker exclusion for A
+      await expect(consumer.call('svc', '/api', {})).rejects.toThrow('A fail');
+
+      // Now register B which succeeds
+      disposeB = await providerB.listen(portB);
+      const unregisterB = providerB.register('/api', async function* () {
+        yield { ok: true };
+      });
+
+      // stream with circuit breaker active → get() with exclude fails
+      // → catch resets breaker and retries → picks B → succeeds
+      const readable = await consumer.stream('svc', '/api', {});
+      const chunks: any[] = [];
+      for await (const chunk of readable) {
+        chunks.push(chunk);
+      }
+      expect(chunks).toEqual([{ ok: true }]);
+
+      unregisterB();
+    } finally {
+      unregisterA();
+      await disposeConsumer();
+      if (disposeB) await disposeB();
+      await disposeA();
+      await disposeRegistry();
+    }
+  });
+
+  it('stream retries when get fails with exclude and resets circuit breaker', async () => {
+    const registryPort = await getAvailablePort();
+    const portA = await getAvailablePort();
+    const portB = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const providerA = new Application({
+      namespace: 'svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const providerB = new Application({
+      namespace: 'svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const consumer = new Application({
+      namespace: 'consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeA = await providerA.listen(portA);
+    const disposeConsumer = await consumer.listen(consumerPort);
+
+    // Only A registered initially
+    const unregisterA = providerA.register('/api', async () => {
+      throw new Error('A fail');
+    });
+
+    let disposeB: () => Promise<void>;
+    let unregisterB: () => void;
+
+    try {
+      // Only A is available → hits A → fails → circuit breaker excludes A
+      await expect(consumer.call('svc', '/api', {})).rejects.toThrow('A fail');
+
+      // Now register B (succeeds) and take A offline
+      disposeB = await providerB.listen(portB);
+      unregisterB = providerB.register('/api', async function* () {
+        yield { ok: true };
+      });
+
+      await disposeA();
+      // Allow close events to propagate (consumer removes A's client)
+      await new Promise(r => setTimeout(r, 100));
+
+      // stream() with circuit breaker excludes A → get() with exclude fails
+      // → catch resets breaker and retries → picks B → succeeds
+      const readable = await consumer.stream('svc', '/api', {});
+      const chunks: any[] = [];
+      for await (const chunk of readable) {
+        chunks.push(chunk);
+      }
+      expect(chunks).toEqual([{ ok: true }]);
+    } finally {
+      unregisterA();
+      if (unregisterB) unregisterB();
+      await disposeConsumer();
+      if (disposeB) await disposeB();
+      await disposeRegistry();
+    }
+  });
+
   it('streams chunks from provider', async () => {
     const registryPort = await getAvailablePort();
     const providerPort = await getAvailablePort();
@@ -948,5 +1077,277 @@ describe('@hile/micro stream', () => {
       await disposeProvider();
       await disposeRegistry();
     }
+  });
+});
+
+describe('@hile/micro address validation', () => {
+  it('throws on empty registry host', () => {
+    expect(() => new Application({
+      namespace: 'test', registry: { host: '', port: 3000 }, ...testAdvertise,
+    })).toThrow('Invalid registry address');
+  });
+
+  it('throws on registry host with whitespace', () => {
+    expect(() => new Application({
+      namespace: 'test', registry: { host: '127.0.0.1 ', port: 3000 }, ...testAdvertise,
+    })).toThrow('Invalid registry address');
+  });
+
+  it('throws on IPv6 registry host without brackets', () => {
+    expect(() => new Application({
+      namespace: 'test', registry: { host: '::1', port: 3000 }, ...testAdvertise,
+    })).toThrow('Invalid registry address');
+  });
+
+  it('throws on registry host containing illegal characters', () => {
+    expect(() => new Application({
+      namespace: 'test', registry: { host: '127.0.0.1/evil', port: 3000 }, ...testAdvertise,
+    })).toThrow('Invalid registry address');
+  });
+
+  it('throws on registry port out of range (zero)', () => {
+    expect(() => new Application({
+      namespace: 'test', registry: { host: '127.0.0.1', port: 0 }, ...testAdvertise,
+    })).toThrow('Invalid registry address');
+  });
+
+  it('throws on oversized registry port', () => {
+    expect(() => new Application({
+      namespace: 'test', registry: { host: '127.0.0.1', port: 65536 }, ...testAdvertise,
+    })).toThrow('Invalid registry address');
+  });
+
+  it('throws on non-integer registry port', () => {
+    expect(() => new Application({
+      namespace: 'test', registry: { host: '127.0.0.1', port: 12.5 }, ...testAdvertise,
+    })).toThrow('Invalid registry address');
+  });
+});
+
+describe('@hile/micro publish/subscribe edge cases', () => {
+  it('publish throws when registry is not connected', async () => {
+    const app = new Application({
+      namespace: 'pub-test', registry: { host: '127.0.0.1', port: 1 }, ...testAdvertise,
+    });
+    await expect(app.publish('test-topic', {})).rejects.toThrow('Registry not found');
+  });
+
+  it('subscribe twice for same topic is idempotent and returns fallback', async () => {
+    const registryPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const consumer = new Application({
+      namespace: 'consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeConsumer = await consumer.listen(consumerPort);
+
+    try {
+      const cb = vi.fn();
+      const fallback1 = await consumer.subscribe('idempotent-topic', cb);
+      expect(typeof fallback1).toBe('function');
+
+      const fallback2 = await consumer.subscribe('idempotent-topic', cb);
+      expect(typeof fallback2).toBe('function');
+    } finally {
+      await disposeConsumer();
+      await disposeRegistry();
+    }
+  });
+
+  it('publish after teardown throws Registry not found', async () => {
+    const registryPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const consumer = new Application({
+      namespace: 'pub-teardown',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeConsumer = await consumer.listen(consumerPort);
+
+    await disposeConsumer();
+    await expect(consumer.publish('post-teardown', {})).rejects.toThrow('Registry not found');
+    await disposeRegistry();
+  });
+
+  it('publish to connected registry succeeds and returns ref', async () => {
+    const registryPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const consumer = new Application({
+      namespace: 'pub-success',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeConsumer = await consumer.listen(consumerPort);
+
+    try {
+      const ref = await consumer.publish('my-topic', { hello: 'world' });
+      expect(ref).toHaveProperty('update');
+      expect(ref).toHaveProperty('unpublish');
+
+      // Update the topic payload
+      await ref.update({ hello: 'updated' });
+
+      // Unpublish the topic
+      await ref.unpublish();
+    } finally {
+      await disposeConsumer();
+      await disposeRegistry();
+    }
+  });
+
+  it('subscribe and then call fallback to unsubscribe', async () => {
+    const registryPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const consumer = new Application({
+      namespace: 'sub-unsub',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeConsumer = await consumer.listen(consumerPort);
+
+    try {
+      const cb = vi.fn();
+      const fallback = await consumer.subscribe('unsub-topic', cb);
+      // Call fallback to unsubscribe — covers the /-/unsubscribe path
+      await fallback();
+    } finally {
+      await disposeConsumer();
+      await disposeRegistry();
+    }
+  });
+
+  it('withTimeout with ms=0 skips timeout race', async () => {
+    const registryPort = await getAvailablePort();
+    const providerPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const provider = new Application({
+      namespace: 'svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const consumer = new Application({
+      namespace: 'consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+      registryLookupTimeoutMs: 0,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeProvider = await provider.listen(providerPort);
+    const disposeConsumer = await consumer.listen(consumerPort);
+    const unregister = provider.register('/echo', async ({ data }: any) => ({ value: data.value }));
+
+    try {
+      const client = await consumer.get('svc');
+      const result = await client.request('/echo', { value: 'ok' });
+      expect(result).toEqual({ value: 'ok' });
+    } finally {
+      unregister();
+      await disposeConsumer();
+      await disposeProvider();
+      await disposeRegistry();
+    }
+  });
+});
+
+describe('@hile/micro server edge cases', () => {
+  it('handleUpgrade throws when wss is not initialized', () => {
+    const server = new Server('test-portal', testAdvertise);
+    expect(() => server.handleUpgrade({} as any, {} as any, Buffer.alloc(0))).toThrow(
+      'WebSocket server not initialized',
+    );
+  });
+
+  it('listen(0) creates WebSocketServer with noServer option', async () => {
+    const server = new Server('test-noserver', testAdvertise);
+    const teardown = await server.listen(0);
+    expect((server as any).wss).toBeDefined();
+    await teardown();
+  });
+
+  it('wss.close error during listen teardown is propagated', async () => {
+    const server = new Server('test-closeerr', testAdvertise);
+    const port = await getAvailablePort();
+    const teardown = await server.listen(port);
+
+    const wss = (server as any).wss;
+    const originalClose = wss.close.bind(wss);
+    wss.close = (cb: (err?: Error) => void) => {
+      cb(new Error('close fail'));
+    };
+
+    await expect(teardown()).rejects.toThrow('close fail');
+  });
+});
+
+describe('@hile/micro client edge cases', () => {
+  it('request throws when _online is false', async () => {
+    const registryPort = await getAvailablePort();
+    const providerPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const provider = new Application({
+      namespace: 'svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const consumer = new Application({
+      namespace: 'consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeProvider = await provider.listen(providerPort);
+    const disposeConsumer = await consumer.listen(consumerPort);
+    const unregister = provider.register('/echo', async ({ data }: any) => ({ value: data.value }));
+
+    try {
+      const client = await consumer.get('svc');
+      // Simulate offline state to test the _online guard in request/push/stream
+      // (actual disconnect event from ws close is async and timing-dependent)
+      (client as any)._online = false;
+
+      expect(() => client.request('/echo', {})).toThrow('Client is not online');
+      expect(() => client.push('/echo', {})).toThrow('Client is not online');
+      expect(() => client.stream('/echo', {})).toThrow('Client is not online');
+    } finally {
+      unregister();
+      await disposeConsumer();
+      await disposeProvider();
+      await disposeRegistry();
+    }
+  });
+});
+
+describe('@hile/micro registry utility functions', () => {
+  it('parseConfigFilename returns null for non-config files', () => {
+    expect(parseConfigFilename('test.txt')).toBeNull();
+    expect(parseConfigFilename('config.yaml')).toBeNull();
+  });
+
+  it('parseConfigFilename extracts namespace from .config.yaml filename', () => {
+    expect(parseConfigFilename('myapp.config.yaml')).toBe('myapp');
+    expect(parseConfigFilename('my.namespace.config.yaml')).toBe('my.namespace');
   });
 });

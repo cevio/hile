@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const shutdownMock = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+const mockForceExitTimeout = vi.hoisted(() => vi.fn());
 
 vi.mock('@hile/core', () => ({
   container: {
@@ -14,9 +15,12 @@ import { registerExitHook, useExit } from './exitHook.js';
 let capturedExitCallback: ((exit: () => void) => void) | null = null;
 
 vi.mock('async-exit-hook', () => ({
-  default: (callback: (exit: () => void) => void) => {
-    capturedExitCallback = callback;
-  },
+  default: Object.assign(
+    (callback: (exit: () => void) => void) => {
+      capturedExitCallback = callback;
+    },
+    { forceExitTimeout: mockForceExitTimeout },
+  ),
 }));
 
 describe('exitHook', () => {
@@ -173,6 +177,45 @@ describe('exitHook', () => {
     }
   });
 
+  it('unref 抛出错误时被 catch 并继续执行（registerExitHook）', async () => {
+    const throwingUnref = vi.fn(() => { throw new Error('unref failed'); });
+    const stub = { isTTY: true, unref: throwingUnref } as unknown as NodeJS.ReadStream;
+    const original = process.stdin;
+    Object.defineProperty(process, 'stdin', { value: stub, configurable: true });
+    try {
+      const offEvent = vi.fn();
+      registerExitHook(offEvent);
+      const exit = vi.fn();
+      capturedExitCallback!(exit);
+      await vi.waitFor(() => {
+        expect(exit).toHaveBeenCalledTimes(1);
+        expect(offEvent).toHaveBeenCalledTimes(1);
+      });
+    } finally {
+      Object.defineProperty(process, 'stdin', { value: original, configurable: true });
+    }
+  });
+
+  it('unref 抛出错误时被 catch 并继续执行（useExit）', async () => {
+    capturedExitCallback = null;
+    const throwingUnref = vi.fn(() => { throw new Error('unref failed'); });
+    const stub = { isTTY: true, unref: throwingUnref } as unknown as NodeJS.ReadStream;
+    const original = process.stdin;
+    Object.defineProperty(process, 'stdin', { value: stub, configurable: true });
+    try {
+      const fn = vi.fn();
+      useExit(fn);
+      const exit = vi.fn();
+      capturedExitCallback!(exit);
+      await vi.waitFor(() => {
+        expect(fn).toHaveBeenCalledTimes(1);
+        expect(exit).toHaveBeenCalledTimes(1);
+      });
+    } finally {
+      Object.defineProperty(process, 'stdin', { value: original, configurable: true });
+    }
+  });
+
   describe('useExit - 简单进程退出钩子', () => {
     it('useExit 注册后退出时执行清理函数', async () => {
       capturedExitCallback = null;
@@ -201,6 +244,28 @@ describe('exitHook', () => {
       await vi.waitFor(() => {
         expect(exit).toHaveBeenCalledTimes(1);
       });
+    });
+
+    it('useExit 中 stdin 为 TTY 时调用 unref', async () => {
+      capturedExitCallback = null;
+      const unref = vi.fn();
+      const stub = { isTTY: true, unref } as unknown as NodeJS.ReadStream;
+      const original = process.stdin;
+      Object.defineProperty(process, 'stdin', { value: stub, configurable: true });
+      try {
+        const fn = vi.fn();
+        useExit(fn);
+        expect(capturedExitCallback).not.toBeNull();
+        const exit = vi.fn();
+        capturedExitCallback!(exit);
+        await vi.waitFor(() => {
+          expect(fn).toHaveBeenCalledTimes(1);
+          expect(unref).toHaveBeenCalledTimes(1);
+          expect(exit).toHaveBeenCalledTimes(1);
+        });
+      } finally {
+        Object.defineProperty(process, 'stdin', { value: original, configurable: true });
+      }
     });
 
     it('useExit 支持异步清理函数', async () => {

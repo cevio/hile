@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { Container, isService, defineService, loadService } from './index'
+import { Container, isService, defineService, loadService, formatServiceKey } from './index'
 
 describe('Container', () => {
   let container: Container
@@ -657,6 +657,76 @@ describe('Container', () => {
       await expect(container.resolve(props)).rejects.toThrow('circular dependency detected')
     })
   })
+
+  describe('formatServiceKey - 格式化服务 key', () => {
+    it('字符串 key 原样返回', () => {
+      expect(formatServiceKey('hello')).toBe('hello');
+    });
+
+    it('symbol key 返回 String(symbol)', () => {
+      const sym = Symbol('test-svc');
+      const result = formatServiceKey(sym);
+      expect(result).toBe(String(sym));
+      expect(result).toContain('test-svc');
+    });
+  });
+
+  describe('重复依赖追踪', () => {
+    it('从同一父服务 resolve 子服务两次不应报错', async () => {
+      const c = new Container();
+      const childProps = c.register('child-dup', async () => 'child');
+      const parentProps = c.register('parent-dup', async () => {
+        // First resolve — creates dependency edge
+        const r1 = await c.resolve(childProps);
+        // Second resolve — trackDependency sees existing edge, hits false branch
+        const r2 = await c.resolve(childProps);
+        return [r1, r2];
+      });
+
+      const result = await c.resolve(parentProps);
+      expect(result).toEqual(['child', 'child']);
+    });
+  });
+
+  describe('边缘分支覆盖', () => {
+    it('nextOrdinal 超过 MAX_SAFE_INTEGER 后重置为 1', () => {
+      const c = new Container();
+      (c as any)['keyOrder'] = Number.MAX_SAFE_INTEGER - 1;
+      c.register('overflow-test', async () => 'ok');
+      // ++this.keyOrder → MAX_SAFE_INTEGER → overflow check resets to 1
+      expect((c as any)['keyOrder']).toBe(1);
+    });
+
+    it('diamond 依赖中 hasPath visited 覆盖', async () => {
+      const c = new Container();
+      // B → D, C → D（diamond），A → B, A → C
+      const dProps = c.register('d', async () => 'd');
+      const cProps = c.register('c', async () => {
+        await c.resolve(dProps);
+        return 'c';
+      });
+      const bProps = c.register('b', async () => {
+        await c.resolve(dProps);
+        return 'b';
+      });
+      const aProps = c.register('a', async () => {
+        await c.resolve(bProps);
+        await c.resolve(cProps);
+        return 'a';
+      });
+      // 建立 A → B → D, A → C → D 的 diamond
+      await c.resolve(aProps);
+
+      // 再注册 X → A，触发 hasPath(A, X) 遍历 diamond
+      // 遍历 from=A → [B, C] → B→D → C→D 时 D 已在 visited 中
+      const xProps = c.register('x', async () => {
+        await c.resolve(aProps);
+        return 'x';
+      });
+      const result = await c.resolve(xProps);
+      expect(result).toBe('x');
+    });
+  });
 
   describe('isService - 判断是否为服务', () => {
     it('通过 register 返回的对象应判定为服务', () => {

@@ -244,6 +244,25 @@ describe('@hile/cache', () => {
     await expect(read({ id: '1' })).rejects.toThrow('handler error')
   })
 
+  /* ============ TTL race / missing data ============ */
+
+  it('read with expired cache triggers re-write', async () => {
+    const { write, read, remove } = await cache.loadCache(testCache)
+
+    // Write the key first
+    await write({ id: 'ttlrace1' })
+
+    // Mock redis.get to return null, simulating TTL expiry between exists() and get()
+    const redis = await loadService(ioredisService)
+    vi.spyOn(redis, 'get').mockResolvedValueOnce(null as any)
+
+    // read() should fall through to _write() since get returns null
+    const result = await read({ id: 'ttlrace1' })
+    expect(result).toEqual({ id: 'ttlrace1', value: 'hello-ttlrace1' })
+
+    await remove({ id: 'ttlrace1' })
+  })
+
   /* ============ data integrity ============ */
 
   it('preserves complex data through JSON serialization roundtrip', async () => {

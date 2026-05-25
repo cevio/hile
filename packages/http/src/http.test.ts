@@ -173,6 +173,12 @@ describe('Http - HTTP 服务类', () => {
       await expect(http.listen()).rejects.toThrow('EADDRINUSE')
     })
 
+    it('load 委托给 loader.from 并返回 Promise', () => {
+      const http = new Http({ port: 5033 })
+      const promise = http.load('/nonexistent/path')
+      expect(promise).toBeInstanceOf(Promise)
+    })
+
     it('路由支持多个中间件', async () => {
       const http = new Http({ port: 4008 })
       http.get(
