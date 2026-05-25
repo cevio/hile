@@ -1,0 +1,27 @@
+{
+  "eval_id": 1,
+  "eval_name": "create-boot-file",
+  "prompt": "我在用 @hile 框架写一个项目，需要在 src/services/ 下创建一个 http.boot.ts，启动一个端口在 4000 的 HTTP 服务，加载 src/controllers 目录下的控制器。帮我生成这个 boot 文件。",
+  "assertions": [
+    {
+      "name": "uses-define-service",
+      "description": "使用 defineService 定义服务",
+      "expected": "代码中应包含 defineService 调用"
+    },
+    {
+      "name": "uses-shutdown-for-cleanup",
+      "description": "listen 返回的关闭函数传给 shutdown",
+      "expected": "shutdown(() => close()) 或等价形式"
+    },
+    {
+      "name": "loads-controllers-directory",
+      "description": "调用 http.load() 加载控制器目录",
+      "expected": "http.load('./src/controllers', ...) 或等价形式"
+    },
+    {
+      "name": "default-export-service",
+      "description": "boot 文件默认导出 defineService 返回值",
+      "expected": "export default defineService(...)"
+    }
+  ]
+}

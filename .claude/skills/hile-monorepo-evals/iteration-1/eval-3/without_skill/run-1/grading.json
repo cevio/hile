@@ -1,0 +1,30 @@
+{
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 4,
+    "failed": 0,
+    "total": 4
+  },
+  "expectations": [
+    {
+      "text": "使用 transaction(ds, callback) 形式",
+      "passed": true,
+      "evidence": "import typeormService, { transaction } from '@hile/typeorm'; transaction(ds, async (runner, rollback) => {...})"
+    },
+    {
+      "text": "注册了 rollback 补偿回调",
+      "passed": true,
+      "evidence": "rollback(async () => { await redis.del(`user:${user.id}`); })"
+    },
+    {
+      "text": "使用 runner.manager 执行数据库操作",
+      "passed": true,
+      "evidence": "runner.manager.save(User, { name, email }); runner.manager.save(Log, ...)"
+    },
+    {
+      "text": "成功时自动 commit（transaction 函数内部处理）",
+      "passed": true,
+      "evidence": "不需要手动调用 commitTransaction"
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "run_id": "eval-1-with_skill",
+  "eval_id": 1,
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 4,
+    "failed": 0,
+    "total": 4
+  },
+  "expectations": [
+    {
+      "name": "uses-define-service",
+      "text": "使用 defineService 定义服务",
+      "passed": true,
+      "evidence": "import { defineService } from '@hile/core'; defineService('http', async (shutdown) => {...})"
+    },
+    {
+      "name": "uses-shutdown-for-cleanup",
+      "text": "listen 返回的关闭函数传给 shutdown",
+      "passed": true,
+      "evidence": "shutdown(() => close())"
+    },
+    {
+      "name": "loads-controllers-directory",
+      "text": "调用 http.load() 加载控制器目录",
+      "passed": true,
+      "evidence": "http.load('./src/controllers', { suffix: 'controller', defaultSuffix: '/index' })"
+    },
+    {
+      "name": "default-export-service",
+      "text": "boot 文件默认导出 defineService 返回值",
+      "passed": true,
+      "evidence": "export default defineService('http', ...)"
+    }
+  ]
+}

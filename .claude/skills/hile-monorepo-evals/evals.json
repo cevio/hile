@@ -1,0 +1,23 @@
+{
+  "skill_name": "hile-monorepo",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "我在用 @hile 框架写一个项目，需要在 src/services/ 下创建一个 http.boot.ts，启动一个端口在 4000 的 HTTP 服务，加载 src/controllers 目录下的控制器。帮我生成这个 boot 文件。",
+      "expected_output": "生成正确的 boot 文件，使用 defineService，new Http 后 load 控制器目录，listen 后将 close 传给 shutdown。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "我需要创建一个用户注册的 POST 控制器，用 Zod 校验 request body（username: string, age: number）。使用 @hile/http 的 defineController。",
+      "expected_output": "生成控制器文件，使用 createControllerMetadata 定义 schema，defineController 绑定 POST 方法，校验 body，返回结果。",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "我需要在 @hile/typeorm 的事务中先插入用户，再插入日志，注册一个补偿回调：如果事务失败则清除缓存中的用户数据。",
+      "expected_output": "使用 transaction(ds, async (runner, rollback) => {...})，在事务内注册 rollback 补偿函数，两次 insert 操作，失败时执行补偿。",
+      "files": []
+    }
+  ]
+}

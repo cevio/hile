@@ -1,0 +1,36 @@
+{
+  "run_id": "eval-2-without_skill",
+  "eval_id": 2,
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 4,
+    "failed": 0,
+    "total": 4
+  },
+  "expectations": [
+    {
+      "name": "uses-create-controller-metadata",
+      "text": "使用 createControllerMetadata 定义 schema",
+      "passed": true,
+      "evidence": "createControllerMetadata({ method: 'POST', schema: { body: z.object({...}) } })"
+    },
+    {
+      "name": "uses-zod-schema",
+      "text": "使用 Zod 定义 body schema",
+      "passed": true,
+      "evidence": "z.object({ username: z.string(), age: z.number() })"
+    },
+    {
+      "name": "uses-define-controller",
+      "text": "使用 defineController(metadata, fn) 形式",
+      "passed": true,
+      "evidence": "export default defineController(createControllerMetadata(...), async (ctx) => {...})"
+    },
+    {
+      "name": "returns-result",
+      "text": "控制器 return 结果而非写 ctx.body",
+      "passed": true,
+      "evidence": "return { message: 'User registered successfully', user: { username, age } }"
+    }
+  ]
+}

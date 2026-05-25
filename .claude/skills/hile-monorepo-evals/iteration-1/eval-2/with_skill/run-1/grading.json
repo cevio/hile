@@ -1,0 +1,30 @@
+{
+  "summary": {
+    "pass_rate": 1.0,
+    "passed": 4,
+    "failed": 0,
+    "total": 4
+  },
+  "expectations": [
+    {
+      "text": "使用 createControllerMetadata 定义 schema",
+      "passed": true,
+      "evidence": "代码包含 createControllerMetadata({...})"
+    },
+    {
+      "text": "使用 Zod 定义 body schema",
+      "passed": true,
+      "evidence": "z.object({ username: z.string(), age: z.number() })"
+    },
+    {
+      "text": "使用 defineController(metadata, fn) 形式",
+      "passed": true,
+      "evidence": "export default defineController(createControllerMetadata(...), async (ctx) => {...})"
+    },
+    {
+      "text": "控制器 return 结果而非写 ctx.body",
+      "passed": true,
+      "evidence": "return { username, age }"
+    }
+  ]
+}

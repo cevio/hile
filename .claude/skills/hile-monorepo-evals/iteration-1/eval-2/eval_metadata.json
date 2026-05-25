@@ -1,0 +1,27 @@
+{
+  "eval_id": 2,
+  "eval_name": "zod-controller",
+  "prompt": "我需要创建一个用户注册的 POST 控制器，用 Zod 校验 request body（username: string, age: number）。使用 @hile/http 的 defineController。",
+  "assertions": [
+    {
+      "name": "uses-create-controller-metadata",
+      "description": "使用 createControllerMetadata 定义 schema",
+      "expected": "代码中包含 createControllerMetadata 调用"
+    },
+    {
+      "name": "uses-zod-schema",
+      "description": "使用 Zod 定义 body schema",
+      "expected": "z.object({...}) 包含 username 和 age 字段"
+    },
+    {
+      "name": "uses-define-controller",
+      "description": "使用 defineController(metadata, fn) 形式",
+      "expected": "export default defineController(metadata, async (ctx) => ...)"
+    },
+    {
+      "name": "returns-result",
+      "description": "控制器 return 结果而非写 ctx.body",
+      "expected": "return ... (不能有 ctx.body = ...)"
+    }
+  ]
+}

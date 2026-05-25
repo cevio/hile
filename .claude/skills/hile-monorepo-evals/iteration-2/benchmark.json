@@ -1,0 +1,317 @@
+{
+  "metadata": {
+    "skill_name": "hile-monorepo",
+    "skill_path": "<path/to/skill>",
+    "executor_model": "<model-name>",
+    "analyzer_model": "<model-name>",
+    "timestamp": "2026-05-25T06:29:45Z",
+    "evals_run": [
+      1,
+      2,
+      3
+    ],
+    "runs_per_configuration": 3
+  },
+  "runs": [
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 19.7,
+        "tokens": 19803,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "name": "uses-define-service",
+          "text": "\u4f7f\u7528 defineService \u5b9a\u4e49\u670d\u52a1",
+          "passed": true,
+          "evidence": "import { defineService } from '@hile/core'; defineService('http', async (shutdown) => {...})"
+        },
+        {
+          "name": "uses-shutdown-for-cleanup",
+          "text": "listen \u8fd4\u56de\u7684\u5173\u95ed\u51fd\u6570\u4f20\u7ed9 shutdown",
+          "passed": true,
+          "evidence": "shutdown(() => close())"
+        },
+        {
+          "name": "loads-controllers-directory",
+          "text": "\u8c03\u7528 http.load() \u52a0\u8f7d\u63a7\u5236\u5668\u76ee\u5f55",
+          "passed": true,
+          "evidence": "http.load('./src/controllers', { suffix: 'controller', defaultSuffix: '/index' })"
+        },
+        {
+          "name": "default-export-service",
+          "text": "boot \u6587\u4ef6\u9ed8\u8ba4\u5bfc\u51fa defineService \u8fd4\u56de\u503c",
+          "passed": true,
+          "evidence": "export default defineService('http', ...)"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 16.5,
+        "tokens": 19735,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "name": "uses-create-controller-metadata",
+          "text": "\u4f7f\u7528 createControllerMetadata \u5b9a\u4e49 schema",
+          "passed": true,
+          "evidence": "createControllerMetadata({ method: 'POST', schema: { body: z.object({...}) } })"
+        },
+        {
+          "name": "uses-zod-schema",
+          "text": "\u4f7f\u7528 Zod \u5b9a\u4e49 body schema",
+          "passed": true,
+          "evidence": "z.object({ username: z.string(), age: z.number() })"
+        },
+        {
+          "name": "uses-define-controller",
+          "text": "\u4f7f\u7528 defineController(metadata, fn) \u5f62\u5f0f",
+          "passed": true,
+          "evidence": "export default defineController(createControllerMetadata(...), async (ctx) => {...})"
+        },
+        {
+          "name": "returns-result",
+          "text": "\u63a7\u5236\u5668 return \u7ed3\u679c\u800c\u975e\u5199 ctx.body",
+          "passed": true,
+          "evidence": "return { id: Date.now(), username, age }"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 24.0,
+        "tokens": 19969,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "name": "uses-transaction-function",
+          "text": "\u4f7f\u7528 transaction(ds, callback) \u5f62\u5f0f",
+          "passed": true,
+          "evidence": "import { transaction } from '@hile/typeorm'; transaction(ds, async (runner, rollback) => {...})"
+        },
+        {
+          "name": "uses-rollback-callback",
+          "text": "\u6ce8\u518c\u4e86 rollback \u8865\u507f\u56de\u8c03",
+          "passed": true,
+          "evidence": "rollback(async () => { await redis.del(`user:${user.id}`); })"
+        },
+        {
+          "name": "uses-runner-for-operations",
+          "text": "\u4f7f\u7528 runner.manager \u6267\u884c\u6570\u636e\u5e93\u64cd\u4f5c",
+          "passed": true,
+          "evidence": "runner.manager.save(User, { name }); runner.manager.save(Log, ...)"
+        },
+        {
+          "name": "commits-on-success",
+          "text": "\u6210\u529f\u65f6\u81ea\u52a8 commit\uff08transaction \u51fd\u6570\u5185\u90e8\u5904\u7406\uff09",
+          "passed": true,
+          "evidence": "\u4e0d\u9700\u8981\u624b\u52a8\u8c03\u7528 commitTransaction"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 64.6,
+        "tokens": 25998,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "name": "uses-define-service",
+          "text": "\u4f7f\u7528 defineService \u5b9a\u4e49\u670d\u52a1",
+          "passed": true,
+          "evidence": "import { defineService } from '@hile/core'; defineService('http', async (shutdown) => {...})"
+        },
+        {
+          "name": "uses-shutdown-for-cleanup",
+          "text": "listen \u8fd4\u56de\u7684\u5173\u95ed\u51fd\u6570\u4f20\u7ed9 shutdown",
+          "passed": true,
+          "evidence": "shutdown(close)"
+        },
+        {
+          "name": "loads-controllers-directory",
+          "text": "\u8c03\u7528 http.load() \u52a0\u8f7d\u63a7\u5236\u5668\u76ee\u5f55",
+          "passed": true,
+          "evidence": "http.load('./src/controllers', { suffix: 'controller', defaultSuffix: '/index' })"
+        },
+        {
+          "name": "default-export-service",
+          "text": "boot \u6587\u4ef6\u9ed8\u8ba4\u5bfc\u51fa defineService \u8fd4\u56de\u503c",
+          "passed": true,
+          "evidence": "export default defineService('http', ...)"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 34.9,
+        "tokens": 27107,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "name": "uses-create-controller-metadata",
+          "text": "\u4f7f\u7528 createControllerMetadata \u5b9a\u4e49 schema",
+          "passed": true,
+          "evidence": "createControllerMetadata({ method: 'POST', schema: { body: z.object({...}) } })"
+        },
+        {
+          "name": "uses-zod-schema",
+          "text": "\u4f7f\u7528 Zod \u5b9a\u4e49 body schema",
+          "passed": true,
+          "evidence": "z.object({ username: z.string(), age: z.number() })"
+        },
+        {
+          "name": "uses-define-controller",
+          "text": "\u4f7f\u7528 defineController(metadata, fn) \u5f62\u5f0f",
+          "passed": true,
+          "evidence": "export default defineController(createControllerMetadata(...), async (ctx) => {...})"
+        },
+        {
+          "name": "returns-result",
+          "text": "\u63a7\u5236\u5668 return \u7ed3\u679c\u800c\u975e\u5199 ctx.body",
+          "passed": true,
+          "evidence": "return { message: 'User registered successfully', user: { username, age } }"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 43.5,
+        "tokens": 24577,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "name": "uses-transaction-function",
+          "text": "\u4f7f\u7528 transaction(ds, callback) \u5f62\u5f0f",
+          "passed": true,
+          "evidence": "import { transaction } from '@hile/typeorm'; transaction(ds, async (runner, rollback) => {...})"
+        },
+        {
+          "name": "uses-rollback-callback",
+          "text": "\u6ce8\u518c\u4e86 rollback \u8865\u507f\u56de\u8c03",
+          "passed": true,
+          "evidence": "rollback(async () => { await redis.del(`user:${user.id}`); })"
+        },
+        {
+          "name": "uses-runner-for-operations",
+          "text": "\u4f7f\u7528 runner.manager \u6267\u884c\u6570\u636e\u5e93\u64cd\u4f5c",
+          "passed": true,
+          "evidence": "runner.manager.save(User, { name }); runner.manager.save(Log, ...)"
+        },
+        {
+          "name": "commits-on-success",
+          "text": "\u6210\u529f\u65f6\u81ea\u52a8 commit\uff08transaction \u51fd\u6570\u5185\u90e8\u5904\u7406\uff09",
+          "passed": true,
+          "evidence": "\u4e0d\u9700\u8981\u624b\u52a8\u8c03\u7528 commitTransaction"
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 20.0667,
+        "stddev": 3.7634,
+        "min": 16.5,
+        "max": 24.0
+      },
+      "tokens": {
+        "mean": 19835.6667,
+        "stddev": 120.3716,
+        "min": 19735,
+        "max": 19969
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 47.6667,
+        "stddev": 15.2821,
+        "min": 34.9,
+        "max": 64.6
+      },
+      "tokens": {
+        "mean": 25894.0,
+        "stddev": 1268.2023,
+        "min": 24577,
+        "max": 27107
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.00",
+      "time_seconds": "-27.6",
+      "tokens": "-6058"
+    }
+  },
+  "notes": []
+}

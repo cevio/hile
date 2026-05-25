@@ -1,0 +1,293 @@
+{
+  "metadata": {
+    "skill_name": "hile-monorepo",
+    "skill_path": "<path/to/skill>",
+    "executor_model": "<model-name>",
+    "analyzer_model": "<model-name>",
+    "timestamp": "2026-05-25T06:09:00Z",
+    "evals_run": [
+      1,
+      2,
+      3
+    ],
+    "runs_per_configuration": 3
+  },
+  "runs": [
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 14.0,
+        "tokens": 18415,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "\u4f7f\u7528 defineService \u5b9a\u4e49\u670d\u52a1",
+          "passed": true,
+          "evidence": "\u4ee3\u7801\u5305\u542b defineService('http', async (shutdown) => {...})"
+        },
+        {
+          "text": "listen \u8fd4\u56de\u7684\u5173\u95ed\u51fd\u6570\u4f20\u7ed9 shutdown",
+          "passed": true,
+          "evidence": "\u4ee3\u7801\u5305\u542b shutdown(() => close())"
+        },
+        {
+          "text": "\u8c03\u7528 http.load() \u52a0\u8f7d\u63a7\u5236\u5668\u76ee\u5f55",
+          "passed": true,
+          "evidence": "\u4ee3\u7801\u5305\u542b http.load('./src/controllers', { suffix: 'controller', defaultSuffix: '/index' })"
+        },
+        {
+          "text": "boot \u6587\u4ef6\u9ed8\u8ba4\u5bfc\u51fa defineService \u8fd4\u56de\u503c",
+          "passed": true,
+          "evidence": "\u4ee3\u7801\u5305\u542b export default defineService('http', ...)"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 15.6,
+        "tokens": 18468,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "\u4f7f\u7528 createControllerMetadata \u5b9a\u4e49 schema",
+          "passed": true,
+          "evidence": "\u4ee3\u7801\u5305\u542b createControllerMetadata({...})"
+        },
+        {
+          "text": "\u4f7f\u7528 Zod \u5b9a\u4e49 body schema",
+          "passed": true,
+          "evidence": "z.object({ username: z.string(), age: z.number() })"
+        },
+        {
+          "text": "\u4f7f\u7528 defineController(metadata, fn) \u5f62\u5f0f",
+          "passed": true,
+          "evidence": "export default defineController(createControllerMetadata(...), async (ctx) => {...})"
+        },
+        {
+          "text": "\u63a7\u5236\u5668 return \u7ed3\u679c\u800c\u975e\u5199 ctx.body",
+          "passed": true,
+          "evidence": "return { username, age }"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 12.9,
+        "tokens": 18384,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "\u4f7f\u7528 transaction(ds, callback) \u5f62\u5f0f",
+          "passed": true,
+          "evidence": "import { transaction } from '@hile/typeorm'; transaction(ds, async (runner, rollback) => {...})"
+        },
+        {
+          "text": "\u6ce8\u518c\u4e86 rollback \u8865\u507f\u56de\u8c03",
+          "passed": true,
+          "evidence": "rollback(async () => { await redis.del(`user:${user.id}`); })"
+        },
+        {
+          "text": "\u4f7f\u7528 runner.manager \u6267\u884c\u6570\u636e\u5e93\u64cd\u4f5c",
+          "passed": true,
+          "evidence": "runner.manager.save(User, userData); runner.manager.save(Log, ...)"
+        },
+        {
+          "text": "\u6210\u529f\u65f6\u81ea\u52a8 commit\uff08transaction \u51fd\u6570\u5185\u90e8\u5904\u7406\uff09",
+          "passed": true,
+          "evidence": "\u4e0d\u9700\u8981\u624b\u52a8\u8c03\u7528 commitTransaction"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 19.0,
+        "tokens": 21649,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "\u4f7f\u7528 defineService \u5b9a\u4e49\u670d\u52a1",
+          "passed": true,
+          "evidence": "\u4ee3\u7801\u5305\u542b defineService('http', async (shutdown) => {...})"
+        },
+        {
+          "text": "listen \u8fd4\u56de\u7684\u5173\u95ed\u51fd\u6570\u4f20\u7ed9 shutdown",
+          "passed": true,
+          "evidence": "\u4ee3\u7801\u5305\u542b shutdown(close)"
+        },
+        {
+          "text": "\u8c03\u7528 http.load() \u52a0\u8f7d\u63a7\u5236\u5668\u76ee\u5f55",
+          "passed": true,
+          "evidence": "\u4ee3\u7801\u5305\u542b http.load('./src/controllers', ...)"
+        },
+        {
+          "text": "boot \u6587\u4ef6\u9ed8\u8ba4\u5bfc\u51fa defineService \u8fd4\u56de\u503c",
+          "passed": true,
+          "evidence": "\u4ee3\u7801\u5305\u542b export default defineService('http', ...)"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 24.6,
+        "tokens": 25144,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "\u4f7f\u7528 createControllerMetadata \u5b9a\u4e49 schema",
+          "passed": true,
+          "evidence": "\u4ee3\u7801\u5305\u542b createControllerMetadata({...})"
+        },
+        {
+          "text": "\u4f7f\u7528 Zod \u5b9a\u4e49 body schema",
+          "passed": true,
+          "evidence": "z.object({ username: z.string(), age: z.number() })"
+        },
+        {
+          "text": "\u4f7f\u7528 defineController(metadata, fn) \u5f62\u5f0f",
+          "passed": true,
+          "evidence": "export default defineController(meta, async (ctx) => {...})"
+        },
+        {
+          "text": "\u63a7\u5236\u5668 return \u7ed3\u679c\u800c\u975e\u5199 ctx.body",
+          "passed": true,
+          "evidence": "return { ok: true, user: {...} }"
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 4,
+        "failed": 0,
+        "total": 4,
+        "time_seconds": 17.6,
+        "tokens": 18018,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "\u4f7f\u7528 transaction(ds, callback) \u5f62\u5f0f",
+          "passed": true,
+          "evidence": "import typeormService, { transaction } from '@hile/typeorm'; transaction(ds, async (runner, rollback) => {...})"
+        },
+        {
+          "text": "\u6ce8\u518c\u4e86 rollback \u8865\u507f\u56de\u8c03",
+          "passed": true,
+          "evidence": "rollback(async () => { await redis.del(`user:${user.id}`); })"
+        },
+        {
+          "text": "\u4f7f\u7528 runner.manager \u6267\u884c\u6570\u636e\u5e93\u64cd\u4f5c",
+          "passed": true,
+          "evidence": "runner.manager.save(User, { name, email }); runner.manager.save(Log, ...)"
+        },
+        {
+          "text": "\u6210\u529f\u65f6\u81ea\u52a8 commit\uff08transaction \u51fd\u6570\u5185\u90e8\u5904\u7406\uff09",
+          "passed": true,
+          "evidence": "\u4e0d\u9700\u8981\u624b\u52a8\u8c03\u7528 commitTransaction"
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 14.1667,
+        "stddev": 1.3577,
+        "min": 12.9,
+        "max": 15.6
+      },
+      "tokens": {
+        "mean": 18422.3333,
+        "stddev": 42.4774,
+        "min": 18384,
+        "max": 18468
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 20.4,
+        "stddev": 3.7041,
+        "min": 17.6,
+        "max": 24.6
+      },
+      "tokens": {
+        "mean": 21603.6667,
+        "stddev": 3563.2163,
+        "min": 18018,
+        "max": 25144
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.00",
+      "time_seconds": "-6.2",
+      "tokens": "-3181"
+    }
+  },
+  "notes": []
+}
