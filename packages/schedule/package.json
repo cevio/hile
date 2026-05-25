@@ -1,6 +1,6 @@
 {
   "name": "@hile/schedule",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Declarative job scheduler based on node-schedule",
   "type": "module",
   "main": "./dist/index.js",
@@ -9,9 +9,14 @@
     "dev": "tsc -b --watch",
     "test": "vitest run"
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "license": "MIT",
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "devDependencies": {
     "@types/node-schedule": "^2.1.7",
     "fix-esm-import-path": "^1.10.3",
