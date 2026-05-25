@@ -8,7 +8,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { Registry } from '@hile/micro';
-import { useExit } from './exitHook';
+import { useExit } from './exitHook.js';
 import { listConfigs, getConfig, setConfig, delConfig } from './configs.js';
 
 type NodeRequire = ReturnType<typeof createRequire>;

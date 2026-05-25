@@ -52,7 +52,7 @@ export class Http {
       ignoreDuplicateSlashes: this.props.ignoreDuplicateSlashes ?? true,
       ignoreTrailingSlash: this.props.ignoreTrailingSlash ?? true,
       maxParamLength: this.props.maxParamLength ?? +Infinity,
-      allowUnsafeRegex: this.props.allowUnsafeRegex ?? true,
+      allowUnsafeRegex: this.props.allowUnsafeRegex ?? false,
       caseSensitive: this.props.caseSensitive ?? true,
       // @ts-ignore
       defaultRoute: async (_, next: Next) => await next(),
