@@ -56,6 +56,7 @@
             "group": "核心包",
             "pages": [
               "packages/core",
+              "packages/loader",
               "packages/logger",
               "packages/schedule",
               "packages/model",

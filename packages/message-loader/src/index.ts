@@ -1,9 +1,7 @@
-import { glob } from 'glob';
-import { resolve, extname } from 'node:path';
+import { Loader, toRouterPath, normalizePath } from '@hile/loader';
+import type { ScannedFile } from '@hile/loader';
 import { createRouter, addRoute, RouterContext, removeRoute, findRoute } from "rou3";
-import { toRouterPath } from './utils';
 import { MessageRegisterProps, MessageFunction, getId } from './message';
-import { pathToFileURL } from 'node:url';
 
 export * from './message';
 
@@ -87,68 +85,22 @@ export class NotFoundException extends Error {
  * const result = await ipc.request('/-/hello', { name: 'world' }).response();
  * ipc.dispose();
  */
-export class MessageLoader {
+export class MessageLoader extends Loader<MessageRegisterProps> {
   private readonly router: RouterContext;
-  private readonly props: MessageLoaderProps;
   private readonly METHOD = 'GET';
   constructor(props: MessageLoaderProps) {
+    super({
+      suffix: props.suffix || 'msg',
+      defaultSuffix: props.defaultSuffix || '/index',
+      prefix: props.prefix || '',
+    });
     this.router = createRouter();
-    this.props = props;
-
-    // 默认值
-    if (!this.props.suffix) this.props.suffix = 'msg';
-    if (!this.props.defaultSuffix) this.props.defaultSuffix = '/index';
-    if (!this.props.prefix) this.props.prefix = '';
   }
 
-  /**
-   * 将路径编译为标准 URL（不含动态参数转换）
-   * @param path 路径
-   * @returns 编译后的路径
-   */
-  private compileRoutePath(path: string) {
-    path = formatRouterWithIgnoreDuplicateSlashes(path);
-    const defaultSuffix = this.props.defaultSuffix!;
-    let url = path.startsWith('/') ? path : '/' + path;
-    if (url.endsWith(defaultSuffix)) {
-      url = url.substring(0, url.length - defaultSuffix.length);
-    }
-    if (!url) url = '/';
-
-    return this.props.prefix
-      ? this.props.prefix + url
-      : url;
-  }
-
-  /**
-   * 从目录加载消息处理器
-   * @param directory 目录路径
-   * @returns 注销函数
-   */
-  public async load(directory: string) {
-    const files = await glob(`**/*.${this.props.suffix}.{ts,js,tsx,jsx}`, { cwd: directory });
-    const callbacks: (() => void)[] = [];
-
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const path = resolve(directory, file);
-      const ext = extname(path);
-      const url = file.substring(0, file.length - this.props.suffix!.length - ext.length - 1);
-      // 导入消息处理器
-      const _file = pathToFileURL(path).href;
-      const controller: { default: MessageRegisterProps } = await import(_file);
-      if (!controller.default) continue;
-      // 获取消息处理器
-      const { default: metadata } = controller;
-      // 编译路径
-      const routePath = toRouterPath(this.compileRoutePath(url));
-      // 添加路由
-      addRoute(this.router, this.METHOD, routePath, metadata);
-      // 返回注销函数
-      callbacks.push(() => removeRoute(this.router, this.METHOD, routePath));
-    }
-
-    return () => callbacks.forEach(callback => callback());
+  protected bind(file: ScannedFile, metadata: MessageRegisterProps) {
+    const routePath = toRouterPath(normalizePath(file.routePath));
+    addRoute(this.router, this.METHOD, routePath, metadata);
+    return () => removeRoute(this.router, this.METHOD, routePath);
   }
 
   /**
@@ -185,10 +137,4 @@ export class MessageLoader {
       ...extras,
     }));
   }
-}
-
-function formatRouterWithIgnoreDuplicateSlashes(path: string) {
-  let id = path.replace(/\\/g, '/');
-  id = id.replace(/\([^\)]+\)/g, '').replace(/\/{2,}/g, '/');
-  return id;
 }

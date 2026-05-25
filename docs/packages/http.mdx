@@ -241,7 +241,7 @@ const off = await http.load('./src/controllers', {
 // off()
 ```
 
-`load()` 是异步的，使用 glob 扫描目录下所有 `*.controller.{ts,js,tsx,jsx}` 文件。
+`load()` 是异步的，使用 `@hile/loader` 扫描目录下所有 `*.controller.{ts,js,tsx,jsx}` 文件。
 
 ### 路径映射规则
 
@@ -374,5 +374,5 @@ defineResponsePlugin(async (ctx, result, next) => {
 | `createControllerMetadata` | 构造控制器元数据（method / middlewares / schema） |
 | `defineResponsePlugin` | 响应插件定义函数 |
 | `Loader` | 路由加载器类。`from(directory, options)` 批量加载文件路由；`compile(path, controllers, options)` 编程式注册 |
-| `compileRoutePath` | 路径编译纯函数（文件路径 → 路由路径） |
-| `toRouterPath` | `[param]` → `:param` 转换函数 |
+| `compileRoutePath` | 路径编译纯函数（文件路径 → 路由路径）。从 `@hile/loader` 导出 |
+| `toRouterPath` | `[param]` → `:param` 转换函数。从 `@hile/loader` 导出 |

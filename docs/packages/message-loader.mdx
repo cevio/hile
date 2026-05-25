@@ -9,7 +9,7 @@ description: "基于文件系统的消息路由加载器，将目录结构映射
 pnpm add @hile/message-loader
 ```
 
-依赖 `glob` 和 `rou3`，安装时自动引入。
+依赖 `@hile/loader` 和 `rou3`，安装时自动引入。
 
 ---
 
@@ -229,7 +229,7 @@ ipc.dispose();
 
 | 选项 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `suffix` | `string` | `'msg'` | 文件后缀标记，匹配 `*.{suffix}.{ts,js,tsx,jsx}` |
+| `suffix` | `string` | `'msg'` | 文件后缀标记，匹配 `*.{suffix}.{ts,js,tsx,jsx,mjs}` |
 | `defaultSuffix` | `string` | `'/index'` | 折叠后缀（index 文件映射为父级路径） |
 | `prefix` | `string` | `''` | 路径前缀 |
 

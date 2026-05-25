@@ -23,7 +23,7 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
-    "glob": "^13.0.6",
+    "@hile/loader": "workspace:^",
     "node-schedule": "^2.1.1"
   }
 }

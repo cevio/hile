@@ -31,6 +31,7 @@ This document is a **code generation reference**, not an abstract design doc. Wh
 |--------------|---------|-------------|
 | Async singleton service, lifecycle management | `@hile/core` | `defineService` / `loadService` / `isService` / `container` |
 | Start app, scan boot files | `@hile/cli` | CLI `hile start` |
+| Shared file-scanning and route loader | `@hile/loader` | `scanDirectory` / `Loader` (abstract) / `compileRoutePath` / `toRouterPath` |
 | HTTP API (Koa + routing) | `@hile/http` | `Http` / `defineController` / `Loader` / `defineResponsePlugin` |
 | API + Next.js same port | `@hile/http-next` | `HttpNext` |
 | Database operations | `@hile/typeorm` | `createDataSource` / `transaction` / default export DataSource service |

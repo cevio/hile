@@ -1,6 +1,7 @@
 {
-  "name": "@hile/message-loader",
+  "name": "@hile/loader",
   "version": "2.0.0",
+  "description": "Shared file-scanning and route loader for @hile packages",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
@@ -8,21 +9,14 @@
     "dev": "tsc -b --watch",
     "test": "vitest run"
   },
-  "files": [
-    "dist",
-    "README.md",
-    "SKILL.md"
-  ],
+  "files": ["dist", "README.md"],
   "license": "MIT",
-  "publishConfig": {
-    "access": "public"
-  },
+  "publishConfig": { "access": "public" },
   "devDependencies": {
     "fix-esm-import-path": "^1.10.3",
     "vitest": "^4.0.18"
   },
   "dependencies": {
-    "@hile/loader": "workspace:^",
-    "rou3": "^0.8.1"
+    "glob": "^13.0.6"
   }
 }

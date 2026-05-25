@@ -1,8 +1,7 @@
 import { scheduleJob, Job as NSJob } from 'node-schedule'
-import { glob } from 'glob'
-import { resolve, extname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { JobHandler, JobDefinition } from './types.js'
+import { scanDirectory } from '@hile/loader'
 
 export type JobInfo = {
   id: string
@@ -76,13 +75,11 @@ export class Scheduler {
    * @returns 注销函数
    */
   async load(directory: string, options?: { suffix?: string }): Promise<() => void> {
-    const suffix = options?.suffix || 'schedule'
-    const files = await glob(`**/*.${suffix}.{ts,js,tsx,jsx,mjs}`, { cwd: directory })
+    const files = await scanDirectory(directory, { suffix: options?.suffix || 'schedule' })
     const offFns: (() => void)[] = []
 
     for (const file of files) {
-      const filePath = resolve(directory, file)
-      const mod: { default?: JobDefinition } = await import(pathToFileURL(filePath).href)
+      const mod: { default?: JobDefinition } = await import(pathToFileURL(file.absolute).href)
       const jobDef = mod.default
       if (!jobDef || jobDef.type !== 'job') continue
 

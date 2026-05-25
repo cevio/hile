@@ -366,6 +366,6 @@ type JobInfo = {
     延迟任务执行后，`node-schedule` 自动失效，但 `Scheduler` 的 jobs/meta 记录不会自动清理。如果不需要保留可调用 `remove(id)`。
   </Accordion>
   <Accordion title="load() 加载的文件如何查找？">
-    使用 `glob` 扫描：`**/*.{suffix}.{ts,js,tsx,jsx,mjs}`。文件必须以 `.schedule.ts`（或自定义后缀）结尾，且 `default export` 为 `defineJob` 的返回值（`type === 'job'`），否则会被跳过。
+    使用 `@hile/loader` 扫描：`**/*.{suffix}.{ts,js,tsx,jsx,mjs}`。文件必须以 `.schedule.ts`（或自定义后缀）结尾，且 `default export` 为 `defineJob` 的返回值（`type === 'job'`），否则会被跳过。
   </Accordion>
 </AccordionGroup>

@@ -3,6 +3,7 @@ import { ControllerRegisterProps } from './controller';
 import { Http } from './http';
 import { glob } from 'glob';
 import { resolve, extname } from 'node:path';
+import { compileRoutePath, toRouterPath, normalizePath } from '@hile/loader';
 
 export type LoaderConflictStrategy = 'error' | 'warn' | 'override';
 
@@ -26,27 +27,6 @@ export interface LoaderCompileOptions {
 export type LoaderFromOptions = {
   suffix?: string; // 标记以什么后缀结尾的文件为路由
 } & LoaderCompileOptions;
-
-/**
- * 将文件路径编译为标准 URL（不含动态参数转换）
- */
-export function compileRoutePath(path: string, options: Pick<LoaderCompileOptions, 'defaultSuffix' | 'prefix'> = {}) {
-  const defaultSuffix = options.defaultSuffix || '/index';
-  let url = path.startsWith('/') ? path : '/' + path;
-  if (url.endsWith(defaultSuffix)) {
-    url = url.substring(0, url.length - defaultSuffix.length);
-  }
-  if (!url) url = '/';
-
-  return options.prefix ? options.prefix + url : url;
-}
-
-/**
- * 将 [param] 格式参数转换为 find-my-way 兼容的 :param
- */
-export function toRouterPath(path: string) {
-  return path.replace(/\[([^\]]+)\]/g, ':$1');
-}
 
 /**
  * 判断是否为 ControllerRegisterProps 类型
@@ -194,7 +174,7 @@ export class Loader {
         throw new Error(`invalid service file: ${file} (${summary}) - ${error?.message || String(error)}`);
       }
 
-      return this.compile(formatRouterWithIgnoreDuplicateSlashes(url), normalized, extras);
+      return this.compile(normalizePath(url), normalized, extras);
     }));
 
     return () => {
@@ -202,11 +182,4 @@ export class Loader {
       while (i--) callbacks[i]();
     }
   }
-}
-
-
-function formatRouterWithIgnoreDuplicateSlashes(path: string) {
-  let id = path.replace(/\\/g, '/');
-  id = id.replace(/\([^\)]+\)/g, '').replace(/\/{2,}/g, '/');
-  return id;
 }

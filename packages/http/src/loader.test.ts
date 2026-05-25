@@ -1,7 +1,8 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { Http } from './http'
-import { Loader, compileRoutePath, toRouterPath } from './loader'
+import { Loader } from './loader'
 import { defineController } from './controller'
+import { compileRoutePath, toRouterPath } from '@hile/loader'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -365,7 +366,7 @@ describe('Loader', () => {
     })
   })
 
-  describe('formatRouterWithIgnoreDuplicateSlashes', () => {
+  describe('路径规范化（normalizePath）', () => {
     it('替换反斜杠为正斜杠', () => {
       const http = new Http({ port: 5030 })
       const loader = new Loader(http)

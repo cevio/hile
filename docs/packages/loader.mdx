@@ -1,0 +1,138 @@
+---
+title: "@hile/loader"
+description: "共享文件扫描与路由加载器基类，统一 `@hile/http` / `@hile/message-loader` / `@hile/schedule` 的文件扫描逻辑"
+---
+
+## 安装
+
+```bash
+pnpm add @hile/loader
+```
+
+---
+
+## 它做了什么？
+
+`@hile/loader` 是一个 **底层基础设施包**，封装了 scan-glob → compile-path → dynamic-import → bind → unregister 的完整生命周期。设计目标不是直接对外使用，而是作为 `@hile/http` / `@hile/message-loader` / `@hile/schedule` 的共享依赖，消除三者中重复的 glob 文件扫描代码。
+
+组件分两层：
+
+1. **纯函数层**（`scanDirectory` / `compileRoutePath` / `toRouterPath` / `normalizePath`）— 从三个包中逐行复制的算法
+2. **抽象基类**（`Loader<T>`）— 统一驱动 import → bind → unregister 流程
+
+---
+
+## API 参考
+
+### 纯函数
+
+```typescript
+import { scanDirectory, compileRoutePath, toRouterPath, normalizePath } from '@hile/loader';
+```
+
+#### `scanDirectory(directory, options?)`
+
+扫描目录，返回匹配后缀的文件列表及其编译后的路由路径。
+
+```typescript
+interface ScanOptions {
+  suffix?: string;        // 文件后缀标记，默认 'handler'
+  prefix?: string;        // URL 前缀
+  defaultSuffix?: string; // 默认 '/index'
+}
+
+interface ScannedFile {
+  absolute: string;   // 磁盘绝对路径
+  relative: string;   // 相对于扫描目录的路径
+  routePath: string;  // 编译后的路由路径（未经 toRouterPath 转换）
+}
+```
+
+glob pattern：`**/*.{suffix}.{ts,js,tsx,jsx,mjs}`
+
+#### `compileRoutePath(path, options?)`
+
+将文件路径编译为标准 URL（不含动态参数转换）。
+
+```typescript
+compileRoutePath('/index')             // → '/'
+compileRoutePath('api/index')          // → '/api'
+compileRoutePath('/users', { prefix: '/api' })  // → '/api/users'
+```
+
+#### `toRouterPath(path)`
+
+将 `[param]` 转换为 `:param`：
+
+```typescript
+toRouterPath('/users/[id]')       // → '/users/:id'
+toRouterPath('/[category]/[id]')  // → '/:category/:id'
+```
+
+#### `normalizePath(path)`
+
+反斜杠转正斜杠、移除括号内容、合并连续斜杠：
+
+```typescript
+normalizePath('win\\path')           // → 'win/path'
+normalizePath('user/(group)/list')   // → 'user/list'
+normalizePath('api//test///x')       // → 'api/test/x'
+```
+
+### 抽象基类
+
+```typescript
+import { Loader } from '@hile/loader';
+// 或 import type { Loader } from '@hile/loader';
+```
+
+```typescript
+abstract class Loader<TFile, TOptions extends ScanOptions = ScanOptions> {
+  protected readonly options: TOptions;
+  constructor(options?: TOptions);
+  protected abstract bind(file: ScannedFile, module: TFile): (() => void) | void;
+  load(directory: string): Promise<() => void>;
+}
+```
+
+- **`bind()`** — 子类实现：将单个文件的 default export 绑定到路由/调度系统，返回注销函数
+- **`load()`** — 执行 `scanDirectory` → `import` → `bind`，返回批量注销函数
+
+---
+
+## 自定义 Loader 示例
+
+```typescript
+import { Loader } from '@hile/loader';
+import type { ScannedFile } from '@hile/loader';
+
+// 定义一个自定义加载器
+export class MyHandlerLoader extends Loader<{ handler: () => any }> {
+  private handlers = new Map<string, () => any>();
+
+  constructor() {
+    super({ suffix: 'handler' });
+  }
+
+  protected bind(file: ScannedFile, mod: { handler: () => any }) {
+    this.handlers.set(file.routePath, mod.handler);
+    return () => { this.handlers.delete(file.routePath); };
+  }
+
+  async execute(path: string) {
+    const handler = this.handlers.get(path);
+    if (!handler) throw new Error(`Handler not found: ${path}`);
+    return handler();
+  }
+}
+```
+
+---
+
+## 与消费方的关系
+
+| 消费方 | 使用方式 | loader 默认 suffix |
+|--------|---------|-------------------|
+| `@hile/http` | 使用纯函数 `compileRoutePath` / `toRouterPath` / `normalizePath`，保持自有 parallel import | `controller` |
+| `@hile/message-loader` | 继承 `Loader` 基类，实现 `bind()` | `msg` |
+| `@hile/schedule` | 使用 `scanDirectory` 替代手动 glob 扫描 | `schedule` |

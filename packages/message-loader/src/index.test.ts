@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { MessageLoader, defineMessage, NotFoundException } from './index'
-import { toRouterPath } from './utils'
+import { toRouterPath } from '@hile/loader'
 
 describe('toRouterPath', () => {
   it('将 [param] 转为 :param', () => {
