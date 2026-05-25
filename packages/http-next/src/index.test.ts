@@ -101,6 +101,57 @@ describe('HttpNext', () => {
     )
   })
 
+  it('publicPath 传递给 koa-static 中间件', () => {
+    vi.stubEnv('NODE_ENV', 'development')
+    const httpNext = new HttpNext({
+      port: 3000,
+      cwd: '/proj',
+      publicPath: 'public',
+    })
+    expect(useMock).toHaveBeenCalled()
+  })
+
+  it('publicPath 支持数组', () => {
+    vi.stubEnv('NODE_ENV', 'development')
+    const httpNext = new HttpNext({
+      port: 3000,
+      cwd: '/proj',
+      publicPath: ['public', 'assets'],
+    })
+    expect(useMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('use() 委托给底层 http.use', () => {
+    vi.stubEnv('NODE_ENV', 'development')
+    const httpNext = new HttpNext({ port: 3000, cwd: '/proj' })
+    const mw = async () => {}
+    httpNext.use(mw)
+    expect(useMock).toHaveBeenCalledWith(mw)
+  })
+
+  it('load() 委托给 http.load 并返回结果', () => {
+    vi.stubEnv('NODE_ENV', 'development')
+    const httpNext = new HttpNext({ port: 3000, cwd: '/proj' })
+    httpNext.load('/custom/path')
+    expect(loadMock).toHaveBeenCalledWith(
+      '/custom/path',
+      expect.objectContaining({
+        suffix: 'controller',
+        defaultSuffix: '/index',
+        prefix: '/-',
+        conflict: 'error',
+      }),
+    )
+  })
+
+  it('onListen 在 start 中被调用', async () => {
+    vi.stubEnv('NODE_ENV', 'development')
+    const httpNext = new HttpNext({ port: 3000, cwd: '/proj' })
+    const onListenSpy = vi.fn()
+    await httpNext.start(onListenSpy)
+    expect(onListenSpy).toHaveBeenCalled()
+  })
+
   it('specialControllers 在主 load 之后追加多次 http.load', async () => {
     vi.stubEnv('NODE_ENV', 'development')
     const httpNext = new HttpNext({

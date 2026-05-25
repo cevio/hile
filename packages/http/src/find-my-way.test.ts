@@ -99,6 +99,51 @@ describe('FindMyWay 包装器', () => {
     })
   })
 
+  describe('all - 注册所有 HTTP 方法', () => {
+    it('.all() 匹配 GET、POST 等方法', async () => {
+      const router = createRouter()
+      const handler = vi.fn(async (ctx: any) => { ctx.body = 'all' })
+      router.all('/any', handler)
+
+      const routeMiddleware = router.routes()
+
+      for (const method of ['GET', 'POST', 'PUT', 'DELETE', 'PATCH']) {
+        handler.mockClear()
+        const ctx: any = { method, path: '/any' }
+        await routeMiddleware(ctx, async () => {})
+        expect(handler).toHaveBeenCalled()
+        expect(ctx.body).toBe('all')
+      }
+    })
+  })
+
+  describe('store - 路由附加数据', () => {
+    it('最后一个参数为对象时作为 store', async () => {
+      const router = createRouter()
+      const handler = async (ctx: any) => { ctx.body = ctx.store }
+      router.on('GET', '/store', handler, { foo: 'bar' })
+
+      const routeMiddleware = router.routes()
+      const ctx: any = { method: 'GET', path: '/store' }
+      await routeMiddleware(ctx, async () => {})
+
+      expect(ctx.store).toEqual({ foo: 'bar' })
+      expect(ctx.body).toEqual({ foo: 'bar' })
+    })
+
+    it('单个中间件时 store 为空', async () => {
+      const router = createRouter()
+      const handler = async (ctx: any) => { ctx.body = ctx.store }
+      router.on('GET', '/no-store', handler)
+
+      const routeMiddleware = router.routes()
+      const ctx: any = { method: 'GET', path: '/no-store' }
+      await routeMiddleware(ctx, async () => {})
+
+      expect(ctx.store).toBeNull()
+    })
+  })
+
   describe('prettyPrint - 打印路由树', () => {
     it('返回路由树字符串', () => {
       const router = createRouter()

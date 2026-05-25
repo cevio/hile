@@ -249,5 +249,96 @@ describe('Loader', () => {
         await rm(root, { recursive: true, force: true })
       }
     })
+
+    it('空数组导出抛出错误', async () => {
+      const http = new Http({ port: 5020 })
+      const loader = new Loader(http)
+      expect(() => {
+        (loader as any).compile('/empty', [])
+      }).toThrow('controller array is empty')
+    })
+
+    it('非法数组元素导出抛出错误', async () => {
+      const http = new Http({ port: 5021 })
+      const loader = new Loader(http)
+      expect(() => {
+        (loader as any).compile('/bad-arr', [42])
+      }).toThrow('default export must be ControllerRegisterProps')
+    })
+
+    it('非法单对象导出抛出错误', async () => {
+      const http = new Http({ port: 5022 })
+      const loader = new Loader(http)
+      expect(() => {
+        (loader as any).compile('/bad-obj', { not: 'valid' })
+      }).toThrow('default export must be ControllerRegisterProps')
+    })
+  })
+
+  describe('formatRouterWithIgnoreDuplicateSlashes', () => {
+    it('替换反斜杠为正斜杠', () => {
+      const http = new Http({ port: 5030 })
+      const loader = new Loader(http)
+      const result = (loader as any).compile('/win\\path', defineController('GET', () => 'ok'))
+      expect(result).toBeDefined()
+    })
+
+    it('删除括号内的内容', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'hile-http-loader-'))
+      try {
+        await mkdir(join(root, 'user', '(group)'), { recursive: true })
+        await writeFile(
+          join(root, 'user', '(group)', 'list.controller.js'),
+          `export default [{ id: 1, method: 'GET', middlewares: [(ctx) => { ctx.body = 'clean' }], data: {} }]`,
+          'utf8',
+        )
+
+        const http = new Http({ port: 5031 })
+        const loader = new Loader(http)
+        const off = await loader.from(root)
+
+        closeServer = await http.listen()
+        const res = await fetch('http://127.0.0.1:5031/user/list')
+        expect(await res.text()).toBe('clean')
+
+        off()
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+
+    it('合并连续斜杠', async () => {
+      const http = new Http({ port: 5032 })
+      const loader = new Loader(http)
+      const controller = defineController('GET', () => 'slash')
+      loader.compile('/api//test', controller)
+
+      closeServer = await http.listen()
+      const res = await fetch('http://127.0.0.1:5032/api/test')
+      expect(await res.text()).toBe('slash')
+    })
+  })
+
+  describe('compile - 卸载清理', () => {
+    it('cleanup 回调注销所有路由', async () => {
+      const http = new Http({ port: 5040 })
+      const loader = new Loader(http)
+      const c1 = defineController('GET', () => 'a')
+      const c2 = defineController('POST', () => 'b')
+      const off = loader.compile('/multi-clean', [c1, c2])
+
+      closeServer = await http.listen()
+
+      const getRes = await fetch('http://127.0.0.1:5040/multi-clean')
+      expect(await getRes.text()).toBe('a')
+
+      off()
+
+      const getRes2 = await fetch('http://127.0.0.1:5040/multi-clean')
+      expect(getRes2.status).toBe(404)
+
+      const postRes = await fetch('http://127.0.0.1:5040/multi-clean', { method: 'POST' })
+      expect(postRes.status).toBe(404)
+    })
   })
 })

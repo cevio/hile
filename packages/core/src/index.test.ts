@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { Container, isService } from './index'
+import { Container, isService, defineService, loadService } from './index'
 
 describe('Container', () => {
   let container: Container
@@ -572,6 +572,89 @@ describe('Container', () => {
 
     it('不存在的 key 应返回 undefined', () => {
       expect(container.getMetaByKey('no-such-key')).toBeUndefined()
+    })
+  })
+
+  describe('off - 移除事件监听器', () => {
+    it('off 移除监听器后不再收到事件', async () => {
+      const listener = vi.fn()
+      container.on(listener)
+      container.off(listener)
+
+      const fn = async () => 'test'
+      await container.resolve(container.register('off-verify', fn))
+      await container.shutdown()
+
+      expect(listener).not.toHaveBeenCalled()
+    })
+
+    it('on 返回的取消函数也可以取消监听', async () => {
+      const listener = vi.fn()
+      const unsub = container.on(listener)
+      unsub()
+
+      const fn = async () => 'test'
+      await container.resolve(container.register('off-unsub', fn))
+      await container.shutdown()
+
+      expect(listener).not.toHaveBeenCalled()
+    })
+  })
+
+  describe('defineService / loadService - 便捷函数', () => {
+    it('defineService 返回包含 key、fn、flag 的对象', () => {
+      const props = defineService('ds-test', async () => 'defined')
+      expect(props.key).toBe('ds-test')
+      expect(typeof props.fn).toBe('function')
+      expect(isService(props)).toBe(true)
+    })
+
+    it('loadService 根据 props 解析服务', async () => {
+      const props = defineService('ls-test', async () => 'loaded')
+      const result = await loadService(props)
+      expect(result).toBe('loaded')
+    })
+
+    it('defineService + loadService 完整流程', async () => {
+      const props = defineService('ds-ls-test', async () => 'complete')
+      const result = await loadService(props)
+      expect(result).toBe('complete')
+    })
+  })
+
+  describe('hasPath - 依赖图遍历', () => {
+    it('多层级依赖检测非循环时返回 false', async () => {
+      // 建立 A → B → C 依赖链
+      const cProps = container.register('c-hp', async () => 'c')
+      const bProps = container.register('b-hp', async () => {
+        await container.resolve(cProps)
+        return 'b'
+      })
+      const aProps = container.register('a-hp', async () => {
+        await container.resolve(bProps)
+        return 'a'
+      })
+      // 正常解析 A，建立依赖链
+      await container.resolve(aProps)
+
+      // 再注册 X → A，触发 hasPath(A, X)
+      // hasPath 从 A 开始遍历依赖链 (A→B→C)，C 无更多依赖，返回 false
+      const xProps = container.register('x-hp', async () => {
+        await container.resolve(aProps)
+        return 'x'
+      })
+      const result = await container.resolve(xProps)
+      expect(result).toBe('x')
+    })
+  })
+
+  describe('自循环依赖检测', () => {
+    it('service 中 resolve 自身时检测到自循环', async () => {
+      const props = container.register('self-ref', async () => {
+        await container.resolve(props)
+        return 'self'
+      })
+      await expect(container.resolve(props)).rejects.toThrow('circular dependency detected')
     })
   })
 

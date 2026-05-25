@@ -1,6 +1,13 @@
 # Hile
 
+![Statements](coverage-statements.svg)
+![Branches](coverage-branches.svg)
+![Functions](coverage-functions.svg)
+![Lines](coverage-lines.svg)
+
 Hile is a lightweight Node.js service toolkit built on an async service container. It provides a structured way to build HTTP APIs, database-backed services, Redis-cached endpoints, microservices, and Next.js-integrated applications.
+
+> Coverage badges are updated after each `pnpm run test:coverage` run.
 
 ## Quick Start
 

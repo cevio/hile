@@ -8,7 +8,7 @@ vi.mock('@hile/core', () => ({
   },
 }));
 
-import { registerExitHook } from './exitHook.js';
+import { registerExitHook, useExit } from './exitHook.js';
 
 // 捕获 exitHook 注册的回调，便于测试时模拟进程退出
 let capturedExitCallback: ((exit: () => void) => void) | null = null;
@@ -171,5 +171,50 @@ describe('exitHook', () => {
     } finally {
       Object.defineProperty(process, 'stdin', { value: original, configurable: true });
     }
+  });
+
+  describe('useExit - 简单进程退出钩子', () => {
+    it('useExit 注册后退出时执行清理函数', async () => {
+      capturedExitCallback = null;
+      const fn = vi.fn();
+      useExit(fn);
+
+      expect(capturedExitCallback).not.toBeNull();
+
+      const exit = vi.fn();
+      capturedExitCallback!(exit);
+
+      await vi.waitFor(() => {
+        expect(fn).toHaveBeenCalledTimes(1);
+        expect(exit).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it('useExit 的清理函数抛错时仍调用 exit', async () => {
+      capturedExitCallback = null;
+      const fn = vi.fn(() => { throw new Error('useExit error') });
+      useExit(fn);
+
+      const exit = vi.fn();
+      capturedExitCallback!(exit);
+
+      await vi.waitFor(() => {
+        expect(exit).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it('useExit 支持异步清理函数', async () => {
+      capturedExitCallback = null;
+      const fn = vi.fn().mockResolvedValue(undefined);
+      useExit(fn);
+
+      const exit = vi.fn();
+      capturedExitCallback!(exit);
+
+      await vi.waitFor(() => {
+        expect(fn).toHaveBeenCalledTimes(1);
+        expect(exit).toHaveBeenCalledTimes(1);
+      });
+    });
   });
 });

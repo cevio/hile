@@ -152,6 +152,34 @@ describe('defineController - 定义路由控制器', () => {
     })
   })
 
+  it('body Zod 校验失败时 ctx.throw(400)', async () => {
+    const meta = createControllerMetadata({
+      method: 'POST',
+      middlewares: [],
+      schema: { body: z.object({ name: z.string().min(1) }) },
+    })
+    const result = defineController(meta, () => ({ ok: true }))
+    const ctx = mockCtx({ request: { body: { name: '' } } })
+    const composed = result.middlewares[result.middlewares.length - 1]
+    await expect(composed(ctx as any, async () => { })).rejects.toMatchObject({ status: 400 })
+  })
+
+  it('Zod body 校验返回错误消息', async () => {
+    const meta = createControllerMetadata({
+      method: 'POST',
+      middlewares: [],
+      schema: { body: z.object({ email: z.string().email() }) },
+    })
+    const result = defineController(meta, () => ({ ok: true }))
+    const ctx = mockCtx({ request: { body: { email: 'not-an-email' } } })
+    const composed = result.middlewares[result.middlewares.length - 1]
+    try {
+      await composed(ctx as any, async () => { })
+    } catch (e: any) {
+      expect(e.message).toContain('Invalid email')
+    }
+  })
+
   it('response plugin 可以修改最终 ctx.body', async () => {
     defineResponsePlugin(async (_ctx, result, next) => {
       return await next({ wrapped: result })

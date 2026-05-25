@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { Http } from './http'
 
 describe('Http - HTTP 服务类', () => {
@@ -165,6 +165,12 @@ describe('Http - HTTP 服务类', () => {
 
       const res = await fetch('http://127.0.0.1:4007/users/123')
       expect(await res.text()).toBe('user-123')
+    })
+
+    it('端口冲突时 listen 应 reject', async () => {
+      const http = new Http({ port: 4099 })
+      vi.spyOn(http, 'listen').mockRejectedValueOnce(new Error('EADDRINUSE'))
+      await expect(http.listen()).rejects.toThrow('EADDRINUSE')
     })
 
     it('路由支持多个中间件', async () => {

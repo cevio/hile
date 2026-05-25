@@ -283,4 +283,64 @@ describe('MessageLoader', () => {
       off()
     })
   })
+
+  describe('register - 动态注册消息处理器', () => {
+    it('register 注册处理器后可以 dispatch', async () => {
+      const loader = new MessageLoader({ suffix: 'msg' })
+      const handler = ({ data }: any) => `hello ${data.name}`
+      const unregister = loader.register('/hello', handler)
+
+      const result = await loader.dispatch('/hello', { name: 'world' })
+      expect(result).toBe('hello world')
+      unregister()
+    })
+
+    it('register 支持动态参数路由', async () => {
+      const loader = new MessageLoader({ suffix: 'msg' })
+      const handler = ({ params }: any) => `user-${params.id}`
+      const unregister = loader.register('/users/:id', handler)
+
+      const result = await loader.dispatch('/users/42', {})
+      expect(result).toBe('user-42')
+      unregister()
+    })
+
+    it('unregister 后路由不再匹配', async () => {
+      const loader = new MessageLoader({ suffix: 'msg' })
+      const handler = () => 'temp'
+      const unregister = loader.register('/temp', handler)
+
+      const before = await loader.dispatch('/temp', {})
+      expect(before).toBe('temp')
+
+      unregister()
+
+      await expect(loader.dispatch('/temp', {})).rejects.toThrow(NotFoundException)
+    })
+
+    it('register 注册后通过 dispatch 匹配（不处理 prefix）', async () => {
+      const loader = new MessageLoader({ suffix: 'msg', prefix: '/-' })
+      const handler = () => 'prefixed-register'
+      const unregister = loader.register('/ping', handler)
+
+      const result = await loader.dispatch('/ping', {})
+      expect(result).toBe('prefixed-register')
+      unregister()
+    })
+
+    it('多个 register 同时存在互不干扰', async () => {
+      const loader = new MessageLoader({ suffix: 'msg' })
+      const un1 = loader.register('/a', () => 'A')
+      const un2 = loader.register('/b', () => 'B')
+
+      expect(await loader.dispatch('/a', {})).toBe('A')
+      expect(await loader.dispatch('/b', {})).toBe('B')
+
+      un1()
+      await expect(loader.dispatch('/a', {})).rejects.toThrow(NotFoundException)
+      expect(await loader.dispatch('/b', {})).toBe('B')
+
+      un2()
+    })
+  })
 })

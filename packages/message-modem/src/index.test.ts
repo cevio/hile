@@ -409,5 +409,112 @@ describe('@hile/message-modem', () => {
       const abortMsg = a.posted.find(m => m.mode === MESSAGE_MODEM_TYPE.ABORT);
       expect(abortMsg).toBeDefined();
     });
+
+    it('non-iterable exec return in stream throws 500', async () => {
+      const a = new TestModem();
+      const b = new TestModem();
+      a.peer = b;
+      b.peer = a;
+
+      b['exec'] = async () => 'not-iterable';
+
+      const stream = a.stream('data');
+      const errorSpy = vi.fn();
+      stream.on('error', errorSpy);
+      await new Promise<void>(r => stream.on('close', () => r()));
+
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      const err = errorSpy.mock.calls[0][0];
+      expect(err.message).toContain('Invalid async iterable');
+    });
+
+    it('iterable error mid-stream sends error RESPONSE then destroys stream', async () => {
+      const a = new TestModem();
+      const b = new TestModem();
+      a.peer = b;
+      b.peer = a;
+
+      b['exec'] = async () => ({
+        [Symbol.asyncIterator]: async function* () {
+          yield 'ok';
+          throw new Exception(500, 'stream fail');
+        }
+      });
+
+      const stream = a.stream('data');
+      const chunks: any[] = [];
+      const errorSpy = vi.fn();
+      stream.on('data', (chunk: any) => chunks.push(chunk));
+      stream.on('error', errorSpy);
+      stream.resume();
+      await new Promise<void>(r => stream.on('close', () => r()));
+
+      expect(chunks).toEqual(['ok']);
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('onStreamResponse - empty chunk data', () => {
+    it('null chunk data destroys stream with 404', async () => {
+      const modem = new TestModem();
+      const stream = modem.stream('data');
+      const errorSpy = vi.fn();
+      stream.on('error', errorSpy);
+
+      modem.receive({
+        id: 0,
+        mode: MESSAGE_MODEM_TYPE.RESPONSE,
+        stream: true,
+        data: null,
+        twoway: false,
+      });
+
+      await new Promise<void>(r => stream.on('close', () => r()));
+      expect(errorSpy).toHaveBeenCalledTimes(1);
+      expect(errorSpy).toHaveBeenCalledWith(expect.objectContaining({ status: 404 }));
+    });
+  });
+
+  describe('abort guard in onRequest', () => {
+    it('abort before exec resolves prevents RESPONSE', async () => {
+      const a = new TestModem();
+      const b = new TestModem();
+      a.peer = b;
+      b.peer = a;
+
+      let resolveExec!: (v: string) => void;
+      b['exec'] = () => new Promise(r => { resolveExec = r });
+
+      // Fire request — don't await (no RESPONSE will come back)
+      a.send('test');
+
+      // Let onRequest set up the controller
+      await new Promise(r => setImmediate(r));
+
+      // Abort the request on b's side
+      b.receive({ id: 99, mode: MESSAGE_MODEM_TYPE.ABORT, twoway: false, data: 0 });
+
+      await new Promise(r => setImmediate(r));
+
+      // Resolve exec — .then fires but abort guard returns early
+      resolveExec('late');
+
+      await new Promise(r => setImmediate(r));
+
+      // b should not have posted any RESPONSE for id 0
+      const bResponses = b.posted.filter(m => m.mode === MESSAGE_MODEM_TYPE.RESPONSE);
+      expect(bResponses).toHaveLength(0);
+    });
+  });
+
+  describe('_dispose cleanup', () => {
+    it('_dispose rejects pending requests', async () => {
+      const modem = new TestModem();
+      const promise = modem.send('pending');
+
+      modem['_dispose']();
+
+      await expect(promise).rejects.toThrow('Abort');
+    });
   });
 });

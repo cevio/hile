@@ -130,6 +130,30 @@ describe('@hile/micro registry selection', () => {
     expect(parseAddressKey('[::1]:9000')).toEqual({ host: '[::1]', port: 9000 });
   });
 
+  it('parseAddressKey returns undefined for key without colon', () => {
+    expect(parseAddressKey('bogus')).toBeUndefined();
+  });
+
+  it('parseAddressKey returns undefined for empty host before colon', () => {
+    expect(parseAddressKey(':3000')).toBeUndefined();
+  });
+
+  it('parseAddressKey returns undefined for port 0', () => {
+    expect(parseAddressKey('127.0.0.1:0')).toBeUndefined();
+  });
+
+  it('parseAddressKey returns undefined for oversized port', () => {
+    expect(parseAddressKey('127.0.0.1:65536')).toBeUndefined();
+  });
+
+  it('parseAddressKey returns undefined for non-numeric port', () => {
+    expect(parseAddressKey('127.0.0.1:abc')).toBeUndefined();
+  });
+
+  it('all malformed keys returns undefined', () => {
+    expect(selectRandomRegistryAddress(['bogus', ''])).toBeUndefined();
+  });
+
   it('skips malformed keys when selecting', () => {
     vi.spyOn(Math, 'random').mockReturnValue(0);
     expect(selectRandomRegistryAddress(['bogus', '127.0.0.1:1'])).toEqual({
