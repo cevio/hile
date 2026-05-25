@@ -1,0 +1,30 @@
+{
+  "name": "@hile/logger",
+  "version": "1.0.0",
+  "description": "Structured logging based on pino",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
+    "dev": "tsc -b --watch",
+    "test": "vitest run"
+  },
+  "files": ["dist", "README.md"],
+  "license": "MIT",
+  "publishConfig": { "access": "public" },
+  "devDependencies": {
+    "fix-esm-import-path": "^1.10.3",
+    "pino-pretty": "^13.0.0",
+    "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "@hile/core": "workspace:^",
+    "pino": "^10.0.0"
+  },
+  "peerDependencies": {
+    "pino-pretty": "^13.0.0"
+  },
+  "peerDependenciesMeta": {
+    "pino-pretty": { "optional": true }
+  }
+}

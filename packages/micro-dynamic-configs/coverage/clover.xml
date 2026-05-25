@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<coverage generated="1779708299323" clover="3.2.0">
-  <project timestamp="1779708299323" name="All files">
+<coverage generated="1779721508346" clover="3.2.0">
+  <project timestamp="1779721508346" name="All files">
     <metrics statements="45" coveredstatements="45" conditionals="14" coveredconditionals="14" methods="5" coveredmethods="5" elements="64" coveredelements="64" complexity="0" loc="45" ncloc="45" packages="1" files="1" classes="1"/>
     <file name="server.ts" path="/Users/evioshen/code/pulian/shenyunjie/artuctor/packages/micro-dynamic-configs/src/server.ts">
       <metrics statements="45" coveredstatements="45" conditionals="14" coveredconditionals="14" methods="5" coveredmethods="5"/>

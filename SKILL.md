@@ -1,6 +1,6 @@
 ---
 name: hile
-description: "Code generation guide for the Hile monorepo (@hile/* packages). Covers service container, HTTP APIs, database (TypeORM), Redis, message communication, microservices, model pipeline, and project scaffolding. Use this skill when generating or editing code that depends on @hile/core, @hile/http, @hile/typeorm, @hile/ioredis, @hile/cache, @hile/micro, @hile/model, @hile/message-*, or create-hile."
+description: "Code generation guide for the Hile monorepo (@hile/* packages). Covers service container, HTTP APIs, database (TypeORM), Redis, logging, job scheduling, message communication, microservices, model pipeline, and project scaffolding. Use this skill when generating or editing code that depends on @hile/core, @hile/logger, @hile/schedule, @hile/http, @hile/typeorm, @hile/ioredis, @hile/cache, @hile/micro, @hile/model, @hile/message-*, or create-hile."
 ---
 
 # Hile — Unified Code Generation Guide
@@ -44,11 +44,110 @@ This document is a **code generation reference**, not an abstract design doc. Wh
 | Microservice registry & discovery | `@hile/micro` | `Server` / `Client` / `Registry` / `Application` |
 | Dynamic config (ZK-like) | `@hile/micro-dynamic-configs` | `MicroDynamicConfigsServer` |
 | Business data pipeline (middleware chain) | `@hile/model` | `defineModel` / `loadModel` / `Pipeline` |
+| Structured logging (pino) | `@hile/logger` | `createLogger` |
+| Declarative job scheduling | `@hile/schedule` | `Scheduler` / `defineJob` |
 | Scaffold new Hile project | `create-hile` | CLI `create-hile create <name>` |
 
 ---
 
-## 2. @hile/core — Service Container
+## 2. @hile/logger — Structured Logging
+
+```typescript
+import { createLogger } from '@hile/logger';
+
+const logger = createLogger();
+logger.info('hello');
+logger.error({ err }, 'something went wrong');
+```
+
+### Options
+
+```typescript
+createLogger({
+  level?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal'
+  pretty?: boolean      // default: !production
+  redact?: string[]     // sensitive field paths, e.g. ['password', 'req.headers.authorization']
+})
+```
+
+- **level** — 日志级别，默认 `LOG_LEVEL` 环境变量，未设置时 `'info'`
+- **pretty** — 开发环境默认启用 `pino-pretty` 美化输出，生产环境输出 JSON
+- **redact** — 敏感字段过滤
+
+### Child logger
+
+```typescript
+const child = logger.child({ module: 'payment' });
+child.info('processing'); // { "module": "payment", "msg": "processing" }
+```
+
+### Env variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOG_LEVEL` | `'info'` | Default log level |
+| `NODE_ENV` | — | Controls `pretty` default |
+
+---
+
+## 3. @hile/schedule — Job Scheduling
+
+```typescript
+import { Scheduler, defineJob } from '@hile/schedule';
+
+const scheduler = new Scheduler();
+
+// Cron expression
+scheduler.add('daily-report', '0 8 * * *', () => {
+  console.log('daily report');
+});
+
+// Delay (ms)
+scheduler.add('delayed-task', { delay: 5000 }, () => {
+  console.log('after 5 seconds');
+});
+
+scheduler.stop(); // cancel all jobs
+```
+
+### Auto-load from directory
+
+Create `{name}.schedule.ts` files:
+
+```typescript
+// tasks/daily-report.schedule.ts
+import { defineJob } from '@hile/schedule';
+export default defineJob('0 8 * * *', () => {
+  console.log('daily report generated');
+});
+```
+
+Load them:
+
+```typescript
+const scheduler = new Scheduler();
+const off = await scheduler.load(resolve(__dirname, 'tasks')); // returns unregister function
+// off() to unregister all
+```
+
+Custom suffix:
+
+```typescript
+await scheduler.load('./jobs', { suffix: 'job' }); // loads *.job.ts, *.job.js, ...
+```
+
+### API
+
+- `defineJob(expression, handler)` — Returns `{ id: number, type: 'job', expression, handler }`
+- `scheduler.add(id, expression | { delay }, handler)` — 注册任务，重复 id 抛异常
+- `scheduler.remove(id)` — 取消任务
+- `scheduler.stop()` — 取消所有任务
+- `scheduler.getJobs(): JobInfo[]` — 返回已注册任务列表
+- `scheduler.load(directory, options?)` — 自动发现并注册任务文件
+
+---
+
+## 4. @hile/core — Service Container
 
 ### Define and load a service
 
@@ -104,7 +203,7 @@ export default defineService('worker', async (shutdown) => {
 
 ---
 
-## 3. @hile/http — HTTP API
+## 5. @hile/http — HTTP API
 
 ### Define a controller
 
@@ -191,7 +290,7 @@ defineResponsePlugin(async (ctx, result, next) => {
 
 ---
 
-## 4. @hile/http-next — HTTP + Next.js on the Same Port
+## 6. @hile/http-next — HTTP + Next.js on the Same Port
 
 ### Standard project directory structure
 
@@ -268,7 +367,7 @@ export default async function UserPage() {
 
 ---
 
-## 5. @hile/typeorm — Database
+## 7. @hile/typeorm — Database
 
 ### Setup
 
@@ -314,7 +413,7 @@ await transaction(ds, async (runner, rollback) => {
 
 ---
 
-## 6. @hile/ioredis — Redis
+## 8. @hile/ioredis — Redis
 
 ```json
 // package.json
@@ -338,7 +437,7 @@ await redis.get('key');
 
 ---
 
-## 7. @hile/cache — Cache Key Declaration
+## 9. @hile/cache — Cache Key Declaration
 
 ```typescript
 import { defineCache, RedisCache } from '@hile/cache';
@@ -362,7 +461,7 @@ await has({ id: 'abc', x: 42 });      // Check existence
 
 ---
 
-## 8. Message Communication Architecture
+## 10. Message Communication Architecture
 
 ### Layer hierarchy
 
@@ -442,7 +541,7 @@ for await (const chunk of stream) {
 
 ---
 
-## 9. @hile/micro — Microservices
+## 11. @hile/micro — Microservices
 
 ### Registry
 
@@ -537,7 +636,7 @@ If programmatic registration is needed, `app.register(path, fn)` is also availab
 
 ---
 
-## 10. @hile/model — Business Pipeline
+## 12. @hile/model — Business Pipeline
 
 ```typescript
 import { defineModel, loadModel, Pipeline } from '@hile/model';
@@ -569,7 +668,7 @@ export default defineModel(async (input: { id: string }) => {
 
 ---
 
-## 11. create-hile — Scaffolding
+## 13. create-hile — Scaffolding
 
 ```bash
 npx create-hile create my-project
@@ -587,7 +686,7 @@ Templates:
 
 ---
 
-## 12. Common Anti-Patterns (Forbidden)
+## 14. Common Anti-Patterns (Forbidden)
 
 ```typescript
 // ❌ Top-level await loadService
@@ -625,7 +724,7 @@ export default defineController('GET', async (ctx, next) => { // Forbidden
 
 ---
 
-## 13. Quick Reference: What API to Use in Which File
+## 15. Quick Reference: What API to Use in Which File
 
 | File | Allowed imports |
 |------|----------------|
@@ -638,7 +737,7 @@ export default defineController('GET', async (ctx, next) => { // Forbidden
 
 ---
 
-## 14. File Naming Conventions
+## 16. File Naming Conventions
 
 | Suffix | Type | Loaded by | Location constraint |
 |--------|------|-----------|-------------------|
@@ -647,3 +746,4 @@ export default defineController('GET', async (ctx, next) => { // Forbidden
 | `*.model.ts` / `*.model.js` | Business model | `loadModel` | `src/models/` |
 | `*.controller.ts` / `*.controller.js` | HTTP controller | `http.load()` scan | Default `src/controllers/` |
 | `*.msg.ts` / `*.msg.js` | Message handler | `loader.load()` scan | Custom (e.g. `src/messages/`) |
+| `*.schedule.ts` / `*.schedule.js` | Scheduled job | `scheduler.load()` scan | Custom (e.g. `src/schedules/`) |

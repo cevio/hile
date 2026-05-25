@@ -1,0 +1,371 @@
+---
+title: "@hile/schedule"
+description: "基于 node-schedule 的声明式任务调度库，支持 cron 和延迟任务，文件系统自动加载，类型安全的 defineJob 定义"
+---
+
+## 安装
+
+```bash
+pnpm add @hile/schedule
+```
+
+---
+
+## 快速开始
+
+### 代码定义
+
+```typescript
+import { Scheduler } from '@hile/schedule'
+
+const scheduler = new Scheduler()
+
+// 每天 8:00 执行
+scheduler.add('daily-report', '0 8 * * *', () => {
+  console.log('generating daily report...')
+})
+
+// 延迟 5 秒执行
+scheduler.add('delayed-task', { delay: 5000 }, () => {
+  console.log('ran after 5 seconds')
+})
+
+// 取消所有任务
+scheduler.stop()
+```
+
+### 文件系统自动加载
+
+```typescript
+// tasks/daily-report.schedule.ts
+import { defineJob } from '@hile/schedule'
+
+export default defineJob('0 8 * * *', () => {
+  console.log('daily report generated')
+})
+```
+
+```typescript
+import { Scheduler } from '@hile/schedule'
+
+const scheduler = new Scheduler()
+const off = await scheduler.load('./tasks')
+
+// 需要时注销所有任务
+off()
+```
+
+---
+
+## 任务定义
+
+### defineJob
+
+```typescript
+import { defineJob } from '@hile/schedule'
+```
+
+`defineJob` 创建一个标准化的任务定义对象，专为文件系统自动加载设计。
+
+**签名：**
+
+```typescript
+function defineJob(
+  expression: string | { delay: number },
+  handler: () => Promise<void> | void,
+): JobDefinition
+```
+
+**参数：**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `expression` | `string \| { delay: number }` | cron 表达式或延迟毫秒数 |
+| `handler` | `() => Promise<void> \| void` | 任务执行函数 |
+
+**返回值：**
+
+```typescript
+type JobDefinition = {
+  id: number        // 自动递增的唯一 ID
+  type: 'job'       // 固定为 'job'
+  expression: string | { delay: number }
+  handler: JobHandler
+}
+```
+
+每次调用 `defineJob` 返回自动递增的 `id`，确保文件系统加载时每个任务有唯一标识。
+
+### Cron 表达式
+
+```typescript
+defineJob('0 8 * * *', handler)      // 每天早上 8:00
+defineJob('*/5 * * * *', handler)    // 每 5 分钟
+defineJob('0 0 * * 0', handler)      // 每周日午夜
+defineJob('0 9-17 * * 1-5', handler) // 工作日 9-17 点每小时
+```
+
+支持标准的 5 字段 cron 表达式，以及 node-schedule 的 6 字段格式（带秒）：
+
+```typescript
+defineJob('*/1 * * * * *', handler)  // 每秒
+```
+
+### 延迟任务
+
+```typescript
+defineJob({ delay: 3000 }, handler)  // 3 秒后执行一次
+defineJob({ delay: 60000 }, handler) // 1 分钟后执行一次
+```
+
+延迟任务执行一次后自动结束。适合超时通知、延迟处理等场景。
+
+---
+
+## Scheduler API
+
+### 创建实例
+
+```typescript
+const scheduler = new Scheduler()
+```
+
+### add — 注册任务
+
+```typescript
+scheduler.add(id, expression, handler)
+scheduler.add(id, { delay }, handler)
+```
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `id` | `string \| number` | 任务唯一标识，重复则抛出 `already exists` |
+| `expression` | `string` | cron 表达式 |
+| `delay` | `number` | 延迟毫秒数 |
+| `handler` | `() => Promise<void> \| void` | 执行函数 |
+
+```typescript
+const s = new Scheduler()
+
+// cron 任务
+s.add('task-1', '0 */5 * * *', () => fetchData())
+
+// 延迟任务
+s.add('task-2', { delay: 10000 }, () => notify())
+
+// 数字 id
+s.add(42, '0 8 * * *', () => report())
+```
+
+**错误处理：** handler 中的同步错误和异步 rejection 均被安全捕获，不会影响调度器运行。
+
+### remove — 取消任务
+
+```typescript
+scheduler.remove(id)
+```
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `id` | `string \| number` | 要取消的任务 ID |
+
+```typescript
+const s = new Scheduler()
+s.add('task', { delay: 5000 }, () => {})
+
+s.remove('task')   // 取消，任务不会执行
+s.remove('noop')   // 不存在的 id，无操作
+```
+
+数字 id 和字符串 id 视为同一 key：
+
+```typescript
+s.add(42, { delay: 100 }, handler)
+s.remove(42)       // 取消数字 id 任务
+s.remove('42')     // 等价，取消同一个任务
+```
+
+### stop — 取消所有任务
+
+```typescript
+scheduler.stop()
+```
+
+取消所有已注册任务，清空内部状态。`stop()` 后可以继续添加新任务。
+
+### getJobs — 获取任务列表
+
+```typescript
+scheduler.getJobs(): JobInfo[]
+```
+
+返回已注册任务的快照：
+
+```typescript
+const s = new Scheduler()
+s.add('a', { delay: 100 }, handler)
+s.add('b', '0 8 * * *', handler)
+
+console.log(s.getJobs())
+// [
+//   { id: 'a', type: 'delay', expression: 'delay:100' },
+//   { id: 'b', type: 'cron', expression: '0 8 * * *' },
+// ]
+```
+
+---
+
+## 文件系统自动加载
+
+### 加载约定
+
+`scheduler.load(directory, options?)` 按约定文件后缀自动发现并注册任务。
+
+**文件命名规则：**
+
+```
+{任意名称}.{suffix}.ts
+```
+
+默认 `suffix` 为 `schedule`，即匹配 `*.schedule.ts`、`*.schedule.js`、`*.schedule.mjs` 等。
+
+### 用法
+
+```typescript
+// 默认 suffix: 'schedule'
+const off = await scheduler.load(resolve(__dirname, 'tasks'))
+// 扫描 tasks/ 下所有 *.schedule.{ts,js,tsx,jsx,mjs}
+
+// 自定义 suffix
+const off2 = await scheduler.load('./jobs', { suffix: 'job' })
+// 扫描 ./jobs/ 下所有 *.job.{ts,js,...}
+```
+
+### 任务文件格式
+
+任务文件必须 `default export` `defineJob` 的返回值：
+
+```typescript
+// tasks/report.schedule.ts
+import { defineJob } from '@hile/schedule'
+
+export default defineJob('0 8 * * *', () => {
+  console.log('daily report')
+})
+```
+
+```typescript
+// tasks/notify.schedule.ts
+import { defineJob } from '@hile/schedule'
+
+export default defineJob({ delay: 5000 }, () => {
+  console.log('delayed notification')
+})
+```
+
+### 返回值
+
+`scheduler.load()` 返回注销函数，调用后取消所有加载的任务：
+
+```typescript
+const off = await scheduler.load('./tasks')
+
+// 应用关闭时
+off()
+// 所有加载的任务被取消
+```
+
+### 支持的文件类型
+
+glob 模式：`**/*.{suffix}.{ts,js,tsx,jsx,mjs}`
+
+Node.js 原生 ESM 可加载 `.mjs`、`.js`（当 `"type": "module"`）。TypeScript 文件 `.ts`、`.tsx` 需要先编译或使用 ts-node/tsx 注册器。
+
+---
+
+## 完整示例
+
+```typescript
+import { Scheduler, defineJob } from '@hile/schedule'
+import { resolve } from 'node:path'
+
+// 1. 代码定义
+const scheduler = new Scheduler()
+
+scheduler.add('health-check', '*/5 * * * *', async () => {
+  const ok = await checkHealth()
+  if (!ok) console.error('health check failed')
+})
+
+scheduler.add('startup-notify', { delay: 3000 }, () => {
+  console.log('application started')
+})
+
+// 2. 文件系统加载
+const off = await scheduler.load(resolve(__dirname, 'schedules'), {
+  suffix: 'schedule',
+})
+
+// 3. 查询状态
+console.log('active jobs:', scheduler.getJobs().length)
+
+// 4. 优雅关闭
+process.on('SIGTERM', () => {
+  off()
+  scheduler.stop()
+})
+```
+
+---
+
+## API 参考
+
+### 顶层导出
+
+| 导出 | 类型 | 说明 |
+|------|------|------|
+| `Scheduler` | `class` | 任务调度器 |
+| `defineJob(expression, handler)` | `function` | 创建任务定义（用于文件系统加载） |
+| `JobDefinition` | `type` | 任务定义类型 |
+| `JobHandler` | `type` | 任务处理函数类型 `() => Promise<void> \| void` |
+| `JobInfo` | `type` | 任务信息类型 `{ id, type, expression }` |
+
+### Scheduler 方法
+
+| 方法 | 返回值 | 说明 |
+|------|--------|------|
+| `add(id, expression, handler)` | `void` | 注册 cron 任务 |
+| `add(id, { delay }, handler)` | `void` | 注册延迟任务 |
+| `remove(id)` | `void` | 取消指定任务 |
+| `stop()` | `void` | 取消所有任务 |
+| `getJobs()` | `JobInfo[]` | 返回任务列表快照 |
+| `load(dir, options?)` | `Promise<() => void>` | 从目录自动加载，返回注销函数 |
+
+### JobInfo
+
+```typescript
+type JobInfo = {
+  id: string
+  type: 'cron' | 'delay'
+  expression: string
+}
+```
+
+---
+
+## 常见问题
+
+<AccordionGroup>
+  <Accordion title="cron 表达式支持哪些格式？">
+    `@hile/schedule` 使用 `node-schedule` 解析 cron，支持标准 5 字段格式（分 时 日 月 周）和带秒的 6 字段格式（秒 分 时 日 月 周）。完整语法参考 [node-schedule 文档](https://github.com/node-schedule/node-schedule)。
+  </Accordion>
+  <Accordion title="任务执行报错会影响调度器吗？">
+    不会。所有 handler 的同步错误和异步 rejection 都被安全捕获，不影响后续任务调度。每个 handler 独立运行。
+  </Accordion>
+  <Accordion title="延迟任务执行完后会自动清理吗？">
+    延迟任务执行后，`node-schedule` 自动失效，但 `Scheduler` 的 jobs/meta 记录不会自动清理。如果不需要保留可调用 `remove(id)`。
+  </Accordion>
+  <Accordion title="load() 加载的文件如何查找？">
+    使用 `glob` 扫描：`**/*.{suffix}.{ts,js,tsx,jsx,mjs}`。文件必须以 `.schedule.ts`（或自定义后缀）结尾，且 `default export` 为 `defineJob` 的返回值（`type === 'job'`），否则会被跳过。
+  </Accordion>
+</AccordionGroup>

@@ -1,0 +1,264 @@
+---
+title: "@hile/logger"
+description: "基于 Pino 的结构化日志库，支持开发美化、生产 JSON、敏感字段过滤、child logger，以及 Hile 服务集成"
+---
+
+## 安装
+
+```bash
+pnpm add @hile/logger
+```
+
+同时确保安装了 peer 依赖：
+
+```bash
+pnpm add pino-pretty
+```
+
+> `pino-pretty` 是可选 peer 依赖，仅在开发环境美化输出时需要。
+
+---
+
+## 快速开始
+
+```typescript
+import { createLogger } from '@hile/logger'
+
+const logger = createLogger()
+logger.info('server started')
+logger.error({ err }, 'failed to connect')
+logger.warn({ cpu: 0.9 }, 'high CPU usage')
+```
+
+---
+
+## 配置
+
+### 创建选项
+
+```typescript
+createLogger({
+  level?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal'
+  pretty?: boolean
+  redact?: string[]
+})
+```
+
+| 选项 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `level` | `string` | `LOG_LEVEL` 环境变量 或 `'info'` | 日志级别 |
+| `pretty` | `boolean` | `NODE_ENV !== 'production'` | 是否启用 pino-pretty 美化 |
+| `redact` | `string[]` | — | 敏感字段路径，如 `['password']` |
+
+### 环境变量
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `LOG_LEVEL` | `'info'` | 默认日志级别 |
+| `NODE_ENV` | — | 控制 `pretty` 默认值（production → JSON，其他 → pretty） |
+
+### 优先级规则
+
+```
+createLogger({ level }) > LOG_LEVEL 环境变量 > 'info'
+createLogger({ pretty }) > (NODE_ENV === 'production')
+```
+
+---
+
+## 用法
+
+### 日志级别
+
+```typescript
+const logger = createLogger({ level: 'trace', pretty: false })
+
+logger.trace('verbose debug')
+logger.debug('debug info')
+logger.info('general info')
+logger.warn('warning')
+logger.error('error')
+logger.fatal('fatal')
+```
+
+级别过滤：低于当前 `level` 的日志不会输出。例如 `level: 'warn'` 时，`info` 和 `debug` 不会打印。
+
+### 结构化日志
+
+第一个参数传入对象，第二个参数传入消息：
+
+```typescript
+logger.info({ userId: 'u-001', action: 'login' }, 'user logged in')
+// 输出: {"userId":"u-001","action":"login","msg":"user logged in"}
+```
+
+### 敏感字段过滤
+
+```typescript
+const logger = createLogger({
+  level: 'info',
+  pretty: false,
+  redact: ['password', 'token'],
+})
+
+logger.info({ password: 'secret123', token: 'abc' }, 'auth')
+// 输出: {"password":"[Redacted]","token":"[Redacted]","msg":"auth"}
+```
+
+### Child logger
+
+```typescript
+const logger = createLogger({ level: 'info', pretty: false })
+
+// 创建带固定上下文的子 logger
+const paymentLogger = logger.child({ module: 'payment' })
+paymentLogger.info('processing payment')
+// 输出: {"module":"payment","msg":"processing payment"}
+
+// 多层继承
+const orderLogger = paymentLogger.child({ orderId: 'ord-001' })
+orderLogger.info('order created')
+// 输出: {"module":"payment","orderId":"ord-001","msg":"order created"}
+```
+
+### Flush
+
+```typescript
+const logger = createLogger()
+logger.flush() // 等待所有待写入日志刷新（退出前调用）
+```
+
+---
+
+## 服务集成
+
+`@hile/logger` 默认导出 Hile 服务，通过 `@hile/core` 容器使用：
+
+```typescript
+import { loadService } from '@hile/core'
+import loggerService from '@hile/logger'
+
+const logger = await loadService(loggerService)
+logger.info('service is ready')
+```
+
+服务启动时自动创建 logger 实例，退出时自动调用 `flush()`。
+
+---
+
+## 开发 vs 生产
+
+### 开发环境
+
+```typescript
+// NODE_ENV=development 或未设置 NODE_ENV
+const logger = createLogger()
+// pretty=true → pino-pretty 彩色输出
+```
+
+在终端中输出格式化的彩色日志，方便阅读。
+
+### 生产环境
+
+```typescript
+// NODE_ENV=production
+const logger = createLogger()
+// pretty=false → JSON 输出
+```
+
+输出 JSON Lines（每行一个 JSON 对象），便于日志收集系统（ELK、Datadog 等）采集。
+
+---
+
+## 完整示例
+
+```typescript
+import { createLogger, type Logger } from '@hile/logger'
+
+// 创建一个生产环境 logger
+const logger = createLogger({
+  level: 'info',
+  pretty: false,
+})
+
+// 基本日志
+logger.info('application started')
+
+// 带上下文的结构化日志
+logger.info({ pid: process.pid }, 'worker started')
+
+// 错误日志
+try {
+  throw new Error('db connection failed')
+} catch (err) {
+  logger.error({ err }, 'database error')
+}
+
+// 模块化日志
+const httpLogger = logger.child({ module: 'http' })
+httpLogger.info({ method: 'GET', path: '/api/users' }, 'incoming request')
+
+// 退出前刷新
+process.on('beforeExit', () => {
+  logger.flush()
+})
+```
+
+---
+
+## API 参考
+
+### 顶层导出
+
+| 导出 | 类型 | 说明 |
+|------|------|------|
+| `createLogger(options?)` | `function` | 创建 logger 实例 |
+| `Logger` | `type` | PinoLogger 类型别名 |
+| `LoggerOptions` | `type` | createLogger 参数类型 |
+| 默认导出 | `ServiceRegisterProps<Logger>` | 服务化的 logger（`@hile/core` 容器） |
+
+### Logger 实例方法
+
+| 方法 | 说明 |
+|------|------|
+| `logger.trace(obj?, msg)` | TRACE 级别日志 |
+| `logger.debug(obj?, msg)` | DEBUG 级别日志 |
+| `logger.info(obj?, msg)` | INFO 级别日志 |
+| `logger.warn(obj?, msg)` | WARN 级别日志 |
+| `logger.error(obj?, msg)` | ERROR 级别日志 |
+| `logger.fatal(obj?, msg)` | FATAL 级别日志 |
+| `logger.child(context)` | 创建带固定上下文的子 logger |
+| `logger.flush()` | 刷新待写入日志 |
+| `logger.level` | 获取/设置当前日志级别 |
+
+---
+
+## 常见问题
+
+<AccordionGroup>
+  <Accordion title="如何将日志写入文件？">
+    生产环境建议由 PM2 或 systemd 管理 stdout/stderr 重定向，`@hile/logger` 不自持文件输出：
+
+    ```bash
+    node app.js > app.log 2>&1
+    ```
+
+    或者使用 PM2：
+
+    ```bash
+    pm2 start app.js --output app.log --error err.log
+    ```
+  </Accordion>
+  <Accordion title="可以使用其他 pino 配置吗？">
+    `createLogger` 封装了最常用的 pino 配置。如果需要更高级的 pino 选项（如 custom levels、formatters、serializers），直接使用 `pino()` 原生 API，`@hile/logger` 保持精简。
+  </Accordion>
+  <Accordion title="如何在不同模块间共享 logger 实例？">
+    推荐通过 `@hile/core` 容器加载 logger 服务，确保全应用单例：
+
+    ```typescript
+    const logger = await loadService(loggerService)
+    ```
+
+    或者将 `createLogger()` 返回的实例作为模块级单例导出。
+  </Accordion>
+</AccordionGroup>

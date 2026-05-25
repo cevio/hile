@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<coverage generated="1779708286592" clover="3.2.0">
-  <project timestamp="1779708286593" name="All files">
+<coverage generated="1779721494245" clover="3.2.0">
+  <project timestamp="1779721494245" name="All files">
     <metrics statements="45" coveredstatements="45" conditionals="14" coveredconditionals="14" methods="16" coveredmethods="16" elements="75" coveredelements="75" complexity="0" loc="45" ncloc="45" packages="1" files="2" classes="2"/>
     <file name="define.ts" path="/Users/evioshen/code/pulian/shenyunjie/artuctor/packages/cache/src/define.ts">
       <metrics statements="6" coveredstatements="6" conditionals="0" coveredconditionals="0" methods="4" coveredmethods="4"/>

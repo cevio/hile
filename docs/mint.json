@@ -73,6 +73,8 @@
       "group": "核心包",
       "pages": [
         "packages/core",
+        "packages/logger",
+        "packages/schedule",
         "packages/model",
         "packages/http",
         "packages/http-next",
