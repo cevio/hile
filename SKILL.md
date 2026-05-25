@@ -1,75 +1,77 @@
 ---
 name: hile
-description: "Hile 代码生成规范。当编辑/生成涉及 @hile/* 或 create-hile 时必读。包含各包的具体用法示例、目录约定、生命周期写法。适用于：新增 API 路由、数据库/缓存接入、消息通信、微服务注册发现、HTTP+Next.js 同端口项目。"
+description: "Code generation guide for the Hile monorepo (@hile/* packages). Covers service container, HTTP APIs, database (TypeORM), Redis, message communication, microservices, model pipeline, and project scaffolding. Use this skill when generating or editing code that depends on @hile/core, @hile/http, @hile/typeorm, @hile/ioredis, @hile/cache, @hile/micro, @hile/model, @hile/message-*, or create-hile."
 ---
 
-# Hile monorepo — 统一代码生成规范
+# Hile — Unified Code Generation Guide
 
-本文档是**代码生成指南**，不是抽象参考。当你需要编写或修改使用 `@hile/*` 的代码时，按场景查阅对应章节，直接使用其中的示例模板。
-
----
-
-## 核心概念（所有包通用）
-
-**服务容器（`@hile/core`）**是整个框架的基石：
-- `defineService(key, fn)` —— 定义服务（注册到容器但不执行）
-- `loadService(service)` —— 获取服务实例（首次调用时执行 fn，之后返回缓存单例）
-- `shutdown(fn)` —— 在服务函数内注册清理回调（LIFO 顺序）
-
-**Boot 机制（`@hile/cli`）**：
-- `src/services/*.boot.ts` —— 由 `hile start` **自动扫描加载**的服务入口
-- `src/services/*.service.ts` —— **依赖加载**的服务，在 boot/其他服务/model 内通过 `loadService` 按需加载
-- `package.json` 的 `hile.auto_load_packages` —— 声明模块名（非文件路径），在 boot 扫描前自动加载
+This document is a **code generation reference**, not an abstract design doc. When writing or modifying code that uses `@hile/*` packages, find your scenario below and follow the examples directly.
 
 ---
 
-## 一、包速查表（按场景选包）
+## Core Concepts (Universal)
 
-| 你要做什么 | 用哪个包 | 关键导出 |
-|-----------|---------|---------|
-| 定义异步单例服务、管理生命周期 | `@hile/core` | `defineService` / `loadService` / `isService` / `container` |
-| 启动应用、扫描 boot 文件 | `@hile/cli` | CLI `hile start` |
-| HTTP API（Koa + 路由） | `@hile/http` | `Http` / `defineController` / `Loader` / `defineResponsePlugin` |
-| API + Next.js 同端口 | `@hile/http-next` | `HttpNext` |
-| 数据库操作 | `@hile/typeorm` | `transaction` / 默认导出 DataSource 服务 |
-| Redis 缓存 | `@hile/ioredis` | 默认导出 Redis 客户端服务 |
-| 带模板参数的 Redis 缓存键 | `@hile/cache` | `defineCache` / `RedisCache` |
-| 请求/响应消息抽象（超时、中止） | `@hile/message-modem` | `MessageModem`（抽象类，需实现 post/exec） |
-| 父子进程 IPC | `@hile/message-ipc` | `MessageIpc`（抽象类） |
-| Worker 线程通信 | `@hile/message-worker-thread` | `MessageWorkerThread`（抽象类） |
-| WebSocket 通信 | `@hile/message-ws` | `MessageWs`（抽象类） |
-| 文件系统消息路由 | `@hile/message-loader` | `MessageLoader` / `defineMessage` |
-| 微服务注册发现（WS） | `@hile/micro` | `Server` / `Client` / `Registry` / `Application` |
-| 动态配置（ZK-like） | `@hile/micro-dynamic-configs` | `MicroDynamicConfigsServer` |
-| 业务数据管线（中间件链） | `@hile/model` | `defineModel` / `loadModel` / `Pipeline` |
-| 创建新 Hile 项目 | `create-hile` | CLI `create-hile create <name>` |
+**Service Container (`@hile/core`)** is the foundation:
+
+- `defineService(key, fn)` — Register a service (does not execute)
+- `loadService(service)` — Get a service instance (executes fn on first call, caches afterwards)
+- `shutdown(fn)` — Register a cleanup callback inside the service function (LIFO order)
+
+**Boot mechanism (`@hile/cli`)** :
+
+- `src/services/*.boot.ts` — **Auto-scanned** by `hile start` at startup
+- `src/services/*.service.ts` — **Lazy-loaded** services, loaded via `loadService` inside boot files / other services / models
+- `package.json` `hile.auto_load_packages` — Module names (not file paths) to auto-load before boot scanning
 
 ---
 
-## 二、@hile/core — 服务容器
+## 1. Package Quick Reference
 
-### 定义并加载一个服务
+| What you need | Package | Key exports |
+|--------------|---------|-------------|
+| Async singleton service, lifecycle management | `@hile/core` | `defineService` / `loadService` / `isService` / `container` |
+| Start app, scan boot files | `@hile/cli` | CLI `hile start` |
+| HTTP API (Koa + routing) | `@hile/http` | `Http` / `defineController` / `Loader` / `defineResponsePlugin` |
+| API + Next.js same port | `@hile/http-next` | `HttpNext` |
+| Database operations | `@hile/typeorm` | `transaction` / default export DataSource service |
+| Redis cache | `@hile/ioredis` | default export Redis client service |
+| Templated Redis cache keys | `@hile/cache` | `defineCache` / `RedisCache` |
+| Request/response message abstraction | `@hile/message-modem` | `MessageModem` (abstract, implement post/exec) |
+| Parent-child process IPC | `@hile/message-ipc` | `MessageIpc` (abstract) |
+| Worker thread communication | `@hile/message-worker-thread` | `MessageWorkerThread` (abstract) |
+| WebSocket communication | `@hile/message-ws` | `MessageWs` (abstract) |
+| File-system message routing | `@hile/message-loader` | `MessageLoader` / `defineMessage` |
+| Microservice registry & discovery | `@hile/micro` | `Server` / `Client` / `Registry` / `Application` |
+| Dynamic config (ZK-like) | `@hile/micro-dynamic-configs` | `MicroDynamicConfigsServer` |
+| Business data pipeline (middleware chain) | `@hile/model` | `defineModel` / `loadModel` / `Pipeline` |
+| Scaffold new Hile project | `create-hile` | CLI `create-hile create <name>` |
+
+---
+
+## 2. @hile/core — Service Container
+
+### Define and load a service
 
 ```typescript
-// src/services/redis.service.ts — 依赖加载的服务
+// src/services/redis.service.ts — lazy-loaded service
 import { defineService, loadService } from '@hile/core';
 
 export default defineService('my-redis', async (shutdown) => {
   const client = new Redis(/* ... */);
   await client.connect();
-  
-  // 必须在创建外部资源后立即注册清理
+
+  // Register cleanup immediately after creating external resources
   shutdown(() => client.disconnect());
-  
+
   return client;
 });
 ```
 
 ```typescript
-// src/services/http.boot.ts — 自启动入口（由 CLI 扫描加载）
+// src/services/http.boot.ts — auto-start entry (scanned by CLI)
 import { defineService, loadService } from '@hile/core';
 import { Http } from '@hile/http';
-import httpService from './http.service.js'; // 按需加载其他服务
+import httpService from './http.service.js';
 
 export default defineService('my-http', async (shutdown) => {
   const http = new Http({ port: 3000 });
@@ -79,49 +81,49 @@ export default defineService('my-http', async (shutdown) => {
 });
 ```
 
-### 在服务内部获取其他服务
+### Access other services from within a service
 
 ```typescript
-// 不要在模块顶层 await loadService()
+// Never use loadService at the module top level
 export default defineService('worker', async (shutdown) => {
-  // 在服务函数内部加载
+  // Always call loadService inside the service function
   const ds = await loadService(typeormService);
   const redis = await loadService(redisService);
   // ...
 });
 ```
 
-### 生命周期速查
+### Lifecycle reference
 
-| 阶段 | 状态 | 说明 |
-|------|------|------|
-| 注册 | — | `defineService` 不执行，只是注册 |
-| 第一次 `loadService` | `init -> ready` | 执行工厂函数，返回结果，后续调用缓存 |
-| 启动失败 | `init -> stopping -> stopped` | 自动执行已注册的 shutdown，然后清除队列 |
-| `container.shutdown()` | 逆序 LIFO | 后启动的服务先关闭；循环清空直到队列为空 |
+| Phase | Status | Description |
+|-------|--------|-------------|
+| Registration | — | `defineService` only registers, does not execute |
+| First `loadService` | `init -> ready` | Runs factory function, caches result for subsequent calls |
+| Startup failure | `init -> stopping -> stopped` | Runs registered shutdown callbacks, then clears queue |
+| `container.shutdown()` | Reverse LIFO | Later-starting services shut down first; loops until queue is empty |
 
 ---
 
-## 三、@hile/http — HTTP API
+## 3. @hile/http — HTTP API
 
-### 定义控制器
+### Define a controller
 
 ```typescript
 // src/controllers/user.controller.ts
-// export default 一个 defineController 或数组
+// export default a single defineController or an array
 import { defineController } from '@hile/http';
 
-// 简单形式：method + handler
+// Simple form: method + handler
 export default defineController('GET', async (ctx) => {
   return { list: [] };
 });
 
-// 带中间件
+// With middleware
 export default defineController('POST', [authMiddleware], async (ctx) => {
   return { success: true };
 });
 
-// 带 Zod 校验
+// With Zod validation
 import { z, createControllerMetadata, defineController } from '@hile/http';
 
 export default defineController(
@@ -132,18 +134,18 @@ export default defineController(
     },
   }),
   async (ctx) => {
-    // ctx.request.body 已被 Zod 校验过
+    // ctx.request.body is already Zod-validated
     return { result: ctx.request.body.name };
   },
 );
 
-// 文件路径转换为路由：
+// File path to route mapping:
 //   src/controllers/user.controller.ts        → GET /user
 //   src/controllers/user/index.controller.ts  → GET /user
 //   src/controllers/user/[id].controller.ts   → GET /user/:id
 ```
 
-### 创建并启动 Http 服务（boot 中）
+### Create and start an HTTP service (in boot file)
 
 ```typescript
 // src/services/http.boot.ts
@@ -152,67 +154,67 @@ import { Http } from '@hile/http';
 
 export default defineService('http', async (shutdown) => {
   const http = new Http({ port: 3000 });
-  
+
   http.use(async (ctx, next) => {
     const start = Date.now();
     await next();
     console.log(`${ctx.method} ${ctx.url} ${Date.now() - start}ms`);
   });
-  
-  // 从目录加载所有 controller 文件
-  // 默认后缀 'controller'，路由冲突策略 error
+
+  // Load all controller files from directory
+  // Default suffix 'controller', conflict strategy 'error'
   await http.load('./src/controllers', { suffix: 'controller', defaultSuffix: '/index' });
-  
+
   const close = await http.listen();
   shutdown(() => close());
 });
 ```
 
-### 响应插件
+### Response plugins
 
 ```typescript
 import { defineResponsePlugin } from '@hile/http';
 
 defineResponsePlugin(async (ctx, result, next) => {
-  // 对所有响应结果进行后处理
+  // Post-process all response results
   const processed = result !== undefined ? { code: 0, data: result } : undefined;
   return next(processed);
 });
 ```
 
-### 路由冲突策略
+### Route conflict strategies
 
-`Loader` 支持三种冲突策略：
-- `'error'`（默认）—— 重复路由直接抛错
-- `'warn'` —— 打印警告，保留已注册的路由
-- `'override'` —— 注销旧路由，注册新路由
+`Loader` supports three conflict strategies:
+- `'error'` (default) — Throw on duplicate routes
+- `'warn'` — Log a warning, keep existing route
+- `'override'` — Unregister old route, register new one
 
 ---
 
-## 四、@hile/http-next — HTTP + Next.js 同端口
+## 4. @hile/http-next — HTTP + Next.js on the Same Port
 
-### 标准项目目录结构
+### Standard project directory structure
 
 ```
 project/
 ├── src/
-│   ├── app/               # Next.js App Router 页面
+│   ├── app/               # Next.js App Router pages
 │   │   ├── page.tsx
-│   │   └── ... 
-│   ├── controllers/       # API 控制器（默认前缀 /-）
+│   │   └── ...
+│   ├── controllers/       # API controllers (default prefix /-)
 │   │   └── user.controller.ts    →  GET /-/user
-│   ├── models/            # 业务逻辑（defineModel 唯一位置）
+│   ├── models/            # Business logic (defineModel only here)
 │   │   ├── user/
 │   │   │   └── user.model.ts
 │   │   └── ...
-│   └── services/          # 基础设施服务
-│       ├── http.boot.ts   # HttpNext 启动入口
+│   └── services/          # Infrastructure services
+│       ├── http.boot.ts   # HttpNext entry point
 │       └── ...
 ├── next.config.ts
 └── package.json
 ```
 
-### HttpNext boot 模板
+### HttpNext boot template
 
 ```typescript
 // src/services/http.boot.ts
@@ -222,40 +224,40 @@ import { HttpNext } from '@hile/http-next';
 export default defineService('http', async (shutdown) => {
   const httpNext = new HttpNext({
     port: 3000,
-    cwd: resolve(__dirname, '../..'),  // 重要：boot 在 services/ 下，多一层
+    cwd: resolve(__dirname, '../..'),  // Important: boot is in services/, one extra level
   });
-  
+
   const stop = await httpNext.start();
   shutdown(() => stop());
 });
 ```
 
-### 请求处理流程（静态 → API → Next）
+### Request processing order (static → API → Next)
 
 ```
 HTTP Request
-  → Koa 中间件链
-  → koa-static（`public/` 目录）
-  → @hile/http 路由（默认前缀 /-）
-  → Next.js 请求处理器（页面渲染）
+  → Koa middleware chain
+  → koa-static (`public/` directory)
+  → @hile/http routes (default prefix /-)
+  → Next.js request handler (page rendering)
 ```
 
-### Model 层规范（重要）
+### Model layer rules (important)
 
 ```typescript
 // src/models/user/user.model.ts
-// defineModel 只能在 src/models/ 下使用
+// defineModel can only be used under src/models/
 import { defineModel } from '@hile/model';
 
 export default defineModel(async (userId: string) => {
   return { id: userId, name: 'Alice' };
 });
 
-// src/app/user/page.tsx 中使用
+// src/app/user/page.tsx usage
 import { loadModel } from '@hile/model';
 import userModel from '@/models/user/user.model';
 
-// 只要 page.tsx 用了 loadModel，必须导出 dynamic
+// When page.tsx uses loadModel, it must export dynamic
 export const dynamic = 'force-dynamic';
 
 export default async function UserPage() {
@@ -266,9 +268,9 @@ export default async function UserPage() {
 
 ---
 
-## 五、@hile/typeorm — 数据库
+## 5. @hile/typeorm — Database
 
-### 接入方式
+### Setup
 
 ```json
 // package.json
@@ -279,9 +281,9 @@ export default async function UserPage() {
 }
 ```
 
-环境变量：`TYPEORM_TYPE` / `TYPEORM_HOST` / `TYPEORM_USERNAME` / `TYPEORM_PASSWORD` / `TYPEORM_DATABASE` / `TYPEORM_PORT` / `TYPEORM_ENTITIES` / `TYPEORM_SYNCHRONIZE`
+Environment variables: `TYPEORM_TYPE` / `TYPEORM_HOST` / `TYPEORM_USERNAME` / `TYPEORM_PASSWORD` / `TYPEORM_DATABASE` / `TYPEORM_PORT` / `TYPEORM_ENTITIES` / `TYPEORM_SYNCHRONIZE`
 
-### 在服务中使用
+### Usage inside a service
 
 ```typescript
 import { loadService } from '@hile/core';
@@ -290,29 +292,29 @@ import typeormService from '@hile/typeorm';
 const ds = await loadService(typeormService);
 ```
 
-### 事务与补偿回调
+### Transaction with compensating callbacks
 
 ```typescript
 import { transaction } from '@hile/typeorm';
 
 await transaction(ds, async (runner, rollback) => {
   const user = await runner.manager.save(User, { name: 'Alice' });
-  
-  // 注册补偿：事务失败时 LIFO 执行
+
+  // Register compensation: executed LIFO on transaction failure
   rollback(async () => {
-    // 例如：清理缓存，发送回滚通知等
+    // e.g., clear cache, send rollback notification
     await cache.del(`user:${user.id}`);
   });
-  
+
   await runner.manager.save(Log, { action: 'create_user', userId: user.id });
   return user;
 });
-// 成功 → commitTransaction；失败 → rollbackTransaction + 执行补偿队列
+// Success → commitTransaction; Failure → rollbackTransaction + run compensation queue
 ```
 
 ---
 
-## 六、@hile/ioredis — Redis
+## 6. @hile/ioredis — Redis
 
 ```json
 // package.json
@@ -323,7 +325,7 @@ await transaction(ds, async (runner, rollback) => {
 }
 ```
 
-环境变量：`REDIS_HOST` / `REDIS_PORT` / `REDIS_USERNAME` / `REDIS_PASSWORD` / `REDIS_DB`
+Environment variables: `REDIS_HOST` / `REDIS_PORT` / `REDIS_USERNAME` / `REDIS_PASSWORD` / `REDIS_DB`
 
 ```typescript
 import { loadService } from '@hile/core';
@@ -336,102 +338,102 @@ await redis.get('key');
 
 ---
 
-## 七、@hile/cache — 缓存键声明
+## 7. @hile/cache — Cache Key Declaration
 
 ```typescript
 import { defineCache, RedisCache } from '@hile/cache';
 
-// 声明带类型参数的缓存键
+// Declare a cache key with typed parameters
 const userCache = defineCache('user:{id:string}:{x:number}', async (params) => {
   // params.id: string, params.x: number
   const data = await fetchUser(params.id);
-  return new Cache(data).setExpire(60); // TTL 60秒
+  return new Cache(data).setExpire(60); // TTL 60 seconds
 });
 
-// 使用
+// Usage
 const cache = new RedisCache('my-prefix:');
 const { read, write, remove, has } = await cache.loadCache(userCache);
 
-await read({ id: 'abc', x: 42 });     // 读（未命中则自动写穿透）
-await write({ id: 'abc', x: 42 });     // 写
-await remove({ id: 'abc', x: 42 });    // 删
-await has({ id: 'abc', x: 42 });       // 是否存在
+await read({ id: 'abc', x: 42 });     // Read (cache-through on miss)
+await write({ id: 'abc', x: 42 });    // Write
+await remove({ id: 'abc', x: 42 });   // Delete
+await has({ id: 'abc', x: 42 });      // Check existence
 ```
 
 ---
 
-## 八、消息通信体系
+## 8. Message Communication Architecture
 
-### 架构层级
+### Layer hierarchy
 
 ```
-@hile/message-modem（抽象基类：请求/响应/中止/流）
-  ├── @hile/message-ipc（父子进程）
-  ├── @hile/message-worker-thread（Worker 线程）
-  └── @hile/message-ws（WebSocket）
-        └── @hile/message-loader（文件系统路由）
-              └── @hile/micro（服务发现）
+@hile/message-modem (abstract base: request/response/abort/stream)
+  ├── @hile/message-ipc (parent-child process)
+  ├── @hile/message-worker-thread (Worker threads)
+  └── @hile/message-ws (WebSocket)
+        └── @hile/message-loader (file-system routing)
+              └── @hile/micro (service discovery)
 ```
 
-### MessageModem — 实现自定义通信层
+### MessageModem — implement a custom transport
 
 ```typescript
 import { MessageModem, MessageTransferFormat } from '@hile/message-modem';
 
 class MyModem extends MessageModem {
   protected post(data: MessageTransferFormat): void {
-    // 如何发送数据到远端
+    // How to send data to the remote end
     transport.send(JSON.stringify(data));
   }
   protected async exec(data: any, signal?: AbortSignal): Promise<any> {
-    // 如何处理收到的请求；流式请求必须返回 AsyncIterable
+    // How to handle received requests; streaming must return AsyncIterable
     return processData(data);
   }
 }
 
 const modem = new MyModem();
-// 双向请求：返回 Promise<响应数据>
+// Bidirectional request: returns Promise<response>
 const res = await modem._send({ url: '/hello', data: 'world' });
-// 带超时和取消信号
+// With timeout and abort signal
 const res2 = await modem._send({ url: '/slow' }, { timeout: 5000, signal: abortSignal });
 
-modem._push({ url: '/log', data: 'info' });                       // 单向推送
-modem._push({ url: '/log', data: 'info' }, { timeout: 1000 });    // 带超时的推送
+modem._push({ url: '/log', data: 'info' });                    // One-way push
+modem._push({ url: '/log', data: 'info' }, { timeout: 1000 }); // Push with timeout
 
-const stream = modem._stream({ url: '/events' });                 // 流式读取（返回 Readable）
+const stream = modem._stream({ url: '/events' });              // Stream (returns Readable)
 for await (const chunk of stream) {
   console.log('chunk:', chunk);
 }
 ```
 
-### MessageLoader — 文件系统消息路由
+### MessageLoader — file-system message routing
 
 ```typescript
-// src/messages/ping.msg.ts —— 普通请求-响应
+// src/messages/ping.msg.ts —— normal request-response
 import { defineMessage } from '@hile/message-loader';
 export default defineMessage(async ({ params, data }) => {
   return { type: 'pong', timestamp: Date.now() };
 });
 
-// src/messages/events.msg.ts —— 流式响应（async function* 返回 AsyncIterable）
+// src/messages/events.msg.ts —— streaming response (async function* returns AsyncIterable)
 export default defineMessage(async function* ({ params, data }) {
   for (let i = 0; i < 10; i++) {
     await new Promise(r => setTimeout(r, 100));
-    yield { value: data.query, index: i };  // seq 由 MessageModem 自动生成
+    yield { value: data.query, index: i };  // seq is auto-generated by MessageModem
   }
 });
 
-// 路由映射：src/messages/ping.msg.ts → /ping, events.msg.ts → /events
+// Route mapping: src/messages/ping.msg.ts → /ping, events.msg.ts → /events
 
-// 加载并分发
+// Load and dispatch
 import { MessageLoader } from '@hile/message-loader';
 const loader = new MessageLoader({ suffix: 'msg', prefix: '/-' });
-const unload = await loader.load('./src/messages'); // 返回取消加载函数
+const unload = await loader.load('./src/messages'); // Returns an unload function
 
-// 普通调用
+// Normal call
 const result = await loader.dispatch('/-/ping', { /* data */ });
 
-// 流式调用：dispatch 返回 AsyncIterable
+// Streaming call: dispatch returns AsyncIterable
 const stream = await loader.dispatch('/-/events', { query: 'test' });
 for await (const chunk of stream) {
   console.log('chunk:', chunk);
@@ -440,40 +442,40 @@ for await (const chunk of stream) {
 
 ---
 
-## 九、@hile/micro — 微服务
+## 9. @hile/micro — Microservices
 
-### Registry（注册中心）
+### Registry
 
 ```typescript
 import { Registry } from '@hile/micro';
 const registry = new Registry();
-await registry.listen(9876);  // 启动 WebSocket 注册中心
+await registry.listen(9876);  // Start WebSocket registry
 ```
 
-### Application（服务提供者 + 消费者）
+### Application (service provider + consumer)
 
-Provider 侧推荐使用**文件系统路由**，将消息处理器放在 `*.msg.ts` 文件中，通过 `app.load()` 自动加载：
+The recommended approach on the provider side is **file-system routing**: place message handlers in `*.msg.ts` files and load them via `app.load()`:
 
 ```typescript
-// src/messages/hello.msg.ts —— 消息处理器文件
+// src/messages/hello.msg.ts —— message handler file
 import { defineMessage } from '@hile/message-loader';
 export default defineMessage(async ({ params, data }) => {
   return `hello ${data.name}`;
 });
-// 文件路径 → 路由：src/messages/hello.msg.ts → /hello
+// File path → route: src/messages/hello.msg.ts → /hello
 
-// src/messages/events.msg.ts —— 流式消息处理器
+// src/messages/events.msg.ts —— streaming message handler
 export default defineMessage(async function* ({ params, data }) {
   for (let i = 0; i < 10; i++) {
     await new Promise(r => setTimeout(r, 500));
-    yield { value: data.type, index: i };  // seq 由 MessageModem 自动生成
+    yield { value: data.type, index: i };  // seq is auto-generated by MessageModem
   }
 });
-// 文件路径 → 路由：src/messages/events.msg.ts → /events（与 app.stream 配对使用）
+// File path → route: src/messages/events.msg.ts → /events (paired with app.stream)
 ```
 
 ```typescript
-// src/services/app.boot.ts —— 启动入口
+// src/services/app.boot.ts —— entry point
 import { Application } from '@hile/micro';
 import { resolve } from 'node:path';
 
@@ -482,69 +484,69 @@ const app = new Application({
   registry: { host: '127.0.0.1', port: 9876 },
 });
 
-// 从文件系统加载所有消息处理器（推荐方式）
+// Load all message handlers from the filesystem (recommended)
 await app.load(resolve(__dirname, '../messages'));
 
-// 调用其他服务（consumer 侧）
+// Call another service (consumer side)
 const result = await app.call('other-service', '/hello', { name: 'world' });
 
-// 带超时和重试的调用（options 对象）
+// With timeout and retry options
 const result2 = await app.call('other-service', '/slow', { data: 1 }, {
-  timeout: 5000,    // 超时，默认继承 Application 的 requestTimeoutMs
-  retries: 0,       // 重试次数，默认 1
-  signal: abortSignal, // 可取消
+  timeout: 5000,       // Timeout, inherits Application's requestTimeoutMs by default
+  retries: 0,          // Retry count, default 1
+  signal: abortSignal, // Cancellable
 });
 
-// 流式调用：适用于大结果集或 SSE（返回 Node.js Readable stream，可用 for await...of）
+// Streaming: for large result sets or SSE (returns Node.js Readable stream, works with for await...of)
 const stream = await app.stream('other-service', '/events', { type: 'user-updates' });
 for await (const chunk of stream) {
   console.log('received:', chunk);
 }
-// stream 也支持 options：{ retries?, signal? }
+// stream also supports options: { retries?, signal? }
 const stream2 = await app.stream('other-service', '/events', { type: 'test' }, { retries: 2 });
 
-// Pub/Sub —— 跨服务事件广播
-// 同一 registry 下所有同 namespace 的服务实例都能收到订阅的事件
-// publish 不会等待 subscriber 处理完成，但返回对象可用于管理该事件
+// Pub/Sub — cross-service event broadcasting
+// All service instances under the same registry + namespace receive subscribed events
+// publish does not wait for subscribers to finish
 const event = await app.publish('order.created', { orderId: 1, amount: 99 });
 
-// event.update(data) —— 推送更新（同事件名，新数据）
+// event.update(data) — push an update (same event name, new data)
 await event.update({ orderId: 1, amount: 199 });
 
-// event.unpublish() —— 下线该事件，后续 subscriber 不再收到
+// event.unpublish() — retire the event; subsequent subscribers will no longer receive it
 await event.unpublish();
 
-// subscribe 监听事件，返回取消订阅函数
+// subscribe returns an unsubscribe function
 const unsubscribe = app.subscribe('order.created', (data) => {
   console.log('order created:', data.orderId, data.amount);
 });
-// 调用 unsubscribe() 取消订阅
+// Call unsubscribe() to stop listening
 unsubscribe();
 
 await app.listen(3001);
 ```
 
-如确需编程式注册，`app.register(path, fn)` 也可用（返回注销函数），但 `app.load()` 更利于目录组织与路由分离。
+If programmatic registration is needed, `app.register(path, fn)` is also available (returns an unsubscribe function), but `app.load()` is preferred for better directory organization and route separation.
 
-### 熔断与重试
+### Circuit breaker and retry
 
-`Application.call()` 和 `Application.stream()` 内置了：
-- **熔断器**：连续失败的节点在 30 秒冷却期内被排除
-- **自动重试**：默认 1 次重试，失败后尝试其他节点
-- **缓存降级**：Registry 不可用时，使用上一次成功的节点缓存
+`Application.call()` and `Application.stream()` have built-in:
+- **Circuit breaker**: Nodes that fail consecutively are excluded for a 30-second cooldown
+- **Auto retry**: 1 retry by default, tries other nodes on failure
+- **Cache degradation**: When the Registry is unavailable, uses the last successful node cache
 
 ---
 
-## 十、@hile/model — 业务管线
+## 10. @hile/model — Business Pipeline
 
 ```typescript
 import { defineModel, loadModel, Pipeline } from '@hile/model';
 import typeormService from '@hile/typeorm';
 import redisService from '@hile/ioredis';
 
-// 定义：含服务依赖 + 管线 + 主逻辑
+// Full form: services + pipelines + main
 export default defineModel({
-  services: [typeormService, redisService], // 自动 resolve
+  services: [typeormService, redisService], // Auto-resolved
   pipelines: [async (ctx, next) => {
     console.log('before:', ctx.args);
     await next();
@@ -556,10 +558,10 @@ export default defineModel({
   },
 });
 
-// 消费：每次 loadModel 都重新执行 main
+// Consumption: each loadModel re-executes main
 const result = await loadModel(userModel, { id: '1' });
 
-// 简写形式（无 services / pipelines）
+// Shorthand (no services / pipelines)
 export default defineModel(async (input: { id: string }) => {
   return { id: input.id };
 });
@@ -567,81 +569,81 @@ export default defineModel(async (input: { id: string }) => {
 
 ---
 
-## 十一、create-hile — 创建项目
+## 11. create-hile — Scaffolding
 
 ```bash
 npx create-hile create my-project
-# 选择模板：default / next / micro-http / micro / micro-http-next / monorepo
+# Choose a template: default / next / micro-http / micro / micro-http-next / monorepo
 cd my-project && pnpm install && pnpm run dev
 ```
 
-模板类型：
-- `default` —— 纯 HTTP（Koa + @hile/http）
-- `next` —— Next.js + @hile/http-next
-- `micro-http` —— 微服务 + HTTP（无 Next）
-- `micro` —— 纯微服务
-- `micro-http-next` —— Next.js + 微服务 + HTTP（全栈）
-- `monorepo` —— Lerna + pnpm workspace
+Templates:
+- `default` — Plain HTTP (Koa + @hile/http)
+- `next` — Next.js + @hile/http-next
+- `micro-http` — Microservice + HTTP (no Next)
+- `micro` — Pure microservice
+- `micro-http-next` — Next.js + microservice + HTTP (full-stack)
+- `monorepo` — Lerna + pnpm workspace
 
 ---
 
-## 十二、常见反模式（禁止）
+## 12. Common Anti-Patterns (Forbidden)
 
 ```typescript
-// ❌ 模块顶层 await loadService
+// ❌ Top-level await loadService
 import service from './service.js';
-const instance = await loadService(service); // 禁止
+const instance = await loadService(service); // Forbidden
 
-// ❌ boot 文件 export default 普通函数
-export default async () => { ... }; // 禁止：必须 defineService 返回值
+// ❌ Boot file exports a plain function
+export default async () => { ... }; // Forbidden: must return defineService result
 
-// ❌ 控制器同时写 ctx.body 和 return
+// ❌ Controller writes ctx.body AND returns
 export default defineController('GET', async (ctx) => {
-  ctx.body = { x: 1 }; // 禁止：只 return
+  ctx.body = { x: 1 }; // Forbidden: only return
   return { x: 1 };
 });
 
-// ❌ 控制器签名为 (ctx, next)
-export default defineController('GET', async (ctx, next) => { // 禁止
+// ❌ Controller signature is (ctx, next)
+export default defineController('GET', async (ctx, next) => { // Forbidden
   await next();
 });
 
-// ❌ boot 文件放在 src/services/ 外
-// src/index.boot.ts  →  禁止
+// ❌ Boot file outside src/services/
+// src/index.boot.ts  →  Forbidden
 
-// ❌ auto_load_packages 写文件路径
-{ "hile": { "auto_load_packages": ["./src/services/db.service.ts"] } }  // 禁止：必须是模块名
+// ❌ auto_load_packages uses file paths
+{ "hile": { "auto_load_packages": ["./src/services/db.service.ts"] } }  // Forbidden: must be module name
 
-// ❌ http-next 的 src/app/ 下用 loadService
-// 禁止：src/app/ 只允许 loadModel
+// ❌ Using loadService inside src/app/ (http-next)
+// Forbidden: src/app/ only allows loadModel
 
-// ❌ http-next 的 src/app/ 下定义 model
-// 禁止：defineModel 只在 src/models/
+// ❌ Defining model inside src/app/ (http-next)
+// Forbidden: defineModel only works in src/models/
 
-// ❌ 将基础设施放在 src/models/，业务逻辑放在 src/services/
+// ❌ Putting infrastructure in src/models/ or business logic in src/services/
 ```
 
 ---
 
-## 十三、快速参考：在什么文件里用什么 API
+## 13. Quick Reference: What API to Use in Which File
 
-| 文件 | 允许的导入 |
-|------|-----------|
+| File | Allowed imports |
+|------|----------------|
 | `src/services/*.boot.ts` | `defineService`, `loadService`, `loadModel` |
 | `src/services/*.service.ts` | `defineService`, `loadService`, `loadModel` |
-| `src/models/*.model.ts` | `defineModel`, `loadService`, `loadModel`（可组合其他模型） |
-| `src/controllers/*.controller.ts`（http-next） | `defineController`, `loadService`, `loadModel` |
-| `src/app/**/page.tsx`（http-next） | `loadModel`（仅配合 `src/models` 导出的 model） |
-| `src/app/**/layout.tsx`（http-next） | `loadModel` 可选（不强制 `force-dynamic`） |
+| `src/models/*.model.ts` | `defineModel`, `loadService`, `loadModel` (can compose other models) |
+| `src/controllers/*.controller.ts` (http-next) | `defineController`, `loadService`, `loadModel` |
+| `src/app/**/page.tsx` (http-next) | `loadModel` (only models from `src/models`) |
+| `src/app/**/layout.tsx` (http-next) | `loadModel` optional (no `force-dynamic` required) |
 
 ---
 
-## 十四、文件命名约定速查
+## 14. File Naming Conventions
 
-| 后缀 | 类型 | 加载方式 | 位置约束 |
-|------|------|---------|---------|
-| `*.boot.ts` / `*.boot.js` | 服务入口（自启动） | CLI 自动扫描 | `src/services/` |
-| `*.service.ts` / `*.service.js` | 服务（依赖加载） | `loadService` | `src/services/` |
-| `*.model.ts` / `*.model.js` | 业务模型 | `loadModel` | `src/models/` |
-| `*.controller.ts` / `*.controller.js` | HTTP 控制器 | `http.load()` 扫描 | 默认 `src/controllers/` |
-| `*.msg.ts` / `*.msg.js` | 消息处理器 | `loader.load()` 扫描 | 自定义（如 `src/messages/`） |
+| Suffix | Type | Loaded by | Location constraint |
+|--------|------|-----------|-------------------|
+| `*.boot.ts` / `*.boot.js` | Service entry (auto-start) | CLI auto-scan | `src/services/` |
+| `*.service.ts` / `*.service.js` | Service (lazy-loaded) | `loadService` | `src/services/` |
+| `*.model.ts` / `*.model.js` | Business model | `loadModel` | `src/models/` |
+| `*.controller.ts` / `*.controller.js` | HTTP controller | `http.load()` scan | Default `src/controllers/` |
+| `*.msg.ts` / `*.msg.js` | Message handler | `loader.load()` scan | Custom (e.g. `src/messages/`) |
