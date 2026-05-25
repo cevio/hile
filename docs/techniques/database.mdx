@@ -1,15 +1,609 @@
 ---
-title: 数据库（TypeORM）
-description: "将 DataSource 接入服务容器与事务辅助的使用思路"
+title: 数据库集成（TypeORM）
+description: "@hile/typeorm 的完整指南：DataSource 的创建、容器集成、环境变量配置与事务辅助函数"
 ---
 
-**`@hile/typeorm`** 把 **TypeORM `DataSource`** 注册为 Hile 服务，生命周期由容器管理（初始化、优雅关闭），并提供事务辅助（含失败时的 **LIFO 补偿** 回调）。
+import { Accordion, AccordionGroup } from '@mintlify/components';
 
-## 典型用法
+## @hile/typeorm 是什么？
 
-1. 安装：`pnpm add @hile/core @hile/typeorm`（通常与 **`@hile/cli`**、**`@hile/http`** 同用）。
-2. 在 **`package.json`** 中配置 **`hile.auto_load_packages`** 包含 **`@hile/typeorm`**（若包文档要求），或通过 boot 中 **`loadService`** 拉取。
-3. 用环境变量配置连接（`TYPEORM_*` 等），启动时用 **`--env-file`** 加载。
-4. 在控制器或其它服务中 **`loadService(typeormService)`** 取得 DataSource，再执行查询或事务。
+`@hile/typeorm` 是 Hile 框架的 TypeORM 集成包。它将 TypeORM 的 `DataSource`（数据源）注册为 Hile 容器服务，让容器自动管理数据库连接的初始化和优雅关闭。
 
-具体 env 键名、`defineService` 的 symbol key、事务 API 与注意事项见 [@hile/typeorm](/packages/typeorm)。
+它提供两种使用模式：
+
+1. **手动模式** —— 直接调用 `createDataSource()` 获取 DataSource
+2. **容器模式** —— 通过 `defineService` 注册为容器服务，由容器管理生命周期
+
+同时它还提供了事务辅助函数 `transaction()`，简化事务操作。
+
+## 安装
+
+```bash
+pnpm add @hile/typeorm
+```
+
+同时需要安装 peer 依赖：
+
+```bash
+pnpm add @hile/core typeorm reflect-metadata
+```
+
+以及对应的数据库驱动：
+
+```bash
+# MySQL / MariaDB
+pnpm add mysql mysql2
+
+# PostgreSQL
+pnpm add pg
+
+# SQLite
+pnpm add sqlite3
+
+# SQL Server
+pnpm add mssql
+```
+
+## 环境变量配置
+
+`@hile/typeorm` 默认从环境变量读取数据库连接配置。这是最简洁的配置方式，适合与 `.env` 文件配合使用。
+
+### 完整的环境变量列表
+
+| 变量名 | 说明 | 必填 | 示例 |
+|--------|------|------|------|
+| `TYPEORM_TYPE` | 数据库类型 | 是 | `mysql`、`postgres`、`sqlite` |
+| `TYPEORM_HOST` | 数据库主机 | 是 | `localhost`、`10.0.0.1` |
+| `TYPEORM_USERNAME` | 数据库用户名 | 是 | `root`、`app_user` |
+| `TYPEORM_PASSWORD` | 数据库密码 | 是 | `password123` |
+| `TYPEORM_DATABASE` | 数据库名称 | 是 | `my_app` |
+| `TYPEORM_PORT` | 数据库端口 | 否（有默认值） | `3306`、`5432` |
+| `TYPEORM_CHARSET` | 字符集 | 否 | `utf8mb4` |
+| `TYPEORM_ENTITY_PREFIX` | 表前缀 | 否 | `app_` |
+| `TYPEORM_ENTITIES` | 实体路径 | 是 | `dist/entities/**/*.js` |
+| `TYPEORM_SYNCHRONIZE` | 自动同步 | 否 | `true`（谨慎） |
+
+### .env 文件示例
+
+```bash
+# .env
+TYPEORM_TYPE=mysql
+TYPEORM_HOST=localhost
+TYPEORM_PORT=3306
+TYPEORM_USERNAME=root
+TYPEORM_PASSWORD=password123
+TYPEORM_DATABASE=my_app
+TYPEORM_ENTITIES=dist/entities/**/*.js
+TYPEORM_SYNCHRONIZE=false
+TYPEORM_CHARSET=utf8mb4
+```
+
+### TYPEORM_SYNCHRONIZE 说明
+
+`TYPEORM_SYNCHRONIZE` 控制 TypeORM 是否自动同步数据库结构：
+
+- 值为字符串 `"true"` 时，开启自动同步
+- 其他值（包括不设置）时，关闭自动同步
+
+```bash
+# 开启自动同步（开发环境方便）
+TYPEORM_SYNCHRONIZE=true
+
+# 关闭自动同步（生产环境）
+TYPEORM_SYNCHRONIZE=false
+```
+
+**生产环境强烈建议关闭 `synchronize`**，改为使用 migration 管理数据库结构变更。自动同步可能导致意外删改数据。
+
+### 日志配置
+
+```typescript
+// @hile/typeorm 内部：
+logging: process.env.NODE_ENV === 'development',
+```
+
+在开发模式下会自动开启 SQL 日志，生产模式关闭。你也可以通过标准的 TypeORM `DataSourceOptions` 覆盖这个设置。
+
+## createDataSource —— 手动模式
+
+如果你不想使用容器，可以直接调用 `createDataSource` 创建 DataSource：
+
+```typescript
+import { createDataSource } from '@hile/typeorm';
+
+// 从环境变量读取配置
+const dataSource = await createDataSource();
+// → 返回已初始化（已连接）的 DataSource
+
+// 使用完毕后手动关闭
+await dataSource.destroy();
+```
+
+### 传入自定义配置
+
+你也可以传入自己的配置，覆盖环境变量中的值：
+
+```typescript
+import { createDataSource } from '@hile/typeorm';
+import { User } from './entities/User';
+import { Post } from './entities/Post';
+
+const dataSource = await createDataSource({
+  type: 'mysql',
+  host: process.env.DB_HOST || 'localhost',
+  port: 3306,
+  username: 'root',
+  password: 'secret',
+  database: 'my_app',
+  entities: [User, Post],  // 传入实体类，而不是路径字符串
+  synchronize: true,
+  logging: true,
+});
+```
+
+### 手动模式的适用场景
+
+- **不需要容器管理的简单脚本** —— 比如迁移脚本、定时任务脚本
+- **测试环境** —— 每个测试用例需要独立的数据库连接
+- **已有自己生命周期管理的应用** —— 不需要 Hile 容器介入
+
+## 容器模式（default export）
+
+容器模式是推荐的使用方式。`@hile/typeorm` 的 `default export` 是一个已注册的服务：
+
+```typescript
+// @hile/typeorm 包内部
+import pkg from '../package.json';
+import { defineService } from '@hile/core';
+
+export default defineService(Symbol.for(pkg.name), async (shutdown) => {
+  const connection = await createDataSource();
+  shutdown(() => connection.destroy()); // 容器关闭时自动断开
+  return connection;
+});
+```
+
+### 自动加载
+
+在 `package.json` 中配置自动加载：
+
+```json
+{
+  "hile": {
+    "auto_load_packages": ["@hile/typeorm"]
+  }
+}
+```
+
+CLI 启动时会自动 `import('@hile/typeorm')`，读取默认导出，调用 `loadService` 初始化数据库连接。
+
+### 手动加载
+
+你也可以在自己的 boot 文件中手动加载：
+
+```typescript
+// src/services/index.boot.ts
+import { loadService } from '@hile/core';
+import typeormService from '@hile/typeorm';
+
+export default async function boot() {
+  // 手动加载数据库服务
+  const dataSource = await loadService(typeormService);
+  console.log('数据库连接已建立');
+
+  // 也可以通过 loadService 不接收返回值，只需触发初始化
+  await loadService(typeormService);
+}
+```
+
+### 获取 DataSource
+
+在其他服务或控制器中获取数据库连接：
+
+```typescript
+import { loadService } from '@hile/core';
+import typeormService from '@hile/typeorm';
+import { DataSource } from 'typeorm';
+
+// 在服务工厂函数中
+const myService = defineService('my-service', async (shutdown) => {
+  // 获取 DataSource
+  const dataSource: DataSource = await loadService(typeormService);
+
+  // 执行查询
+  const users = await dataSource.query('SELECT * FROM users');
+  const userRepository = dataSource.getRepository(User);
+
+  shutdown(() => {
+    // 清理逻辑（DataSrouce 的关闭由 @hile/typeorm 管理）
+  });
+
+  return { dataSource, users };
+});
+```
+
+```typescript
+// 在控制器中
+import { loadService } from '@hile/core';
+import typeormService from '@hile/typeorm';
+import { defineController } from '@hile/http';
+
+export default defineController('GET', async (ctx) => {
+  const dataSource = await loadService(typeormService);
+  const users = await dataSource.getRepository(User).find();
+  return users;
+});
+```
+
+### 容器管理的优势
+
+1. **自动初始化** —— 启动时自动创建连接
+2. **依赖追踪** —— 其他服务可以声明依赖数据库服务
+3. **优雅关闭** —— 关闭时自动断开连接
+4. **单例** —— 全局共享一个 DataSource 实例
+
+## 事务辅助函数
+
+`@hile/typeorm` 提供了一个事务辅助函数 `transaction()`，它比 TypeORM 原生的 `QueryRunner` 更易用。
+
+### 基本用法
+
+```typescript
+import { transaction } from '@hile/typeorm';
+import { DataSource } from 'typeorm';
+
+const result = await transaction(dataSource, async (runner, rollback) => {
+  // runner 是 QueryRunner 实例
+  // 在事务中执行操作
+  await runner.query('INSERT INTO users (name) VALUES (?)', ['Alice']);
+  await runner.query('INSERT INTO logs (action) VALUES (?)', ['create_user']);
+
+  // 返回结果
+  return { success: true };
+});
+
+// 事务自动提交，返回结果
+console.log(result); // { success: true }
+```
+
+### 失败时自动回滚
+
+如果回调函数抛出异常，事务会自动回滚：
+
+```typescript
+import { transaction } from '@hile/typeorm';
+
+try {
+  await transaction(dataSource, async (runner) => {
+    await runner.query('INSERT INTO users (name) VALUES (?)', ['Alice']);
+    throw new Error('出错了！');
+    // 前面的 INSERT 会被自动回滚
+  });
+} catch (e) {
+  console.log('事务已回滚');
+}
+```
+
+### 失败补偿回调（rollback）
+
+`transaction` 的第三个特性是失败补偿：你可以在执行过程中注册"如果事务失败，需要额外做的事情"。这些补偿回调在回滚之后按 LIFO 顺序执行。
+
+```typescript
+import { transaction } from '@hile/typeorm';
+
+const result = await transaction(dataSource, async (runner, rollback) => {
+  // 1. 创建用户
+  await runner.query('INSERT INTO users (name) VALUES (?)', ['Alice']);
+
+  // 注册回滚补偿：如果后续失败，需要清理缓存
+  rollback(() => {
+    console.log('清除用户缓存');
+    cache.del('user:alice');
+  });
+
+  // 2. 发送通知
+  await runner.query('INSERT INTO notifications (user_id, message) VALUES (?, ?)', [1, 'Welcome']);
+
+  // 注册回滚补偿：如果后续失败，需要删除通知
+  rollback(() => {
+    console.log('删除通知');
+  });
+
+  // 3. 一些可能失败的操作
+  if (someCondition) {
+    throw new Error('出错了！');
+    // 事务回滚，然后按 LIFO 执行补偿：
+    // 1. 删除通知
+    // 2. 清除用户缓存
+  }
+
+  return 'success';
+});
+```
+
+### transaction 函数的完整签名
+
+```typescript
+async function transaction<T>(
+  datasource: DataSource,                              // TypeORM DataSource
+  callback: (runner: QueryRunner, rollback: (fn: () => unknown | Promise<unknown>) => number) => Promise<T>
+): Promise<T>
+```
+
+| 参数 | 说明 |
+|------|------|
+| `datasource` | TypeORM DataSource 实例 |
+| `callback` | 事务回调，接收 `runner`(QueryRunner) 和 `rollback`(注册补偿函数) |
+| `runner` | QueryRunner，用于在事务中执行查询 |
+| `rollback(fn)` | 注册补偿回调，返回当前补偿数组长度 |
+
+### 补偿回调的执行顺序
+
+补偿回调按 LIFO 执行，与容器的 shutdown 一致：
+
+```typescript
+await transaction(dataSource, async (runner, rollback) => {
+  rollback(() => console.log('补偿 1'));
+  rollback(() => console.log('补偿 2'));
+  rollback(() => console.log('补偿 3'));
+  throw new Error('触发回滚');
+});
+// 输出：
+// 补偿 3
+// 补偿 2
+// 补偿 1
+```
+
+## Entity 定义
+
+使用标准的 TypeORM entity 定义：
+
+```typescript
+// src/entities/User.ts
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+
+@Entity('users')
+export class User {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column({ length: 100 })
+  name: string;
+
+  @Column({ unique: true })
+  email: string;
+
+  @Column({ default: true })
+  isActive: boolean;
+
+  @CreateDateColumn()
+  createdAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
+}
+```
+
+```typescript
+// src/entities/Post.ts
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn } from 'typeorm';
+import { User } from './User';
+
+@Entity('posts')
+export class Post {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  title: string;
+
+  @Column('text')
+  content: string;
+
+  @ManyToOne(() => User)
+  @JoinColumn({ name: 'user_id' })
+  author: User;
+
+  @Column()
+  userId: number;
+}
+```
+
+### 实体路径配置
+
+在 `.env` 中指定实体路径：
+
+```bash
+# 生产环境（编译后）
+TYPEORM_ENTITIES=dist/entities/**/*.js
+
+# 开发环境（编译前，如果使用 ts-node）
+TYPEORM_ENTITIES=src/entities/**/*.ts
+```
+
+或者在 `createDataSource` 中传入实体类：
+
+```typescript
+const dataSource = await createDataSource({
+  type: 'mysql',
+  entities: [User, Post],  // 直接传入类引用
+  // ...
+});
+```
+
+## 完整示例
+
+### 项目结构
+
+```
+my-app/
+├── .env
+├── package.json
+├── src/
+│   ├── entities/
+│   │   ├── User.ts
+│   │   └── Post.ts
+│   ├── services/
+│   │   └── index.boot.ts
+│   └── controllers/
+│       └── users.controller.ts
+```
+
+### .env 文件
+
+```bash
+TYPEORM_TYPE=mysql
+TYPEORM_HOST=localhost
+TYPEORM_PORT=3306
+TYPEORM_USERNAME=root
+TYPEORM_PASSWORD=password123
+TYPEORM_DATABASE=my_app
+TYPEORM_ENTITIES=dist/entities/**/*.js
+TYPEORM_SYNCHRONIZE=false
+```
+
+### package.json
+
+```json
+{
+  "name": "my-app",
+  "hile": {
+    "auto_load_packages": ["@hile/typeorm"]
+  }
+}
+```
+
+### 实体定义
+
+```typescript
+// src/entities/User.ts
+import { Entity, PrimaryGeneratedColumn, Column } from 'typeorm';
+
+@Entity('users')
+export class User {
+  @PrimaryGeneratedColumn()
+  id: number;
+
+  @Column()
+  name: string;
+
+  @Column()
+  email: string;
+}
+```
+
+### 控制器
+
+```typescript
+// src/controllers/users.controller.ts
+import { defineController, createControllerMetadata } from '@hile/http';
+import { loadService } from '@hile/core';
+import typeormService from '@hile/typeorm';
+import { transaction } from '@hile/typeorm';
+import { z } from 'zod';
+import { User } from '../entities/User';
+
+// GET /-/users — 获取用户列表
+const listMeta = createControllerMetadata({
+  method: 'GET',
+  schema: {
+    query: z.object({
+      page: z.coerce.number().default(1),
+      limit: z.coerce.number().default(20),
+    }),
+  },
+});
+
+export default defineController(listMeta, async (ctx) => {
+  const dataSource = await loadService(typeormService);
+  const userRepo = dataSource.getRepository(User);
+
+  const [users, total] = await userRepo.findAndCount({
+    skip: (Number(ctx.query.page) - 1) * Number(ctx.query.limit),
+    take: Number(ctx.query.limit),
+  });
+
+  return { users, total, page: Number(ctx.query.page) };
+});
+```
+
+```typescript
+// src/controllers/users/index.controller.ts
+import { defineController, createControllerMetadata } from '@hile/http';
+import { loadService } from '@hile/core';
+import typeormService from '@hile/typeorm';
+import { transaction } from '@hile/typeorm';
+import { z } from 'zod';
+import { User } from '../../entities/User';
+
+const createMeta = createControllerMetadata({
+  method: 'POST',
+  schema: {
+    body: z.object({
+      name: z.string().min(1),
+      email: z.string().email(),
+    }),
+  },
+});
+
+export default [
+  // POST /-/users — 创建用户
+  defineController(createMeta, async (ctx) => {
+    const dataSource = await loadService(typeormService);
+    const body = ctx.request.body;
+
+    const result = await transaction(dataSource, async (runner, rollback) => {
+      // 在事务中创建用户
+      await runner.query(
+        'INSERT INTO users (name, email) VALUES (?, ?)',
+        [body.name, body.email]
+      );
+
+      // 如果失败，不做额外补偿
+      return { created: true };
+    });
+
+    return result;
+  }),
+];
+```
+
+### 启动
+
+```bash
+# 开发
+hile start --dev -e .env
+
+# 生产（需要先编译）
+tsc
+hile start -e .env
+```
+
+## 常见问题
+
+<AccordionGroup>
+  <Accordion title="createDataSource 和 default export 有什么区别？">
+    `createDataSource` 是手动模式，直接创建并返回 DataSource，需要你自己管理生命周期。`default export` 是一个 `defineService(...)` 的返回值，可以交给容器管理生命周期。推荐在应用中使用 default export 模式。
+  </Accordion>
+  <Accordion title="自动加载 @hile/typeorm 时，它何时连接数据库？">
+    当 CLI 启动时扫描到 `auto_load_packages` 中的 `@hile/typeorm`，会立即 `loadService`，此时执行工厂函数，连接数据库。所以数据库连接在应用启动阶段就已经建立。
+  </Accordion>
+  <Accordion title="如何在多个数据库之间切换？">
+    可以通过环境变量或创建多个 DataSource 实例实现。如果需要多个数据库，建议分别定义不同的 `defineService`：
+    ```typescript
+    const primaryDb = defineService('db-primary', async (shutdown) => {
+      const conn = await createDataSource({ type: 'mysql', database: 'app1' });
+      shutdown(() => conn.destroy());
+      return conn;
+    });
+    const secondaryDb = defineService('db-secondary', async (shutdown) => {
+      const conn = await createDataSource({ type: 'mysql', database: 'app2' });
+      shutdown(() => conn.destroy());
+      return conn;
+    });
+    ```
+  </Accordion>
+  <Accordion title="transaction 中的 runner 和 rollback 是否支持嵌套事务？">
+    不支持嵌套事务。`transaction` 函数创建一个 QueryRunner 并开始一个事务，不支持在回调中再开启子事务。如果需要复杂的嵌套事务逻辑，建议使用 TypeORM 原生的 QueryRunner 和事务 API。
+  </Accordion>
+</AccordionGroup>

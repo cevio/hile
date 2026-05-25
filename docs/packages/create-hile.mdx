@@ -1,92 +1,487 @@
 ---
 title: "create-hile"
-description: "一键从内置模板创建 Hile 项目的脚手架 CLI（含默认、Next.js、Micro 等）"
+description: "Hile 项目脚手架 CLI：交互式模板选择、自动复制、点文件重命名、可选依赖安装、快速启动项目"
 ---
 
-## 概述
-
-`create-hile` 是一个项目脚手架 CLI 工具。创建时**交互选择内置模板**，将模板目录完整复制到目标路径，并把 `package.json` 的 `name` 改为项目名。部分模板在仓库内用 **`_env`、`_env.prod`、`_gitignore`** 命名（避免点文件在发布链路中被忽略）；复制到目标目录后会**自动重命名**为 **`.env`、`.env.prod`、`.gitignore`**。
-
----
-
-## 使用方式
-
-### 方式一：npx（推荐）
-
-无需安装，直接运行：
+## 安装
 
 ```bash
+# 推荐：使用 npx 直接运行（无需安装）
 npx create-hile create my-app
-```
 
-### 方式二：全局安装
-
-```bash
+# 或全局安装
 npm i -g create-hile
 create-hile create my-app
 ```
 
 ---
 
-## 创建流程
+## 核心概念
 
-<Steps>
-  <Step title="运行命令">
-    ```bash
-    npx create-hile create my-app
-    ```
+### 什么是 create-hile？
 
-    脚手架会执行以下操作：
+`create-hile` 是一个**项目脚手架 CLI 工具**。它的作用是从内置模板快速创建 Hile 项目，让你无需从零开始配置项目结构。
 
-    1. 检查 `my-app` 目录是否已存在（如存在则报错）
-    2. 交互选择**内置模板**
-    3. 创建目录并从所选模板复制所有文件到目标目录
-    4. 若模板中存在 `_env` / `_env.prod` / `_gitignore`，则重命名为 `.env` / `.env.prod` / `.gitignore`
-    5. 将 `package.json` 的 `name` 字段改为 `my-app`
-    6. 可选：是否立即安装依赖（支持 pnpm / yarn / npm）
-    7. 输出后续操作提示
-  </Step>
-  <Step title="安装依赖">
-    如果上一步未安装依赖：
-    ```bash
-    cd my-app
-    pnpm install
-    ```
-  </Step>
-  <Step title="启动开发">
-    ```bash
-    pnpm run dev
-    ```
-  </Step>
-</Steps>
+当你运行 `create-hile create my-app` 时，它会：
+
+1. 让你交互选择一个内置模板
+2. 将模板文件完整复制到 `my-app/` 目录
+3. 自动处理一些模板文件的特殊命名（如 `_env` → `.env`）
+4. 将 `package.json` 的 `name` 改为项目名
+5. 可选：自动安装依赖
+
+### 为什么用脚手架而不是手动创建？
+
+- **节省时间** - 从零配置 webpack/tsconfig/package.json 等需要大量重复工作
+- **最佳实践** - 模板内置了推荐的目录结构、配置和依赖
+- **一致性** - 团队所有成员使用相同模板，项目结构保持一致
+- **减少错误** - 避免手动配置时的遗漏或错误
 
 ---
 
-## 内置模板
+## 快速开始
 
-| 目录名 | 说明 |
-|--------|------|
-| `default` | 默认 Hile + HTTP，无 Next.js |
-| `next` | Next.js + `@hile/http-next` 全栈 |
-| `micro-http` | `@hile/micro` + HTTP（与 Registry 等集成） |
-| `micro` | 独立 Micro 服务骨架 |
-| `micro-http-next` | Next.js + Micro + HTTP 组合 |
+### 创建默认项目
+
+```bash
+npx create-hile create my-app
+```
+
+执行过程：
+
+```
+? 请选择模板 (Use arrow keys)
+❯ 默认模板
+  Next.js 模板
+  Micro + HTTP 模板
+  Micro 独立服务模板
+  Next.js + Micro + HTTP 模板
+  Monorepo 模板（Lerna + pnpm workspace）
+
+? 是否安装依赖 (Y/n) › 是/否
+✔ 正在创建项目...
+✔ 项目创建成功
+
+请在 my-app 目录下运行以下命令：
+
+  $ cd my-app
+  $ pnpm run dev
+```
+
+### 跳过依赖安装
+
+```bash
+npx create-hile create my-app --skip-install
+```
+
+使用 `--skip-install` 会跳过依赖安装询问，直接创建项目：
+
+```
+? 请选择模板 (Use arrow keys)
+❯ 默认模板
+  ...
+
+✔ 项目创建成功
+
+请在 my-app 目录下运行以下命令：
+
+  $ cd my-app
+  $ pnpm install
+  $ pnpm run dev
+```
 
 ---
 
 ## CLI 命令参考
 
+### create-hile create <project-name>
+
 ```bash
-create-hile create <project-name>
+create-hile create <project-name> [options]
 ```
+
+#### 参数
 
 | 参数 | 说明 |
-|------|------|
-| `project-name` | 项目名称，也是目标目录名和 `package.json` 的 `name` |
+|----------|------|
+| `project-name` | 项目名称。将作为目标目录名和 `package.json` 的 `name` 字段值 |
+
+#### 选项
+
+| 选项 | 说明 |
+|--------|------|
+| `--skip-install` | 跳过依赖安装步骤。创建项目后不会询问是否安装依赖 |
+
+<Warning>
+如果目标目录已存在，命令会立即抛出错误 `目录 xxx 已存在` 并终止。
+</Warning>
+
+#### 其他命令
 
 ```bash
-create-hile -V    # 查看版本
-create-hile -h    # 查看帮助
+create-hile -V    # 查看版本号
+create-hile -h    # 查看帮助信息
 ```
 
-<Warning>如果目标目录已存在，命令会报错 `目录 xxx 已存在`。</Warning>
+---
+
+## 创建流程详解
+
+```
+create-hile create my-app
+    │
+    ├── 1. 检查目标目录
+    │      ├── my-app/ 不存在 → 继续
+    │      └── my-app/ 已存在 → 抛出错误
+    │
+    ├── 2. 交互选择模板
+    │      使用 Enquirer 的 select prompt
+    │
+    ├── 3. 询问是否安装依赖
+    │      ├── --skip-install 跳过
+    │      └── 否则询问 Y/n
+    │
+    ├── 4. 复制模板文件
+    │      ├── ensureDir(targetDir)
+    │      ├── copy(templateDir → targetDir)
+    │      └── promoteUnderscoreDotfiles()
+    │
+    ├── 5. 修改 package.json
+    │      将 name 字段改为项目名
+    │
+    ├── 6. 安装依赖（如果选择安装）
+    │      ├── 检测可用包管理器：pnpm > yarn > npm
+    │      └── 执行 install 命令
+    │
+    └── 7. 输出成功提示
+```
+
+### 步骤 1：目录检查
+
+```typescript
+if (existsSync(targetDir)) {
+  throw new Error(`目录 ${projectName} 已存在`);
+}
+```
+
+如果目标目录已存在，直接抛出错误，防止覆盖已有项目。
+
+### 步骤 2：模板选择
+
+使用 `enquirer` 的 select prompt 交互选择模板：
+
+```typescript
+const { template } = await Enquirer.prompt<{ template: string }>({
+  type: 'select',
+  name: 'template',
+  message: '请选择模板',
+  choices: [
+    { name: 'default',       message: '默认模板' },
+    { name: 'next',          message: 'Next.js 模板' },
+    { name: 'micro-http',    message: 'Micro + HTTP 模板' },
+    { name: 'micro',         message: 'Micro 独立服务模板' },
+    { name: 'micro-http-next', message: 'Next.js + Micro + HTTP 模板' },
+    { name: 'monorepo',      message: 'Monorepo 模板（Lerna + pnpm workspace）' },
+  ],
+});
+```
+
+### 步骤 3：依赖安装询问
+
+除非指定了 `--skip-install`，否则会询问是否安装依赖：
+
+```typescript
+const { install } = await Enquirer.prompt<{ install: boolean }>({
+  type: 'confirm',
+  name: 'install',
+  message: '是否安装依赖',
+});
+```
+
+### 步骤 4：复制模板
+
+```typescript
+await ensureDir(targetDir);        // 创建目标目录（含父目录）
+await copy(template, targetDir);   // 复制整个模板目录
+promoteUnderscoreDotfiles(targetDir); // 重命名点文件
+```
+
+### 步骤 5：重命名点文件 (promoteUnderscoreDotfiles)
+
+模板仓库中，点文件（如 `.env`）会被 npm publish 忽略。为了解决这个问题，模板中使用下划线前缀命名：
+
+| 模板文件名 | 目标文件名 | 用途 |
+|-----------------|---------------|---------|
+| `_env` | `.env` | 环境变量文件 |
+| `_env.prod` | `.env.prod` | 生产环境变量 |
+| `_gitignore` | `.gitignore` | Git 忽略规则 |
+
+```typescript
+function promoteUnderscoreDotfiles(dir: string) {
+  const renames: [string, string][] = [
+    ['_env', '.env'],
+    ['_env.prod', '.env.prod'],
+    ['_gitignore', '.gitignore'],
+  ];
+  for (const [from, to] of renames) {
+    const src = resolve(dir, from);
+    const dest = resolve(dir, to);
+    if (existsSync(src)) {
+      renameSync(src, dest);  // 重命名
+    }
+  }
+}
+```
+
+### 步骤 6：修改 package.json
+
+复制完成后，读取 `package.json`，将 `name` 字段改为项目名：
+
+```typescript
+const packageJson = resolve(targetDir, 'package.json');
+const packageJsonContent = readFileSync(packageJson, 'utf-8');
+const packageJsonData = JSON.parse(packageJsonContent);
+packageJsonData.name = projectName;  // 改为用户指定的项目名
+writeFileSync(packageJson, JSON.stringify(packageJsonData, null, 2), 'utf-8');
+```
+
+### 步骤 7：安装依赖
+
+如果选择安装依赖，按优先级检测可用包管理器：
+
+```
+1. pnpm（优先）
+2. yarn（备选）
+3. npm（兜底）
+```
+
+```typescript
+const [pnpmExists, yarnExists, npmExists] = await Promise.all([
+  commandExists('pnpm'),
+  commandExists('yarn'),
+  commandExists('npm'),
+]);
+
+const command = pnpmExists ? 'pnpm' : yarnExists ? 'yarn' : npmExists ? 'npm' : null;
+
+if (!command) {
+  return spinner.fail('未安装 pnpm、yarn 或 npm');
+}
+
+const result = await runCommand(command, ['install'], targetDir);
+```
+
+依赖安装使用 `spawn` 执行，stdio 设为 `'ignore'`（不输出安装过程到终端）。
+
+---
+
+## 内置模板详解
+
+### 模板列表
+
+| 名称 | 目录名 | 说明 | 适用场景 |
+|------|-----------|------|---------|
+| 默认模板 | `default` | 基础 Hile + HTTP 项目，无 Next.js | 纯后端 API 服务 |
+| Next.js 模板 | `next` | Next.js + `@hile/http-next` 全栈项目 | 全栈 Web 应用 |
+| Micro + HTTP 模板 | `micro-http` | `@hile/micro` + HTTP，与 Registry 集成 | 微服务 HTTP 网关 |
+| Micro 独立服务模板 | `micro` | 独立的 Micro 服务骨架 | 纯微服务节点 |
+| Next.js + Micro + HTTP | `micro-http-next` | Next.js + Micro + HTTP 组合 | 全栈 + 微服务 |
+| Monorepo 模板 | `monorepo` | Lerna + pnpm workspace 多包仓库 | 大型项目多包管理 |
+
+### 如何选择？
+
+```
+你要做什么？
+├── 纯后端 API → 默认模板
+├── 全栈应用
+│   ├── 单一服务 → Next.js 模板
+│   └── 微服务架构 → Next.js + Micro + HTTP 模板
+├── 微服务
+│   ├── 带 HTTP 网关 → Micro + HTTP 模板
+│   └── 纯消息服务 → Micro 独立服务模板
+└── 大型多包项目 → Monorepo 模板
+```
+
+---
+
+## 架构与实现
+
+### 函数签名
+
+```typescript
+async function CreateHileHttpNextProject(
+  projectName: string,
+  options: { skipInstall: boolean }
+): Promise<void>
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+|----------|------|------|------|
+| `projectName` | `string` | 是 | 项目名称，也是目标目录名 |
+| `options.skipInstall` | `boolean` | 是 | 是否跳过依赖安装 |
+
+### 内部辅助函数
+
+#### promoteUnderscoreDotfiles(dir)
+
+将模板中的下划线前缀文件重命名为点文件。
+
+```typescript
+function promoteUnderscoreDotfiles(dir: string): void
+```
+
+| 参数 | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| `dir` | `string` | 是 | 目标目录路径 |
+
+#### commandExists(command)
+
+检测系统中是否存在某个命令。
+
+```typescript
+function commandExists(command: string): Promise<boolean>
+```
+
+内部使用 `which` 包检查。
+
+#### runCommand(command, args, cwd)
+
+在指定目录运行命令。
+
+```typescript
+function runCommand(command: string, args: string[], cwd: string): Promise<boolean>
+```
+
+| 返回值 | 说明 |
+|------------|------|
+| `true` | 命令执行成功（exit code === 0） |
+| `false` | 命令执行失败（exit code !== 0） |
+
+---
+
+## 最佳实践
+
+### 1. 使用 npx 而非全局安装
+
+```bash
+# ✅ 推荐：始终使用最新版本
+npx create-hile create my-app
+
+# ⚠️ 也可以，但需要手动更新
+npm i -g create-hile
+create-hile create my-app
+```
+
+### 2. 选择模板时的考量
+
+```bash
+# 小项目快速启动 → 默认模板
+npx create-hile create quick-api
+
+# 全栈项目 → Next.js 模板
+npx create-hile create my-web-app
+
+# 微服务项目 → Micro + HTTP 模板
+npx create-hile create order-service
+```
+
+### 3. 跳过安装以节省时间
+
+如果你计划手动修改 package.json 或使用不同的包管理器，可以跳过安装：
+
+```bash
+npx create-hile create my-app --skip-install
+cd my-app
+# 修改 package.json 后
+pnpm install
+```
+
+### 4. 在 CI/CD 中使用
+
+在 CI 环境中，可以配合 `--skip-install` 使用：
+
+```bash
+npx create-hile create my-app --skip-install
+cd my-app
+# CI 会自己处理依赖安装
+```
+
+### 5. 自定义模板位置
+
+如果你从模板目录中复制模板并修改，模板文件位于 `<create-hile>/templates/`。但注意，如果你全局安装了 `create-hile`，模板目录在全局 node_modules 中。
+
+---
+
+## 常见错误排查
+
+### "目录 xxx 已存在"
+
+**错误信息**：
+```
+Error: 目录 my-app 已存在
+```
+
+**原因**：当前目录下已有同名目录。
+
+**解决**：
+```bash
+# 删除已存在的目录
+rm -rf my-app
+
+# 或使用不同的项目名
+npx create-hile create my-app-v2
+```
+
+### "未安装 pnpm、yarn 或 npm"
+
+**错误信息**：
+```
+✖ 未安装 pnpm、yarn 或 npm
+```
+
+**原因**：系统中没有安装任何 Node.js 包管理器。
+
+**解决**：
+```bash
+# 安装 pnpm
+npm i -g pnpm
+
+# 或安装 yarn
+npm i -g yarn
+```
+
+### "安装依赖失败，请手动安装"
+
+**错误信息**：
+```
+✖ 安装依赖失败，请手动安装！
+```
+
+**原因**：依赖安装过程中出错（如网络问题、版本冲突）。
+
+**解决**：
+```bash
+cd my-app
+# 手动安装依赖
+pnpm install
+```
+
+### "未选择模板"
+
+**错误信息**：
+```
+Error: 未选择模板
+```
+
+**原因**：在模板选择界面直接退出（如按了 Ctrl+C）。
+
+**解决**：重新运行命令并选择一个模板。
+
+---
+
+## 相关包
+
+- `enquirer` — 交互式命令行提示
+- `fs-extra` — 文件操作增强（`copy`, `ensureDir`）
+- `ora` — 终端加载动画（spinner）
+- `which` — 查找系统命令路径

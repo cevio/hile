@@ -11,27 +11,32 @@
   "navigation": {
     "tabs": [
       {
-        "tab": "文档",
+        "tab": "指南",
         "groups": [
           {
             "group": "概述",
             "pages": ["introduction", "architecture"]
           },
           {
-            "group": "第一步",
+            "group": "快速开始",
             "pages": ["quickstart"]
           },
           {
-            "group": "基础",
+            "group": "核心概念",
             "pages": [
               "fundamentals/container",
-              "fundamentals/lifecycle-and-events",
+              "fundamentals/lifecycle-and-events"
+            ]
+          },
+          {
+            "group": "HTTP 开发",
+            "pages": [
               "fundamentals/http-pipeline",
               "fundamentals/http-next-pipeline"
             ]
           },
           {
-            "group": "技巧",
+            "group": "实用技巧",
             "pages": [
               "techniques/configuration",
               "techniques/database",
@@ -40,7 +45,7 @@
             ]
           },
           {
-            "group": "CLI",
+            "group": "CLI 手册",
             "pages": ["cli/overview"]
           },
           {
@@ -53,36 +58,53 @@
         "tab": "API 参考",
         "groups": [
           {
-            "group": "核心包",
+            "group": "核心框架",
             "pages": [
               "packages/core",
               "packages/loader",
               "packages/logger",
               "packages/schedule",
-              "packages/model",
-              "packages/http",
-              "packages/http-next",
-              "packages/cli"
+              "packages/model"
             ]
           },
           {
-            "group": "集成（数据库 · 缓存 · 消息）",
+            "group": "HTTP 服务",
+            "pages": [
+              "packages/http",
+              "packages/http-next"
+            ]
+          },
+          {
+            "group": "数据存储",
             "pages": [
               "packages/typeorm",
               "packages/ioredis",
-              "packages/cache",
+              "packages/cache"
+            ]
+          },
+          {
+            "group": "消息通信",
+            "pages": [
               "packages/message-modem",
               "packages/message-ipc",
               "packages/message-worker-thread",
               "packages/message-ws",
-              "packages/message-loader",
+              "packages/message-loader"
+            ]
+          },
+          {
+            "group": "微服务",
+            "pages": [
               "packages/micro",
               "packages/micro-dynamic-configs"
             ]
           },
           {
-            "group": "工具",
-            "pages": ["packages/create-hile"]
+            "group": "开发工具",
+            "pages": [
+              "packages/cli",
+              "packages/create-hile"
+            ]
           }
         ]
       }

@@ -1,150 +1,530 @@
 ---
 title: 简介
-description: "Hile — 面向 Node.js 的轻量级服务化工具集"
+description: "Hile — 面向 Node.js 的轻量级服务化工具集。了解 Hile 是什么、核心特性、所有包的作用、依赖关系以及设计哲学。"
 ---
 
 # 什么是 Hile？
 
-Hile 是一套面向 Node.js 的**轻量级服务化工具集**。它的核心理念是：用最简单的 API 管理复杂的服务依赖关系，让你专注于业务逻辑而不是基础设施。
+Hile 是一套面向 **Node.js** 的**轻量级服务化工具集**。它的名字源于"轻"的谐音，寓意让开发者用最轻量的心智负担构建服务端应用。
 
-Hile 提供**服务容器**、**HTTP / Next 集成**、**数据库与缓存**以及**消息传输**等模块化能力。其中 **@hile/core 系**（如 `cli`、`http`、`typeorm`）通过同一套服务容器协作生命周期；**消息类包**（`message-modem`、`message-ws`、`message-loader`、`micro` 等）可脱离容器独立使用，也可在 boot 中自行接入。
+Hile 基于 **pnpm workspace monorepo**，所有包均为**纯 ESM + TypeScript** 编写，意味着你需要 Node.js >= 20.12 且在 `package.json` 中设置 `"type": "module"`。
+
+## 为什么需要 Hile？
+
+在 Node.js 后端开发中，你通常会遇到以下问题：
+
+- **服务依赖管理麻烦**：数据库连接要在 HTTP 服务启动之前完成，Redis 要在使用缓存之前就绪，多个服务之间的启动顺序如何协调？
+- **优雅关闭复杂**：进程收到 SIGTERM 信号时，要先停止接受新请求，再关闭数据库连接，最后释放 Redis 连接——顺序错了就会丢数据。
+- **重复样板代码**：每次新项目都要写一样的 Koa 启动代码、一样的数据库配置、一样的信号处理。
+- **多进程通信成本高**：WebSocket、IPC、Worker Threads 各自有独立的 API，切换实现方式要重写大量代码。
+
+Hile 用一个**服务容器**（`@hile/core`）统一解决这些问题。你只需要定义"服务是什么"和"关闭时该做什么"，容器自动处理依赖顺序、并发合并和优雅关闭。
+
+## 谁应该使用 Hile？
+
+- **Node.js 后端开发者**：需要快速搭建 REST API、全栈应用或微服务
+- **全栈工程师**：需要将 Next.js 和 API 服务运行在同一个端口上
+- **微服务架构团队**：需要进程间通信（WebSocket / IPC / Worker Threads）和轻量级服务发现
+- **希望减少样板代码的开发者**：Hile 用约定（文件系统路由、自动加载 boot 文件）代替配置
 
 ## 核心特性
 
 <CardGroup cols={2}>
   <Card title="异步服务容器" icon="cube">
-    全局单例、并发请求合并、依赖图追踪、循环依赖检测、可配超时与优雅关闭。基于 Node.js AsyncLocalStorage 追踪依赖链。
+    全局单例、并发请求合并、依赖图追踪、循环依赖检测、可配超时与优雅关闭。基于 Node.js <code>AsyncLocalStorage</code> 追踪依赖链，自动识别服务之间的依赖关系，确保按正确的顺序启动和关闭。
   </Card>
   <Card title="HTTP 服务框架" icon="server">
-    基于 Koa + find-my-way，支持全局中间件、手动路由注册、文件系统路由、响应插件链；控制器可选 Zod 校验 query / params / body。
+    基于 Koa + find-my-way（高性能树形路由器）。支持全局中间件、手动路由注册、文件系统自动路由、响应插件链、Zod 校验（query / params / body）。相当于 Koa 的增强版，专为 Hile 容器优化。
   </Card>
   <Card title="Next.js 集成" icon="react">
-    将 Next.js 作为渲染引擎嵌入 Koa 服务，共享同一端口。API 路由与页面路由互不冲突。
+    将 Next.js 作为渲染引擎嵌入 Koa 服务，共享同一端口。API 路由与页面路由互不冲突——API 走 <code>/-/*</code> 前缀，页面走 Next.js 路由。支持开发模式热更新（HMR）。
   </Card>
   <Card title="命令行启动器" icon="terminal">
-    一条命令启动所有服务，自动扫描 *.boot 文件，内置容器事件日志（开发模式），支持优雅关闭。
+    一条 <code>hile start</code> 命令启动所有服务。自动扫描 <code>*.boot</code> 文件，内置容器事件日志（开发模式），支持 <code>--env-file</code> 加载环境变量，支持优雅关闭（SIGTERM / SIGINT）。
   </Card>
   <Card title="数据库集成" icon="database">
-    TypeORM DataSource 服务化封装，内置事务辅助函数（LIFO 补偿回调），环境变量配置。
+    TypeORM DataSource 服务化封装——在容器中自动初始化数据库连接，关闭时自动销毁。内置事务辅助函数 <code>transaction()</code>，支持 LIFO（后进先出）补偿回调。环境变量配置，零代码连接数据库。
   </Card>
   <Card title="Redis 集成" icon="bolt">
-    ioredis 客户端服务化封装，环境变量配置，自动连接/断连。
+    ioredis 客户端的服务化封装。自动连接、自动断连、环境变量配置。只需要一行 <code>auto_load_packages</code> 配置就能让 Redis 在容器中可用。
   </Card>
   <Card title="类型安全 Redis 缓存" icon="table">
-    基于 @hile/ioredis，模板字符串键类型推导，支持读写、删除、存在性检查及过期时间。
+    基于 <code>@hile/ioredis</code> 的缓存层。模板字符串键类型推导——例如 <code>defineCache('user:{id:string}:profile', fn)</code> 会推导出参数的类型。支持读写、删除、存在性检查和过期时间设置。
   </Card>
-  <Card title="动态配置服务" icon="toggle">
-    基于 Redis 持久化 + Registry topic 发布/订阅，Zod schema 校验，运行时配置变更推送。
+  <Card title="消息通信体系" icon="message-square">
+    抽象消息通信协议（请求/响应/中止），支持 WebSocket、IPC、Worker Threads 三种传输实现。同一套 API 切换底层传输方式——从 WebSocket 换成 IPC 只需改一个 import。支持流式传输（AsyncIterable）。
+  </Card>
+  <Card title="轻量级服务发现" icon="map">
+    基于 WebSocket 的 Registry 注册中心。Server/Client 模型，心跳检测，namespace 分组，topic 发布/订阅，断路器（Circuit Breaker），连接缓存降级。适合中小规模微服务集群。
+  </Card>
+  <Card title="运行时动态配置" icon="toggle">
+    基于 Redis 持久化 + Registry topic 发布/订阅的配置中心。Zod schema 校验配置结构，运行时修改配置后实时推送到所有订阅方。修改配置无需重启服务。
+  </Card>
+  <Card title="业务模型层" icon="layers">
+    提供 <code>defineModel</code> 和 <code>loadModel</code> 定义业务逻辑。支持 Pipeline 中间件模式（类似 Koa 中间件链），自动注入容器服务。分离"怎么做"（Model）和"怎么暴露"（Controller）。
+  </Card>
+  <Card title="定时任务调度" icon="clock">
+    基于 <code>node-schedule</code> 的定时任务管理器。支持 cron 表达式和延迟执行两种模式。文件系统自动加载 <code>*.schedule.ts</code>，<code>defineJob</code> 定义任务。简单、轻量、无外部存储依赖。
+  </Card>
+  <Card title="结构化日志" icon="file-text">
+    基于 <code>pino</code> 的高性能日志器。开发模式自动启用 <code>pino-pretty</code> 可读格式，生产模式输出 JSON 格式（适合日志收集系统如 ELK）。支持日志级别、字段脱敏（redact）配置。
+  </Card>
+  <Card title="简便脚手架" icon="wand">
+    <code>npx create-hile create my-app</code> 交互式创建项目。内置 6 种模板（default / next / micro-http / micro / micro-http-next / monorepo），自动安装依赖。
   </Card>
 </CardGroup>
 
 ## 包一览
 
-{/* package-table:auto */}
-| 包名 | 说明 | 版本 | 安装 |
-|------|------|------|------|
-| `@hile/core` | 异步服务容器 | 1.1.2 | `pnpm add @hile/core` |
-| `@hile/http` | HTTP 服务框架 | 1.1.3 | `pnpm add @hile/http` |
-| `@hile/http-next` | Next.js 桥接层 | 1.1.12 | `pnpm add @hile/http-next` |
-| `@hile/cli` | 命令行启动器 | 2.0.0 | `pnpm add @hile/cli` |
-| `@hile/typeorm` | TypeORM 集成 | 1.1.4 | `pnpm add @hile/typeorm` |
-| `@hile/ioredis` | ioredis 集成 | 1.1.2 | `pnpm add @hile/ioredis` |
-| `@hile/cache` | 类型安全 Redis 缓存 | 1.0.1 | `pnpm add @hile/cache` |
-| `@hile/message-modem` | 消息通信抽象层 | 2.0.0 | `pnpm add @hile/message-modem` |
-| `@hile/message-ipc` | Node.js IPC 通信实现 | 2.0.0 | `pnpm add @hile/message-ipc` |
-| `@hile/message-worker-thread` | Worker Threads 通信实现 | 2.0.0 | `pnpm add @hile/message-worker-thread` |
-| `@hile/message-ws` | WebSocket 通信实现 | 2.0.0 | `pnpm add @hile/message-ws` |
-| `@hile/message-loader` | 文件系统消息路由加载器 | 1.0.9 | `pnpm add @hile/message-loader` |
-| `@hile/micro` | WebSocket 服务注册与发现 | 2.0.0 | `pnpm add @hile/micro` |
-| `@hile/micro-dynamic-configs` | Redis + Registry 动态配置 | 2.0.0 | `pnpm add @hile/micro-dynamic-configs` |
-| `create-hile` | 项目脚手架 | 2.0.0 | `npx create-hile` |
+Hile 目前包含 **19 个包**，分为以下几类：
 
-## 依赖关系
+### 核心框架包
 
-以下是各包之间的依赖关系。箭头方向表示"依赖于"：
+| 包名 | 版本 | 说明 | 安装命令 |
+|------|------|------|----------|
+| `@hile/core` | latest | **异步服务容器**——Hile 的基石。管理服务的注册、解析、依赖追踪和优雅关闭。全局单例，所有服务都在同一个容器中协作。 | `pnpm add @hile/core` |
+| `@hile/loader` | latest | **文件系统加载器抽象**——提供统一的目录扫描、路径编译、路由路径转换功能。作为 <code>@hile/http</code> 的 Loader 和 <code>@hile/message-loader</code> 的基类。 | `pnpm add @hile/loader` |
+| `@hile/logger` | latest | **结构化日志服务**——基于 pino 的日志器封装。作为容器服务自动注册，导出 <code>createLogger()</code> 和默认的 <code>defineService</code>。 | `pnpm add @hile/logger` |
+| `@hile/schedule` | latest | **定时任务调度器**——基于 node-schedule。支持 cron 表达式和延迟执行，文件系统自动加载任务文件。 | `pnpm add @hile/schedule` |
+| `@hile/model` | latest | **业务模型层**——定义可复用的业务逻辑单元。支持 Pipeline 中间件、自动注入容器服务、类型安全的 <code>defineModel</code> / <code>loadModel</code>。 | `pnpm add @hile/model` |
+
+### HTTP 服务包
+
+| 包名 | 版本 | 说明 | 安装命令 |
+|------|------|------|----------|
+| `@hile/http` | latest | **HTTP 服务框架**——基于 Koa + find-my-way 的路由器。支持全局中间件、手动路由、文件系统路由、Zod 校验、响应插件链。 | `pnpm add @hile/http` |
+| `@hile/http-next` | latest | **Next.js 桥接层**——将 Next.js 作为渲染引擎嵌入 Koa 服务。API 和 SSR 共享同一端口，控制器自动加载。 | `pnpm add @hile/http-next` |
+
+### 数据存储包
+
+| 包名 | 版本 | 说明 | 安装命令 |
+|------|------|------|----------|
+| `@hile/typeorm` | latest | **TypeORM 集成**——DataSource 的服务化封装。环境变量自动配置，支持事务（带 LIFO 补偿回调）。 | `pnpm add @hile/typeorm` |
+| `@hile/ioredis` | latest | **Redis 集成**——ioredis 客户端的服务化封装。环境变量自动配置，自动连接/断连。 | `pnpm add @hile/ioredis` |
+| `@hile/cache` | latest | **类型安全 Redis 缓存**——基于 <code>@hile/ioredis</code>。模板字符串键类型推导，<code>defineCache</code> + <code>RedisCache</code> 提供读写删查操作。 | `pnpm add @hile/cache` |
+
+### 消息通信包
+
+| 包名 | 版本 | 说明 | 安装命令 |
+|------|------|------|----------|
+| `@hile/message-modem` | latest | **消息通信抽象层**——定义请求/响应/中止协议。提供 <code>_send()</code>（双向）、<code>_push()</code>（单向）、<code>_stream()</code>（流式）三种通信模式。所有 message-* 包的基类。 | `pnpm add @hile/message-modem` |
+| `@hile/message-ws` | latest | **WebSocket 通信实现**——基于 <code>ws</code> 模块的 MessageModem 实现。JSON 序列化/反序列化传输。 | `pnpm add @hile/message-ws` |
+| `@hile/message-ipc` | latest | **Node.js IPC 通信实现**——基于 <code>child_process.fork()</code> 的 IPC 通道。支持父子进程双端使用。 | `pnpm add @hile/message-ipc` |
+| `@hile/message-worker-thread` | latest | **Worker Threads 通信实现**——基于 <code>worker_threads</code> 模块。支持主线程和 Worker 线程双端使用。 | `pnpm add @hile/message-worker-thread` |
+| `@hile/message-loader` | latest | **文件系统消息路由加载器**——从目录自动扫描 <code>*.msg.ts</code> 文件，<code>defineMessage()</code> 定义处理器，<code>dispatch()</code> 分发消息。可作为 <code>@hile/micro</code> 和其他消息通信传输层的中间路由层。 | `pnpm add @hile/message-loader` |
+
+### 微服务包
+
+| 包名 | 版本 | 说明 | 安装命令 |
+|------|------|------|----------|
+| `@hile/micro` | latest | **轻量级服务发现与微服务框架**——包含 Server（WebSocket 服务端 + 消息路由）、Client（WebSocket 客户端 + 心跳）、Registry（注册中心 + topic 发布/订阅）、Application（含 Registry 客户端 + 断路器 + 调用重试）。 | `pnpm add @hile/micro` |
+| `@hile/micro-dynamic-configs` | latest | **运行时动态配置服务**——基于 Redis 持久化 + Registry topic 发布/订阅。Zod schema 校验配置结构，<code>save()</code> 方法写入 Redis 并实时推送变更。 | `pnpm add @hile/micro-dynamic-configs` |
+
+### 开发工具包
+
+| 包名 | 版本 | 说明 | 安装命令 |
+|------|------|------|----------|
+| `@hile/cli` | latest | **命令行启动器**——<code>hile start</code> 启动服务（自动加载 boot 文件），<code>hile registry</code> 启动注册中心，<code>hile registry configs</code> 管理配置。提供优雅关闭（SIGTERM/SIGINT 处理）。 | `pnpm add @hile/cli` |
+| `create-hile` | latest | **项目脚手架**——<code>npx create-hile create my-app</code> 交互式创建项目。内置 6 种模板，自动初始化项目结构和依赖。 | `pnpm create hile` |
+
+<Note>
+所有包的完整版本号以 npm 最新发布版本为准。建议使用 <code>pnpm add @hile/core@latest</code> 等方式确保安装最新版本。
+</Note>
+
+## 包依赖关系
+
+以下是 Hile 各包的依赖关系图。箭头方向表示"依赖于"，即 A → B 表示"A 依赖于 B"。
+
+### 核心依赖链
 
 ```
-@hile/core                ← 所有包的基础
-  ├── @hile/cli           ← 启动器，依赖核心容器
-  ├── @hile/typeorm       ← 数据库集成，依赖核心容器
-  └── @hile/ioredis       ← Redis 集成，依赖核心容器
-       └── @hile/cache    ← 类型安全缓存，依赖 @hile/ioredis + @hile/core
-
-@hile/http                ← HTTP 框架
-  └── @hile/http-next     ← Next.js 桥接层，依赖 HTTP 框架
-
-@hile/message-modem       ← 消息通信抽象层（独立，无外部依赖）
-  ├── @hile/message-ipc   ← Node.js IPC 实现，依赖 message-modem
-  ├── @hile/message-worker-thread ← Worker Threads 实现，依赖 message-modem
-  └── @hile/message-ws    ← WebSocket 实现，依赖 message-modem + ws
-
-@hile/message-loader      ← 文件系统消息路由（独立，可搭配各 message 实现）
-
-@hile/micro               ← 轻量服务发现（依赖 message-loader + message-ws + ws）
-  └── @hile/micro-dynamic-configs ← 动态配置（依赖 micro + ioredis）
-
-create-hile               ← 脚手架工具，不依赖任一运行时包
-  └── 生成的项目依赖所选模板（default / next / micro-http / micro / micro-http-next 等）
+@hile/core                ← 基础容器，零依赖（仅依赖 Node.js 内置 AsyncLocalStorage）
+  ├── @hile/cli           ← 启动器，依赖 core + micro（registry 命令）
+  ├── @hile/logger        ← 日志，依赖 core + pino
+  ├── @hile/typeorm       ← 数据库，依赖 core + typeorm
+  └── @hile/ioredis       ← Redis，依赖 core + ioredis
+       └── @hile/cache    ← 缓存，依赖 ioredis + core
 ```
+
+### HTTP 依赖链
+
+```
+@hile/http                ← 独立 HTTP 框架，无 core 依赖
+  ├── @hile/http-next     ← Next.js 桥接，依赖 http + next + koa-static
+  └── @hile/loader        ← 文件系统加载器抽象（被 http 和 message-loader 共同使用）
+```
+
+### 消息通信依赖链
+
+```
+@hile/message-modem       ← 抽象协议层，零外部依赖
+  ├── @hile/message-ws    ← WebSocket 实现，依赖 message-modem + ws
+  ├── @hile/message-ipc   ← IPC 实现，依赖 message-modem
+  └── @hile/message-worker-thread  ← Worker 实现，依赖 message-modem
+
+@hile/loader              ← 文件扫描与路径编译
+  └── @hile/message-loader ← 消息路由加载器，依赖 loader + rou3
+       └── @hile/micro     ← 微服务框架，依赖 message-loader + message-ws + ws
+            └── @hile/micro-dynamic-configs ← 动态配置，依赖 micro + ioredis
+```
+
+### 完整依赖关系（文本图）
+
+```
+                                      create-hile
+                                     （脚手架，无运行时依赖）
+                                          │
+                                          │ (生成的项目模板)
+                                          ▼
+               ┌───────────────────────────────────────┐
+               │             @hile/core                │
+               │         异步服务容器 (core)            │
+               └──┬────────────────────┬───────────────┘
+                  │                    │
+          ┌───────▼────────┐   ┌──────▼──────────┐
+          │  @hile/cli     │   │  @hile/typeorm  │
+          │  CLI 启动器     │   │  数据库集成      │
+          └───────┬────────┘   └─────────────────┘
+                  │
+          ┌───────▼────────┐   ┌──────────────────┐
+          │  @hile/ioredis │   │   @hile/logger   │
+          │  Redis 集成     │   │   日志            │
+          └───────┬────────┘   └──────────────────┘
+                  │
+          ┌───────▼────────┐
+          │  @hile/cache   │
+          │  类型安全缓存   │
+          └────────────────┘
+
+┌──────────────────────────────────────────────────────┐
+│                    @hile/loader                       │
+│              文件系统加载器抽象                         │
+└──┬───────────────────────────────────────┬───────────┘
+   │                                       │
+   ▼                                       ▼
+┌──────────────┐              ┌────────────────────────┐
+│ @hile/http   │              │ @hile/message-loader   │
+│ HTTP 服务框架 │              │ 消息路由加载器           │
+└──────┬───────┘              └───────────┬────────────┘
+       │                                  │
+       ▼                                  ▼
+┌──────────────┐              ┌────────────────────────┐
+│@hile/http-   │              │     @hile/micro        │
+│next          │              │  微服务框架 (Server +   │
+│Next.js 桥接   │              │  Client + Registry +    │
+└──────────────┘              │  Application)          │
+                              └───────────┬────────────┘
+                                          │
+                              ┌───────────▼────────────┐
+                              │@hile/micro-dynamic-     │
+                              │configs                 │
+                              │运行时动态配置服务        │
+                              └────────────────────────┘
+
+┌──────────────────────────────────────────────────────┐
+│              消息通信传输层（独立于 core）              │
+│                                                      │
+│  @hile/message-modem (抽象基类)                       │
+│     ├── @hile/message-ws      (WebSocket 实现)        │
+│     ├── @hile/message-ipc     (IPC 实现)               │
+│     └── @hile/message-worker-thread (Worker 实现)     │
+└──────────────────────────────────────────────────────┘
+```
+
+<Note>
+<strong>关键理解</strong>：<code>@hile/core</code> 是"服务容器"，它本身不依赖任何外部包（只使用 Node.js 内置的 <code>AsyncLocalStorage</code>）。其他包要么作为"容器服务"注册到 core 中（如 typeorm、ioredis），要么完全独立使用（如 message-* 系列包可以在没有 core 的情况下单独工作）。
+</Note>
 
 ## 典型技术栈组合
 
 根据你的项目类型，选择不同的包组合：
 
 <AccordionGroup>
-  <Accordion title="消息 / WS 服务发现">
-    ```bash
-    pnpm add @hile/message-loader @hile/message-ws @hile/micro
-    ```
-    适合：多进程之间用 WebSocket 做请求/响应，并需要 **Registry** 按 namespace 发现实例与 topic 发布/订阅。
-  </Accordion>
-  <Accordion title="纯 API 服务">
+  <Accordion title="纯 API 服务（最简组合）">
+    **适用场景**：REST API、微服务后端、BFF（Backend For Frontend）
+
+    **安装命令**：
     ```bash
     pnpm add @hile/core @hile/http @hile/cli
     ```
-    适合：REST API、微服务后端。使用 `@hile/http` 的文件系统路由和中间件能力。
-  </Accordion>
-  <Accordion title="全栈应用（API + SSR）">
-    ```bash
-    npx create-hile create my-app
+
+    **组合说明**：
+    - <code>@hile/core</code> 提供服务容器，管理生命周期
+    - <code>@hile/http</code> 提供 HTTP 服务（路由、中间件、控制器）
+    - <code>@hile/cli</code> 提供命令行启动（自动加载 boot 文件、优雅关闭）
+
+    **典型目录结构**：
     ```
-    创建时在 CLI 中选择 **`next`** 或 **`micro-http-next`** 等含 Next.js 的模板，即可得到 Koa API 路由与 Next.js 页面共享同一端口的典型全栈应用。若选 **`default`** 等模板，则无 Next.js，请以生成项目说明为准。
+    my-api/
+    ├── src/
+    │   ├── services/
+    │   │   └── http.boot.ts     # 服务入口
+    │   ├── controllers/
+    │   │   └── users.controller.ts
+    │   └── models/
+    │       └── user.model.ts
+    ├── package.json
+    └── tsconfig.json
+    ```
   </Accordion>
   <Accordion title="API + 数据库 + 缓存">
+    **适用场景**：需要数据库和 Redis 缓存的后端服务
+
+    **安装命令**：
     ```bash
     pnpm add @hile/core @hile/http @hile/cli @hile/typeorm @hile/ioredis @hile/cache
     ```
-    适合：需要数据库和 Redis 缓存的后端服务。所有资源通过容器统一管理生命周期。
+
+    **组合说明**：
+    - 所有资源通过容器统一管理生命周期
+    - 数据库连接在容器启动时自动初始化，HTTP 服务就绪之前连接已经建立
+    - Redis 在服务关闭时自动断连，不会遗留连接
+    - <code>@hile/cache</code> 提供类型安全的缓存操作
+
+    **自动加载配置**（在 package.json 中）：
+    ```json
+    {
+      "hile": {
+        "auto_load_packages": ["@hile/typeorm", "@hile/ioredis"]
+      }
+    }
+    ```
+
+    这样 CLI 启动时会自动初始化数据库和 Redis 连接，无需手动在 boot 文件中编写连接代码。
   </Accordion>
-  <Accordion title="动态配置">
+  <Accordion title="全栈应用（API + Next.js SSR）">
+    **适用场景**：包含前端页面的全栈应用
+
+    **创建方式**：
+    ```bash
+    npx create-hile create my-app
+    ```
+
+    在 CLI 交互中选择 **`next`** 模板（或 **`micro-http-next`** 等含 Next.js 的模板）。
+
+    **组合说明**：
+    - Koa API 路由与 Next.js 页面共享同一端口
+    - API 路由默认前缀为 <code>/-</code>（如 <code>/-/post</code>）
+    - Next.js 页面路由不受影响（如 <code>/</code>、<code>/about</code>）
+    - 开发模式支持 Next.js HMR（热模块替换）
+    - 控制器放在 <code>src/controllers/</code> 目录下
+
+    **关键架构决策**：为什么 API 路由要加前缀 <code>/-</code>？因为 Next.js 会接管所有它认识的路由（基于 <code>app/</code> 目录），给 API 路由一个特殊前缀可以避免路由冲突。Hile 的 HttpNext 先加载 API 路由（<code>/-/*</code>），最后才把 Next.js 处理器挂载为兜底中间件。
+  </Accordion>
+  <Accordion title="消息服务 / WebSocket 服务发现">
+    **适用场景**：多进程之间用 WebSocket 做请求/响应通信，需要服务发现
+
+    **安装命令**：
+    ```bash
+    pnpm add @hile/message-loader @hile/message-ws @hile/micro
+    ```
+
+    **组合说明**：
+    - <code>@hile/message-loader</code> 从文件系统加载消息处理器
+    - <code>@hile/message-ws</code> 提供 WebSocket 传输层
+    - <code>@hile/micro</code> 的 Server 内置 WebSocket 服务端和消息路由
+    - Registry（注册中心）按 namespace 发现服务实例
+    - 支持 topic 发布/订阅模式
+
+    **典型架构**：
+    ```
+    Registry (注册中心，9876 端口)
+      ↑ WebSocket 连接
+      ├── Service A (namespace: "user-service")
+      │     └── 提供 /-/findUser 消息处理
+      └── Service B (namespace: "order-service")
+            └── 提供 /-/createOrder 消息处理
+
+    客户端通过 Application.get("user-service") 发现 Service A
+    然后通过 client.request('/-/findUser', { id: 1 }) 调用
+    ```
+  </Accordion>
+  <Accordion title="运行时动态配置">
+    **适用场景**：需要配置中心、配置修改后实时推送到所有服务的微服务集群
+
+    **安装命令**：
     ```bash
     pnpm add @hile/micro @hile/micro-dynamic-configs @hile/ioredis
     ```
-    适合：需要 Registry 派发，并通过 Redis 持久化运行时配置的微服务集群。
+
+    **组合说明**：
+    - Registry 作为配置分发中心
+    - <code>@hile/micro-dynamic-configs</code> 的 <code>MicroDynamicConfigsServer</code> 基于 Zod schema 校验配置
+    - Redis 持久化配置值
+    - 配置变更通过 Registry topic 发布/订阅实时推送
+
+    **工作流程**：
+    1. 运维调用 <code>MicroDynamicConfigsServer.save({ featureX: true })</code>
+    2. 配置被写入 Redis 持久化
+    3. 同时通过 Registry topic 发布变更
+    4. 所有订阅了该 topic 的服务实时收到新配置
+    5. 配置以 TypeScript 类型安全的方式被消费
+  </Accordion>
+  <Accordion title="微服务全栈（最完整组合）">
+    **适用场景**：复杂的微服务系统，需要 HTTP + 数据库 + 缓存 + 消息通信 + 动态配置
+
+    **安装命令**：
+    ```bash
+    pnpm add @hile/core @hile/http @hile/cli @hile/typeorm @hile/ioredis @hile/cache @hile/micro @hile/micro-dynamic-configs @hile/message-loader @hile/message-ws
+    ```
+
+    **这是最完整的 Hile 组合，适合中大型项目。**
   </Accordion>
 </AccordionGroup>
 
 ## 设计哲学
 
-1. **服务即单例（按 key）**：通过 `defineService(key, fn)` 定义的服务由容器按 **服务 key** 保证全局唯一，并发加载自动合并
-2. **约定优于配置**：文件系统路由、`*.boot.ts` 自动加载、环境变量配置，减少样板代码
-3. **优雅关闭**：每个服务注册清理回调，进程退出时容器按逆序执行，确保资源正确释放
-4. **可观测性**：容器事件流覆盖服务全生命周期，CLI 在开发模式下自动订阅并输出日志
-5. **渐进式采用**：可以只用 `@hile/core`，也可以组合所有包构建完整应用
+Hile 的每个设计决策背后都有明确的理念。理解这些哲学有助于你更好地使用 Hile。
+
+### 1. 服务即单例（按 key 保证）
+
+通过 <code>defineService(key, fn)</code> 定义的服务，由容器按**服务 key**（一个字符串或 Symbol）保证全局唯一。无论你在多少个地方 <code>loadService()</code> 同一个服务的注册信息，容器只会执行一次 <code>fn</code>，后续调用都返回缓存的同一个实例。
+
+```typescript
+const dbService = defineService('database', async () => {
+  // 这个函数只执行一次
+  const connection = await createConnection()
+  return connection
+})
+
+// 无论 loadService 多少次，返回的都是同一个 connection 实例
+const db1 = await loadService(dbService)
+const db2 = await loadService(dbService)
+console.log(db1 === db2) // true
+```
+
+**为什么这样设计？** 在传统 Node.js 应用中，你可能会用模块级变量来管理单例：
+
+```typescript
+// 传统方式：模块级变量
+let db: Database
+export async function getDb() {
+  if (!db) db = await createConnection()
+  return db
+}
+```
+
+这种方式的问题是：如果初始化失败，<code>db</code> 变量处于"已分配未初始化"的状态，重试逻辑很难写。而且没有生命周期管理，关闭时需要手动处理。Hile 的容器不仅管理单例，还管理状态（init / ready / stopping / stopped）、并发合并（多个调用者同时请求时只执行一次初始化）、依赖追踪（自动识别 A 依赖 B）和优雅关闭。
+
+### 2. 约定优于配置
+
+Hile 大量使用约定来减少样板代码：
+
+- **文件系统路由**：<code>src/controllers/users.controller.ts</code> 自动映射到 <code>GET /users</code>（默认前缀 <code>/-</code>）。不需要路由配置文件。
+- **自动加载 boot 文件**：CLI 自动扫描 <code>src/**/*.boot.ts</code>（开发模式）或 <code>dist/**/*.boot.js</code>（生产模式）并加载。不需要手动 import 每个启动文件。
+- **环境变量配置**：<code>@hile/typeorm</code> 和 <code>@hile/ioredis</code> 从环境变量读取配置。不需要额外的配置文件。
+- **自动加载包**：在 <code>package.json</code> 的 <code>hile.auto_load_packages</code> 数组中声明需要自动初始化的包，CLI 自动处理。
+
+### 3. 优雅关闭
+
+每个服务通过 <code>shutdown</code> 回调注册清理函数：
+
+```typescript
+defineService('http', async (shutdown) => {
+  const http = new Http({ port: 3000 })
+  const close = await http.listen()
+  shutdown(close) // 注册关闭回调
+  return http
+})
+```
+
+当进程收到 SIGTERM 信号时，容器按**后注册的先关闭**（LIFO）顺序执行所有 shutdown 回调。这意味着：如果服务 A 依赖服务 B，且 A 先注册，B 后注册，关闭时 B 先关闭，A 后关闭——这是正确的依赖顺序。
+
+**详细关闭流程**：
+1. 进程收到 SIGTERM / SIGINT
+2. <code>@hile/cli</code> 的退出钩子捕获信号
+3. 调用 <code>container.shutdown()</code>
+4. 容器按 LIFO 顺序逐个关闭服务
+5. 每个服务执行其注册的 shutdown 回调
+6. 所有服务关闭完成后，进程退出
+
+### 4. 可观测性
+
+容器事件流覆盖服务全生命周期：
+
+| 事件 | 触发时机 |
+|------|----------|
+| <code>service:init</code> | 服务开始初始化 |
+| <code>service:ready</code> | 服务初始化成功（含耗时） |
+| <code>service:error</code> | 服务初始化失败（含错误信息和耗时） |
+| <code>service:shutdown:start</code> | 服务开始关闭 |
+| <code>service:shutdown:done</code> | 服务关闭完成（含耗时） |
+| <code>service:shutdown:error</code> | 服务关闭出错 |
+| <code>container:shutdown:start</code> | 容器开始关闭 |
+| <code>container:shutdown:done</code> | 容器关闭完成（含总耗时） |
+| <code>container:error</code> | 容器级错误（如循环依赖检测） |
+
+在开发模式下，CLI 自动订阅这些事件并以彩色日志输出：
+
+```
+[hile] service(http) init
+[hile] service(http) ready (8ms)
+[hile] container shutdown start
+[hile] service(http) stopping
+[hile] service(http) stopped (15ms)
+[hile] container shutdown done (20ms)
+```
+
+### 5. 渐进式采用
+
+你不需要一次性使用所有 Hile 包。可以从最简单的场景开始：
+
+1. **只用 <code>@hile/core</code>**：只使用服务容器管理应用中的单例和生命周期
+2. **+ <code>@hile/http</code> + <code>@hile/cli</code>**：添加 HTTP 服务和命令行启动
+3. **+ 数据库/缓存**：按需添加 <code>@hile/typeorm</code>、<code>@hile/ioredis</code>
+4. **+ 消息通信**：当需要进程间通信时引入 message-* 包
+5. **+ 微服务**：当需要服务发现时引入 <code>@hile/micro</code>
+
+每个包都可以独立使用，没有"必须全部引入"的负担。
+
+### 6. 传输层与业务层分离
+
+消息通信体系（message-* 系列包）严格遵循接口分离原则：
+
+- **<code>@hile/message-modem</code>** 只定义协议（如何发送、接收、解析消息），不关心底层传输
+- **<code>@hile/message-ws</code> / <code>@hile/message-ipc</code> / <code>@hile/message-worker-thread</code>** 各自实现不同的传输方式
+- **<code>@hile/message-loader</code>** 专注于"消息路由"——给定一个 URL 和数据，找到对应的处理器并执行
+
+这种分离让你可以在不改变业务代码的情况下切换传输方式。从 WebSocket 切换到 IPC 只需改一行：
+
+```typescript
+// 从 WebSocket
+class MyHandler extends MessageWs { ... }
+
+// 切换到 IPC（其他代码完全不变）
+class MyHandler extends MessageIpc { ... }
+```
+
+### 7. 最小依赖原则
+
+Hile 的每个包都尽量控制外部依赖。例如：
+
+- <code>@hile/core</code> 零外部依赖（只使用 Node.js 内置 API）
+- <code>@hile/message-modem</code> 零外部依赖
+- <code>@hile/loader</code> 只依赖 <code>glob</code> 包
+- <code>@hile/message-ipc</code> 零外部依赖（只使用 Node.js 内置 <code>child_process</code>）
+
+这意味着核心包的安装体积很小，安全风险面窄。
 
 ## 下一步
 
 <CardGroup cols={2}>
-  <Card title="第一步" icon="rocket" href="/quickstart">
-    创建并运行第一个 Hile 项目
+  <Card title="快速开始" icon="rocket" href="/quickstart">
+    5 分钟创建并运行第一个 Hile 项目，从零到 Hello World
   </Card>
   <Card title="架构概览" icon="sitemap" href="/architecture">
-    分层与各包职责鸟瞰
+    深入了解 Hile 的分层架构、各个包的职责以及它们如何协作
   </Card>
   <Card title="服务容器" icon="cube" href="/fundamentals/container">
-    defineService、loadService 与依赖图
+    学习 <code>defineService</code>、<code>loadService</code> 和服务依赖图
   </Card>
-  <Card title="CLI 概览" icon="terminal" href="/cli/overview">
-    create-hile 与 hile start 如何配合
+  <Card title="生命周期与事件" icon="timeline" href="/fundamentals/lifecycle-and-events">
+    了解服务的就绪/关闭流程、超时配置和事件监听
+  </Card>
+  <Card title="HTTP 开发" icon="server" href="/fundamentals/http-pipeline">
+    学习 HTTP 路由、中间件、控制器和 Zod 校验
+  </Card>
+  <Card title="生产部署" icon="check-circle" href="/deployment">
+    构建、环境变量配置、Docker 部署和进程管理
   </Card>
 </CardGroup>

@@ -1,18 +1,661 @@
 ---
-title: 缓存（Redis）
-description: "ioredis 客户端服务化与缓存辅助工具"
+title: 缓存策略（Redis + 类型安全缓存）
+description: "@hile/ioredis Redis 集成与 @hile/cache 类型安全缓存层的完整指南：模板键语法、读穿透、TTL 管理"
 ---
 
-**`@hile/ioredis`** 将 **ioredis** 客户端封装为容器中的单例服务：随 **`hile start`** 连接，随 **`container.shutdown()`** 断开。
+import { Accordion, AccordionGroup } from '@mintlify/components';
 
-## 典型用法
+## 概述
 
-1. 安装：`pnpm add @hile/ioredis`，并在 **`hile.auto_load_packages`** 中列出（若采用自动加载）。
-2. 通过 **`REDIS_HOST`**、**`REDIS_PORT`**、**`REDIS_DB`** 等环境变量配置（详见包文档）。
-3. 业务代码中 **`loadService(ioredisService)`** 获取客户端实例。
+Hile 的缓存方案由两个包组成：
 
-## 缓存辅助（@hile/cache）
+1. **`@hile/ioredis`** —— Redis 客户端集成，提供连接管理和容器服务化
+2. **`@hile/cache`** —— 基于 Redis 的类型安全缓存层，提供模板键、读穿透和 TTL 管理
 
-**`@hile/cache`** 基于 `@hile/ioredis` 提供声明式缓存工具。通过 `defineCache` 定义带 key 模板和过期时间的缓存条目，使用 `RedisCache` 进行读写、清除和存在检查。详见 [@hile/cache](/packages/cache)。
+你可以单独使用 `@hile/ioredis` 作为一个普通的 Redis 客户端，也可以结合 `@hile/cache` 获得更高级的缓存抽象。
 
-与控制器组合示例见 [第一步](/quickstart) 中「方式三」；完整选项见 [@hile/ioredis](/packages/ioredis)。
+## @hile/ioredis——Redis 集成
+
+`@hile/ioredis` 基于 `ioredis` 库，将 Redis 客户端注册为 Hile 容器服务。
+
+### 安装
+
+```bash
+pnpm add @hile/ioredis
+```
+
+同时安装 peer 依赖：
+
+```bash
+pnpm add @hile/core
+```
+
+### 环境变量配置
+
+默认从环境变量读取 Redis 连接配置：
+
+| 变量名 | 说明 | 默认值 | 示例 |
+|--------|------|--------|------|
+| `REDIS_HOST` | Redis 主机 | 无（必填） | `localhost` |
+| `REDIS_PORT` | Redis 端口 | 无（必填） | `6379` |
+| `REDIS_USERNAME` | 用户名 | 无 | `default` |
+| `REDIS_PASSWORD` | 密码 | 无 | `redispass` |
+| `REDIS_DB` | 数据库编号 | `0` | `1` |
+
+```bash
+# .env
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=redispass
+REDIS_DB=0
+```
+
+### createRedis —— 手动模式
+
+直接创建 Redis 客户端，不经过容器：
+
+```typescript
+import { createRedis } from '@hile/ioredis';
+
+// 从环境变量读取配置
+const redis = await createRedis();
+await redis.set('key', 'value');
+const value = await redis.get('key');
+console.log(value); // 'value'
+
+// 使用后断开
+await redis.disconnect();
+```
+
+也可以传入自定义配置：
+
+```typescript
+import { createRedis } from '@hile/ioredis';
+
+const redis = await createRedis({
+  host: 'redis.example.com',
+  port: 6380,
+  password: 'secret',
+  db: 1,
+});
+```
+
+`createRedis` 会等待连接就绪后再返回。如果连接失败，会抛出错误。
+
+### 容器模式（default export）
+
+`@hile/ioredis` 的默认导出是一个已注册的服务：
+
+```typescript
+// @hile/ioredis 内部
+export default defineService(Symbol.for('@hile/ioredis'), async (shutdown) => {
+  const client = await createRedis();
+  shutdown(() => client.disconnect());
+  return client;
+});
+```
+
+**自动加载：**
+
+在 `package.json` 中配置：
+
+```json
+{
+  "hile": {
+    "auto_load_packages": ["@hile/ioredis"]
+  }
+}
+```
+
+**手动加载：**
+
+```typescript
+import { loadService } from '@hile/core';
+import redisService from '@hile/ioredis';
+
+const redis = await loadService(redisService);
+```
+
+### 使用 Redis 客户端
+
+获取 Redis 客户端后，可以使用 `ioredis` 的全部 API：
+
+```typescript
+import { loadService } from '@hile/core';
+import redisService from '@hile/ioredis';
+
+const myService = defineService('my-service', async (shutdown) => {
+  const redis = await loadService(redisService);
+
+  // 字符串操作
+  await redis.set('user:1:name', 'Alice');
+  const name = await redis.get('user:1:name');
+
+  // 哈希操作
+  await redis.hset('user:1', { name: 'Alice', age: 30 });
+  const user = await redis.hgetall('user:1');
+
+  // 列表操作
+  await redis.lpush('queue', 'job1', 'job2');
+  const job = await redis.rpop('queue');
+
+  // 设置过期时间
+  await redis.setex('temp:key', 60, 'value'); // 60 秒后自动删除
+
+  // 分布式锁
+  const lock = await redis.set('lock:resource', 'locked', 'NX', 'PX', 10000);
+  if (lock) {
+    // 获取锁成功，执行业务逻辑
+    // ...
+    await redis.del('lock:resource');
+  }
+
+  shutdown(() => {}); // Redis 连接的关闭由 @hile/ioredis 管理
+  return { redis };
+});
+```
+
+## @hile/cache——类型安全缓存
+
+`@hile/cache` 在 `@hile/ioredis` 之上构建了一个类型安全的读穿透缓存层。它的设计目标是让缓存操作像调用普通函数一样简单和类型安全。
+
+### 安装
+
+```bash
+pnpm add @hile/cache
+```
+
+需要确保已安装 `@hile/core` 和 `@hile/ioredis`（peer 依赖）。
+
+### 设计理念
+
+`@hile/cache` 的核心思想是**读穿透**（Read-Through）：
+
+当请求一个缓存 key 时，如果缓存不存在（miss），缓存层自动调用你提供的"回源函数"获取数据，写入缓存，然后返回结果。调用方完全不需要关心数据是从 Redis 还是从数据库来的。
+
+```
+调用方
+  │  read({ id: 'u-001' })
+  ▼
+┌────────────────┐
+│  RedisCache     │
+│  check Redis    │
+│  ├─ 命中 → 返回 │
+│  └─ miss →     │
+│    回源函数 →   │
+│    写入 Redis → │
+│    返回数据     │
+└────────────────┘
+```
+
+### 定义缓存（defineCache）
+
+`defineCache` 接收一个 key 模板和一个回源函数，返回一个缓存定义对象。
+
+```typescript
+import { defineCache, Cache } from '@hile/cache';
+
+const userCache = defineCache('user:{id:string}:info', async ({ id }) => {
+  // 回源函数：从数据库获取数据
+  const user = await db.query('SELECT * FROM users WHERE id = $1', [id]);
+
+  // 没有找到数据
+  if (!user) return new Cache(undefined);
+
+  // 找到数据，设置 5 分钟过期
+  return new Cache(user).setExpire(300);
+});
+```
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `key` | 字符串模板 | 包含 `{name:type}` 占位符的缓存 key |
+| `fn` | `(params) => Promise<Cache<R>>` | 回源函数，接收解析后的参数 |
+
+返回 `{ fn, key }` 对象，供后续 `RedisCache.loadCache()` 使用。
+
+### 模板键语法
+
+key 模板使用 `{name:type}` 占位符语法。`name` 是参数名称，`type` 是参数类型。
+
+#### 支持的类型
+
+| 模板类型 | TypeScript 类型 | 示例 |
+|----------|----------------|------|
+| `{name:string}` | `string` | `user:{id:string}:info` |
+| `{name:number}` | `number` | `page:{page:number}` |
+| `{name:boolean}` | `boolean` | `{verified:boolean}` |
+
+#### 单参数示例
+
+```typescript
+const cache = defineCache('user:{id:string}:profile', async ({ id }) => {
+  // id 的类型被自动推导为 string
+  return new Cache(await findUser(id));
+});
+
+// 调用时传入具体参数
+const ops = await redisCache.loadCache(cache);
+await ops.read({ id: 'u-001' });
+// 实际 Redis key: myapp:user:u-001:profile
+```
+
+#### 多参数示例
+
+```typescript
+const cache = defineCache(
+  'user:{id:string}:posts:{page:number}',
+  async ({ id, page }) => {
+    // 类型自动推导：id: string, page: number
+    const posts = await db.query(
+      'SELECT * FROM posts WHERE user_id = $1 LIMIT 10 OFFSET $2',
+      [id, (page - 1) * 10]
+    );
+    return new Cache(posts).setExpire(60);
+  }
+);
+
+await ops.read({ id: 'u-001', page: 1 });
+// 实际 Redis key: myapp:user:u-001:posts:1
+```
+
+#### 混合类型
+
+```typescript
+const cache = defineCache(
+  'post:{id:number}:comments:{verified:boolean}',
+  async ({ id, verified }) => {
+    // id: number, verified: boolean
+    return new Cache(await findComments(id, verified));
+  }
+);
+
+await ops.read({ id: 42, verified: true });
+// 实际 Redis key: myapp:post:42:comments:true
+```
+
+#### 宽松模式
+
+当 key 模板是宽泛的 `string` 类型而非字面量时，参数退化为宽松的索引类型：
+
+```typescript
+// 动态生成 key 模板
+function createCache(template: string) {
+  return defineCache(template, async (params) => {
+    // params 类型: Record<string, string | number | boolean>
+    return new Cache(await fetchData(params));
+  });
+}
+```
+
+### Cache 类
+
+回源函数必须返回 `Cache<R>` 实例。这个类包装了实际数据和 TTL 设置。
+
+```typescript
+class Cache<R> {
+  // data: 实际要缓存的数据
+  constructor(public readonly data: R) { }
+
+  // 设置过期时间（秒）。0 表示永不过期。
+  // 返回 this，支持链式调用。
+  public setExpire(seconds: number): this;
+
+  // 内部的过期时间（秒），只读
+  get expire(): number;
+}
+```
+
+使用方式：
+
+```typescript
+// 带过期时间
+return new Cache(userData).setExpire(300); // 5 分钟
+
+// 永不过期
+return new Cache(configData); // 不调用 setExpire
+
+// 无数据（回源未找到）
+return new Cache(undefined);
+```
+
+### RedisCache 实例
+
+`RedisCache` 管理实际的 Redis 操作。构造函数接收一个字符串前缀。
+
+```typescript
+import { RedisCache } from '@hile/cache';
+
+// 为每个应用使用不同的前缀，避免 key 冲突
+const cache = new RedisCache('myapp:');
+```
+
+**前缀的作用：** 所有通过该实例操作的 Redis key 都会自动带上前缀。这相当于一个命名空间，避免不同应用之间的 key 冲突。
+
+| 前缀 | 模板 | params | 实际 Redis key |
+|------|------|--------|----------------|
+| `myapp:` | `user:{id:string}` | `{id:'u-001'}` | `myapp:user:u-001` |
+| `app2:` | `user:{id:string}` | `{id:'u-001'}` | `app2:user:u-001` |
+
+### loadCache——加载缓存操作
+
+`loadCache` 接收 `defineCache` 的返回值，返回一个包含四个操作方法的对象：
+
+```typescript
+const cache = new RedisCache('myapp:');
+const userOps = await cache.loadCache(userCache);
+
+// 返回的操作对象类型：
+// {
+//   read: (params: ExtractParams<T>) => Promise<R | undefined>,
+//   write: (params: ExtractParams<T>) => Promise<R | undefined>,
+//   remove: (params: ExtractParams<T>) => Promise<number>,
+//   has: (params: ExtractParams<T>) => Promise<boolean>,
+// }
+```
+
+#### read——读穿透
+
+这是最常用的操作。如果缓存不存在，自动调用回源函数：
+
+```typescript
+// 第一次读取：缓存 miss，自动回源
+const user1 = await userOps.read({ id: 'u-001' });
+// → 调用回源函数从数据库查询
+// → 结果写入 Redis
+// → 返回数据
+
+// 第二次读取：缓存命中
+const user2 = await userOps.read({ id: 'u-001' });
+// → 直接读取 Redis
+// → 返回数据
+
+// 不存在的 key
+const user3 = await userOps.read({ id: 'not-exist' });
+// → 回源函数返回 new Cache(undefined)
+// → read 返回 undefined
+```
+
+内部执行流程：
+
+```
+read({ id: 'u-001' })
+  → makeKey: 'myapp' + 'user:' + 'u-001' + ':info'
+  → 实际 key: 'myapp:user:u-001:info'
+  → EXISTS 'myapp:user:u-001:info'
+    ├─ false → 调用回源函数({ id: 'u-001' })
+    │          → 返回 Cache(user) 或 Cache(undefined)
+    │          → JSON.stringify → SETEX/SET/DEL
+    │          → 返回数据或 undefined
+    └─ true  → GET 'myapp:user:u-001:info'
+               ├─ 有数据 → JSON.parse → 返回 R
+               └─ 字符串为空 → write(params) → 回源
+```
+
+#### write——强制回源写入
+
+无论缓存是否存在，都强制执行回源函数并更新缓存：
+
+```typescript
+// 强制刷新缓存
+const freshData = await userOps.write({ id: 'u-001' });
+// → 调用回源函数
+// → 结果写入 Redis
+// → 返回数据
+
+// 回源函数返回 Cache(undefined)
+const result = await userOps.write({ id: 'not-exist' });
+// → 调用回源函数 → 返回 Cache(undefined)
+// → 删除 Redis 中对应的 key（如果存在）
+// → 返回 undefined
+```
+
+内部执行流程：
+
+```
+write({ id: 'u-001' })
+  → makeKey → 'myapp:user:u-001:info'
+  → 调用回源函数 → Cache 实例
+    ├─ Cache.data === undefined
+    │  → EXISTS key? DEL → 返回 undefined
+    └─ Cache.data !== undefined
+       → JSON.stringify(data)
+       ├─ expire > 0 → SETEX key expire payload
+       └─ expire = 0 → SET key payload
+```
+
+#### remove——删除缓存
+
+```typescript
+const deleted = await userOps.remove({ id: 'u-001' });
+// → key 存在：DEL 并返回 1
+// → key 不存在：返回 0
+```
+
+#### has——检查存在
+
+```typescript
+const exists = await userOps.has({ id: 'u-001' });
+// → 返回 true 或 false
+// 注意：has 不会触发回源，只是检查 Redis 中是否存在
+```
+
+### 缓存更新策略
+
+推荐使用 Cache-Aside（旁路缓存）模式：
+
+```
+读取：read → 缓存命中？→ 是：返回 / 否：回源 → 写入缓存 → 返回
+更新：更新数据库 → remove 删除缓存（下次读取自动回源）
+```
+
+这种模式的优点是简单可靠，避免缓存与数据库的不一致性：
+
+```typescript
+// 更新用户
+async function updateUser(id: string, data: any) {
+  // 1. 先更新数据库
+  await db.query('UPDATE users SET ... WHERE id = ?', [id, data]);
+
+  // 2. 再删除缓存（不是更新缓存）
+  const { userOps } = await getCacheOps();
+  await userOps.remove({ id });
+
+  // 下次读取时，缓存 miss → 自动回源获取最新数据
+}
+```
+
+### 完整 API 参考
+
+**RedisCache 类：**
+
+| 方法 | 返回值 | 说明 |
+|------|--------|------|
+| `constructor(prefix)` | `RedisCache` | 创建实例，prefix 为所有 key 的前缀 |
+| `loadCache(target)` | `Promise<{read,write,remove,has}>` | 加载一条缓存定义 |
+
+**loadCache 返回的操作对象：**
+
+| 方法 | 返回值 | 说明 |
+|------|--------|------|
+| `read(params)` | `Promise<R \| undefined>` | 读穿透：缓存 miss 自动回源 |
+| `write(params)` | `Promise<R \| undefined>` | 强制回源并写入 |
+| `remove(params)` | `Promise<number>` | 删除缓存 key |
+| `has(params)` | `Promise<boolean>` | 检查 key 是否存在 |
+
+## 完整示例
+
+### 项目结构
+
+```
+my-app/
+├── .env
+├── package.json
+└── src/
+    ├── services/
+    │   ├── index.boot.ts
+    │   └── cache-definitions.ts
+    └── controllers/
+        └── user.controller.ts
+```
+
+### .env 文件
+
+```bash
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_DB=0
+```
+
+### package.json
+
+```json
+{
+  "name": "my-app",
+  "hile": {
+    "auto_load_packages": ["@hile/ioredis"]
+  }
+}
+```
+
+### 缓存定义文件
+
+```typescript
+// src/services/cache-definitions.ts
+import { defineCache, Cache, RedisCache } from '@hile/cache';
+
+// 假设的类型
+interface User {
+  id: string;
+  name: string;
+  email: string;
+}
+
+// 定义用户信息缓存
+export const userInfoCache = defineCache('user:{id:string}:info', async ({ id }) => {
+  // 模拟数据库查询
+  const user = await findUserById(id);
+  if (!user) return new Cache(undefined);
+  return new Cache(user).setExpire(600); // 10 分钟
+});
+
+// 定义用户文章列表缓存
+export const userPostsCache = defineCache(
+  'user:{id:string}:posts:{page:number}',
+  async ({ id, page }) => {
+    const posts = await findPostsByUser(id, page);
+    return new Cache(posts).setExpire(300); // 5 分钟
+  }
+);
+
+// 创建 RedisCache 实例
+export const redisCache = new RedisCache('myapp:');
+
+// 辅助函数：获取所有缓存操作
+export async function getCacheOps() {
+  const [userOps, postOps] = await Promise.all([
+    redisCache.loadCache(userInfoCache),
+    redisCache.loadCache(userPostsCache),
+  ]);
+  return { userOps, postOps };
+}
+
+// 模拟数据库查询
+async function findUserById(id: string): Promise<User | null> {
+  // 实际项目中这里是数据库查询
+  return { id, name: 'Alice', email: 'alice@example.com' };
+}
+
+async function findPostsByUser(id: string, page: number) {
+  // 实际项目中这里是数据库查询
+  return [];
+}
+```
+
+### Bootstrap 文件
+
+```typescript
+// src/services/index.boot.ts
+import { defineService, loadService } from '@hile/core';
+import { defineController, Http } from '@hile/http';
+
+const httpServer = defineService('http-server', async (shutdown) => {
+  const http = new Http({ port: 3000 });
+
+  // 注册通用中间件
+  http.use(async (ctx, next) => {
+    const start = Date.now();
+    await next();
+    console.log(`${ctx.status} ${ctx.method} ${ctx.url} - ${Date.now() - start}ms`);
+  });
+
+  await http.listen();
+  shutdown(() => console.log('HTTP 服务已关闭'));
+
+  return http;
+});
+
+export default loadService(httpServer);
+```
+
+### 控制器中使用缓存
+
+```typescript
+// src/controllers/user.controller.ts
+import { defineController, createControllerMetadata } from '@hile/http';
+import { z } from 'zod';
+import { getCacheOps } from '../services/cache-definitions';
+
+// GET /-/user/:id
+const meta = createControllerMetadata({
+  method: 'GET',
+  schema: {
+    params: z.object({
+      id: z.string(),
+    }),
+  },
+});
+
+export default defineController(meta, async (ctx) => {
+  const { userOps } = await getCacheOps();
+  const user = await userOps.read({ id: ctx.params.id });
+
+  if (user === undefined) {
+    ctx.status = 404;
+    return { error: '用户不存在' };
+  }
+
+  return user;
+});
+```
+
+## 常见问题
+
+<AccordionGroup>
+  <Accordion title="回源函数返回 Cache(undefined) 会怎样？">
+    `read` 和 `write` 操作都会返回 `undefined`。`_write` 方法会删除 Redis 中对应的 key（如果存在）。下次再 `read` 同一个 key 时，缓存仍然会 miss，回源函数会被再次调用。
+  </Accordion>
+  <Accordion title="如何为不同的业务使用不同的 Redis 实例？">
+    目前 `@hile/cache` 内部通过 `loadService(ioredisService)` 获取 Redis 连接，使用的是 `@hile/ioredis` 的默认导出。如果你需要切换 Redis 实例，需要在 `@hile/ioredis` 层面做文章。你也可以 fork 或扩展 `RedisCache` 类来支持多实例。
+  </Accordion>
+  <Accordion title="key 模板中除了占位符还有什么需要注意的？">
+    占位符之外的所有字符都会原样保留。比如模板 `user:{id:string}:info` 渲染后为 `user:u-001:info`。建议使用冒号 `:` 作为分隔符，这是 Redis key 的常见约定，也便于在 redis-cli 中按前缀搜索。
+  </Accordion>
+  <Accordion title="缓存和数据库的一致性如何保证？">
+    `@hile/cache` 推荐 Cache-Aside 模式：更新数据库后删除对应的缓存 key。下次读取时由于缓存 miss，会自动调用回源函数获取最新的数据。这保证了最终一致性。对于需要强一致性的场景，建议在业务层面使用分布式锁或事务性消息。
+  </Accordion>
+  <Accordion title="如何批量清除缓存？">
+    `@hile/cache` 本身没有批量清除的 API，但你可以直接操作 Redis 客户端：
+    ```typescript
+    import { loadService } from '@hile/core';
+    import redisService from '@hile/ioredis';
+
+    const redis = await loadService(redisService);
+    // 找出所有匹配的 key（生产环境慎用 KEYS，建议用 SCAN）
+    const keys = await redis.keys('myapp:user:*');
+    if (keys.length > 0) {
+      await redis.del(...keys);
+    }
+    ```
+  </Accordion>
+</AccordionGroup>

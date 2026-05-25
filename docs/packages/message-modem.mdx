@@ -1,6 +1,6 @@
 ---
 title: "@hile/message-modem"
-description: "请求/响应消息通信抽象层，支持双向、单向、流式传输、超时、中止、错误传播"
+description: "消息通信抽象基类——定义请求/响应/中止的通信协议，支持双向通信、单向推送、流式传输、超时控制、主动中止和错误传播"
 ---
 
 ## 安装
@@ -9,15 +9,15 @@ description: "请求/响应消息通信抽象层，支持双向、单向、流�
 pnpm add @hile/message-modem
 ```
 
-零依赖。所有类型和异常类均从主入口导出：
+`@hile/message-modem` 是**零依赖**的核心包。安装后可以直接导入所有类型和类：
 
 ```typescript
 import {
   MessageModem,
-  Exception,
-  AbortException,
-  TimeoutException,
   MESSAGE_MODEM_TYPE,
+  Exception,
+  TimeoutException,
+  AbortException,
   type MessageTransferFormat,
   type MessageReturnFormat,
   type MessageStreamChunk,
@@ -26,305 +26,1029 @@ import {
 
 ---
 
-## 概述
+## 概述：什么是 MessageModem？
 
-`MessageModem` 是一个**抽象基类**，将底层传输（WebSocket、postMessage、IPC、Worker 等）与请求/响应协议解耦。
+### 问题背景
 
-子类只需实现两个抽象方法：
+当你需要在两个进程（或两个运行时环境）之间通信时，通常会遇到以下问题：
 
-| 方法 | 职责 |
-|------|------|
-| `post(data)` | 将消息发送到远端 |
-| `exec(data, signal)` | 处理收到的请求，返回响应数据 |
+- 发送方发出请求后，如何将响应匹配回正确的调用方？
+- 请求超时了怎么办？
+- 发送方想取消一个正在处理的请求，如何通知接收方？
+- 如何支持服务端推送和流式传输？
+- 接收方处理出错时，如何将错误信息完整地传回发送方？
 
-框架自动处理：
+如果直接使用原始的 `WebSocket` 或 `process.send`，你需要自己实现以上所有逻辑——维护一个请求 ID 映射表、处理超时定时器、管理中止信号、解析消息类型……这些代码在每个项目中都会重复。
 
-- **请求/响应配对** — 自增 ID + Promise 栈
-- **超时控制** — 默认 30 秒，可覆盖
-- **主动中止** — 发送方 `AbortSignal` → 接收方 `AbortController.abort()`
-- **错误传播** — `Exception` 携带 status 码透传；普通 `Error` 映射为 500
-- **流式传输** — `_stream()` 返回 `Readable`，远端 `AsyncIterable` 逐块消费
+### MessageModem 的解决方案
+
+`MessageModem` 是一个**抽象基类**，它将底层传输（无论是 WebSocket、IPC、Worker Threads 还是其他通道）与一套完整的请求/响应协议解耦。你只需要关心两件事：
+
+1. **如何发送数据**（实现 `post` 方法）
+2. **如何处理接收到的请求**（实现 `exec` 方法）
+
+其余一切——请求/响应配对、超时控制、主动中止、错误传播、流式传输——都由框架自动处理。
+
+### 核心设计理念
+
+```
+你的业务逻辑                    MessageModem                   底层传输
+  (exec 实现)                      (核心协议)                    (post 实现)
+
+┌──────────────┐   REQUEST    ┌──────────────┐   JSON/Buffer   ┌──────────────┐
+│  接收方逻辑   │◄─────────────│  MessageModem │◄───────────────│   WebSocket  │
+│  (处理请求)   │────RESPONSE─►│  (协议引擎)   │───send(data)──►│    / IPC     │
+└──────────────┘              └──────────────┘                 │   / Worker   │
+                                                                └──────────────┘
+```
+
+<Note>
+  `MessageModem` 本身不依赖任何传输层。它只定义了通信协议，具体的传输机制（WebSocket、IPC、Worker Threads）由子类实现。这就是为什么框架中还有 `@hile/message-ws`、`@hile/message-ipc`、`@hile/message-worker-thread` 三个包——它们分别实现了不同的底层传输。
+</Note>
 
 ---
 
-## 消息类型
+## 核心概念详解
 
-| 枚举值 | 说明 |
-|--------|------|
-| `REQUEST` | 请求消息。`twoway: true` 为双向（期待回复），`false` 为单向 |
-| `RESPONSE` | 响应消息。携带 `status` / `data` / `message` |
-| `ABORT` | 中止消息。发送方取消某 ID 的请求，接收方取消对应 `exec` |
+### 消息类型（MESSAGE_MODEM_TYPE）
 
-### 消息格式
+消息通信中有三种基本操作，由枚举 `MESSAGE_MODEM_TYPE` 表示：
+
+| 枚举值 | 数值 | 说明 |
+|--------|------|------|
+| `MESSAGE_MODEM_TYPE.REQUEST` | `0` | **请求消息**。发送方向接收方发起一个请求，期望（或不期望）得到回复 |
+| `MESSAGE_MODEM_TYPE.RESPONSE` | `1` | **响应消息**。接收方处理完请求后，将结果返回给发送方 |
+| `MESSAGE_MODEM_TYPE.ABORT` | `2` | **中止消息**。发送方通知接收方取消某个正在处理的请求 |
+
+### 消息传输格式（MessageTransferFormat）
+
+任何消息在传输时都遵循这个统一格式：
 
 ```typescript
 interface MessageTransferFormat<T = any> {
-  id: number;               // 自增消息 ID
-  mode: MESSAGE_MODEM_TYPE; // REQUEST / RESPONSE / ABORT
-  twoway: boolean;          // 是否需要响应
-  stream?: boolean;         // 是否为流式请求
-  data?: T;                 // 消息数据
+  id: number;                   // 消息 ID（自增，用于匹配请求和响应）
+  mode: MESSAGE_MODEM_TYPE;     // 消息类型（REQUEST / RESPONSE / ABORT）
+  twoway: boolean;              // 是否为双向通信（是否需要响应）
+  stream?: boolean;             // 是否为流式传输（可选）
+  data?: T;                     // 消息携带的数据（可选）
 }
 ```
 
-### 响应格式
+**各字段详解：**
+
+- **`id`**：数字类型。每次发送新消息时自动分配一个自增 ID。接收方处理完请求后，在响应消息中带上相同的 `id`，这样发送方就能知道这个响应对应的是哪个请求。ID 达到 `Number.MAX_SAFE_INTEGER` 时自动回绕到 0。
+- **`mode`**：决定消息的语义——是请求、响应还是中止指令。
+- **`twoway`**：如果为 `true`，发送方会等待响应；如果为 `false`，发送方发出消息后立即返回，不等待回复（即单向推送）。
+- **`stream`**：如果为 `true`，表示这是一个流式请求——接收方的 `exec` 应返回 `AsyncIterable`，框架会将每次 `yield` 的值作为一个独立的响应块发送回来。
+- **`data`**：实际传输的数据，可以是任何类型。
+
+### 消息返回格式（MessageReturnFormat）
+
+当接收方返回响应时，数据被包装成这个格式：
 
 ```typescript
 interface MessageReturnFormat<T = any> {
-  status: string | number;  // 200 成功，其他为错误码
+  status: string | number;  // 状态码（200 表示成功，其他值表示错误）
+  data: T;                  // 响应数据
+  message: string;          // 状态描述信息（成功时通常为空，失败时为错误描述）
+}
+```
+
+- **`status`**：成功时为 `200`，失败时可以是错误码（如 `401`、`500`）或字符串（如 `"ETIMEDOUT"`、`"ECONNABORTED"`）。
+- **`data`**：`exec` 方法的返回值。
+- **`message`**：当 `exec` 抛出 `Exception` 时，`Exception.message` 会存入此字段。
+
+### 流式块格式（MessageStreamChunk）
+
+流式传输时，每个数据块遵循这个格式：
+
+```typescript
+interface MessageStreamChunk<T = any> {
+  status: string | number;  // 状态码
+  seq: number;              // 块序号（从 0 开始递增）
+  payload: T;               // 当前块的数据
+  final: boolean;           // 是否为最后一个块
+}
+```
+
+- **`status`**：正常为 `200`，出错时携带错误码。
+- **`seq`**：从 0 开始递增，接收方可以按序组装数据。
+- **`payload`**：`exec` 中 `yield` 的当前值。
+- **`final`**：最后一个块的 `final` 为 `true`，表示流结束。
+
+---
+
+## 异常体系（Exception Classes）
+
+`@hile/message-modem` 定义了三个异常类，覆盖了消息通信中的所有错误场景：
+
+```typescript
+import { Exception, TimeoutException, AbortException } from '@hile/message-modem';
+```
+
+### Exception（基类）
+
+```typescript
+class Exception extends Error {
+  public readonly status: number | string;
+  constructor(status: number | string, msg: string);
+}
+```
+
+最通用的异常类。任何在 `exec` 方法中主动抛出的 `Exception`，其 `status` 和 `message` 都会透传到请求方。
+
+**使用场景**：在 `exec` 中校验失败时主动抛出，将业务错误码传递给调用方。
+
+```typescript
+protected async exec(data: any): Promise<any> {
+  if (!data.token) {
+    throw new Exception(401, 'Unauthorized'); // 调用方会收到 status=401
+  }
+}
+```
+
+### TimeoutException
+
+```typescript
+class TimeoutException extends Exception {
+  static readonly code = 'ETIMEDOUT';
+  constructor(msg: string = 'Timeout');
+}
+```
+
+当请求超过指定的超时时间（默认 30 秒）仍未收到响应时，由框架自动抛出。
+
+- `status` 为 `'ETIMEDOUT'`
+- `message` 默认为 `'Timeout'`
+
+### AbortException
+
+```typescript
+class AbortException extends Exception {
+  static readonly code = 'ECONNABORTED';
+  constructor(msg: string = 'Abort');
+}
+```
+
+当请求被主动取消时，由框架自动抛出。触发场景：
+
+- 发送方调用了 `AbortController.abort()`
+- `_dispose()` 被调用，所有待处理的请求被强制取消
+
+<Note>
+  `TimeoutException` 和 `AbortException` 都继承自 `Exception`，所以你可以通过 `instanceof Exception` 捕获所有框架异常，也可以用 `instanceof TimeoutException` 或 `instanceof AbortException` 分别处理。
+</Note>
+
+---
+
+## 完整 API 参考
+
+### MessageModem（抽象类）
+
+这是整个消息通信体系的核心。它是一个抽象类，不能直接实例化，必须由子类继承并实现两个抽象方法。
+
+#### 类型参数
+
+`MessageModem` 没有泛型参数。它的方法使用各自的方法级泛型。
+
+#### 构造函数
+
+```typescript
+constructor()
+```
+
+创建一个 MessageModem 实例。初始化内部状态：
+
+- 消息 ID 计数器（从 0 开始）
+- 待处理请求映射表（`Map<id, { resolve, reject }>`）
+- 待处理中止控制器映射表（`Map<id, AbortController>`）
+- 活动流映射表（`Map<id, Readable>`）
+
+**不需要传任何参数。** 所有初始化都在构造函数内自动完成。
+
+#### 抽象方法（子类必须实现）
+
+##### `post`
+
+```typescript
+protected abstract post<T = any>(data: MessageTransferFormat<T>): void;
+```
+
+| 方面 | 说明 |
+|------|------|
+| **可见性** | `protected`——仅子类内部调用 |
+| **类型参数** | `T`——消息数据类型 |
+| **参数** | `data: MessageTransferFormat<T>`——完整的消息传输格式 |
+| **返回值** | `void`——此方法必须同步返回 |
+| **职责** | 将 `data` 序列化并通过底层传输发送到远端 |
+
+**子类实现示例：**
+
+```typescript
+// WebSocket 实现
+protected post<T>(data: MessageTransferFormat<T>): void {
+  this.ws.send(JSON.stringify(data));
+}
+
+// IPC 实现
+protected post<T>(data: MessageTransferFormat<T>): void {
+  this.channel.send(data);
+}
+
+// Worker Threads 实现
+protected post<T>(data: MessageTransferFormat<T>): void {
+  this.port.postMessage(data, []);
+}
+```
+
+<Warning>
+  `post` 应保持**同步**。如果底层传输是异步的（例如需要等待缓冲区 flushed），你需要在 `post` 内部缓冲，**不可**将 `post` 声明为 `async`——框架假定 `post` 调用后消息即发出，后续操作依赖此假设。
+</Warning>
+
+##### `exec`
+
+```typescript
+protected abstract exec(data: any, signal?: AbortSignal): Promise<any>;
+```
+
+| 方面 | 说明 |
+|------|------|
+| **可见性** | `protected`——仅子类内部调用 |
+| **参数** | `data: any`——请求携带的数据 |
+| **参数** | `signal?: AbortSignal`——可选的中止信号。当发送方取消请求时触发 |
+| **返回值** | `Promise<any>`——处理结果。如果配合 `_stream`，可以返回 `AsyncIterable` |
+
+**`exec` 的返回值决定行为：**
+
+| 返回值类型 | 行为 |
+|-----------|------|
+| `Promise<任意值>` | 正常响应。该值会包装为 `{ status: 200, data: value }` 返回给发送方 |
+| `Promise.reject(Exception)` | `Exception.status` 和 `Exception.message` 透传给发送方 |
+| `Promise.reject(Error)` | 普通 Error 会被映射为 `{ status: 500, data: null, message: error.message }` |
+| `AsyncIterable`（配合 `_stream`） | 逐块 yield，每块作为独立 RESPONSE 发送给发送方 |
+
+**最简单的 `exec` 实现——回显模式：**
+
+```typescript
+protected async exec(data: any): Promise<any> {
+  return data; // 收到什么就返回什么
+}
+```
+
+**带错误处理的 `exec`：**
+
+```typescript
+protected async exec(data: any): Promise<any> {
+  if (data.action === 'crash') {
+    throw new Error('Something went wrong'); // 发送方收到 status: 500
+  }
+  if (!data.token) {
+    throw new Exception(401, 'Missing token'); // 发送方收到 status: 401
+  }
+  return { success: true, result: await process(data) };
+}
+```
+
+#### 受保护方法（子类可调用）
+
+##### `_send`
+
+```typescript
+protected _send<T = any>(data: any, options?: {
+  timeout?: number;      // 超时时间（毫秒），默认 30000
+  signal?: AbortSignal;  // 外部中止信号
+}): Promise<T>;
+```
+
+| 方面 | 说明 |
+|------|------|
+| **可见性** | `protected`——子类内部调用 |
+| **类型参数** | `T`——期望的响应数据类型 |
+| **参数** | `data: any`——要发送的数据 |
+| **参数** | `options.timeout`——超时毫秒数，默认 30000（30 秒） |
+| **参数** | `options.signal`——`AbortController.signal`，用于主动取消 |
+| **返回值** | `Promise<T>`——解析为远端的响应数据 |
+
+**`_send` 的内部流程：**
+
+1. 分配一个新的自增 ID
+2. 构造 `{ id, mode: REQUEST, twoway: true, data }` 消息
+3. 调用 `post(data)` 发送消息
+4. 创建一个 Promise，并将 `{ resolve, reject }` 存入 `stacks` 映射表
+5. 如果指定了 `timeout`，启动超时定时器（默认 30 秒）
+6. 如果指定了 `signal`，监听 `signal.abort` 事件
+7. 当收到匹配的 RESPONSE 消息时，resolve 或 reject 这个 Promise
+8. 如果超时触发，reject 一个 `TimeoutException`
+9. 如果 abort 触发，发送 ABORT 消息给接收方，并 reject 一个 `AbortException`
+
+**子类如何暴露 `_send`：**
+
+由于 `_send` 是 `protected`，子类需要创建一个 `public` 方法来包装它：
+
+```typescript
+class MyModem extends MessageModem {
+  // ... 实现 post 和 exec ...
+
+  // 对外暴露请求方法
+  public request<T = any>(data: T, options?: {
+    timeout?: number;
+    signal?: AbortSignal;
+  }): Promise<T> {
+    return this._send<T>(data, options);
+  }
+}
+
+// 使用
+const result = await modem.request({ action: 'ping' });
+```
+
+##### `_push`
+
+```typescript
+protected _push<T = any>(data: T, options?: {
+  timeout?: number;      // 超时时间（实际超时时仅本地报错，因为无响应）
+  signal?: AbortSignal;  // 中止信号
+}): void;
+```
+
+| 方面 | 说明 |
+|------|------|
+| **可见性** | `protected`——子类内部调用 |
+| **类型参数** | `T`——数据类型 |
+| **参数** | `data: T`——要发送的数据 |
+| **返回值** | `void`——直接返回，不等待响应 |
+
+**`_push` 和 `_send` 的核心区别：**
+
+| 特性 | `_send` | `_push` |
+|------|---------|---------|
+| `twoway` | `true` | `false` |
+| 返回值 | `Promise<T>` | `void` |
+| 等待响应 | 是 | 否 |
+| 超时控制 | 有（默认 30 秒） | 有（但超时只影响本地不等待） |
+| 适用场景 | 一问一答 | 通知、事件推送、日志 |
+
+**`_push` 的内部流程：**
+
+1. 分配自增 ID
+2. 构造 `{ id, mode: REQUEST, twoway: false, data }` 消息
+3. 调用 `post(data)` 发送
+4. **直接返回**，不创建 Promise，不等待响应
+
+**示例——单向通知：**
+
+```typescript
+class LoggerModem extends MessageModem {
+  // 用于记录日志，不需要回复
+  public log(level: string, message: string): void {
+    this._push({ level, message, timestamp: Date.now() });
+  }
+}
+```
+
+##### `_stream`
+
+```typescript
+protected _stream(data: any, options?: {
+  signal?: AbortSignal;  // 中止信号
+}): Readable;
+```
+
+| 方面 | 说明 |
+|------|------|
+| **可见性** | `protected`——子类内部调用 |
+| **参数** | `data: any`——请求数据 |
+| **参数** | `options.signal`——可选的中止信号 |
+| **返回值** | `Readable`——objectMode 的可读流 |
+
+**`_stream` 和 `_send` 的核心区别：**
+
+- `_send` 接收一个值，返回一个值
+- `_stream` 接收一个请求，返回一个**数据流**（多个值分块到达）
+
+**`_stream` 的内部流程：**
+
+1. 分配自增 ID
+2. 构造 `{ id, mode: REQUEST, twoway: true, stream: true, data }` 消息
+3. 创建一个 `Readable({ objectMode: true })` 流
+4. 将流存入 `streams` 映射表
+5. 调用 `post(data)` 发送
+6. 返回 `Readable` 流
+7. 当收到每个 `RESPONSE` 块时，检查 `streams` 映射表：
+   - 如果 `final === false`，将 `payload` 推入流
+   - 如果 `final === true`，调用 `stream.push(null)` 结束流
+8. 如果 abort 或流关闭，清理映射表
+
+**消费流：**
+
+```typescript
+class StreamModem extends MessageModem {
+  public fetchStream<T>(query: string, options?: { signal?: AbortSignal }) {
+    return this._stream({ query }, options);
+  }
+}
+
+const modem = new StreamModem(/* ... */);
+const stream = modem.fetchStream('SELECT * FROM users');
+
+for await (const chunk of stream) {
+  console.log('收到块:', chunk);
+}
+```
+
+<Note>
+  `_stream` 返回的是 Node.js `Readable` 流，支持 `for await...of` 语法消费。底层数据传输采用多次 RESPONSE 消息实现，每次携带一个块。
+</Note>
+
+##### `_dispose`
+
+```typescript
+protected _dispose(): void;
+```
+
+| 方面 | 说明 |
+|------|------|
+| **可见性** | `protected`——子类可调用 |
+| **参数** | 无 |
+| **返回值** | `void` |
+
+**`_dispose` 执行的操作：**
+
+1. 遍历 `stacks` 映射表，对每个待处理的 Promise 调用 `reject(new AbortException())`
+2. 遍历 `aborts` 映射表，调用每个 `AbortController.abort()`
+3. 遍历 `streams` 映射表，对每个流调用 `stream.destroy(new AbortException())`
+4. 清空所有映射表
+
+**何时调用 `_dispose`：**
+
+直接在子类的 `dispose()` 方法中调用，用于清理资源：
+
+```typescript
+class MyModem extends MessageModem {
+  public dispose(): void {
+    this._dispose();       // 清理 MessageModem 内部资源
+    // 清理子类资源...
+  }
+}
+```
+
+#### 公共方法
+
+##### `receive`
+
+```typescript
+public receive(msg: MessageTransferFormat): void;
+```
+
+| 方面 | 说明 |
+|------|------|
+| **可见性** | `public`——子类和外部均可调用 |
+| **参数** | `msg: MessageTransferFormat`——收到的完整消息 |
+| **返回值** | `void` |
+
+**`receive` 是消息处理的入口。** 当底层传输收到一条消息时，子类应调用此方法，框架会根据 `msg.mode` 自动路由到对应的处理器：
+
+| `msg.mode` | `msg.stream` | 实际处理方法 |
+|-----------|-------------|-------------|
+| `REQUEST` | `false` 或不传 | `onRequest(msg)`——调用 `exec`，返回普通响应 |
+| `REQUEST` | `true` | `onStreamRequest(msg)`——调用 `exec`，消费 `AsyncIterable` |
+| `RESPONSE` | `false` 或不传 | `onResponse(msg)`——查找 `stacks` 映射表，resolve/reject |
+| `RESPONSE` | `true` | `onStreamResponse(msg)`——查找 `streams` 映射表，推送数据块 |
+| `ABORT` | — | 查找 `aborts` 映射表，调用 `controller.abort()` |
+
+**子类如何绑定 `receive`：**
+
+```typescript
+// WebSocket
+ws.on('message', (raw) => {
+  const msg = JSON.parse(raw.toString());
+  this.receive(msg);
+});
+
+// IPC
+process.on('message', (msg) => {
+  this.receive(msg);
+});
+
+// Worker Threads
+worker.on('message', (msg) => {
+  this.receive(msg);
+});
+```
+
+---
+
+### 类型别名和辅助函数
+
+#### `MESSAGE_MODEM_TYPE` 枚举
+
+```typescript
+enum MESSAGE_MODEM_TYPE {
+  REQUEST = 0,
+  RESPONSE = 1,
+  ABORT = 2,
+}
+```
+
+#### `MessageTransferFormat<T>`
+
+```typescript
+interface MessageTransferFormat<T = any> {
+  id: number;
+  mode: MESSAGE_MODEM_TYPE;
+  twoway: boolean;
+  stream?: boolean;
+  data?: T;
+}
+```
+
+| 属性 | 类型 | 必需 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `id` | `number` | 是 | — | 自增消息 ID，用于匹配请求和响应 |
+| `mode` | `MESSAGE_MODEM_TYPE` | 是 | — | 消息类型：REQUEST, RESPONSE, ABORT |
+| `twoway` | `boolean` | 是 | — | 是否需要响应。ABORT 类型强制为 `false` |
+| `stream` | `boolean` | 否 | `undefined` | 是否为流式请求。ABORT 类型强制为 `false` |
+| `data` | `T` | 否 | `undefined` | 消息负载 |
+
+#### `MessageReturnFormat<T>`
+
+```typescript
+interface MessageReturnFormat<T = any> {
+  status: string | number;
   data: T;
   message: string;
 }
 ```
 
-### 流式块格式
+| 属性 | 类型 | 必需 | 说明 |
+|------|------|------|------|
+| `status` | `string \| number` | 是 | 200 表示成功，其他值表示错误 |
+| `data` | `T` | 是 | 响应数据 |
+| `message` | `string` | 是 | 状态描述。成功时通常为空字符串 |
+
+#### `MessageStreamChunk<T>`
 
 ```typescript
 interface MessageStreamChunk<T = any> {
   status: string | number;
-  seq: number;              // 块序号
+  seq: number;
   payload: T;
-  final: boolean;           // 是否为最后一个块
+  final: boolean;
 }
 ```
 
+| 属性 | 类型 | 必需 | 说明 |
+|------|------|------|------|
+| `status` | `string \| number` | 是 | 200 表示正常，错误时携带错误码 |
+| `seq` | `number` | 是 | 块序号，从 0 开始递增 |
+| `payload` | `T` | 是 | 当前块的数据 |
+| `final` | `boolean` | 是 | 是否为最后一个块 |
+
 ---
 
-## 核心 API
+## 消息 ID 分配机制
 
-### `MessageModem`（抽象类）
+`MessageModem` 内部维护一个自增 ID 计数器（从 0 开始）。每次发送新消息时：
 
-| 方法 | 可见性 | 签名 | 说明 |
-|------|--------|------|------|
-| `post` | `protected abstract` | `(data: MessageTransferFormat) => void` | 子类实现：如何将消息发出 |
-| `exec` | `protected abstract` | `(data: any, signal?: AbortSignal) => Promise<any>` | 子类实现：处理收到的请求。返回 `Promise`（普通值）；支持 `AsyncIterable`（需配合 `_stream`） |
-| `_send` | `protected` | `(data, { timeout?, signal? }) => Promise<T>` | 发送双向请求（`twoway: true`），`timeout` 默认 30000ms |
-| `_push` | `protected` | `(data, { timeout?, signal? }) => void` | 发送单向消息（`twoway: false`），接收方不回复 |
-| `_stream` | `protected` | `(data, { signal? }) => Readable` | 发送流式请求，返回 `Readable`（objectMode），逐块消费远端 `AsyncIterable` |
-| `receive` | `public` | `(msg: MessageTransferFormat) => void` | 接收消息入口，按 `mode` 分发到 `onRequest` / `onResponse` / `onAbort` / 流式处理 |
-| `_dispose` | `protected` | `() => void` | 释放所有待处理的 Promise、流和 AbortController |
+1. 获取当前 ID 值
+2. 计数器 +1
+3. 如果计数器达到 `Number.MAX_SAFE_INTEGER`，回绕到 0
+
+```typescript
+private createIncrementId() {
+  let id = this.id++;
+  if (this.id >= Number.MAX_SAFE_INTEGER) {
+    id = this.id = 0;
+  }
+  return id;
+}
+```
+
+<Note>
+  两端各自维护独立的 ID 序列，互不冲突。这意味着发送方和接收方可能使用相同的 ID 值，但由于消息中的 `mode` 字段（REQUEST vs RESPONSE），框架能正确区分。
+</Note>
+
+---
+
+## 通信协议详细图解
 
 ### 双向请求（`_send`）
 
-```text
-发送方                           接收方
-  │                                │
-  │  _send(data)                   │
-  │──── REQUEST (twoway:true) ────►│
-  │                                │ exec(data, signal)
-  │◄──── RESPONSE ─────────────────│
-  │  resolve(data)                 │
-  │                                │
-  │  发送方 abort()                 │
-  │──── ABORT ────────────────────►│
-  │                                │ controller.abort() → exec 收到中止信号
+```
+发送方 (Sender)                     接收方 (Receiver)
+    │                                   │
+    │  _send({ action: 'ping' })        │
+    │                                   │
+    │  createIncrementId() → id=1       │
+    │  ┌───────────────────────┐        │
+    │  │ id: 1                 │        │
+    │  │ mode: REQUEST (0)     │        │
+    │  │ twoway: true          │        │
+    │  │ data: {action:'ping'} │        │
+    │  └─────────┬─────────────┘        │
+    │            │ post(data)           │
+    │────────────┼──────────────────────│
+    │            │                      │ receive(msg)
+    │            │                      │ mode === REQUEST → onRequest(msg)
+    │            │                      │ exec(data) → { pong: true }
+    │            │                      │
+    │            │                      │ 创建响应：
+    │            │                      │ ┌───────────────────────┐
+    │            │                      │ │ id: 1                 │
+    │            │                      │ │ mode: RESPONSE (1)    │
+    │            │                      │ │ data: {               │
+    │            │                      │ │   status: 200         │
+    │            │                      │ │   data: { pong: true }│
+    │            │                      │ │   message: ""         │
+    │            │                      │ │ }                     │
+    │            │                      │ └─────────┬─────────────┘
+    │◄───────────┼──────────────────────│           │ post(data)
+    │            │                      │
+    │            │ receive(msg)         │
+    │            │ mode === RESPONSE    │
+    │            │ status === 200       │
+    │            │ resolve({pong:true}) │
+    │            │                      │
+    │  _send 返回 Promise<{pong:true}>  │
 ```
 
-### 单向消息（`_push`）
+### 单向推送（`_push`）
 
-```text
-发送方                           接收方
-  │                                │
-  │  _push(data)                   │
-  │──── REQUEST (twoway:false) ───►│
-  │                                │ exec(data)（不回复）
+```
+发送方                             接收方
+    │                                   │
+    │  _push({ event: 'heartbeat' })    │
+    │                                   │
+    │  id → id=x                        │
+    │  ┌───────────────────────┐         │
+    │  │ id: x                 │         │
+    │  │ mode: REQUEST (0)     │         │
+    │  │ twoway: false        │         │
+    │  │ data: {event:'hb'}   │         │
+    │  └─────────┬─────────────┘         │
+    │            │ post(data)            │
+    │────────────┼───────────────────────│
+    │  return void                       │ receive(msg)
+    │            │                      │ mode === REQUEST, twoway=false
+    │            │                      │ onRequest(msg) → exec(data)
+    │            │                      │ exec 返回值不会被回复！
 ```
 
 ### 流式传输（`_stream`）
 
-```text
-发送方                           接收方
-  │                                │
-  │  _stream(data)                 │
-  │──── REQUEST (stream:true) ────►│
-  │                                │ exec → AsyncIterable
-  │◄──── RESPONSE (stream:true) ───│  { seq:0, payload, final:false }
-  │◄──── RESPONSE (stream:true) ───│  { seq:1, payload, final:false }
-  │◄──── RESPONSE (stream:true) ───│  { seq:2, payload, final:true  }
-  │  stream.push(chunk) ...        │
+```
+发送方                             接收方
+    │                                   │
+    │  _stream({ query: 'users' })      │
+    │                                   │
+    │  id → id=x                        │
+    │  stream = new Readable()          │
+    │  ┌─────────────────────────┐      │
+    │  │ id: x, twoway: true     │      │
+    │  │ mode: REQUEST (0)      │      │
+    │  │ stream: true           │      │
+    │  │ data: {query:'users'}  │      │
+    │  └─────────┬───────────────┘      │
+    │────────────┼──────────────────────│
+    │            │                      │ receive(msg)
+    │            │                      │ onStreamRequest(msg)
+    │            │                      │ exec(data) → AsyncIterable
+    │            │                      │ for await (const chunk of iterable) {
+    │            │                      │   post({ id: x, mode: RESPONSE,
+    │            │                      │         stream: true,
+    │            │                      │         data: { status:200, seq:0,
+    │◄───────────┼──────────────────────│                payload:chunk, final:false }})
+    │            │ stream.push(chunk)   │ }
+    │            │                      │
+    │            │                      │ post({ id: x, mode: RESPONSE,
+    │            │                      │       stream: true,
+    │            │                      │       data: { status:200, seq:1,
+    │◄───────────┼──────────────────────│              payload:chunk2, final:false }})
+    │            │ stream.push(chunk2)  │
+    │            │                      │
+    │            │                      │ post({ id: x, mode: RESPONSE,
+    │            │                      │       stream: true,
+    │            │                      │       data: { status:200, seq:2,
+    │◄───────────┼──────────────────────│              payload:undefined, final:true }})
+    │            │ stream.push(null)    │
+    │            │ 流结束               │
+```
+
+### 中止流程（Abort）
+
+```
+发送方                             接收方
+    │                                   │
+    │  ac = new AbortController()       │
+    │  _send(data, { signal: ac.signal })│
+    │                                   │
+    │  ──── REQUEST ──────────────────► │
+    │                                   │ exec(data, controller.signal)
+    │                                   │
+    │  ac.abort()  // 用户主动取消      │
+    │                                   │
+    │  发送 ABORT 消息：                 │
+    │  ┌───────────────────────┐         │
+    │  │ id: x                 │         │
+    │  │ mode: ABORT (2)       │         │
+    │  │ twoway: false         │         │
+    │  │ data: <被取消的请求ID>  │         │
+    │  └─────────┬─────────────┘         │
+    │────────────┼───────────────────────│
+    │            │                      │ receive(msg)
+    │            │                      │ mode === ABORT
+    │            │                      │ controller.abort()
+    │            │                      │ exec 收到 abort 信号
+    │                                   │
+    │  reject(new AbortException())     │
 ```
 
 ---
 
 ## 快速开始
 
-### 最小实现
+### 最小完整实现
+
+创建一个基于 `MessageModem` 的回显通信模组：
 
 ```typescript
-import { MessageModem } from '@hile/message-modem';
+import {
+  MessageModem,
+  MESSAGE_MODEM_TYPE,
+  type MessageTransferFormat,
+} from '@hile/message-modem';
+import { EventEmitter } from 'node:events';
 
+// 1. 创建子类，继承 MessageModem
 class EchoModem extends MessageModem {
-  protected post<T>(data: MessageTransferFormat<T>): void {
-    // 通过底层传输发送 JSON
-    transport.send(JSON.stringify(data));
+  constructor(private emitter: EventEmitter) {
+    super();
+    // 绑定消息接收
+    emitter.on('message', (msg: MessageTransferFormat) => {
+      this.receive(msg); // 将收到的消息交给框架处理
+    });
   }
 
+  // 实现 post：如何发送消息
+  protected post<T>(data: MessageTransferFormat<T>): void {
+    this.emitter.emit('send', data);
+  }
+
+  // 实现 exec：如何处理请求
   protected async exec(data: any): Promise<any> {
-    // 处理收到的请求
-    return data;
+    return { echo: data }; // 收到什么，原样返回
+  }
+
+  // 对外暴露请求方法
+  public ping<T = any>(data: T): Promise<T> {
+    return this._send<T>(data);
+  }
+
+  // 对外暴露推送方法
+  public notify(data: any): void {
+    this._push(data);
+  }
+
+  // 清理资源
+  public dispose(): void {
+    this.emitter.removeAllListeners('message');
+    this._dispose();
+  }
+}
+
+// 2. 创建两端实例
+const emitterA = new EventEmitter();
+const emitterB = new EventEmitter();
+
+const modemA = new EchoModem(emitterA);
+const modemB = new EchoModem(emitterB);
+
+// 连接两端：A 的发送到 B 的接收，B 的发送到 A 的接收
+emitterA.on('send', (data: MessageTransferFormat) => {
+  emitterB.emit('message', data);
+});
+emitterB.on('send', (data: MessageTransferFormat) => {
+  emitterA.emit('message', data);
+});
+
+// 3. 发送请求
+async function main() {
+  const result = await modemA.ping({ hello: 'world' });
+  console.log('收到响应:', result); // { echo: { hello: 'world' } }
+
+  modemA.dispose();
+  modemB.dispose();
+}
+
+main();
+```
+
+### 使用 `_push` 的单向通知
+
+```typescript
+class NotifierModem extends MessageModem {
+  // 假设 post 和 exec 已经实现
+  // ...
+
+  public sendNotification(type: string, payload: any): void {
+    this._push({ type, payload, timestamp: Date.now() });
   }
 }
 ```
 
-### WebSocket
+### 自定义超时
 
 ```typescript
-import { MessageModem, type MessageTransferFormat } from '@hile/message-modem';
-
-class WebSocketModem extends MessageModem {
-  constructor(private ws: WebSocket) {
-    super();
-    ws.addEventListener('message', (e) => {
-      this.receive(JSON.parse(e.data));
-    });
+class TimeoutAwareModem extends MessageModem {
+  // 对外暴露带超时的请求
+  public requestWithTimeout<T>(data: T, timeoutMs: number): Promise<T> {
+    return this._send<T>(data, { timeout: timeoutMs });
   }
 
-  protected post<T>(data: MessageTransferFormat<T>): void {
-    this.ws.send(JSON.stringify(data));
+  // 默认使用 30 秒超时
+  public request<T>(data: T): Promise<T> {
+    return this._send<T>(data); // 隐含 timeout: 30000
   }
+}
+```
 
-  protected async exec(data: any): Promise<any> {
-    return handleRequest(data);
+### 配合 AbortSignal 取消请求
+
+```typescript
+const ac = new AbortController();
+
+// 5 秒后取消请求
+setTimeout(() => ac.abort(), 5000);
+
+try {
+  const result = await modem.request(data, { signal: ac.signal });
+  console.log('结果:', result);
+} catch (e) {
+  if (e instanceof TimeoutException) {
+    console.log('请求超时');
+  } else if (e instanceof AbortException) {
+    console.log('请求被取消');
   }
+}
+```
 
-  public request<T>(data: T, options?: { timeout?: number; signal?: AbortSignal }) {
-    return this._send<T>(data, options);
+### 流式传输完整示例
+
+**接收方——返回 AsyncIterable：**
+
+```typescript
+class DataProvider extends MessageModem {
+  // 实现 post 和 exec...
+
+  protected async exec(data: any, signal?: AbortSignal): Promise<any> {
+    if (data.action === 'listFiles') {
+      // 返回异步生成器
+      return async function* () {
+        yield { name: 'file1.txt', size: 1024 };
+        yield { name: 'file2.txt', size: 2048 };
+        yield { name: 'file3.txt', size: 4096 };
+      }();
+    }
+    return { error: 'unknown action' };
+  }
+}
+```
+
+**发送方——消费流：**
+
+```typescript
+class DataConsumer extends MessageModem {
+  public listFiles(dir: string, options?: { signal?: AbortSignal }) {
+    return this._stream({ action: 'listFiles', dir }, options);
   }
 }
 
 // 使用
-const modem = new WebSocketModem(ws);
-const result = await modem.request({ action: 'getUser', id: 1 });
-```
-
-### Worker Threads
-
-```typescript
-import { parentPort, Worker } from 'node:worker_threads';
-import { MessageModem } from '@hile/message-modem';
-
-// 主线程
-class WorkerModem extends MessageModem {
-  constructor(private worker: Worker) {
-    super();
-    worker.on('message', (msg) => this.receive(msg));
-  }
-
-  protected post<T>(data: MessageTransferFormat<T>): void {
-    this.worker.postMessage(data);
-  }
-
-  protected async exec(data: any): Promise<any> {
-    return handleRequest(data);
-  }
-
-  public request<T>(data: T, options?: { timeout?: number; signal?: AbortSignal }) {
-    return this._send<T>(data, options);
-  }
-}
-
-// Worker 线程
-class ParentModem extends MessageModem {
-  constructor() {
-    super();
-    parentPort!.on('message', (msg) => this.receive(msg));
-  }
-
-  protected post<T>(data: MessageTransferFormat<T>): void {
-    parentPort!.postMessage(data);
-  }
-
-  protected async exec(data: any): Promise<any> {
-    return heavyComputation(data);
-  }
-}
-```
-
----
-
-## 异常处理
-
-| 类 | `status` | 默认 `message` | 触发时机 |
-|------|----------|------|------|
-| `Exception` | 自定义 | 自定义 | `exec` 中主动抛出，status 码透传到发送方 |
-| `TimeoutException` | `ETIMEDOUT` | `Timeout` | 超过指定超时时间（默认 30s） |
-| `AbortException` | `ECONNABORTED` | `Abort` | 发送方 `signal.abort()` 或被远端 ABORT |
-
-```typescript
-// exec 中抛出错误
-protected async exec(data: any): Promise<any> {
-  if (!data.token) {
-    throw new Exception(401, 'Unauthorized');
-  }
-  throw new Error('Something went wrong'); // 映射为 status 500
-}
-
-// 发送方捕获
+const stream = consumer.listFiles('/tmp');
 try {
-  const result = await modem.request(data);
+  for await (const file of stream) {
+    console.log('文件:', file.name, file.size);
+  }
+  console.log('流结束');
 } catch (e) {
   if (e instanceof AbortException) {
-    console.log('请求被中止');
-  } else if (e instanceof Exception) {
-    console.log(`错误 [${e.status}]: ${e.message}`);
+    console.log('流被取消');
   }
 }
 ```
 
 ---
 
-## 流式传输示例
+## 最佳实践
 
-接收方 `exec` 返回 `AsyncIterable`，发送方通过 `_stream` 消费：
+### 1. 统一异常处理
+
+在 `exec` 中统一捕获所有错误，用 `Exception` 包装后抛出，确保调用方能获取到结构化的错误信息：
 
 ```typescript
-// 接收方（Provider）
-class ProviderModem extends MessageModem {
-  // ...
-  protected async exec(data: any): Promise<any> {
-    // 返回异步迭代器
-    return async function* () {
-      yield { id: 1, name: 'Alice' };
-      yield { id: 2, name: 'Bob' };
-      yield { id: 3, name: 'Charlie' };
-    }();
+protected async exec(data: any): Promise<any> {
+  try {
+    const result = await riskyOperation(data);
+    return result;
+  } catch (e) {
+    if (e instanceof Exception) throw e;
+    throw new Exception(500, e instanceof Error ? e.message : 'Unknown error');
   }
 }
+```
 
-// 发送方（Consumer）
-class ConsumerModem extends MessageModem {
-  // ...
-  public query<T>(data: T, options?: { signal?: AbortSignal }) {
-    return this._stream(data, options);
-  }
+### 2. 明确区分 `_send` 和 `_push`
+
+- 使用 `_send` 的场景：需要确认对方已收到并处理完毕（如查询数据、执行命令）
+- 使用 `_push` 的场景：不需要对方回复（如日志上报、心跳通知、事件广播）
+
+### 3. 始终调用 `dispose`
+
+在子类的清理方法中始终调用 `_dispose()`，确保所有待处理的 Promise 被拒绝、所有流被销毁、所有 AbortController 被中止，防止内存泄漏：
+
+```typescript
+public dispose(): void {
+  this._dispose();       // 拒绝所有待处理请求
+  this.ws.close();       // 关闭连接
+}
+```
+
+### 4. Prefix 约定
+
+子类暴露的方法建议使用 `_send`、`_push`、`_stream` 而不是直接暴露它们——创建语义更清晰的方法名：
+
+```typescript
+// 推荐
+public getUser(id: number): Promise<User> {
+  return this._send({ action: 'getUser', id });
 }
 
-const stream = modem.query({ query: 'SELECT * FROM users' });
-for await (const chunk of stream) {
-  console.log(chunk); // 逐块到达
+// 不推荐——语义不清晰
+public send(data: any): Promise<any> {
+  return this._send(data);
 }
+```
+
+### 5. 合理设置超时
+
+根据操作的实际耗时设置超时，避免不必要的等待：
+
+```typescript
+// 快速操作（如缓存查询）
+const result = await modem.request(data, { timeout: 1000 });
+
+// 慢操作（如模型推理）
+const result = await modem.request(data, { timeout: 60000 });
 ```
 
 ---
 
-## 注意事项
+## 常见错误排查
 
-<Warning>
-  `post` 应保持同步。如果底层传输是异步的，需在 `post` 内部缓冲，不可将 `post` 声明为 `async`——框架假设 `post` 调用后消息即发出。
-</Warning>
+<AccordionGroup>
+  <Accordion title="TypeError: Cannot read properties of undefined (reading 'resolve')">
+    收到一个不存在的请求 ID 的 RESPONSE 消息。可能的原因：
+    - 消息 ID 冲突（两端 ID 计数器不同步）
+    - 收到了过期的响应消息
 
-<Warning>
-  `_send`、`_push`、`_stream` 均为 `protected`。子类应自行决定如何暴露给外部调用，不应直接改为 `public`。
-</Warning>
+    检查 `post` 实现是否正确发送了 `MessageTransferFormat` 的完整结构。
+  </Accordion>
 
-<Note>
-  消息 ID 在实例内自增，两端各自维护独立的 ID 序列，互不冲突。超过 `Number.MAX_SAFE_INTEGER` 时自动归零。
-</Note>
+  <Accordion title="收到 TimeoutException，但操作实际只用了很短时间">
+    可能的原因：
+    - 接收方未正确处理消息（`exec` 没有返回或返回太慢）
+    - `post` 未正确发送消息
+    - 接收方未调用 `receive` 解析收到的消息
+
+    检查 `exec` 是否有 `await` 所有异步操作，确保没有遗漏 `receive` 调用。
+  </Accordion>
+
+  <Accordion title="exec 抛出的 Error 在发送方收到时 status 为 500">
+    这是预期行为。`exec` 中抛出的普通 `Error` 会被框架映射为 `{ status: 500, data: null, message: error.message }`。如果需要自定义状态码，使用 `throw new Exception(XXX, 'message')`。
+  </Accordion>
+
+  <Accordion title="推送的消息未到达接收方">
+    检查 `post` 实现是否正常工作。如果 `post` 是异步的（async），框架可能在下一条消息发送前还未完成发送。
+
+    如果使用 `_push`，注意它不等待响应，所以没有反馈机制确认对方是否收到。
+  </Accordion>
+
+  <Accordion title="流式传输中某些块丢失">
+    检查 `exec` 返回的 `AsyncIterable` 是否正确 `yield` 了所有值。如果 `exec` 中抛出异常但未被捕获，流会异常结束。建议在 `exec` 中添加 try-catch。
+  </Accordion>
+
+  <Accordion title="消息 ID 达到 MAX_SAFE_INTEGER 后会怎样？">
+    ID 会自动回绕到 0。在极端高并发的场景下，如果旧请求尚未完成且 ID 已回绕，可能出现 ID 冲突。大多数场景下无需担心——从 0 计数到 `Number.MAX_SAFE_INTEGER`（约 9007199254740991）需要极大量的消息才能触及。
+  </Accordion>
+</AccordionGroup>
 
 ---
 
 ## 相关包
 
-- `@hile/message-ws` — 基于 WebSocket 的 `MessageModem` 实现
-- `@hile/message-ipc` — 基于 IPC 的 `MessageModem` 实现
-- `@hile/message-worker-thread` — 基于 Worker Threads 的 `MessageModem` 实现
+| 包名 | 说明 |
+|------|------|
+| `@hile/message-ws` | 基于 WebSocket 的 MessageModem 实现 |
+| `@hile/message-ipc` | 基于 IPC（父子进程）的 MessageModem 实现 |
+| `@hile/message-worker-thread` | 基于 Worker Threads 的 MessageModem 实现 |
+| `@hile/message-loader` | 基于文件系统的消息路由加载器 |

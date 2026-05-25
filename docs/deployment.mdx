@@ -1,39 +1,1222 @@
 ---
 title: 生产部署
-description: "构建、NODE_ENV、扫描 dist 与优雅关闭行为说明"
+description: "将 Hile 应用部署到生产环境的完整指南——包括 TypeScript 构建、环境变量配置、Node.js 生产运行、Docker 容器化、优雅关闭机制以及进程管理。"
 ---
 
-## 基本步骤
+# 生产部署
+
+当你的 Hile 应用开发完成，准备部署到生产环境时，本指南将带你了解所有需要考虑的要点。
+
+## 开发模式 vs 生产模式
+
+首先，理解 Hile 的两种运行模式：
+
+| 特性 | 开发模式 (<code>hile start --dev</code>) | 生产模式 (<code>hile start</code>) |
+|------|---------------------------------------|-----------------------------------|
+| <code>NODE_ENV</code> | 强制设为 <code>development</code> | 强制设为 <code>production</code> |
+| TypeScript 执行 | **tsx** 直接执行 <code>src/</code> 中的 TS 文件（无需预编译） | 运行 <code>dist/</code> 中的编译后 JS 文件 |
+| 容器事件日志 | 默认输出彩色日志 | 不输出（即使是 <code>--silent</code> 也不输出） |
+| TypeORM SQL 日志 | 开启（<code>logging: true</code>） | 关闭 |
+| 文件扫描目录 | <code>src/</code> | <code>dist/</code> |
+| 适用场景 | 本地开发、调试 | 生产服务器、Docker 容器 |
+
+生产模式的关键差异在于：
+1. **TypeScript 文件需要先编译为 JavaScript**
+2. **扫描的是 <code>dist/</code> 目录**，不是 <code>src/</code>
+3. **不输出容器事件日志**（减少控制台输出）
+4. **数据库日志关闭**（性能考虑）
+
+---
+
+## 第一步：构建 TypeScript
+
+Hile 项目使用 TypeScript，部署前需要编译为 JavaScript。
+
+### 标准构建
 
 ```bash
-# 1. 编译 TypeScript（脚本名以你的 package.json 为准）
+# 编译 TypeScript
 pnpm run build
 
-# 2. 生产模式启动（示例）
-NODE_ENV=production hile start
+# 这条命令等同于
+npx tsc -b
 ```
 
-若生产环境需要 env 文件：
+<code>tsc -b</code> 是 TypeScript 的"项目构建"模式，它会：
+- 读取 <code>tsconfig.json</code> 中的配置
+- 将 <code>src/</code> 目录下的 <code>.ts</code> 文件编译到 <code>dist/</code> 目录
+- 生成对应的 <code>.js</code> 和 <code>.d.ts</code> 文件
+
+### 验证构建产物
+
+构建完成后，检查 <code>dist/</code> 目录：
 
 ```bash
-NODE_ENV=production hile start --env-file .env.prod
+ls dist/
+# 输出示例：
+# controllers/
+# models/
+# services/
+
+ls dist/services/
+# index.boot.js    ← boot 文件已被编译为 JS
 ```
 
-## 生产模式与开发模式差异
+确保以下文件都存在：
+- <code>dist/services/index.boot.js</code> (或你的 boot 文件)
+- <code>dist/controllers/*.controller.js</code> (控制器)
+- <code>dist/models/*.model.js</code> (如果有 model 层)
 
-| 特性 | `hile start --dev` | `hile start`（生产） |
-|------|-------------------|---------------------|
-| `NODE_ENV` | 强制设为 `development` | 强制设为 `production`（除非之前已被外部设定） |
-| TypeScript | **tsx** 直接执行 `src/` | 运行 **编译后的 JS**，扫描 **`dist/`** |
-| 容器事件日志 | 默认输出（除非带 `--silent`） | 不输出 |
-| TypeORM SQL 日志 | 开启（`logging: true`） | 关闭 |
+<Warning>
+如果 <code>dist/</code> 目录中没有 boot 文件，CLI 在生产模式下启动时会找不到任何服务。请检查 <code>tsconfig.json</code> 的 <code>include</code> 配置是否包含了所有源文件。
+</Warning>
 
-确保 **`tsconfig`** 的 **`outDir`** 与 CLI 在生产环境下扫描的目录一致（`dist/`），且 boot 与控制器路径在编译产物中存在。
+### 常见的构建问题
 
-## 优雅关闭
+<Accordion title="tsc -b 报错 "Cannot find module ..."">
+  这通常是因为 TypeScript 找不到某个依赖的类型定义。尝试：
 
-进程管理器（systemd、Kubernetes、Docker STOP）通常发送 **SIGTERM**。**`@hile/cli`** 通过 `async-exit-hook` 库捕获进程退出信号，触发 **`container.shutdown()`**，按 **LIFO**（后注册的先关闭）依次执行各服务的 shutdown 回调（关 HTTP、断 Redis、销毁连接池等）。服务级别的 shutdown 超时可通 `Container` 构造参数的 `shutdownTimeoutMs` 配置。
+  1. 确保所有依赖都已安装：<code>pnpm install</code>
+  2. 如果使用 pnpm，确保 <code>package.json</code> 中的依赖版本正确
+  3. 检查 <code>tsconfig.json</code> 的 <code>moduleResolution</code> 设置是否与包管理工具匹配（pnpm 推荐使用 <code>"bundler"</code>）
+</Accordion>
 
-## 全栈（Next + HttpNext）注意点
+<Accordion title="Error: Cannot find module 'tsx'">
+  生产模式不需要 <code>tsx</code>，因为运行的是编译后的 JS 文件。但如果你在某些脚本中引用了 <code>tsx</code>，确保将它放在 <code>devDependencies</code> 中，生产环境不安装 <code>devDependencies</code>：
 
-含 **Next.js** 的模板往往需要 **先 `next build`** 再启动（具体以模板 **`package.json` scripts** 为准）；静态资源与 **`.next/static`** 需在部署产物中可用。
+  ```json
+  {
+    "devDependencies": {
+      "tsx": "^4.0.0"
+    }
+  }
+  ```
+
+  如果使用 <code>npm install --production</code> 或 <code>pnpm install --prod</code>，<code>tsx</code> 不会被安装。
+
+  不过，<code>@hile/cli</code> 在生产模式下不会使用 <code>tsx</code>，所以即使安装了 tsx 也没关系。
+</Accordion>
+
+### 在 package.json 中配置构建脚本
+
+确保你的 <code>package.json</code> 中包含以下脚本：
+
+```json
+{
+  "scripts": {
+    "dev": "hile start --dev",
+    "build": "tsc -b",
+    "start": "hile start",
+    "clean": "rm -rf dist"
+  }
+}
+```
+
+对于生产环境的部署流程：
+
+```bash
+# 完整步骤
+pnpm install          # 安装依赖
+pnpm run build        # 编译 TypeScript
+pnpm run start        # 生产模式启动
+```
+
+---
+
+## 第二步：环境变量配置
+
+Hile 的多个包通过环境变量获取配置。生产环境需要正确设置这些变量。
+
+### 核心环境变量
+
+| 环境变量 | 所属包 | 说明 | 示例值 |
+|----------|--------|------|--------|
+| <code>NODE_ENV</code> | 全局 | 运行模式。CLI 生产模式会自动设为 <code>production</code> | <code>production</code> |
+| <code>LOG_LEVEL</code> | <code>@hile/logger</code> | 日志级别 | <code>info</code> |
+
+### TypeORM 环境变量
+
+当使用 <code>@hile/typeorm</code> 时：
+
+| 环境变量 | 说明 | 生产环境建议 |
+|----------|------|-------------|
+| <code>TYPEORM_TYPE</code> | 数据库类型 | <code>mysql</code> / <code>postgres</code> 等 |
+| <code>TYPEORM_HOST</code> | 数据库主机 | 生产数据库地址 |
+| <code>TYPEORM_PORT</code> | 数据库端口 | 3306（MySQL）或 5432（PostgreSQL） |
+| <code>TYPEORM_USERNAME</code> | 数据库用户 | 具有最小权限的专用用户 |
+| <code>TYPEORM_PASSWORD</code> | 数据库密码 | 使用强密码，建议从密钥管理服务获取 |
+| <code>TYPEORM_DATABASE</code> | 数据库名 | 生产数据库名称 |
+| <code>TYPEORM_ENTITIES</code> | 实体文件路径 | <code>dist/entities/*.js</code> |
+| <code>TYPEORM_SYNCHRONIZE</code> | 是否自动同步 | **必须设为 <code>false</code>** |
+
+<Warning>
+<strong>生产环境绝对不能开启 <code>TYPEORM_SYNCHRONIZE=true</code></strong>。synchronize 会根据实体类自动创建/修改数据库表结构，这可能导致数据丢失。生产环境下应使用 TypeORM migration 管理数据库结构变更。
+</Warning>
+
+### Redis 环境变量
+
+当使用 <code>@hile/ioredis</code> 时：
+
+| 环境变量 | 说明 | 示例值 |
+|----------|------|--------|
+| <code>REDIS_HOST</code> | Redis 主机 | <code>localhost</code> 或 Redis 服务地址 |
+| <code>REDIS_PORT</code> | Redis 端口 | <code>6379</code> |
+| <code>REDIS_USERNAME</code> | Redis 用户名 | 如果启用了 ACL 需要设置 |
+| <code>REDIS_PASSWORD</code> | Redis 密码 | 建议设置强密码 |
+| <code>REDIS_DB</code> | 数据库编号 | <code>0</code> |
+
+### Micro 环境变量
+
+当使用 <code>@hile/micro</code> 时：
+
+| 环境变量 | 说明 | 默认值 |
+|----------|------|--------|
+| <code>MICRO_HEARTBEAT_INTERVAL</code> | 心跳发送间隔（毫秒） | <code>10000</code> |
+| <code>MICRO_HEARTBEAT_TIMEOUT</code> | 心跳超时时间（毫秒） | <code>20000</code> |
+| <code>MICRO_HEARTBEAT_CHECK_INTERVAL</code> | 心跳检查间隔（毫秒） | <code>5000</code> |
+| <code>REGISTRY_PORT</code> | Registry 端口 | <code>9876</code> |
+
+### 使用 .env 文件
+
+CLI 支持通过 <code>--env-file</code> 选项加载环境变量文件：
+
+```bash
+# 加载单个文件
+hile start --env-file .env.prod
+
+# 加载多个文件（先加载的优先，已存在的 key 不被后加载的覆盖）
+hile start --env-file .env --env-file .env.local
+```
+
+<code>--env-file</code> 选项使用 Node.js 20.12+ 原生 <code>process.loadEnvFile()</code> 方法加载文件，行为与 Node.js 的 <code>--env-file</code> 标志一致：
+
+- 文件格式为 <code>KEY=VALUE</code>（每行一个，支持注释 <code>#</code>）
+- 已存在的环境变量不会被覆盖（先加载的优先）
+- 支持空行和引号包裹的值
+
+**示例 .env.prod 文件**：
+
+```env
+# 数据库配置
+TYPEORM_TYPE=mysql
+TYPEORM_HOST=db.example.com
+TYPEORM_PORT=3306
+TYPEORM_USERNAME=app_user
+TYPEORM_PASSWORD=s3cret!
+TYPEORM_DATABASE=myapp_prod
+TYPEORM_ENTITIES=dist/entities/*.js
+TYPEORM_SYNCHRONIZE=false
+
+# Redis 配置
+REDIS_HOST=redis.example.com
+REDIS_PORT=6379
+REDIS_PASSWORD=s3cret!
+REDIS_DB=0
+
+# 日志配置
+LOG_LEVEL=info
+```
+
+<Note>
+在生产环境中，敏感信息（如数据库密码）应该通过密钥管理服务获取，而不是硬编码在文件中。可以使用环境变量注入工具（如 Kubernetes Secrets、AWS Secrets Manager、Vault 等）或 CI/CD 平台内置的密钥管理功能。
+</Note>
+
+---
+
+## 第三步：生产环境启动
+
+构建完成后，使用以下命令启动：
+
+```bash
+# 最简启动
+NODE_ENV=production hile start
+
+# 使用 env 文件
+NODE_ENV=production hile start --env-file .env.prod
+
+# 设置 PATH 以确保 CLI 能找到
+# 如果全局安装 @hile/cli 可直接使用
+hile start
+
+# 如果作为项目依赖，使用 pnpm
+pnpm run start
+```
+
+### 指定启动目录
+
+CLI 支持通过 <code>start [name]</code> 参数启动指定目录或包中的服务：
+
+```bash
+# 启动当前目录下的服务
+hile start
+
+# 启动指定目录下的服务
+hile start /path/to/my-app
+
+# 启动指定包名（需要 package.json 中定义）
+hile start @my-org/my-service
+```
+
+### 后端服务器配置建议
+
+<Accordion title="Node.js 内存设置">
+  建议为 Node.js 进程设置内存限制：
+
+  ```bash
+  NODE_OPTIONS="--max-old-space-size=512" hile start
+  ```
+
+  这个例子限制堆内存为 512MB。具体数值取决于你的应用规模和服务器配置。可以使用以下命令监控实际内存使用：
+
+  ```bash
+  ps -p <PID> -o rss,vsz
+  # 或
+  top -pid <PID>
+  ```
+</Accordion>
+
+<Accordion title="启用 Node.js 的 Source Map 支持">
+  如果你希望在错误堆栈中看到 TypeScript 源码位置（而不是编译后的 JS），可以启用 source map 支持：
+
+  ```bash
+  NODE_OPTIONS="--enable-source-maps" hile start
+  ```
+
+  这需要在 <code>tsconfig.json</code> 中设置 <code>"sourceMap": true</code>。
+</Accordion>
+
+<Accordion title="生产环境关闭 Node.js 的实验性警告">
+  ```bash
+  NODE_OPTIONS="--no-warnings" hile start
+  ```
+</Accordion>
+
+---
+
+## 第四步：优雅关闭机制
+
+Hile 内置了优雅关闭机制，确保服务在进程退出时正确释放资源。
+
+### 什么是优雅关闭？
+
+优雅关闭（Graceful Shutdown）是指在进程收到终止信号时，不是立即退出，而是：
+
+1. 停止接受新请求/新连接
+2. 处理完正在进行的请求
+3. 释放资源（关闭数据库连接、断开 Redis 等）
+4. 然后才退出进程
+
+如果不做优雅关闭，可能出现：
+- 数据库连接正在执行查询，进程突然退出导致数据损坏
+- HTTP 请求只处理了一半，客户端收到不完整的响应
+- Redis 连接泄漏，耗尽连接池
+
+### Hile 的优雅关闭流程
+
+```
+进程收到 SIGTERM / SIGINT
+        │
+        ▼
+async-exit-hook 捕获信号
+        │
+        ▼
+调用 container.shutdown()
+        │
+        ├── 发出 container:shutdown:start 事件
+        │
+        ├── 按 LIFO 顺序遍历服务
+        │     ├── 服务 C 的 shutdown 回调（后注册的先关闭）
+        │     ├── 服务 B 的 shutdown 回调
+        │     └── 服务 A 的 shutdown 回调（先注册的后关闭）
+        │
+        ├── 对每个服务，逆序执行其 shutdown 回调
+        │
+        ├── 循环检查直到所有服务都关闭
+        │
+        └── 发出 container:shutdown:done 事件
+              │
+              ▼
+        进程安全退出 (process.exit)
+```
+
+### 注册关闭回调
+
+每个服务通过 <code>shutdown(fn)</code> 注册关闭回调：
+
+```typescript
+// src/services/http.boot.ts
+import { defineService } from '@hile/core'
+import { Http } from '@hile/http'
+
+export default defineService('http-server', async (shutdown) => {
+  const http = new Http({ port: 3000 })
+  await http.load('./src/controllers', { suffix: 'controller' })
+
+  // listen 返回的 close 函数会优雅关闭 HTTP 服务
+  // 它停止接受新连接，但会等待正在处理的请求完成
+  const close = await http.listen()
+
+  // 将 close 注册为 shutdown 回调
+  // 当容器关闭时，会自动调用 close()
+  shutdown(close)
+
+  return http
+})
+```
+
+### 多个关闭回调的执行顺序
+
+一个服务可以注册多个关闭回调，它们按**逆序**执行（后注册的先执行）：
+
+```typescript
+defineService('my-service', async (shutdown) => {
+  shutdown(() => console.log('第三个执行'))
+  shutdown(() => console.log('第二个执行'))
+  shutdown(() => console.log('第一个执行'))
+  return 'ok'
+})
+
+// 关闭时输出：第一个执行 → 第二个执行 → 第三个执行
+```
+
+多个服务之间也是按逆序（LIFO）关闭：后注册 shutdown 回调的服务先关闭。如果你在 <code>boot-a.boot.ts</code> 中注册了服务 A，在 <code>boot-b.boot.ts</code> 中注册了服务 B（B 后被加载），关闭时先关 B，再关 A。
+
+### 关闭超时
+
+如果某个服务的 shutdown 回调耗时过长，可以通过 <code>startTimeoutMs</code> 和 <code>shutdownTimeoutMs</code> 设置超时：
+
+```typescript
+import { Container } from '@hile/core'
+
+const customContainer = new Container({
+  shutdownTimeoutMs: 10000, // shutdown 回调最多等待 10 秒
+})
+```
+
+即使没有配置超时，CLI 也会设置一个极长的超时（约 24 天），这实际上等于"永不超时"——容器会等待所有服务完成关闭后再退出进程。
+
+### 手动触发关闭
+
+你也可以在代码中手动触发关闭：
+
+```typescript
+import { container } from '@hile/core'
+
+// 手动关闭所有服务
+await container.shutdown()
+```
+
+这在编写测试或需要重启服务的场景中很有用。
+
+---
+
+## 第五步：Docker 部署
+
+Docker 是部署 Hile 应用的推荐方式。以下是一个经过优化的 Dockerfile。
+
+### 多阶段构建 Dockerfile
+
+```dockerfile
+# ========== 构建阶段 ==========
+FROM node:22-alpine AS builder
+
+# 设置工作目录
+WORKDIR /app
+
+# 安装 pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# 复制依赖配置文件
+COPY package.json pnpm-lock.yaml ./
+
+# 安装所有依赖（包括 devDependencies，TypeScript 编译需要）
+RUN pnpm install --frozen-lockfile
+
+# 复制源代码
+COPY tsconfig.json ./
+COPY src/ ./src/
+
+# 构建
+RUN pnpm run build
+
+# ========== 生产阶段 ==========
+FROM node:22-alpine AS runner
+
+# 设置工作目录
+WORKDIR /app
+
+# 设置生产环境
+ENV NODE_ENV=production
+
+# 安装 pnpm
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# 复制 package.json（用于安装生产依赖）
+COPY package.json pnpm-lock.yaml ./
+
+# 只安装生产依赖（跳过 devDependencies）
+RUN pnpm install --frozen-lockfile --prod
+
+# 从构建阶段复制编译产物
+COPY --from=builder /app/dist ./dist
+
+# 复制可能的静态资源（如果有）
+# COPY --from=builder /app/public ./public
+
+# 暴露端口（根据你的实际配置调整）
+EXPOSE 3000
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/ || exit 1
+
+# 使用非 root 用户运行（安全性）
+USER node
+
+# 启动命令
+CMD ["node", "/app/node_modules/.bin/hile", "start"]
+```
+
+<Accordion title="Dockerfile 详解">
+  <strong>多阶段构建</strong>：分为 builder 和 runner 两个阶段。builder 阶段安装所有依赖并编译 TypeScript，runner 阶段只复制编译产物和生产依赖。这使最终镜像非常小（不包含 TypeScript 源码和 devDependencies）。
+
+  <strong>corepack enable</strong>：启用 Node.js 内置的包管理器管理器，允许使用 <code>pnpm</code>。
+
+  <strong>--frozen-lockfile</strong>：使用 lock 文件中的确切版本安装依赖，确保构建的可重复性。
+
+  <strong>USER node</strong>：切换到非 root 用户运行，提高容器安全性。Node.js 官方 Alpine 镜像中预置了 <code>node</code> 用户。
+
+  <strong>HEALTHCHECK</strong>：Docker 的健康检查指令，Kubernetes 等编排工具会定期检查容器是否健康。
+</Accordion>
+
+### .dockerignore 文件
+
+创建 <code>.dockerignore</code> 文件，避免不必要的文件进入 Docker 构建上下文：
+
+```
+node_modules
+dist
+.next
+.git
+.gitignore
+.env
+.env.*
+*.md
+.vscode
+.idea
+coverage
+test
+tests
+__tests__
+```
+
+这可以显著减少 Docker 构建上下文的体积，加快构建速度。
+
+### 构建和运行 Docker 镜像
+
+```bash
+# 构建镜像
+docker build -t my-hile-app:latest .
+
+# 运行容器（使用环境变量）
+docker run -d \
+  --name my-app \
+  -p 3000:3000 \
+  -e TYPEORM_HOST=db.example.com \
+  -e TYPEORM_USERNAME=app_user \
+  -e TYPEORM_PASSWORD=s3cret! \
+  -e TYPEORM_DATABASE=myapp_prod \
+  -e REDIS_HOST=redis.example.com \
+  -e REDIS_PASSWORD=s3cret! \
+  my-hile-app:latest
+
+# 查看日志
+docker logs -f my-app
+
+# 停止容器（会触发优雅关闭）
+docker stop my-app
+
+# 删除容器
+docker rm my-app
+```
+
+### Docker Compose 示例
+
+对于包含多个服务（数据库、Redis）的开发/测试环境，使用 Docker Compose：
+
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - TYPEORM_TYPE=mysql
+      - TYPEORM_HOST=db
+      - TYPEORM_PORT=3306
+      - TYPEORM_USERNAME=app_user
+      - TYPEORM_PASSWORD=app_password
+      - TYPEORM_DATABASE=myapp
+      - TYPEORM_ENTITIES=dist/entities/*.js
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: mysql:8.0
+    environment:
+      - MYSQL_ROOT_PASSWORD=root_password
+      - MYSQL_DATABASE=myapp
+      - MYSQL_USER=app_user
+      - MYSQL_PASSWORD=app_password
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  db_data:
+```
+
+```bash
+# 启动所有服务
+docker-compose up -d
+
+# 查看日志
+docker-compose logs -f app
+
+# 停止
+docker-compose down
+```
+
+<Note>
+<code>depends_on</code> 的 <code>condition: service_healthy</code> 确保数据库和 Redis 完全就绪后才会启动应用。这避免了应用启动时因数据库未就绪而报错的问题。
+</Note>
+
+---
+
+## 第六步：进程管理
+
+在生产环境中，你通常需要一个进程管理器来确保应用的可用性。
+
+### 使用 PM2
+
+PM2 是一个流行的 Node.js 进程管理器，提供进程守护、负载均衡、日志管理和自动重启功能。
+
+<Accordion title="安装 PM2">
+  ```bash
+  # 全局安装
+  npm install -g pm2
+
+  # 或作为项目依赖
+  pnpm add -D pm2
+  ```
+</Accordion>
+
+<Accordion title="PM2 配置文件">
+  创建 <code>ecosystem.config.cjs</code> 文件：
+
+  ```javascript
+  // ecosystem.config.cjs
+  module.exports = {
+    apps: [{
+      name: 'my-hile-app',            // 应用名称
+      script: 'hile',                  // CLI 命令
+      args: 'start --env-file .env.prod', // 命令行参数
+      cwd: '/path/to/app',             // 工作目录
+      instances: 1,                    // 实例数量（单进程推荐 1）
+      exec_mode: 'fork',               // 执行模式（fork 适合单进程）
+      autorestart: true,               // 自动重启
+      watch: false,                    // 不监听文件变更（生产环境）
+      max_memory_restart: '512M',      // 内存超过 512M 时重启
+      env: {
+        NODE_ENV: 'production',
+      },
+      // 日志配置
+      error_file: './logs/err.log',
+      out_file: './logs/out.log',
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      merge_logs: true,
+      // 优雅关闭配置
+      kill_timeout: 30000,             // 等待优雅关闭的超时时间
+      listen_timeout: 15000,           // 等待应用启动的超时时间
+    }],
+  }
+  ```
+</Accordion>
+
+<Accordion title="PM2 常用命令">
+  ```bash
+  # 启动应用
+  pm2 start ecosystem.config.cjs
+
+  # 查看进程状态
+  pm2 status
+  pm2 list
+
+  # 查看日志
+  pm2 logs my-hile-app
+  pm2 logs my-hile-app --lines 100
+
+  # 重启应用
+  pm2 restart my-hile-app
+
+  # 停止应用
+  pm2 stop my-hile-app
+
+  # 删除应用
+  pm2 delete my-hile-app
+
+  # 保存进程列表（重启后自动恢复）
+  pm2 save
+
+  # 设置开机自启
+  pm2 startup
+  ```
+</Accordion>
+
+<Accordion title="PM2 与优雅关闭的配合">
+  PM2 在停止进程时默认发送 <code>SIGINT</code> 信号。Hile 的 CLI 通过 <code>async-exit-hook</code> 捕获这个信号并执行 <code>container.shutdown()</code>。
+
+  关键配置：<code>kill_timeout: 30000</code> 表示 PM2 等待 30 秒，如果进程在这段时间内没有自行退出，PM2 会发送 <code>SIGKILL</code> 强制终止。这个值应该大于你的服务关闭所需时间。
+
+  Hile 的关闭机制：
+
+  ```
+  PM2 执行 restart/stop
+        │
+        ├── 发送 SIGINT 给 Hile 进程
+        │
+        ├── Hile 开始优雅关闭
+        │     └── container.shutdown()
+        │
+        ├── Hile 进程在关闭完成后自行退出
+        │
+        └── PM2 收到进程退出事件
+              └── 执行 restart（如果配置了 autorestart）
+  ```
+
+  <code>kill_timeout</code> 应该设置得足够大（建议 30 秒以上），以确保所有服务有足够时间完成关闭。
+</Accordion>
+
+### 使用 systemd（Linux）
+
+如果你在 Linux 服务器上直接运行（不使用 Docker/PaaS），可以使用 systemd 管理进程。
+
+创建 <code>/etc/systemd/system/hile-app.service</code>：
+
+```ini
+[Unit]
+Description=Hile Application
+After=network.target
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/opt/my-hile-app
+ExecStart=/usr/local/bin/hile start --env-file /opt/my-hile-app/.env.prod
+Restart=always
+RestartSec=10
+TimeoutStopSec=30
+Environment=NODE_ENV=production
+
+# 日志配置
+StandardOutput=journal
+StandardError=journal
+
+# 安全配置
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+启用和启动服务：
+
+```bash
+# 重新加载 systemd 配置
+sudo systemctl daemon-reload
+
+# 启动服务
+sudo systemctl start hile-app
+
+# 设置开机自启
+sudo systemctl enable hile-app
+
+# 查看状态
+sudo systemctl status hile-app
+
+# 查看日志
+sudo journalctl -u hile-app -f
+```
+
+### 使用 Kubernetes
+
+对于容器编排环境，Kubernetes 的 Pod 生命周期管理天然支持优雅关闭：
+
+```yaml
+# deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-hile-app
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: my-hile-app
+  template:
+    metadata:
+      labels:
+        app: my-hile-app
+    spec:
+      containers:
+      - name: app
+        image: my-hile-app:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: TYPEORM_HOST
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: host
+        - name: TYPEORM_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: password
+        # ... 其他环境变量
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        lifecycle:
+          preStop:
+            exec:
+              # K8s 在发送 SIGTERM 前, 等待 5 秒让负载均衡器注销 Pod
+              command: ["sleep", "5"]
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      terminationGracePeriodSeconds: 60
+```
+
+Kubernetes 的优雅关闭流程：
+
+1. <code>preStop</code> 钩子执行（这里等待 5 秒让负载均衡器注销 Pod）
+2. K8s 发送 <code>SIGTERM</code> 信号
+3. Hile 的退出钩子捕获信号，执行 <code>container.shutdown()</code>
+4. 所有服务完成关闭
+5. 进程退出
+6. K8s 如果在 <code>terminationGracePeriodSeconds</code>（60 秒）内未收到进程退出，发送 <code>SIGKILL</code>
+
+---
+
+## 第六步补充：TypeORM 迁移（Migration）
+
+在生产环境中管理数据库结构变更时，应该使用 TypeORM 的 Migration 功能，而不是 <code>synchronize: true</code>。
+
+### 生成迁移文件
+
+```bash
+# 假设你已经安装了 typeorm 命令行工具
+npx typeorm migration:generate src/migrations/CreateUsers -d dist/datasource.js
+```
+
+### package.json 中添加迁移脚本
+
+```json
+{
+  "scripts": {
+    "migration:run": "typeorm migration:run -d dist/datasource.js",
+    "migration:revert": "typeorm migration:revert -d dist/datasource.js"
+  }
+}
+```
+
+### 部署时执行迁移
+
+在 Dockerfile 中，在启动应用之前执行迁移：
+
+```dockerfile
+# 在 CMD 之前添加
+COPY --from=builder /app/src/migrations ./dist/migrations
+
+# 启动命令（先执行迁移，再启动应用）
+CMD ["sh", "-c", "npx typeorm migration:run -d dist/datasource.js && node /app/node_modules/.bin/hile start"]
+```
+
+或者使用 Init Container（Kubernetes）：
+
+```yaml
+# Kubernetes Job 或 Init Container 执行迁移
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: my-app-migrations
+spec:
+  template:
+    spec:
+      containers:
+      - name: migrations
+        image: my-hile-app:latest
+        command: ["npx", "typeorm", "migration:run", "-d", "dist/datasource.js"]
+        env:
+        - name: TYPEORM_HOST
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: host
+        # ... 其他数据库配置
+      restartPolicy: Never
+```
+
+---
+
+## 全栈项目（Next.js + HttpNext）部署注意事项
+
+如果你的项目使用了 <code>@hile/http-next</code>（即包含 Next.js 页面），部署时需要额外注意：
+
+### 构建顺序
+
+```bash
+# 1. 安装依赖
+pnpm install
+
+# 2. 编译 TypeScript
+pnpm run build        # tsc -b
+
+# 3. 构建 Next.js（如果模板中有 next build 脚本）
+pnpm run next:build   # next build
+
+# 4. 启动
+pnpm run start        # hile start
+```
+
+<Accordion title="Next.js 构建产物目录">
+  Next.js 的构建产物默认输出到项目根目录的 <code>.next/</code> 文件夹。Hile 的 HttpNext 会自动读取这个目录。
+
+  如果你自定义了 <code>nextArtifactsDir</code> 配置，确保在部署时包含该目录：
+
+  ```typescript
+  const app = new HttpNext({
+    port: 3000,
+    nextArtifactsDir: '/path/to/.next', // 自定义 .next 目录
+  })
+  ```
+</Accordion>
+
+### 全栈项目 Dockerfile 示例
+
+```dockerfile
+# ========== 构建阶段 ==========
+FROM node:22-alpine AS builder
+
+WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+# 复制依赖配置
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+# 复制源代码
+COPY tsconfig.json tsconfig.next.json ./
+COPY src/ ./src/
+COPY next.config.ts ./
+
+# 编译 TypeScript
+RUN pnpm run build
+
+# 构建 Next.js（如果有）
+RUN pnpm run next:build
+
+# ========== 生产阶段 ==========
+FROM node:22-alpine AS runner
+
+WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
+ENV NODE_ENV=production
+
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile --prod
+
+# 复制编译产物
+COPY --from=builder /app/dist ./dist
+# 复制 Next.js 构建产物
+COPY --from=builder /app/.next ./.next
+# 复制静态资源
+COPY --from=builder /app/public ./public
+
+EXPOSE 3000
+
+USER node
+CMD ["node", "/app/node_modules/.bin/hile", "start"]
+```
+
+### 环境变量中的 Next.js 配置
+
+某些 Next.js 配置通过环境变量注入：
+
+```env
+# Next.js 环境变量（以 NEXT_PUBLIC_ 开头的是公开变量）
+NEXT_PUBLIC_API_URL=https://api.example.com
+
+# 当使用 HttpNext 时，Next.js 会自动识别这些变量
+```
+
+---
+
+## 监控与日志
+
+### 日志管理
+
+Hile 使用 <code>@hile/logger</code>（基于 pino）输出结构化日志。生产环境下日志格式为 JSON：
+
+```json
+{"level":30,"time":1712345678901,"pid":1234,"hostname":"server-1","msg":"Server running on http://localhost:3000"}
+```
+
+这种格式便于日志收集系统（如 ELK Stack、Datadog、Splunk）处理。
+
+建议生产环境的日志配置：
+
+```typescript
+import { createLogger } from '@hile/logger'
+
+// 生产环境日志器
+const logger = createLogger({
+  level: process.env.LOG_LEVEL || 'info',
+  // 生产环境关闭 pretty（输出 JSON）
+  pretty: false,
+  // 脱敏字段（密码、令牌等不会出现在日志中）
+  redact: ['password', 'token', 'secret', 'authorization'],
+})
+```
+
+### 健康检查端点
+
+如果你的服务使用 <code>@hile/micro</code> 的 <code>Application</code>，它会自动注册 <code>/-/health</code> 端点：
+
+```typescript
+// Application 内部自动注册
+this.register('/-/health', async () => ({
+  status: 'ok' as const,
+  registry: !!this.registry,   // 是否已连接 Registry
+  uptime: process.uptime(),    // 进程运行时间
+  namespaces: [...this.namespaces.keys()],  // 已知的 namespace
+}))
+```
+
+对于纯 API 项目，你可以手动添加健康检查端点：
+
+```typescript
+// src/controllers/health.controller.ts
+import { defineController } from '@hile/http'
+
+export default defineController('GET', async (ctx) => {
+  return {
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: Date.now(),
+  }
+})
+```
+
+---
+
+## 部署检查清单
+
+在部署到生产环境之前，请逐项确认：
+
+<AccordionGroup>
+  <Accordion title="构建相关">
+    - [ ] TypeScript 编译成功（<code>pnpm run build</code>）
+    - [ ] <code>dist/</code> 目录包含所有必要的 <code>.js</code> 文件
+    - [ ] boot 文件已编译（<code>dist/services/*.boot.js</code> 存在）
+    - [ ] 控制器文件已编译（<code>dist/controllers/*.controller.js</code> 存在）
+    - [ ] 如果是全栈项目，<code>.next/</code> 目录已构建
+  </Accordion>
+  <Accordion title="环境变量">
+    - [ ] <code>NODE_ENV=production</code> 已设置
+    - [ ] 数据库连接信息正确（主机、端口、用户名、密码、数据库名）
+    - [ ] Redis 连接信息正确
+    - [ ] <code>TYPEORM_SYNCHRONIZE</code> 为 <code>false</code>
+    - [ ] 敏感信息不硬编码在代码中
+    - [ ] 不同环境使用不同的 .env 文件（<code>.env.prod</code>、<code>.env.staging</code>）
+  </Accordion>
+  <Accordion title="优雅关闭">
+    - [ ] 所有服务都注册了 <code>shutdown</code> 回调
+    - [ ] 进程管理器（PM2 / Docker / K8s）的 <code>killTimeout</code> 足够大
+    - [ ] 数据库连接在关闭时正确销毁
+    - [ ] HTTP 服务在关闭时停止接受新连接
+  </Accordion>
+  <Accordion title="Docker（如使用）">
+    - [ ] 多阶段构建，最终镜像不含 devDependencies
+    - [ ] <code>.dockerignore</code> 排除了不必要的文件
+    - [ ] 使用非 root 用户运行（<code>USER node</code>）
+    - [ ] 健康检查配置正确
+    - [ ] 端口映射正确
+  </Accordion>
+  <Accordion title="进程管理">
+    - [ ] PM2 或 systemd 配置正确
+    - [ ] 设置了合适的 <code>max_memory_restart</code>
+    - [ ] 日志轮转已配置（防止日志文件过大）
+    - [ ] 设置了开机自启
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## 常见问题
+
+<Accordion title="生产环境启动后没有看到任何 [hile] 日志">
+  这是正常的。生产模式下容器事件日志默认不输出。如果你需要查看日志，请使用 <code>--silent</code> 的相反行为——实际上生产模式不支持容器事件日志，这是有意为之的。
+
+  你可以手动监听容器事件并输出到日志文件：
+
+  ```typescript
+  // 在某个 boot 文件中
+  import { container } from '@hile/core'
+  import { createLogger } from '@hile/logger'
+
+  const logger = createLogger({ level: 'info' })
+
+  container.on((event) => {
+    logger.info({ event }, 'container event')
+  })
+  ```
+</Accordion>
+
+<Accordion title="Error: Cannot find module '...' in dist/">
+  这通常意味着 <code>tsconfig.json</code> 的 <code>include</code> 配置没有包含所有源文件。确保你的源文件都在 <code>src/</code> 下，且 <code>tsconfig.json</code> 配置正确：
+
+  ```json
+  {
+    "include": ["src"],
+    "compilerOptions": {
+      "rootDir": "./src",
+      "outDir": "./dist"
+    }
+  }
+  ```
+
+  也可以在构建后检查 <code>dist/</code> 目录确认文件都已生成：
+
+  ```bash
+  find dist -name "*.js" -type f
+  ```
+</Accordion>
+
+<Accordion title="部署后请求返回 404">
+  检查以下几点：
+
+  1. CLI 在生产模式下扫描的是 <code>dist/</code>，确保控制器文件在 <code>dist/controllers/</code> 下
+  2. <code>http.load()</code> 中的路径是否正确？如果你在开发时使用 <code>./src/controllers</code>，生产环境应改为 <code>./dist/controllers</code>（或使用相对路径，CLI 会基于 <code>dist/</code> 目录解析）
+  3. 建议在 boot 文件中根据 <code>NODE_ENV</code> 动态设置路径：
+
+  ```typescript
+  const isDev = process.env.NODE_ENV === 'development'
+  const controllerDir = isDev ? './src/controllers' : './dist/controllers'
+
+  await http.load(controllerDir, { ... })
+  ```
+</Accordion>
+
+<Accordion title="Docker 容器启动后立即退出">
+  可能的原因：
+
+  1. **端口冲突**：主机上已有其他进程在使用 3000 端口。使用 <code>docker run -p 3001:3000</code> 映射到其他端口测试
+  2. **数据库连接失败**：容器内的应用无法连接到数据库主机。检查 <code>TYPEORM_HOST</code> 是否设置为 <code>localhost</code>（容器内 localhost 是容器自己，不是宿主机）。应该设置为宿主机 IP 或 Docker 服务名
+  3. **环境变量缺失**：某些必需的环境变量没有设置
+
+  查看日志：
+  ```bash
+  docker logs <container-id>
+  ```
+</Accordion>
+
+<Accordion title="如何在日志中记录请求 ID（用于链路追踪）？">
+  在全局中间件中生成请求 ID：
+
+  ```typescript
+  import { randomUUID } from 'node:crypto'
+
+  const http = new Http({ port: 3000 })
+
+  http.use(async (ctx, next) => {
+    ctx.state.requestId = randomUUID()
+    const start = Date.now()
+
+    await next()
+
+    console.log({
+      requestId: ctx.state.requestId,
+      method: ctx.method,
+      url: ctx.url,
+      status: ctx.status,
+      duration: Date.now() - start,
+    })
+  })
+  ```
+
+  然后在控制器中通过 <code>ctx.state.requestId</code> 访问请求 ID。
+</Accordion>
+
+---
+
+## 下一步
+
+<CardGroup cols={2}>
+  <Card title="服务容器" icon="cube" href="/fundamentals/container">
+    深入学习 defineService 和 loadService
+  </Card>
+  <Card title="HTTP 管线" icon="server" href="/fundamentals/http-pipeline">
+    理解完整的 HTTP 请求处理流程
+  </Card>
+  <Card title="数据库使用" icon="database" href="/techniques/database">
+    类型安全的事务和查询
+  </Card>
+  <Card title="架构概览" icon="sitemap" href="/architecture">
+    了解 Hile 的分层架构
+  </Card>
+</CardGroup>

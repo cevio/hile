@@ -1,57 +1,619 @@
 ---
-title: CLI 概览
-description: "create-hile 与 hile 命令行的功能分工；与文档其它章节的衔接"
+title: CLI 命令参考
+description: "hile 命令行工具的完整指南：hile start、hile registry、配置管理、create-hile 脚手架及启动流程详解"
 ---
 
-Hile 的命令行工具分两类：**项目脚手架**与**进程启动器**。
+import { Accordion, AccordionGroup } from '@mintlify/components';
 
-## create-hile（脚手架）
+## 概述
 
-**`npx create-hile create <项目名>`** 用于生成带约定目录的完整应用（多种模板：`default`、`next`、`micro-http`、`micro`、`micro-http-next`）。适合「从零要一份可运行仓库」的场景。
+Hile 的命令行工具分为两类：
 
-模板会把 **`_env`** / **`_gitignore`** 等重命名为 **`.env`** / **`.gitignore`**（若存在），并自动将 `package.json` 的 `name` 写入你指定的项目名。生成后可选择是否自动安装依赖（使用 pnpm / yarn / npm）。
+1. **`hile`** —— 运行时 CLI，用于启动服务、管理注册中心和配置
+2. **`create-hile`** —— 项目脚手架，用于快速生成项目模板
 
-## hile（运行时 CLI）
+## hile start——启动服务
 
-**`hile start`** 是已存在项目中的启动入口：递归扫描 **`*.boot.{ts,js}`**（通常在 `src/services/`，也可在 `src/` 下任意目录），加载 `package.json` 中 `hile.auto_load_packages` 数组指定的自动加载包，对其中导出的服务执行 `loadService`。开发模式下订阅容器事件并输出日志。最后注册退出钩子以 **优雅关闭**。
+`hile start` 是 Hile 应用的启动入口。它在启动时会做以下几件事：
 
-**`hile registry`** 启动注册中心：基于 WebSocket 的服务注册与发现、心跳检测、namespace 管理。配套的 **`hile registry configs`** 子命令用于管理位于 `~/.registry/configs/` 目录下的 YAML 配置文件（按 `{namespace}.config.yaml` 命名）。
+1. 加载环境变量文件（如果有 `--env-file`）
+2. 设置 `NODE_ENV`（开发模式或生产模式）
+3. 订阅容器事件（开发模式且非静默模式）
+4. 读取 `package.json` 中的 `hile.auto_load_packages`，自动加载包
+5. 扫描并加载 `*.boot.{ts,js}` 文件
+6. 注册进程退出钩子，实现优雅关闭
 
-**`hile registry configs` 子命令：**
+### 基本用法
 
-| 命令 | 说明 |
-|------|------|
-| `hile registry configs` | 列出所有 namespace |
-| `hile registry configs get <ns>` | 查看配置（默认 YAML 输出） |
-| `hile registry configs get <ns> --json` | JSON 格式输出 |
-| `hile registry configs set <ns> <key>=<value>` | 设置配置项；值以 `{` 或 `[` 开头时自动 JSON 解析 |
-| `hile registry configs del <ns> [key]` | 删除配置（不加 key 时删除整个 namespace） |
+```bash
+# 开发模式
+hile start --dev
 
-### 启动选项
+# 生产模式
+hile start
 
-- **`--dev`** / **`-d`** — 开发模式：设置 `NODE_ENV=development`，`tsx` 直接执行 `.ts` 文件，扫描 `src/` 目录，打印容器事件日志。
-- **`--env-file <path>`** / **`-e`** — 加载 env 文件。可多次指定：先加载的文件中已存在的 key 不会被后加载的文件覆盖（与 Node.js `--env-file` 语义一致）。
-- **`--silent`** / **`-s`** — 静默模式：即使在开发模式下也不输出容器事件日志。
+# 指定包名启动（在 node_modules 中查找）
+hile start my-app-package
+```
 
-### 自动加载包（auto_load_packages）
+### 选项
 
-在 `package.json` 的 `hile` 字段中声明：
+| 选项 | 简写 | 类型 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `--dev` | `-d` | boolean | `false` | 开发模式 |
+| `--silent` | `-s` | boolean | `false` | 静默模式，不输出容器事件日志 |
+| `--env-file` | `-e` | string[] | `[]` | 加载环境变量文件，可重复指定 |
+
+#### --dev（开发模式）
+
+开发模式下，CLI 会：
+
+1. **设置 `NODE_ENV=development`**
+2. **使用 tsx 实时编译 TypeScript** —— 不需要预先编译，直接运行 `.ts` 文件
+3. **扫描 `src/` 目录** —— 查找 `src/**/*.boot.{ts,js}` 文件
+4. **打印容器事件日志** —— 自动订阅容器事件，输出带颜色的日志
+5. **TypeORM 日志开启** —— 自动开启 SQL 查询日志
+
+```bash
+# 开发模式启动
+hile start --dev -e .env
+
+# 启动后输出示例：
+[hile] service(config) init
+[hile] service(config) ready (2ms)
+[hile] service(database) init
+[hile] service(database) ready (105ms)
+[hile] service(http-server) init
+[hile] service(http-server) ready (108ms)
+```
+
+#### --silent（静默模式）
+
+即使是在开发模式下，也会抑制容器事件日志的输出：
+
+```bash
+# 不想看容器日志时
+hile start --dev --silent
+```
+
+#### --env-file（环境变量文件）
+
+加载 `.env` 文件中的环境变量。可以重复指定以加载多个文件：
+
+```bash
+hile start --dev -e .env -e .env.local
+
+# 简写
+hile start -d -e .env
+```
+
+加载规则：
+- 先指定的文件中的 key 不会被后指定的文件覆盖
+- 不会覆盖 `process.env` 中已有的值
+
+详情见[配置管理](/techniques/configuration)。
+
+### start 的完整执行流程
+
+```typescript
+// start() 函数的执行步骤（简化版）
+async function start(options) {
+  // 步骤 1：加载环境变量文件
+  for (const envFile of options.envFile) {
+    process.loadEnvFile(envFile);
+  }
+
+  // 步骤 2：设置 NODE_ENV
+  process.env.NODE_ENV = options.dev ? 'development' : 'production';
+
+  // 步骤 3：订阅容器事件日志（开发模式且非静默）
+  const offEvent = (!options.silent && process.env.NODE_ENV === 'development')
+    ? container.on(logContainerEvent)
+    : () => {};
+
+  // 步骤 4：读取 package.json 的 auto_load_packages
+  const packageJson = require(resolve(cwd, 'package.json'));
+  const autoLoadPackages = packageJson.hile?.auto_load_packages || [];
+
+  // 步骤 5：扫描 *.boot.{ts,js} 文件
+  const directory = resolve(cwd, options.dev ? 'src' : 'dist');
+  const bootFiles = await glob(`**/*.boot.{ts,js}`, { cwd: directory });
+
+  // 步骤 6：加载所有自动加载包和 boot 文件
+  const allFiles = [...autoLoadPackages, ...bootFiles];
+  await Promise.all(allFiles.map(async (file) => {
+    const mod = await importModule(file, options.dev);
+    const service = mod.default;
+    if (isService(service)) {
+      await loadService(service);
+    }
+  }));
+
+  // 步骤 7：注册优雅退出钩子
+  registerExitHook(offEvent);
+}
+```
+
+### name 参数
+
+`hile start` 可以接受一个可选的 `name` 参数，用于指定要启动的包：
+
+```bash
+# 查找并启动指定包
+hile start my-app-package
+
+# 直接指定路径
+hile start ./path/to/my-app
+```
+
+查找逻辑：
+1. 如果名称是文件路径且存在，直接使用
+2. 如果在当前 `package.json` 所在目录的 `node_modules` 中找到同名包，使用该包
+3. 如果在 CLI 自身所在目录的 `node_modules` 中找到同名包，使用该包
+4. 如果在全局 `npm root -g` 中找到同名包，使用该包
+
+## 自动扫描 .boot.ts 文件
+
+`hile start` 会自动扫描 `*.boot.{ts,js}` 文件。这些文件是服务的启动入口。
+
+### 扫描规则
+
+- **开发模式**（`--dev`）：扫描 `src/` 目录下的 `**/*.boot.{ts,js}`
+- **生产模式**：扫描 `dist/` 目录下的 `**/*.boot.{ts,js}`
+
+### 文件内容的约定
+
+每个 `.boot.ts` 文件必须 `export default` 一个 `defineService` 的返回值：
+
+```typescript
+// src/services/http.boot.ts
+import { Http } from '@hile/http';
+import { defineService, loadService } from '@hile/core';
+
+export default defineService('http-server', async (shutdown) => {
+  const http = new Http({ port: 3000 });
+
+  http.use(async (ctx, next) => {
+    const start = Date.now();
+    await next();
+    console.log(`${ctx.method} ${ctx.url} - ${Date.now() - start}ms`);
+  });
+
+  const close = await http.listen();
+  shutdown(() => close());
+  return http;
+});
+```
+
+```typescript
+// src/services/database.boot.ts
+import typeormService from '@hile/typeorm';
+import { loadService } from '@hile/core';
+
+export default defineService('database', async (shutdown) => {
+  const dataSource = await loadService(typeormService);
+  shutdown(() => dataSource.destroy());
+  return dataSource;
+});
+```
+
+### 放置位置
+
+boot 文件可以放在 `src/services/` 目录下，也可以放在 `src/` 下的任何位置：
+
+```
+src/
+├── services/
+│   ├── http.boot.ts        ← 会被扫描到
+│   └── database.boot.ts    ← 会被扫描到
+├── controllers/
+│   └── users.controller.ts
+└── app/
+    └── boot.ts             ← 也会被扫描到
+```
+
+### 多个 boot 文件的执行顺序
+
+所有 boot 文件通过 `Promise.all` 并行加载。但每个 boot 文件内部的 `loadService` 调用是有顺序的（取决于依赖关系）。如果服务 A 依赖服务 B，容器会确保 B 先就绪。
+
+## package.json 中的 hile.auto_load_packages
+
+除了扫描 boot 文件，CLI 还会读取 `package.json` 中的 `hile.auto_load_packages` 配置，自动加载指定的包。
+
+### 配置方式
 
 ```json
 {
+  "name": "my-app",
   "hile": {
-    "auto_load_packages": ["@hile/typeorm", "@hile/ioredis"]
+    "auto_load_packages": [
+      "@hile/typeorm",
+      "@hile/ioredis"
+    ]
   }
 }
 ```
 
-CLI 自动导入这些包的默认导出（需 `defineService` 注册的服务），并调用 `loadService` 初始化。
+### 工作原理
 
-## 阅读路径建议
+CLI 对数组中的每个包执行以下操作：
 
-| 目标 | 建议 |
-|------|------|
-| 第一次跑起来 | [第一步](/quickstart) |
-| 理解容器与关闭 | [服务容器](/fundamentals/container)、[生命周期与事件](/fundamentals/lifecycle-and-events) |
-| 配置 env 与 package.json | [配置](/techniques/configuration) |
-| 上线 | [生产部署](/deployment) |
+1. `import(packageName)` —— 导入包
+2. `mod.default` —— 读取默认导出
+3. `isService(defaultExport)` —— 检查是否是合法的服务注册信息
+4. `loadService(defaultExport)` —— 初始化服务
+
+```typescript
+// CLI 内部的简化逻辑
+for (const pkgName of packageJson.hile.auto_load_packages) {
+  const mod = await import(pkgName);
+  const service = mod.default;
+  if (isService(service)) {
+    await loadService(service);
+  }
+}
+```
+
+### 哪些包支持自动加载
+
+所有 `default export` 是 `defineService(...)` 返回值的包都支持自动加载。Hile 官方集成包都遵循这个约定：
+
+| 包 | 默认导出 |
+|---|----------|
+| `@hile/typeorm` | `defineService(Symbol.for('@hile/typeorm'), ...)` |
+| `@hile/ioredis` | `defineService(Symbol.for('@hile/ioredis'), ...)` |
+
+### 自动加载 vs 手动 boot 文件
+
+| | auto_load_packages | .boot.ts 文件 |
+|--|-------------------|---------------|
+| 配置位置 | package.json | 文件系统 |
+| 用途 | 加载第三方集成包 | 加载应用自身的服务 |
+| 内容 | 包名 | 文件路径 |
+| 灵活性 | 只能触发默认导出 | 可以包含复杂初始化逻辑 |
+| 推荐 | 用于集成包 | 用于应用服务 |
+
+两者会同时生效：先加载 `auto_load_packages` 中的包，再加载 boot 文件。
+
+## 开发模式 tsImport 编译
+
+在开发模式下，CLI 使用 `tsx` 的 `tsImport` 实时编译 TypeScript 文件。
+
+```typescript
+// start.ts 中的编译逻辑
+if (options.dev && file.endsWith('.ts')) {
+  // 使用 tsImport 实时编译
+  const { tsImport } = await import('tsx/esm/api');
+  const mod = await tsImport(fileUrl, import.meta.url);
+} else {
+  // 生产模式直接 import（已是 JS 文件）
+  const mod = await import(fileUrl);
+}
+```
+
+这意味着：
+
+- **开发时不需要预先编译** —— 直接运行 `ts` 源文件
+- **支持所有 TypeScript 特性** —— tsx 提供了完整的 TypeScript 支持
+- **支持 ESM** —— 使用 ESM 语法加载模块
+
+## hile registry——启动注册中心
+
+`hile registry` 命令启动微服务的注册中心。
+
+```bash
+# 使用默认配置启动
+hile registry
+
+# 指定端口和主机
+hile registry --port 9876 --host 127.0.0.1
+```
+
+### 选项
+
+| 选项 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `--port` | number | `9876` | 注册中心监听端口 |
+| `--host` | string | `127.0.0.1` | 注册中心宣告地址 |
+
+启动后：
+- 自动创建 `~/.registry/` 工作目录
+- 监听指定端口
+- 加载 `~/.registry/configs/` 下的 YAML 配置文件
+- 注册退出钩子实现优雅关闭
+
+```bash
+# 启动输出
+$ hile registry --port 9876
++ [registry] started on port 9876
+```
+
+## hile registry configs——配置管理
+
+`hile registry configs` 子命令用于管理 Registry 的 YAML 配置文件。
+
+### 列出所有配置
+
+```bash
+hile registry configs
+```
+
+输出示例：
+
+```
+Configs in /Users/username/.registry/configs:
+  my-service
+  payment
+  logging
+```
+
+### 查看配置
+
+```bash
+# YAML 格式输出（默认）
+hile registry configs get my-service
+
+# JSON 格式输出
+hile registry configs get my-service --json
+```
+
+YAML 输出示例：
+
+```yaml
+server:
+  port: 8080
+  host: 0.0.0.0
+debug: true
+```
+
+JSON 输出示例（`--json`）：
+
+```json
+{
+  "server": {
+    "port": 8080,
+    "host": "0.0.0.0"
+  },
+  "debug": true
+}
+```
+
+### 设置配置项
+
+```bash
+# 基本用法：set <namespace> <key>=<value>
+hile registry configs set my-service port=8080
+hile registry configs set my-service debug=true
+hile registry configs set my-service name=hello
+
+# JSON 值
+hile registry configs set my-service whitelist='["10.0.0.1","10.0.0.2"]'
+hile registry configs set my-service db='{"host":"localhost","port":3306}'
+```
+
+值的类型自动推断：
+
+| 输入 | 推断类型 | 存储值 |
+|------|----------|--------|
+| `8080` | number | `8080` |
+| `3.14` | number | `3.14` |
+| `true` | boolean | `true` |
+| `false` | boolean | `false` |
+| `null` | null | `null` |
+| `hello` | string | `"hello"` |
+| `{...}` 开头 | object | JSON.parse 结果 |
+| `[...]` 开头 | array | JSON.parse 结果 |
+
+### 删除配置
+
+```bash
+# 删除特定字段
+hile registry configs del my-service port
+
+# 删除整个 namespace
+hile registry configs del my-service
+
+# 跳过确认
+hile registry configs del my-service -y
+hile registry configs del my-service port -y
+```
+
+删除时需要确认（除非指定 `-y`）。
+
+## create-hile——项目脚手架
+
+`create-hile` 用于快速生成 Hile 项目骨架。
+
+### 基本用法
+
+```bash
+# 创建项目
+npx create-hile create my-project
+
+# 创建项目并跳过依赖安装
+npx create-hile create my-project --skip-install
+```
+
+### 支持的模板
+
+create-hile 提供了多个模板，创建时会提示选择：
+
+| 模板名称 | 说明 | 适用场景 |
+|----------|------|----------|
+| `default` | 默认模板 | 纯 HTTP API 服务 |
+| `next` | Next.js 模板 | 全栈应用（API + SSR） |
+| `micro-http` | Micro + HTTP 模板 | 微服务 + HTTP API |
+| `micro` | Micro 独立服务模板 | 纯微服务 |
+| `micro-http-next` | Next.js + Micro + HTTP 模板 | 全栈微服务 |
+| `monorepo` | Monorepo 模板 | 多包仓库（Lerna + pnpm workspace） |
+
+### 创建过程中的交互
+
+```
+$ npx create-hile create my-project
+? 请选择模板 (Use arrow keys)
+❯ 默认模板
+  Next.js 模板
+  Micro + HTTP 模板
+  Micro 独立服务模板
+  Next.js + Micro + HTTP 模板
+  Monorepo 模板（Lerna + pnpm workspace）
+
+? 是否安装依赖 (Y/n)
+```
+
+### 创建后的操作
+
+1. 生成项目目录和文件（从模板复制）
+2. 将 `_env`、`_env.prod`、`_gitignore` 等重命名为 `.env`、`.env.prod`、`.gitignore`
+3. 将 `package.json` 的 `name` 字段设置为项目名
+4. 可选：使用 pnpm / yarn / npm 安装依赖
+
+### 模板目录结构示例
+
+**default 模板：**
+
+```
+my-project/
+├── .env
+├── .gitignore
+├── package.json
+├── tsconfig.json
+├── src/
+│   ├── controllers/
+│   │   └── index.controller.ts
+│   └── services/
+│       └── index.boot.ts
+```
+
+```typescript
+// src/controllers/index.controller.ts
+import { defineController } from '@hile/http';
+
+export default defineController('GET', async (ctx) => {
+  return { message: 'Hello from Hile!' };
+});
+```
+
+```typescript
+// src/services/index.boot.ts
+import { Http } from '@hile/http';
+import { defineService } from '@hile/core';
+
+export default defineService('http-server', async (shutdown) => {
+  const http = new Http({ port: 3000 });
+  await http.load('./controllers');
+  await http.listen();
+  shutdown(() => console.log('HTTP 服务已关闭'));
+  return http;
+});
+```
+
+**micro-http-next 模板：**
+
+```
+my-project/
+├── .env
+├── package.json
+├── tsconfig.json
+├── next.config.js
+├── src/
+│   ├── controllers/
+│   │   └── post.controller.ts
+│   ├── messages/
+│   │   └── ping.msg.ts
+│   ├── models/
+│   │   ├── home/
+│   │   │   └── home.model.ts
+│   │   └── post/
+│   │       └── post.model.ts
+│   ├── pages/           ← Next.js 页面
+│   ├── services/
+│   │   ├── app.boot.ts
+│   │   └── http.boot.ts
+```
+
+## 完整启动流程
+
+结合以上所有知识点，`hile start` 的完整启动流程如下：
+
+```bash
+hile start --dev -e .env
+```
+
+1. **解析命令行参数**
+   - `--dev` → 开发模式
+   - `-e .env` → 加载 `.env` 文件
+
+2. **加载环境变量**
+   - `process.loadEnvFile('.env')`
+
+3. **设置 `NODE_ENV`**
+   - `process.env.NODE_ENV = 'development'`
+
+4. **订阅容器事件日志**
+   - `container.on(logContainerEvent)`（开发模式自动订阅）
+
+5. **读取 `package.json`**
+   ```json
+   {
+     "hile": {
+       "auto_load_packages": ["@hile/typeorm", "@hile/ioredis"]
+     }
+   }
+   ```
+
+6. **扫描 boot 文件**
+   ```bash
+   # 查找 src/**/*.boot.{ts,js}
+   src/services/index.boot.ts
+   src/services/http.boot.ts
+   ```
+
+7. **并行加载所有服务**
+   - `loadService(@hile/typeorm)` —— 连接数据库
+   - `loadService(@hile/ioredis)` —— 连接 Redis
+   - `loadService(index.boot.ts)` —— 启动 HTTP 服务
+   - `loadService(http.boot.ts)` —— 启动 HTTP 服务
+
+8. **服务依赖解析**
+   - 如果 HTTP 服务依赖数据库，容器等待数据库就绪后才启动 HTTP
+
+9. **注册退出钩子**
+   - `exitHook(async () => await container.shutdown())`
+
+10. **服务就绪，等待请求**
+    - 打印 `[hile] service(http-server) ready (120ms)`
+
+11. **退出时**
+    - 收到 `SIGINT`/`SIGTERM` 信号
+    - 执行 `container.shutdown()`（按 LIFO 顺序关闭所有服务）
+    - 进程退出
+
+## 常见问题
+
+<AccordionGroup>
+  <Accordion title="hile start 和 node app.js 有什么区别？">
+    `hile start` 封装了 Hile 容器的自动初始化流程：自动扫描 boot 文件、自动加载集成包、自动管理容器生命周期和优雅关闭。`node app.js` 需要你手动处理所有这些。
+  </Accordion>
+  <Accordion title="为什么推荐使用 --dev 而不是手动设置 NODE_ENV？">
+    `--dev` 做了三件事：设置 `NODE_ENV=development`、使用 tsx 实时编译 TypeScript、打印容器事件日志。手动设置环境变量只能实现第一部分。
+  </Accordion>
+  <Accordion title="hile start 和 create-hile 的关系是什么？">
+    `create-hile` 是"创建项目"的工具，只在你开始新项目时使用一次。`hile start` 是"运行项目"的工具，在开发和生产环境中反复使用。
+  </Accordion>
+  <Accordion title="生产环境如何部署？">
+    生产环境需要先编译 TypeScript：
+    ```bash
+    # 编译
+    tsc
+
+    # 启动（生产模式，不需要 --dev）
+    NODE_ENV=production hile start -e .env
+
+    # 或直接设置 NODE_ENV
+    hile start -e .env
+    ```
+    生产模式下，控制器从 `dist/` 目录加载，不使用 tsx 实时编译。
+  </Accordion>
+</AccordionGroup>

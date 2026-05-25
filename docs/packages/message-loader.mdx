@@ -1,6 +1,6 @@
 ---
 title: "@hile/message-loader"
-description: "基于文件系统的消息路由加载器，将目录结构映射为路由表，适配各种 message 通信模块"
+description: "基于文件系统的消息路由加载器——将目录结构映射为路由表，通过 defineMessage/register/dispatch 实现消息的路由分发，适配 WebSocket/IPC/Worker Threads 等各种消息通信模块"
 ---
 
 ## 安装
@@ -9,15 +9,59 @@ description: "基于文件系统的消息路由加载器，将目录结构映射
 pnpm add @hile/message-loader
 ```
 
-依赖 `@hile/loader` 和 `rou3`，安装时自动引入。
+安装时自动引入依赖：
+
+- `@hile/loader`——文件扫描与加载器基类
+- `rou3`——轻量级路由匹配引擎
+- `glob`——文件模式匹配
+
+```typescript
+import {
+  MessageLoader,
+  defineMessage,
+  NotFoundException,
+  type MessageFunction,
+  type MessageRegisterProps,
+} from '@hile/message-loader';
+```
 
 ---
 
-## 它做了什么？
+## 概述：它解决了什么问题？
 
-`@hile/message-loader` 是一个 **基于文件系统的消息路由加载器**，与 `@hile/http` 的 `Loader` 思路一致，但面向消息通信场景。
+### 问题背景
 
-它将目录中的 `*.msg.{ts,js,tsx,jsx}` 文件自动扫描并注册为路由，也可用 **`register(routePath, fn)`** 在运行时挂载单条路由；通过 **`dispatch(path, data, extras?)`** 分发消息到匹配的处理器，其中 **`extras`** 会展开合并到处理器入参（例如 `@hile/micro` 注入 `client`）。
+在消息通信场景中（WebSocket / IPC / Worker Threads），我们需要将收到的消息路由到不同的处理函数。通常的做法是使用一个大的 `switch` 语句：
+
+```typescript
+// 不优雅的方式——随着功能增加，switch 会越来越大
+protected async exec(data: any): Promise<any> {
+  switch (data.url) {
+    case '/user/get':
+      return handleGetUser(data.data);
+    case '/user/list':
+      return handleListUsers(data.data);
+    case '/order/create':
+      return handleCreateOrder(data.data);
+    case '/order/delete':
+      return handleDeleteOrder(data.data);
+    // ... 随着功能增加，这里越来越长
+    default:
+      throw new Exception(404, 'Not found');
+  }
+}
+```
+
+这种方式的问题：
+
+1. **难以维护**：每次新增功能都要修改 `exec` 方法
+2. **难以组织**：所有处理函数分散在同一个文件中
+3. **缺乏扩展性**：不支持动态参数、中间件等高级特性
+4. **文件系统即路由**：不能像 HTTP 框架那样通过文件组织路由
+
+### MessageLoader 的解决方案
+
+`MessageLoader` 借鉴了主流 HTTP 框架的"文件系统即路由"设计理念：
 
 ```
 文件系统                        路由表                       分发
@@ -25,133 +69,565 @@ pnpm add @hile/message-loader
   ├── index.msg.ts    ──────►  │ /                    │
   ├── hello.msg.ts    ──────►  │ /hello               │  ──► dispatch(url, data, extras?)
   ├── users/                   │                      │       找到路由 → 执行 fn
-  │   ├── index.msg.ts ─────►  │ /users               │       未找到  → 抛出错误
+  │   ├── index.msg.ts ─────►  │ /users               │       未找到  → 抛出 NotFoundException
   │   └── [id].msg.ts  ─────►  │ /users/:id           │
   └── ...                      └──────────────────────┘
 ```
 
-也可用 `loader.register(...)` 向路由表追加 **编程式路由**（图中未画出）。
+**核心能力：**
 
-核心能力：
+- **文件系统即路由**：`messages/hello.msg.ts` → 路由 `/hello`
+- **Index 折叠**：`users/index.msg.ts` → 路由 `/users`
+- **动态参数**：`[id].msg.ts` → 路由 `:id`，通过 `params.id` 访问
+- **路径前缀**：通过 `prefix` 配置统一前缀
+- **编程式路由**：`register(path, fn)` 在运行时动态添加路由
+- **路由注销**：`load()` 和 `register()` 均返回注销函数
+- **传输无关**：可搭配任意 MessageModem 子类使用
 
-- **文件系统即路由** — 目录结构自动映射为路由表
-- **index 折叠** — `users/index.msg.ts` 映射为 `/users`
-- **动态参数** — `[id].msg.ts` 转换为 `:id`，通过处理器入参 **`params`** 访问
-- **路径前缀** — 通过 `prefix` 配置统一前缀（如 `/-`）
-- **编程式路由** — `register(path, fn)` 返回单条注销函数
-- **`dispatch` 扩展** — 第三参 `extras` 会与 `{ params, data, url }` 合并后传入 `fn`
-- **注销支持** — `load()` 的注销移除该次扫描注册的全部路由；`register()` 的注销仅移除对应一条
-- **传输无关** — 可搭配任意 message 通信模块或 [@hile/micro](/packages/micro) 使用
+### 与 HTTP 路由系统的对比
+
+| 概念 | HTTP 框架 | MessageLoader |
+|------|-----------|--------------|
+| 路由来源 | 文件系统中的 controller | 文件系统中的 `*.msg.*` 文件 |
+| 路由注册 | 装饰器/注解 | `defineMessage()` + 文件位置 |
+| 路由匹配 | HTTP Method + Path | Path only（内部固定 GET） |
+| 处理器参数 | Request/Response | `{ params, data, url }` + extras |
+| 依赖 HTTP | 是 | 否 |
+
+---
+
+## 核心概念详解
+
+### defineMessage——消息处理器定义
+
+`defineMessage` 是一个工厂函数，用于创建一个消息处理器的注册信息。它是**文件路由系统的基本构成单元**。
+
+```typescript
+function defineMessage<T = any>(fn: MessageFunction<T>): MessageRegisterProps<T>;
+```
+
+**为什么需要 `defineMessage`？**
+
+因为每个 `*.msg.ts` 文件只能有一个 `export default`，`defineMessage` 做了两件事：
+
+1. **分配自增 ID**：为每个处理器分配一个全局唯一的 ID（从 1 开始递增）
+2. **包装处理函数**：将你的处理函数包装成 `MessageRegisterProps` 格式
+
+**`defineMessage` 内部实现：**
+
+```typescript
+let _id = 1;
+
+export function defineMessage<T = any>(fn: MessageFunction<T>): MessageRegisterProps<T> {
+  const id = _id++;
+  return { id, fn };
+}
+```
+
+每调用一次 `defineMessage`，全局 ID 递增一次。
+
+### MessageFunction——处理函数签名
+
+```typescript
+type MessageFunction<T = any, E extends Record<string, any> = {}> = (data: {
+  params?: Record<string, string>;  // 从路由 URL 中提取的动态参数
+  data: T;                           // 调用 dispatch 时传入的数据
+  url: string;                       // 请求的完整路径
+} & E) => any;                        // E 来自 dispatch 的 extras 参数
+```
+
+**参数详解：**
+
+| 属性 | 类型 | 说明 |
+|------|------|------|
+| `params` | `Record<string, string>`（可选） | 路由匹配提取的动态参数。例如路由 `/users/:id` 匹配路径 `/users/42` 时，`params` 为 `{ id: "42" }` |
+| `data` | `T` | `dispatch(path, data, extras)` 中的 `data` 参数传入的数据 |
+| `url` | `string` | 完整的请求路径（包含 prefix） |
+| 其他属性 | 来自 `E` | `dispatch` 的 `extras` 参数合并进来的额外字段 |
+
+### MessageRegisterProps——处理器注册信息
+
+```typescript
+interface MessageRegisterProps<T = any> {
+  id: number;             // 自增的处理器 ID
+  fn: MessageFunction<T>; // 处理函数
+}
+```
+
+`MessageLoader` 内部的路由表存储的就是 `MessageRegisterProps` 类型的条目。
+
+### 文件映射规则
+
+`@hile/loader` 的 `scanDirectory` 函数扫描目录，将文件名编译为路由路径。
+
+**核心规则：**
+
+| 文件路径 | 路由（无 prefix） | 路由（prefix: `/-`） | 说明 |
+|---------|-------------------|---------------------|------|
+| `index.msg.ts` | `/` | `/-/` | index 文件折叠为父路径 |
+| `hello.msg.ts` | `/hello` | `/-/hello` | 普通文件名映射为同名路径 |
+| `users/index.msg.ts` | `/users` | `/-/users` | 目录中的 index 折叠 |
+| `users/[id].msg.ts` | `/users/:id` | `/-/users/:id` | `[param]` 转换为 `:param` |
+| `[category]/[id].msg.ts` | `/:category/:id` | `/-/:category/:id` | 多级动态参数 |
+
+**编译器原理：**
+
+1. `normalizePath(path)`：反斜杠转正斜杠，移除括号内容，合并连续斜杠
+2. `compileRoutePath(path, options)`：将路径编译为 URL，移除 `defaultSuffix`
+3. `toRouterPath(path)`：将 `[param]` 转换为 `:param`
+
+---
+
+## MessageLoader API 参考
+
+### 构造函数
+
+```typescript
+class MessageLoader extends Loader<MessageRegisterProps> {
+  constructor(props: MessageLoaderProps);
+}
+```
+
+```typescript
+interface MessageLoaderProps {
+  suffix?: string;          // 文件后缀标记，默认 'msg'
+  defaultSuffix?: string;   // 默认 '/index'
+  prefix?: string;          // URL 前缀，默认 ''
+}
+```
+
+**参数详解：**
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `suffix` | `string` | `'msg'` | 文件后缀标记。匹配模式为 `**/*.{suffix}.{ts,js,tsx,jsx,mjs}`。例如 `suffix: 'msg'` 匹配所有 `*.msg.ts`、`*.msg.js` 文件 |
+| `defaultSuffix` | `string` | `'/index'` | 折叠后缀。文件名为 `index` 时，文件名部分被移除。例如 `/users/index` → `/users` |
+| `prefix` | `string` | `''` | 路径前缀。所有路由都挂在这个前缀下。例如 `prefix: '/-'` 时，`hello.msg.ts` 的路由变为 `/-/hello` |
+
+**构造函数内部行为：**
+
+```typescript
+constructor(props: MessageLoaderProps) {
+  super({
+    suffix: props.suffix || 'msg',
+    defaultSuffix: props.defaultSuffix || '/index',
+    prefix: props.prefix || '',
+  });
+  this.router = createRouter(); // 创建 rou3 路由实例
+}
+```
+
+- 调用父类 `Loader` 构造函数，传入 `suffix`、`defaultSuffix`、`prefix`
+- 创建一个 `rou3` 路由实例，用于路由匹配
+
+### `load(directory)`——从目录批量加载
+
+```typescript
+load(directory: string): Promise<() => void>;
+```
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `directory` | `string` | 要扫描的目录路径（绝对路径） |
+| **返回值** | `Promise<() => void>` | 注销函数——调用后移除本次加载的所有路由 |
+
+**内部流程：**
+
+1. 调用 `scanDirectory(directory, options)` 扫描目录，找到所有匹配 `*.msg.{ts,js,tsx,jsx,mjs}` 的文件
+2. 对每个文件：
+   - 使用 `import(href)` 动态导入文件
+   - 读取 `module.default`——即 `defineMessage()` 的返回值
+   - 如果 `default` 为空，静默跳过该文件
+   - 否则调用 `bind(file, module.default)` 注册路由
+3. 返回批量注销函数
+
+**`bind` 的内部实现：**
+
+```typescript
+protected bind(file: ScannedFile, metadata: MessageRegisterProps) {
+  const routePath = toRouterPath(normalizePath(file.routePath));
+  addRoute(this.router, this.METHOD, routePath, metadata);
+  return () => removeRoute(this.router, this.METHOD, routePath);
+}
+```
+
+- 将文件路径规范化并转换为 rou3 路由格式
+- 调用 `addRoute(this.router, 'GET', routePath, metadata)` 注册
+- 返回一个函数，调用时从路由表中移除该路由
+
+**使用示例：**
+
+```typescript
+const loader = new MessageLoader({ prefix: '/-' });
+const unload = await loader.load(path.resolve(__dirname, 'messages'));
+
+// ... 使用 loader 处理请求 ...
+
+// 需要时注销本次加载的所有路由
+unload();
+```
+
+<Note>
+  `load()` 返回的注销函数只移除本次 `load()` 调用注册的路由。如果调用了两次 `load()`，各自返回独立的注销函数。
+</Note>
+
+### `register(routePath, fn)`——编程式路由注册
+
+```typescript
+register<T = any, E extends Record<string, any> = {}>(
+  routePath: string,
+  fn: MessageFunction<T, E>
+): () => void;
+```
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `routePath` | `string` | 路由路径。支持 rou3 的 `:param` 语法 |
+| `fn` | `MessageFunction<T, E>` | 消息处理函数 |
+| **返回值** | `() => void` | 注销函数——调用后移除这条路由 |
+
+**内部行为：**
+
+1. 调用 `getId()` 获取一个新的自增 ID
+2. 调用 `addRoute(this.router, 'GET', routePath, { id, fn })` 注册
+3. 返回注销函数
+
+**`register` 和文件系统 `load` 的路由共存：**
+
+两者共用同一张 `rou3` 路由表。`dispatch` 时，文件路由和编程式路由完全一致地参与匹配。
+
+**使用示例：**
+
+```typescript
+// 注册一条健康检查路由
+const unregister = loader.register('/-/health', async ({ data }) => {
+  return { status: 'ok', uptime: process.uptime() };
+});
+
+// 注册带动态参数的路由
+loader.register('/-/greet/:name', async ({ params, data }) => {
+  return { message: `Hello, ${params!.name}!` };
+});
+
+// 注销一条路由
+unregister(); // 健康检查路由被移除
+```
+
+### `dispatch(path, data, extras?)`——消息分发
+
+```typescript
+async dispatch(
+  path: string,
+  data: any,
+  extras: Record<string, any> = {}
+): Promise<any>;
+```
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `path` | `string` | — | 请求路径（必须包含 prefix） |
+| `data` | `any` | — | 要传递给处理函数的数据 |
+| `extras` | `Record<string, any>` | `{}` | 额外字段，合并到处理器入参 |
+| **返回值** | `Promise<any>` | — | 处理函数的返回值 |
+
+**内部流程：**
+
+```typescript
+async dispatch(path: string, data: any, extras: Record<string, any> = {}) {
+  const matched = findRoute(this.router, this.METHOD, path, {
+    params: true,    // 提取动态参数
+    normalize: true, // 标准化路径
+  });
+  if (!matched) {
+    throw new NotFoundException(path);
+  }
+  const handler = matched.data as MessageRegisterProps;
+  return await Promise.resolve(handler.fn({
+    params: matched.params ?? {},
+    data,
+    url: path,
+    ...extras,       // extras 合并到这里
+  }));
+}
+```
+
+**流程详解：**
+
+1. 调用 `findRoute()` 在路由表中查找匹配的路由
+2. 如果没有匹配，抛出 `NotFoundException`
+3. 如果有匹配，获取 `handler.fn` 处理函数
+4. 构造参数对象：`{ params, data, url, ...extras }`
+5. 调用 `handler.fn(params)` 并返回结果
+
+**`extras` 参数的作用：**
+
+`extras` 中的字段会展开合并到处理函数的入参中。这在需要注入额外上下文时非常有用。
+
+```typescript
+// 示例：注入 client 实例
+await loader.dispatch('/-/user/get', { id: 1 }, {
+  client: dbClient,
+  requestId: 'abc-123',
+  timestamp: Date.now(),
+});
+
+// 处理器可以访问这些额外字段
+export default defineMessage(async ({ params, data, client, requestId, timestamp }) => {
+  // 使用 client 查询数据库
+  const user = await client.query('SELECT * FROM users WHERE id = ?', [data.id]);
+  return { user, requestId, processedAt: timestamp };
+});
+```
+
+### NotFoundException——路径未匹配异常
+
+```typescript
+class NotFoundException extends Error {
+  public readonly status = 'NOT_FOUND';
+  constructor(path: string);
+}
+```
+
+当 `dispatch` 找不到匹配的路由时抛出。
+
+| 属性 | 类型 | 值 | 说明 |
+|------|------|-----|------|
+| `status` | `string` | `'NOT_FOUND'` | 固定的状态码 |
+| `message` | `string` | 传入的 `path` | 未匹配的路径 |
+
+### 辅助函数
+
+#### `getId()`
+
+```typescript
+function getId(): number;
+```
+
+获取下一个可用的消息处理器 ID（全局自增）。`register()` 方法内部使用此函数生成 ID。
 
 ---
 
 ## 快速开始
 
-### 第一步：创建消息处理器
+### 基础示例：文件路由
 
-使用 `defineMessage` 工厂函数定义消息处理器，每个 `*.msg.ts` 文件导出一个处理器：
+#### 目录结构
+
+```
+project/
+├── loader.ts              # Loader 实例化
+├── messages/
+│   ├── index.msg.ts       # 路由: / (或 /-/)
+│   ├── hello.msg.ts       # 路由: /hello (或 /-/hello)
+│   ├── echo.msg.ts        # 路由: /echo (或 /-/echo)
+│   └── users/
+│       ├── index.msg.ts   # 路由: /users (或 /-/users)
+│       └── [id].msg.ts    # 路由: /users/:id (或 /-/users/:id)
+```
+
+#### 1. 定义消息处理器
+
+```typescript
+// messages/index.msg.ts
+import { defineMessage } from '@hile/message-loader';
+
+export default defineMessage(async ({ data }) => {
+  return { message: 'Welcome to the message API!', version: '1.0.0' };
+});
+```
 
 ```typescript
 // messages/hello.msg.ts
 import { defineMessage } from '@hile/message-loader';
 
 export default defineMessage(async ({ data, params, url }) => {
-  return { greeting: `Hello, ${data.name}!` };
+  const name = data?.name || 'World';
+  return { greeting: `Hello, ${name}!` };
 });
 ```
 
-### 第二步：支持动态参数
+```typescript
+// messages/echo.msg.ts
+import { defineMessage } from '@hile/message-loader';
 
-文件名中的 `[param]` 会被转换为路由参数：
+export default defineMessage(async ({ data }) => {
+  // 原样返回收到的数据
+  return { echoed: data, timestamp: Date.now() };
+});
+```
+
+```typescript
+// messages/users/index.msg.ts
+import { defineMessage } from '@hile/message-loader';
+
+// 模拟用户数据库
+const users = [
+  { id: 1, name: 'Alice', email: 'alice@example.com' },
+  { id: 2, name: 'Bob', email: 'bob@example.com' },
+  { id: 3, name: 'Charlie', email: 'charlie@example.com' },
+];
+
+export default defineMessage(async ({ data }) => {
+  return { users, total: users.length };
+});
+```
 
 ```typescript
 // messages/users/[id].msg.ts
 import { defineMessage } from '@hile/message-loader';
 
+const users = [
+  { id: 1, name: 'Alice', email: 'alice@example.com' },
+  { id: 2, name: 'Bob', email: 'bob@example.com' },
+  { id: 3, name: 'Charlie', email: 'charlie@example.com' },
+];
+
 export default defineMessage(async ({ params }) => {
-  const user = await findUserById(params!.id);
+  const user = users.find(u => u.id === Number(params!.id));
+  if (!user) {
+    throw new Error(`User ${params!.id} not found`);
+  }
   return user;
 });
 ```
 
-### 第三步：加载并分发
+#### 2. 加载并分发
 
 ```typescript
-import { MessageLoader } from '@hile/message-loader';
+// loader.ts
+import { MessageLoader, NotFoundException } from '@hile/message-loader';
 import path from 'node:path';
 
-const loader = new MessageLoader({
-  suffix: 'msg',
-  prefix: '/-',
+async function main() {
+  const loader = new MessageLoader({
+    suffix: 'msg',
+    prefix: '/-',
+  });
+
+  // 加载消息目录
+  await loader.load(path.resolve(__dirname, 'messages'));
+  console.log('消息路由加载完成');
+
+  try {
+    // 1. 根路由
+    const root = await loader.dispatch('/-/', {});
+    console.log('根路由:', root);
+    // { message: 'Welcome to the message API!', version: '1.0.0' }
+
+    // 2. Hello 路由
+    const hello = await loader.dispatch('/-/hello', { name: 'World' });
+    console.log('Hello:', hello);
+    // { greeting: 'Hello, World!' }
+
+    // 3. Echo 路由
+    const echo = await loader.dispatch('/-/echo', { test: 'data' });
+    console.log('Echo:', echo);
+    // { echoed: { test: 'data' }, timestamp: ... }
+
+    // 4. 用户列表
+    const users = await loader.dispatch('/-/users', {});
+    console.log('用户列表:', users);
+    // { users: [...], total: 3 }
+
+    // 5. 单个用户（动态参数）
+    const user = await loader.dispatch('/-/users/2', {});
+    console.log('用户 #2:', user);
+    // { id: 2, name: 'Bob', email: 'bob@example.com' }
+
+  } catch (e) {
+    if (e instanceof NotFoundException) {
+      console.error('路由未找到:', e.message);
+    } else {
+      console.error('处理错误:', e);
+    }
+  }
+}
+
+main();
+```
+
+#### 3. 不传 data 时的行为
+
+```typescript
+// 不传 data 参数
+const result = await loader.dispatch('/-/hello', undefined);
+// handler 中的 data 为 undefined
+```
+
+### 编程式路由示例
+
+```typescript
+import { MessageLoader, NotFoundException } from '@hile/message-loader';
+
+const loader = new MessageLoader({ prefix: '/api' });
+
+// 注册路由
+const unregisterHealth = loader.register('/api/health', async ({ data }) => {
+  return { status: 'healthy', timestamp: Date.now() };
 });
 
-await loader.load(path.resolve(__dirname, 'messages'));
+loader.register('/api/greet/:name', async ({ params }) => {
+  return { message: `Hello, ${params!.name}!` };
+});
 
-const result = await loader.dispatch('/-/hello', { name: 'world' });
-console.log(result); // { greeting: 'Hello, world!' }
+// 分发
+const health = await loader.dispatch('/api/health', {});
+console.log('健康检查:', health);
 
-const user = await loader.dispatch('/-/users/42', {});
-console.log(user); // findUserById 返回值，通常包含 id 等字段
+const greet = await loader.dispatch('/api/greet/Alice', {});
+console.log('问候:', greet);
+
+// 注销路由
+unregisterHealth();
+
+try {
+  await loader.dispatch('/api/health', {}); // 现在找不到此路由
+} catch (e) {
+  if (e instanceof NotFoundException) {
+    console.log('路由已注销');
+  }
+}
 ```
 
-### 编程式注册（可选）
-
-不通过文件，直接在内存里挂路由：
+### 搭配 MessageWs 使用
 
 ```typescript
-const unload = loader.register('/-/health', async ({ data }) => ({ ok: true, data }));
-await loader.dispatch('/-/health', { ping: 1 });
-unload();
-```
-
----
-
-## 文件系统映射规则
-
-| 文件路径 | 路由（无 prefix） | 路由（prefix: `/-`） |
-|---------|-------------------|---------------------|
-| `index.msg.ts` | `/` | `/-/` |
-| `hello.msg.ts` | `/hello` | `/-/hello` |
-| `users/index.msg.ts` | `/users` | `/-/users` |
-| `users/[id].msg.ts` | `/users/:id` | `/-/users/:id` |
-| `[category]/[id].msg.ts` | `/:category/:id` | `/-/:category/:id` |
-
-<Note>
-  `defaultSuffix` 默认为 `/index`，即文件名为 `index` 时会被折叠。可通过配置 `defaultSuffix` 自定义折叠行为。
-</Note>
-
----
-
-## 与 message 模块搭配
-
-`@hile/message-loader` 天然与 `@hile/message-modem` 家族模块搭配使用。只需在 `exec` 方法中调用 `loader.dispatch` 即可。若你需要 **中心化注册表 + 多实例 namespace 查找**，可先阅读 [@hile/micro](/packages/micro)：它在 message-loader + message-ws 上封装 `Registry` 与 `Application`。
-
-### 搭配 @hile/message-ws
-
-```typescript
+import { WebSocketServer } from 'ws';
 import { MessageWs } from '@hile/message-ws';
 import { MessageLoader } from '@hile/message-loader';
+import { Exception } from '@hile/message-modem';
 import path from 'node:path';
 
 const loader = new MessageLoader({ suffix: 'msg', prefix: '/-' });
 await loader.load(path.resolve(__dirname, 'messages'));
 
 class AppWs extends MessageWs {
+  // exec 中调用 loader.dispatch
   protected async exec(data: { url: string; data: any }): Promise<any> {
-    return loader.dispatch(data.url, data.data);
+    try {
+      return await loader.dispatch(data.url, data.data);
+    } catch (e) {
+      if (e instanceof NotFoundException) {
+        throw new Exception(404, `Route not found: ${e.message}`);
+      }
+      throw e;
+    }
   }
 
-  public request(url: string, data: any, options?: { timeout?: number, signal?: AbortSignal }) {
+  // 对外暴露请求方法
+  public request(url: string, data: any, options?: {
+    timeout?: number;
+    signal?: AbortSignal;
+  }) {
     return this._send({ url, data }, options);
   }
+
+  public notify(url: string, data: any) {
+    this._push({ url, data });
+  }
 }
-```
 
-使用：
-
-```typescript
-import { WebSocketServer } from 'ws';
-
+// 服务端
 const wss = new WebSocketServer({ port: 8080 });
 wss.on('connection', (ws) => {
   const modem = new AppWs(ws);
@@ -159,191 +635,666 @@ wss.on('connection', (ws) => {
 });
 
 // 客户端
+import WebSocket from 'ws';
 const ws = new WebSocket('ws://localhost:8080');
 ws.on('open', async () => {
   const modem = new AppWs(ws);
-  const result = await modem.request('/-/hello', { name: 'world' });
-  console.log(result); // { greeting: 'Hello, world!' }
+  const result = await modem.request('/-/hello', { name: 'World' });
+  console.log(result); // { greeting: 'Hello, World!' }
   modem.dispose();
   ws.close();
 });
 ```
 
-### 搭配 @hile/message-worker-thread
+### 搭配 MessageIpc 使用
 
 ```typescript
-import { MessageWorkerThread } from '@hile/message-worker-thread';
+import { fork } from 'node:child_process';
+import { MessageIpc } from '@hile/message-ipc';
+import { MessageLoader } from '@hile/message-loader';
+import { Exception } from '@hile/message-modem';
+import path from 'node:path';
 
-class AppWorker extends MessageWorkerThread {
+const loader = new MessageLoader({ suffix: 'msg', prefix: '/-' });
+await loader.load(path.resolve(__dirname, 'messages'));
+
+class AppIpc extends MessageIpc {
   protected async exec(data: { url: string; data: any }): Promise<any> {
-    return loader.dispatch(data.url, data.data);
+    try {
+      return await loader.dispatch(data.url, data.data);
+    } catch (e) {
+      if (e instanceof NotFoundException) {
+        throw new Exception(404, `Route not found: ${e.message}`);
+      }
+      throw e;
+    }
   }
 
-  public request(url: string, data: any, options?: { timeout?: number, signal?: AbortSignal }) {
+  public request(url: string, data: any, options?: {
+    timeout?: number;
+    signal?: AbortSignal;
+  }) {
     return this._send({ url, data }, options);
   }
 }
 
-// 主线程
+const child = fork('./worker.js');
+const ipc = new AppIpc(child);
+const result = await ipc.request('/-/hello', { name: 'IPC World' });
+console.log(result);
+ipc.dispose();
+child.kill();
+```
+
+### 搭配 MessageWorkerThread 使用
+
+```typescript
+import { Worker } from 'node:worker_threads';
+import { MessageWorkerThread } from '@hile/message-worker-thread';
+import { MessageLoader } from '@hile/message-loader';
+import { Exception } from '@hile/message-modem';
+import path from 'node:path';
+
+const loader = new MessageLoader({ suffix: 'msg', prefix: '/-' });
+await loader.load(path.resolve(__dirname, 'messages'));
+
+class AppWorker extends MessageWorkerThread {
+  protected async exec(data: { url: string; data: any }): Promise<any> {
+    try {
+      return await loader.dispatch(data.url, data.data);
+    } catch (e) {
+      if (e instanceof NotFoundException) {
+        throw new Exception(404, `Route not found: ${e.message}`);
+      }
+      throw e;
+    }
+  }
+
+  public request(url: string, data: any, options?: {
+    timeout?: number;
+    signal?: AbortSignal;
+  }) {
+    return this._send({ url, data }, options);
+  }
+}
+
 const worker = new Worker('./worker.js');
 const wt = new AppWorker(worker);
-const result = await wt.request('/-/hello', { name: 'world' });
+const result = await wt.request('/-/hello', { name: 'Worker World' });
+console.log(result);
 wt.dispose();
 await worker.terminate();
 ```
 
-### 搭配 @hile/message-ipc
+### 使用 extras 注入上下文
 
 ```typescript
-import { MessageIpc } from '@hile/message-ipc';
+// 定义处理器——期望从 extras 接收 db 和 logger
+export default defineMessage(async ({ params, data, url, db, logger }) => {
+  logger.info(`处理请求: ${url}`);
+  const user = await db.query('SELECT * FROM users WHERE id = ?', [data.id]);
+  return user;
+});
 
-class AppIpc extends MessageIpc {
-  protected async exec(data: { url: string; data: any }): Promise<any> {
-    return loader.dispatch(data.url, data.data);
-  }
-
-  public request(url: string, data: any, options?: { timeout?: number, signal?: AbortSignal }) {
-    return this._send({ url, data }, options);
-  }
-}
-
-const ipc = new AppIpc();
-const result = await ipc.request('/-/hello', { name: 'world' });
-ipc.dispose();
+// 分发时传入 extras
+await loader.dispatch('/-/user/get', { id: 1 }, {
+  db: databaseClient,
+  logger: console,
+});
 ```
+
+<Warning>
+  `extras` 中的字段会覆盖 `params`、`data`、`url`。如果 extras 中包含同名字段，会覆盖默认字段。因此避免使用 `data`、`params`、`url` 作为 extras 的键名。
+</Warning>
 
 ---
 
-## API 参考
+## API 参考总表
 
-### `MessageLoader`
+### MessageLoader
 
 | 方法 | 签名 | 说明 |
 |------|------|------|
-| `constructor` | `new MessageLoader(props: MessageLoaderProps)` | 创建加载器实例 |
-| `load` | `load(directory: string): Promise<() => void>` | 从目录批量注册，返回注销函数（移除本批路由） |
-| `register` | `register(routePath: string, fn: MessageFunction): () => void` | 注册单条路由，返回注销函数 |
-| `dispatch` | `dispatch(path: string, data: any, extras?: Record<string, any>): Promise<any>` | 分发消息；`extras` 合并进处理器入参 |
+| `constructor` | `(props: MessageLoaderProps)` | 创建加载器实例 |
+| `load` | `(directory: string) => Promise<() => void>` | 从目录批量注册文件路由，返回注销函数 |
+| `register` | `<T, E>(routePath: string, fn: MessageFunction<T, E>) => () => void` | 注册单条编程式路由，返回注销函数 |
+| `dispatch` | `(path: string, data: any, extras?: Record<string, any>) => Promise<any>` | 分发消息到匹配的处理器 |
 
-### `MessageLoaderProps`
+### MessageLoaderProps
 
-| 选项 | 类型 | 默认值 | 说明 |
+| 属性 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `suffix` | `string` | `'msg'` | 文件后缀标记，匹配 `*.{suffix}.{ts,js,tsx,jsx,mjs}` |
-| `defaultSuffix` | `string` | `'/index'` | 折叠后缀（index 文件映射为父级路径） |
-| `prefix` | `string` | `''` | 路径前缀 |
+| `suffix` | `string` | `'msg'` | 文件后缀标记。glob pattern: `**/*.{suffix}.{ts,js,tsx,jsx,mjs}` |
+| `defaultSuffix` | `string` | `'/index'` | 默认后缀，文件名为 index 时折叠 |
+| `prefix` | `string` | `''` | 路由前缀 |
 
-### `defineMessage(fn)`
-
-工厂函数，创建消息处理器注册信息，自动分配递增 ID。
+### defineMessage
 
 ```typescript
 function defineMessage<T = any>(fn: MessageFunction<T>): MessageRegisterProps<T>;
+```
 
+### MessageFunction
+
+```typescript
 type MessageFunction<T = any, E extends Record<string, any> = {}> = (data: {
   params?: Record<string, string>;
   data: T;
   url: string;
 } & E) => any;
+```
 
+### MessageRegisterProps
+
+```typescript
 interface MessageRegisterProps<T = any> {
   id: number;
   fn: MessageFunction<T>;
 }
 ```
 
-### `dispatch` 处理器参数
+### NotFoundException
 
-| 属性 | 类型 | 说明 |
-|------|------|------|
-| `params` | `Record<string, string>` | 路由匹配提取的动态参数 |
-| `data` | `any` | 调用方传入的消息数据 |
-| `url` | `string` | 原始请求路径（包含 prefix） |
-| （其它） | `extras` 中的键 | `dispatch` **第三参** 会展开并入同一对象，例如 `client` |
-
-<Warning>`extras` 展开在 `params`、`data`、`url` 之后，如果用了同名字段会覆盖前者。避免使用 `data`、`params`、`url` 作为 `extras` 的键名。</Warning>
-
-<Note>`load()` 注册的 **文件路由** 与 `register()` 注册的 **编程式路由** 共用同一张 `rou3` 路由表，`dispatch` 语义完全一致。</Note>
+```typescript
+class NotFoundException extends Error {
+  public readonly status = 'NOT_FOUND';
+  constructor(path: string);
+}
+```
 
 ---
 
-## 与 @hile/http Loader 的对比
+## 最佳实践
 
-| 特性 | @hile/http Loader | @hile/message-loader |
-|------|-------------------|---------------------|
-| 面向场景 | HTTP 请求 | 消息通信（WS/IPC/Worker） |
-| 路由引擎 | find-my-way | rou3 |
-| 文件后缀 | `*.controller.{ts,js}` | `*.msg.{ts,js,tsx,jsx}` |
-| HTTP 方法 | 支持 GET/POST/PUT 等 | 仅 GET（内部路由键） |
-| 冲突处理 | error/warn/override | 无（后注册覆盖） |
-| 中间件 | 支持 | 不支持 |
-| 依赖 HTTP 框架 | 是（`@hile/http`） | 否（独立使用） |
+### 1. 错误处理包装
+
+在传输层的 `exec` 中统一处理路由错误：
+
+```typescript
+protected async exec(data: { url: string; data: any }): Promise<any> {
+  try {
+    return await loader.dispatch(data.url, data.data);
+  } catch (e) {
+    if (e instanceof NotFoundException) {
+      throw new Exception(404, `Route not found: ${e.message}`);
+    }
+    if (e instanceof Exception) {
+      throw e;
+    }
+    // 未知错误包装为 500
+    throw new Exception(500, e instanceof Error ? e.message : 'Unknown error');
+  }
+}
+```
+
+### 2. 路由命名规范
+
+```typescript
+// 推荐：使用名词复数 + 动词前缀
+// messages/
+//   users/
+//     index.msg.ts        GET  /users
+//     [id].msg.ts          GET  /users/:id
+//     create.msg.ts        GET  /users/create
+//   orders/
+//     index.msg.ts        GET  /orders
+//     [id].msg.ts          GET  /orders/:id
+
+// 推荐：使用 prefix 区分命名空间
+const api = new MessageLoader({ prefix: '/api/v1' });
+const admin = new MessageLoader({ prefix: '/admin' });
+```
+
+### 3. 函数式路由风格的处理器
+
+消息处理器应该保持纯函数风格——接收参数，返回结果，不产生副作用（或明确管理副作用）：
+
+```typescript
+// 好的风格
+export default defineMessage(async ({ data, db }) => {
+  const user = await db.findUser(data.id);
+  return user;
+});
+
+// 避免这种风格
+export default defineMessage(async ({ data }) => {
+  global.cache.set('last_request', data); // 全局副作用
+  return { ok: true };
+});
+```
+
+### 4. 热更新
+
+利用 `load()` 返回的注销函数实现热更新：
+
+```typescript
+class HotReloadManager {
+  private loader: MessageLoader;
+  private currentUnload: (() => void) | null = null;
+
+  constructor(private messagesDir: string) {
+    this.loader = new MessageLoader({ suffix: 'msg', prefix: '/-' });
+  }
+
+  async load(): Promise<void> {
+    if (this.currentUnload) {
+      this.currentUnload(); // 注销旧路由
+    }
+    this.currentUnload = await this.loader.load(this.messagesDir);
+    console.log('路由已重新加载');
+  }
+
+  async watch(): Promise<void> {
+    const { watch } = await import('node:fs');
+    const fsWatcher = watch(this.messagesDir, { recursive: true }, () => {
+      this.load().catch(console.error);
+    });
+    process.on('exit', () => fsWatcher.close());
+  }
+}
+
+const manager = new HotReloadManager(path.resolve(__dirname, 'messages'));
+await manager.load();
+await manager.watch(); // 文件变更时自动重新加载
+```
+
+### 5. 多目录加载
+
+```typescript
+const loader = new MessageLoader({ prefix: '/-' });
+
+// 加载核心路由
+const unloadCore = await loader.load(path.resolve(__dirname, 'core-messages'));
+
+// 加载扩展路由
+const unloadExt = await loader.load(path.resolve(__dirname, 'ext-messages'));
+
+// 独立注销
+unloadCore();  // 只注销 core-messages
+// unloadExt(); // 只注销 ext-messages
+```
 
 ---
 
-## 注意事项
-
-<Warning>
-  消息处理器文件必须有 `export default`。缺少默认导出的文件会被静默跳过，不会抛出错误。
-</Warning>
-
-<Warning>
-  `dispatch` 在路径未匹配时抛出 `NotFoundException`（包含 `status: 'NOT_FOUND'`）。调用方应做好 try-catch 处理。
-</Warning>
-
-<Warning>
-  `dispatch` 路径需要包含 `prefix`。如果 `prefix` 为 `/-`，那么调用 `dispatch('/hello', data)` 将找不到路由，应使用 `dispatch('/-/hello', data)`。
-</Warning>
-
-<Note>
-  `load()` 返回注销函数，调用后所有已注册的路由会被移除。适合热更新场景：先注销旧路由，再重新加载。
-</Note>
-
----
-
-## 常见问题
+## 常见错误排查
 
 <AccordionGroup>
-  <Accordion title="dispatch 抛出 NotFoundException 怎么办？">
-    检查以下几点：
-    1. 文件是否放在正确的目录下，且命名符合 `*.msg.{ts,js,tsx,jsx}` 格式
-    2. 文件是否有 `export default`
-    3. dispatch 路径是否包含了 `prefix`
-    4. 是否已调用 `loader.load()` 加载目录
-  </Accordion>
-  <Accordion title="如何实现热更新？">
-    `load()` 返回注销函数，可以先注销旧路由再重新加载：
+  <Accordion title="dispatch 抛出 NotFoundException">
+    表示 `dispatch` 路径在路由表中没有匹配。检查以下几点：
+
+    1. **路径是否包含 prefix？** 如果 `prefix: '/-'`，`dispatch('/hello', data)` 会找不到，应该用 `dispatch('/-/hello', data)`
+
+    2. **文件是否存在且命名正确？** 文件必须符合 `*.msg.{ts,js,tsx,jsx,mjs}` 格式
+
+    3. **文件是否有 export default？** 没有 `export default` 的文件会被静默跳过
+
+    4. **是否已调用 load()？** 需要先调用 `load()` 加载文件路由
 
     ```typescript
-    let off = await loader.load(directory);
-
-    // 文件变更后
-    off(); // 移除旧路由
-    off = await loader.load(directory); // 重新加载
+    // 调试：打印所有已注册的路由
+    console.log(loader['router']); // 查看内部路由表（rou3 实例）
     ```
   </Accordion>
-  <Accordion title="可以同时加载多个目录吗？">
-    可以。每次 `load()` 调用独立注册路由，各自返回独立的注销函数：
+
+  <Accordion title="处理器中的 data 是 undefined">
+    如果你在调用 `dispatch` 时没有传 `data` 参数：
 
     ```typescript
-    const off1 = await loader.load(dir1);
-    const off2 = await loader.load(dir2);
+    await loader.dispatch('/-/hello'); // data 默认为 undefined
+    ```
 
-    // 独立注销
-    off1();
-    off2();
+    处理器中的 `data` 会是 `undefined`。如果希望总是有数据，在 dispatch 时传入默认值：
+
+    ```typescript
+    await loader.dispatch('/-/hello', {}); // data 为 {}
+    ```
+
+    或者在处理器中设置默认值：
+
+    ```typescript
+    export default defineMessage(async ({ data = {} }) => {
+      const name = data.name || 'World';
+    });
     ```
   </Accordion>
-  <Accordion title="支持 TypeScript 消息处理器吗？">
-    支持。`load()` 使用 `import()` 动态导入文件，只要运行环境支持 `.ts` 文件（如通过 `tsx`、`ts-node` 或编译后运行），就可以正常加载 `.msg.ts` 文件。
+
+  <Accordion title="extras 中的字段覆盖了 params 或 data">
+    这是预期行为。`dispatch` 中 `extras` 的字段会展开合并到处理器入参的顶层，如果与 `params`、`data`、`url` 重名，会覆盖它们。
+
+    ```typescript
+    // 避免这种情况
+    await loader.dispatch('/-/hello', {}, {
+      data: 'overwritten', // 这会覆盖原始的 data！
+      params: 'overwritten', // 这会覆盖路由参数！
+    });
+    ```
+
+    建议使用带命名空间的 extras 字段：
+
+    ```typescript
+    await loader.dispatch('/-/hello', {}, {
+      context: { requestId: 'abc' }, // 使用嵌套对象而不是顶层字段
+    });
+    ```
   </Accordion>
-  <Accordion title="`register` 和 `load()` 能一起用吗？">
-    可以。二者共用同一张 `rou3` 路由表；`load()` 返回的注销只撤销**该次目录扫描**注册的路由，`register()` 返回的注销只撤销**那一条**。
+
+  <Accordion title="load() 后马上 dispatch 还是 NotFoundException">
+    一个常见陷阱是 `load()` 使用相对路径但没有基于 `__dirname` 解析：
+
+    ```typescript
+    // 错误：相对路径基于 process.cwd()
+    await loader.load('./messages');
+
+    // 正确：基于当前文件路径
+    await loader.load(path.resolve(__dirname, 'messages'));
+    ```
   </Accordion>
-  <Accordion title="`dispatch` 第三参 `extras` 是什么？">
-    可选对象，会展开合并进处理器入参（与 `params`、`data`、`url` 同级）。`@hile/micro` 在向 Registry 查询等场景下会传入 `{ client }`，handler 可读取 `client`。避免使用 `data`、`params`、`url` 作为 `extras` 的键名以免语义混淆。
+
+  <Accordion title="如何测试路由是否已注册？">
+    可以尝试 dispatch 已知路径并捕获异常：
+
+    ```typescript
+    async function isRouteRegistered(loader: MessageLoader, path: string): Promise<boolean> {
+      try {
+        await loader.dispatch(path, {});
+        return true;
+      } catch (e) {
+        if (e instanceof NotFoundException) return false;
+        throw e; // 其他错误说明路由存在但执行出错
+      }
+    }
+
+    console.log(await isRouteRegistered(loader, '/-/hello')); // true 或 false
+    ```
   </Accordion>
-  <Accordion title="与 @hile/http 的 Loader 有什么区别？">
-    两者设计理念相同（文件系统即路由），但 `@hile/http` Loader 面向 HTTP 请求，支持多种 HTTP 方法和中间件；`@hile/message-loader` 面向消息通信，更轻量，不依赖 `@hile/core` 容器。
+
+  <Accordion title="文件路由和 register 注册的路由可以共存吗？">
+    可以。二者共用同一张 `rou3` 路由表。验证：
+
+    ```typescript
+    const loader = new MessageLoader({ suffix: 'msg', prefix: '/-' });
+
+    // 文件路由
+    await loader.load(path.resolve(__dirname, 'messages'));
+
+    // 编程式路由
+    loader.register('/-/health', async () => ({ ok: true }));
+
+    // 两者都能匹配
+    await loader.dispatch('/-/hello', { name: 'test' }); // 文件路由
+    await loader.dispatch('/-/health', {});               // 编程式路由
+    ```
+  </Accordion>
+
+  <Accordion title="支持 TypeScript 文件吗？">
+    支持。`load()` 使用原生 `import()` 动态导入文件。只要运行环境能处理 `.ts` 文件（通过 `tsx`、`ts-node` 或预先编译），就可以正常加载 `.msg.ts` 文件。
+
+    - 开发时使用 `tsx`：`node --loader tsx/esm main.ts`
+    - 生产环境：先编译为 JavaScript，再运行编译后的文件
+  </Accordion>
+
+  <Accordion title="load() 返回的注销函数做了什么？">
+    它会遍历本次 `load()` 注册的所有路由，逐个从 `rou3` 路由表中移除。这不会影响其他 `load()` 调用或 `register()` 注册的路由。
+
+    ```typescript
+    const unload1 = await loader.load(dir1);
+    const unload2 = await loader.load(dir2);
+
+    unload1(); // 只移除 dir1 中的路由
+    // dir2 中的路由仍然可用
+    ```
   </Accordion>
 </AccordionGroup>
+
+---
+
+## 完整示例：RPC 服务
+
+### 场景
+
+使用 `@hile/message-loader` + `@hile/message-ws` 构建一个轻量级 RPC 服务。
+
+### 目录结构
+
+```
+rpc-server/
+├── index.ts                # 入口
+├── messages/
+│   ├── index.msg.ts        # GET /
+│   ├── math/
+│   │   ├── add.msg.ts      # GET /math/add
+│   │   └── multiply.msg.ts # GET /math/multiply
+│   └── users/
+│       ├── index.msg.ts    # GET /users
+│       └── [id].msg.ts     # GET /users/:id
+```
+
+### 入口文件
+
+```typescript
+// index.ts
+import { WebSocketServer } from 'ws';
+import { MessageLoader } from '@hile/message-loader';
+import { MessageWs } from '@hile/message-ws';
+import { Exception } from '@hile/message-modem';
+import path from 'node:path';
+
+async function main() {
+  // 初始化消息加载器
+  const loader = new MessageLoader({
+    suffix: 'msg',
+    prefix: '/',
+  });
+
+  await loader.load(path.resolve(__dirname, 'messages'));
+  console.log('消息路由已加载');
+
+  // 创建 RPC 服务
+  class RpcServer extends MessageWs {
+    protected async exec(data: { method: string; params: any }): Promise<any> {
+      try {
+        return await loader.dispatch(data.method, data.params ?? {});
+      } catch (e) {
+        if (e instanceof NotFoundException) {
+          throw new Exception(404, `Method not found: ${data.method}`);
+        }
+        throw e;
+      }
+    }
+
+    public call<T = any>(method: string, params?: any, options?: {
+      timeout?: number;
+      signal?: AbortSignal;
+    }): Promise<T> {
+      return this._send<T>({ method, params }, options);
+    }
+  }
+
+  // 启动 WebSocket 服务
+  const wss = new WebSocketServer({ port: 8080 });
+  console.log('RPC 服务已启动，端口: 8080');
+
+  wss.on('connection', (ws) => {
+    const server = new RpcServer(ws);
+    ws.on('close', () => server.dispose());
+  });
+}
+
+main().catch(console.error);
+```
+
+### 消息处理器
+
+```typescript
+// messages/index.msg.ts
+import { defineMessage } from '@hile/message-loader';
+
+export default defineMessage(async () => {
+  return {
+    service: 'RPC Service',
+    version: '1.0.0',
+    methods: ['/math/add', '/math/multiply', '/users', '/users/:id'],
+  };
+});
+```
+
+```typescript
+// messages/math/add.msg.ts
+import { defineMessage } from '@hile/message-loader';
+
+export default defineMessage(async ({ data }) => {
+  const { a, b } = data;
+  if (typeof a !== 'number' || typeof b !== 'number') {
+    throw new Error('a and b must be numbers');
+  }
+  return { result: a + b };
+});
+```
+
+```typescript
+// messages/math/multiply.msg.ts
+import { defineMessage } from '@hile/message-loader';
+
+export default defineMessage(async ({ data }) => {
+  const { a, b } = data;
+  if (typeof a !== 'number' || typeof b !== 'number') {
+    throw new Error('a and b must be numbers');
+  }
+  return { result: a * b };
+});
+```
+
+```typescript
+// messages/users/index.msg.ts
+import { defineMessage } from '@hile/message-loader';
+
+const users = [
+  { id: 1, name: 'Alice', role: 'admin' },
+  { id: 2, name: 'Bob', role: 'user' },
+  { id: 3, name: 'Charlie', role: 'user' },
+];
+
+export default defineMessage(async ({ data }) => {
+  const page = data.page || 1;
+  const limit = data.limit || 10;
+  const start = (page - 1) * limit;
+  const paged = users.slice(start, start + limit);
+
+  return {
+    data: paged,
+    pagination: { page, limit, total: users.length },
+  };
+});
+```
+
+```typescript
+// messages/users/[id].msg.ts
+import { defineMessage } from '@hile/message-loader';
+
+const users = [
+  { id: 1, name: 'Alice', role: 'admin' },
+  { id: 2, name: 'Bob', role: 'user' },
+  { id: 3, name: 'Charlie', role: 'user' },
+];
+
+export default defineMessage(async ({ params, data }) => {
+  const user = users.find(u => u.id === Number(params!.id));
+  if (!user) {
+    throw new Error(`User not found: ${params!.id}`);
+  }
+  return user;
+});
+```
+
+### 客户端
+
+```typescript
+// client.ts
+import WebSocket from 'ws';
+import { MessageWs } from '@hile/message-ws';
+import { Exception } from '@hile/message-modem';
+
+class RpcClient extends MessageWs {
+  protected async exec(data: any): Promise<any> {
+    return { echo: data };
+  }
+
+  public call<T = any>(method: string, params?: any): Promise<T> {
+    return this._send<T>({ method, params });
+  }
+}
+
+async function main() {
+  const ws = new WebSocket('ws://localhost:8080');
+
+  ws.on('open', async () => {
+    const client = new RpcClient(ws);
+
+    try {
+      // 调用 math/add
+      const sum = await client.call('/math/add', { a: 10, b: 20 });
+      console.log('10 + 20 =', sum.result); // 30
+
+      // 调用 math/multiply
+      const product = await client.call('/math/multiply', { a: 6, b: 7 });
+      console.log('6 * 7 =', product.result); // 42
+
+      // 获取用户列表
+      const userList = await client.call('/users', { page: 1 });
+      console.log('用户列表:', userList.data.length, '个用户');
+
+      // 获取单个用户
+      const user = await client.call('/users/1', {});
+      console.log('用户 #1:', user.name); // Alice
+
+      // 调用不存在的路由
+      try {
+        await client.call('/nonexistent', {});
+      } catch (e) {
+        if (e instanceof Exception) {
+          console.log('错误:', e.status, e.message);
+        }
+      }
+
+    } finally {
+      client.dispose();
+      ws.close();
+    }
+  });
+}
+
+main().catch(console.error);
+```
+
+---
+
+## 与其他包的关系
+
+`@hile/message-loader` 位于 Hile 消息通信体系的上层：
+
+```
+传输层（如何传数据）          路由层（如何路由请求）       业务逻辑
+┌─────────────────┐        ┌──────────────────┐        ┌─────────────┐
+│ @hile/message-ws│        │                  │        │ msg handler │
+│ @hile/message-ipc│──────►│ @hile/message-   │───────►│ msg handler │
+│ @hile/message-  │        │ loader           │        │ msg handler │
+│ worker-thread   │        │                  │        └─────────────┘
+└─────────────────┘        └──────────────────┘
+      ^                           ^
+      | 基于                       | 基于
+      |                           |
+┌─────────────────┐        ┌──────────────────┐
+│ @hile/message-  │        │ @hile/loader     │
+│ modem           │        │ + rou3           │
+└─────────────────┘        └──────────────────┘
+```
+
+| 包 | 作用 |
+|------|------|
+| `@hile/message-modem` | 消息通信抽象基类（协议层） |
+| `@hile/message-ws` | WebSocket 传输实现 |
+| `@hile/message-ipc` | IPC 传输实现 |
+| `@hile/message-worker-thread` | Worker Threads 传输实现 |
+| `@hile/loader` | 文件扫描 + 基础加载器 |
+| `rou3` | 路由匹配引擎 |
+| `@hile/message-loader` | **消息路由加载器（本包）** |

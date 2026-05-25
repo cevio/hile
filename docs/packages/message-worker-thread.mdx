@@ -1,6 +1,6 @@
 ---
 title: "@hile/message-worker-thread"
-description: "基于 @hile/message-modem 的 Node.js Worker Threads 通信抽象实现"
+description: "基于 @hile/message-modem 的 Node.js Worker Threads 通信抽象实现——封装 worker.postMessage / parentPort.postMessage，为主线程和 Worker 线程通信提供请求/响应模式"
 ---
 
 ## 安装
@@ -9,302 +9,869 @@ description: "基于 @hile/message-modem 的 Node.js Worker Threads 通信抽象
 pnpm add @hile/message-worker-thread
 ```
 
-自动安装依赖 `@hile/message-modem`。
-
----
-
-## 它做了什么？
-
-`@hile/message-worker-thread` 是 `@hile/message-modem` 的 **Node.js Worker Threads 抽象实现**。它封装了 `worker.postMessage()` / `worker.on('message')` 和 `parentPort.postMessage()` / `parentPort.on('message')` 的细节，你只需继承 `MessageWorkerThread` 并实现 `exec` 方法即可。
-
-继承链：
-
-```
-MessageModem (abstract)              ← post + exec 均抽象
-  └── MessageWorkerThread (abstract) ← 实现 post，exec 仍抽象
-        └── 用户子类                  ← 实现 exec
-```
-
-核心能力：
-
-- **双端支持** — 主线程传入 `Worker` 或 `MessagePort`，Worker 线程端自动使用 `parentPort`
-- **继承模式** — 子类实现 `exec` 定义请求处理逻辑
-- **请求/响应** — 继承 `MessageModem` 全部能力（超时、中止、stream、错误传播）
-- **资源清理** — `dispose()` 移除监听，避免内存泄漏
-
----
-
-## 通信模型
-
-```
-主线程                            Worker 线程
-  │                                 │
-  │  wt._send(data)                 │
-  │───── REQUEST ──────────────────►│
-  │                                 │ exec(data, signal)
-  │                                 │
-  │◄───── RESPONSE ─────────────────│
-  │  resolve(result)                │
-  │                                 │
-  │  wt.abort()                     │
-  │───── ABORT ────────────────────►│
-  │                                 │ 取消 exec
-```
-
-<Note>
-  通信是双向对称的。Worker 线程也可以向主线程发请求，前提是主线程的子类也实现了 `exec`。
-</Note>
-
----
-
-## 快速开始
-
-### 第一步：定义子类
-
-`MessageWorkerThread` 是抽象类，必须继承并实现 `exec`：
+安装时自动引入依赖 `@hile/message-modem`。
 
 ```typescript
 import { MessageWorkerThread } from '@hile/message-worker-thread';
-import { Exception } from '@hile/message-modem';
-
-class ComputeWorker extends MessageWorkerThread {
-  protected async exec(data: any, signal?: AbortSignal): Promise<any> {
-    switch (data?.action) {
-      case 'compute':
-        return data.value * 2;
-      case 'restricted':
-        throw new Exception(403, 'not allowed');
-      default:
-        return data;
-    }
-  }
-
-  public request<T = any>(data: T, options?: { timeout?: number, signal?: AbortSignal }) {
-    return this._send(data, options);
-  }
-}
-```
-
-### 第二步：主线程
-
-```typescript
-import { Worker } from 'node:worker_threads';
-
-class MainThread extends MessageWorkerThread {
-  protected async exec(data: any, signal?: AbortSignal): Promise<any> {
-    return { reply: 'from main', query: data };
-  }
-
-  public request<T = any>(data: T, options?: { timeout?: number, signal?: AbortSignal }) {
-    return this._send(data, options);
-  }
-}
-
-const worker = new Worker('./worker.js');
-const wt = new MainThread(worker);
-
-const result = await wt.request({ action: 'compute', value: 42 });
-console.log(result); // 84
-
-wt.dispose();
-await worker.terminate();
-```
-
-### 第三步：Worker 线程（worker.js）
-
-```typescript
-const wt = new ComputeWorker(); // 无参数 → 自动使用 parentPort
+import { Exception, TimeoutException, AbortException } from '@hile/message-modem';
 ```
 
 ---
 
-## 也可以用 MessageChannel
+## 概述：它解决了什么问题？
 
-`MessageChannel` 创建一对互相连接的 `MessagePort`，可以在同一进程内测试或建立任意两端的通信：
+### 问题背景
+
+Node.js 的 [`worker_threads`](https://nodejs.org/api/worker_threads.html) 模块允许 JavaScript 代码在独立的线程中运行。主线程通过 `Worker` 实例与 Worker 线程通信，Worker 线程通过 `parentPort` 与主线程通信。
+
+和 WebSocket 与 IPC 一样，原始 Worker Threads API 也是纯消息驱动的：
+
+```typescript
+// 主线程
+worker.postMessage({ action: 'compute', value: 42 });
+
+// Worker 线程
+parentPort.on('message', (msg) => {
+  parentPort.postMessage({ result: msg.value * 2 });
+});
+
+// 问题：如何将响应匹配到原始请求？
+```
+
+`@hile/message-worker-thread` 通过继承 `MessageModem`，自动实现了请求/响应配对、超时控制、主动中止和流式传输。
+
+### 继承链
+
+```
+MessageModem (abstract)          
+  │  post(data): void —— 抽象     ← 如何发送消息
+  │  exec(data, signal): Promise —— 抽象  ← 如何处理请求
+  │
+  └── MessageWorkerThread (abstract)       
+       │  post(data): void —— 已实现  ← port.postMessage(data, [])
+       │  exec(data, signal): Promise —— 抽象  ← 仍需子类实现
+       │  dispose(): void —— 已实现  ← 移除监听器 + _dispose()
+       │
+       └── 你的子类
+            exec(data, signal): Promise —— 实现
+            request(data, options?) —— 你添加
+```
+
+### 双端支持
+
+和 `MessageIpc` 类似，`MessageWorkerThread` 可以在主线程和 Worker 线程两端使用：
+
+| 端 | 构造函数参数 | 底层通道 |
+|----|-------------|---------|
+| 主线程端 | `new SubClass(worker)` 传入 `new Worker()` 返回的实例 | `worker.postMessage()` / `worker.on('message')` |
+| 主线程端 | `new SubClass(port)` 传入 `MessageChannel` 的 `MessagePort` | `port.postMessage()` / `port.on('message')` |
+| Worker 线程端 | `new SubClass()` 不传参数 | `parentPort.postMessage()` / `parentPort.on('message')` |
+
+### Worker 线程 vs IPC
+
+| 特性 | `child_process.fork()` (IPC) | `worker_threads` |
+|------|-----------------------------|-----------------|
+| 进程模型 | 独立进程（不同 PID） | 同进程内线程 |
+| 内存 | 独立堆，不能共享内存 | 可共享 `SharedArrayBuffer` |
+| 序列化 | JSON 或 structured clone | structured clone（默认支持 Buffer、Date 等） |
+| 资源消耗 | 较高（独立进程） | 较低（轻量级线程） |
+| 适用场景 | 微服务、完全隔离 | CPU 密集型计算、并行处理 |
+
+---
+
+## 核心概念
+
+### 通信模型
+
+```
+主线程                             Worker 线程
+  │                                    │
+  │  worker = new Worker('./worker.js')│
+  │  wt = new MyWT(worker)             │  wt = new MyWT() // 无参数
+  │                                    │
+  │  wt.request({ action: 'compute', value: 42 })
+  │────── REQUEST ───────────────────► │
+  │                                    │  exec({ action: 'compute', value: 42 })
+  │                                    │  → { result: 84 }
+  │◄────── RESPONSE ───────────────────│
+  │  resolve({ result: 84 })           │
+```
+
+### 使用 MessageChannel
+
+`MessageWorkerThread` 也支持 [`MessageChannel`](https://nodejs.org/api/worker_threads.html#class-messagechannel)，它创建一对互相连接的 `MessagePort`：
 
 ```typescript
 import { MessageChannel } from 'node:worker_threads';
 
 const { port1, port2 } = new MessageChannel();
-const side1 = new MySide(port1);
-const side2 = new MySide(port2);
+const side1 = new MyWT(port1);
+const side2 = new MyWT(port2);
 
-const result = await side1.request('hello');
-console.log(result);
-
-side1.dispose();
-side2.dispose();
-port1.close();
-port2.close();
+// 两端可以直接通信，无需 Worker 线程
 ```
+
+这在测试或同一进程内的任意两端通信场景中非常有用。
 
 ---
 
-## 超时与中止
+## MessageWorkerThread API 参考
 
-### 设置超时
+### 类签名
 
 ```typescript
-try {
-  const result = await wt.request(data, { timeout: 5000 });
-} catch (e) {
-  // 超时后触发 abort → TimeoutException
+abstract class MessageWorkerThread extends MessageModem {
+  constructor(port?: Worker | MessagePort);
+  protected post<T = any>(data: MessageTransferFormat<T>): void;
+  public dispose(): void;
 }
 ```
 
-### 主动中止
+### 构造函数
 
 ```typescript
-const ac = new AbortController();
-const promise = wt.request(data, { signal: ac.signal });
-
-setTimeout(() => ac.abort(), 3000);
-
-try {
-  await promise;
-} catch (e) {
-  // AbortException
-}
+constructor(port?: Worker | MessagePort)
 ```
 
----
+| 参数 | 类型 | 必需 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `port` | `Worker \| MessagePort` | 否 | `parentPort` | 主线程端传入 Worker/MessagePort；Worker 线程端不传 |
 
-## 错误处理
-
-### exec 中抛出异常
+**构造函数内部行为：**
 
 ```typescript
-import { Exception } from '@hile/message-modem';
-
-class MyWorker extends MessageWorkerThread {
-  protected async exec(data: any, signal?: AbortSignal): Promise<any> {
-    if (!data.token) {
-      throw new Exception(401, 'Unauthorized');
-      // status 401 透传到对端
+constructor(port?: Worker | MessagePort) {
+  super();
+  if (port) {
+    this.port = port;
+  } else {
+    if (!parentPort) {
+      throw new Error('parentPort is not available. Ensure this code runs inside a Worker thread.');
     }
-    throw new Error('Something went wrong');
-    // 普通 Error → status 500
+    this.port = parentPort;
   }
-
-  public request<T = any>(data: T, options?: { timeout?: number, signal?: AbortSignal }) {
-    return this._send(data, options);
-  }
+  this.listener = (msg: any) => this.receive(msg);
+  this.port.on('message', this.listener);
 }
 ```
 
-### 对端捕获异常
+1. 调用父类 `MessageModem` 构造函数
+2. 确定端口：
+   - 如果传了 `port`，使用它
+   - 如果没传，尝试使用 `parentPort`
+   - 如果 `parentPort` 不可用（在主线程中运行），抛出错误
+3. 创建监听器并绑定到 `port.on('message')`
+
+### post（已实现）
 
 ```typescript
-import { Exception, AbortException } from '@hile/message-modem';
+protected post<T = any>(data: MessageTransferFormat<T>): void;
+```
 
-try {
-  await wt.request(data);
-} catch (e) {
-  if (e instanceof AbortException) {
-    console.log('请求被中止或超时');
-  } else if (e instanceof Exception) {
-    console.log(`远端错误 [${e.status}]: ${e.message}`);
-  }
+**内部实现：**
+
+```typescript
+protected post<T = any>(data: MessageTransferFormat<T>): void {
+  this.port.postMessage(data, []);
 }
 ```
 
----
+通过 `port.postMessage(data, [])` 发送消息。第二个参数是空的 transfer list，表示不转移任何 `ArrayBuffer` 的所有权。
 
-## API 参考
+<Note>
+  和 IPC 不同，Worker Threads 使用 structured clone 算法进行序列化。这意味着它原生支持 `Buffer`、`Date`、`Map`、`Set`、`RegExp` 等类型（但仍不支持 `Function`、`Symbol`、`WeakMap`）。
+</Note>
 
-### `MessageWorkerThread`（抽象类）
+### exec（抽象，需子类实现）
 
-继承自 `MessageModem`。
+```typescript
+protected abstract exec(data: any, signal?: AbortSignal): Promise<any>;
+```
+
+由 `MessageModem` 定义的抽象方法。`MessageWorkerThread` **没有实现**此方法，子类必须实现。
+
+| 方面 | 说明 |
+|------|------|
+| **参数** | `data: any`——收到的请求数据 |
+| **参数** | `signal?: AbortSignal`——当发送方取消请求时触发 |
+| **返回值** | `Promise<any>`——处理结果 |
+
+### dispose（已实现）
+
+```typescript
+public dispose(): void;
+```
+
+**内部实现：**
+
+```typescript
+public dispose(): void {
+  this._dispose();
+  this.port.removeListener('message', this.listener);
+}
+```
+
+**清理的内容：**
+
+1. 调用 `_dispose()`：拒绝所有待处理 Promise、中止所有 AbortController、销毁所有流
+2. 从端口移除 `message` 事件监听器
+
+<Warning>
+  在主线程端，`dispose()` **不会**终止 Worker 线程。你需要单独调用 `worker.terminate()` 关闭 Worker 线程。
+</Warning>
+
+### 继承的方法（来自 MessageModem）
 
 | 方法 | 签名 | 说明 |
 |------|------|------|
-| `constructor` | `new SubClass(port?: Worker \| MessagePort)` | 主线程传 Worker/MessagePort；Worker 线程不传参数（自动使用 parentPort） |
-| `exec` | `protected abstract exec(data: any, signal?: AbortSignal): Promise<any>` | 子类必须实现：处理对端请求。`signal` 在请求被中止时触发 |
-| `_send` | `protected _send<T>(data: T, options?: { timeout?: number, signal?: AbortSignal }): Promise<T>` | 发送双向请求（`twoway: true`），返回 Promise。子类自行暴露为 public。默认超时 30s |
-| `_push` | `protected _push<T>(data: T, options?: { timeout?: number, signal?: AbortSignal }): void` | 发送单向推送（`twoway: false`），接收方不回复 RESPONSE |
-| `_stream` | `protected _stream(data: any, options?: { signal?: AbortSignal }): Readable` | 发送流式请求，返回 `Readable`。远端 `exec` 需返回 `AsyncIterable` |
-| `dispose` | `dispose(): void` | 移除消息监听，拒绝所有待处理请求，释放资源 |
-
-### `_send` 返回值
-
-`_send` 返回 `Promise<T>`，直接在 Promise 中 resolve 远端 `exec` 的返回值，reject 远端错误或本地超时/中止。
+| `_send` | `_send<T>(data, options?)` | 发送双向请求，返回 `Promise<T>` |
+| `_push` | `_push<T>(data, options?)` | 发送单向推送，无返回值 |
+| `_stream` | `_stream(data, options?)` | 发送流式请求，返回 `Readable` |
 
 ---
 
-## 与其他模块的关系
+## 快速开始
 
-```
-@hile/message-modem              ← 抽象基类（传输无关）
-  ├── @hile/message-ipc          ← Node.js IPC（fork 父子进程）
-  ├── @hile/message-worker-thread ← Worker Threads（worker_threads）
-  └── @hile/message-ws           ← WebSocket（ws 模块）
+### 最小完整示例
+
+#### 1. 定义共享子类
+
+```typescript
+// shared.ts
+import { MessageWorkerThread } from '@hile/message-worker-thread';
+import { Exception } from '@hile/message-modem';
+
+export class ComputeWorker extends MessageWorkerThread {
+  // 实现 exec：处理收到的请求
+  protected async exec(data: any, signal?: AbortSignal): Promise<any> {
+    switch (data?.action) {
+      case 'compute':
+        // 执行 CPU 密集型计算
+        return { result: data.value * 2 };
+
+      case 'fibonacci':
+        // 计算斐波那契数列（CPU 密集型）
+        return { result: this.fibonacci(data.n) };
+
+      case 'validate':
+        if (!data.input) {
+          throw new Exception(400, 'input is required');
+        }
+        return { valid: true, normalized: data.input.trim() };
+
+      case 'longTask': {
+        // 支持中止的长时间任务
+        return new Promise((resolve, reject) => {
+          let cancelled = false;
+          signal?.addEventListener('abort', () => {
+            cancelled = true;
+            reject(new Exception(499, 'Task cancelled'));
+          });
+
+          // 模拟长时间计算
+          let result = 0;
+          for (let i = 0; i < 100000000; i++) {
+            if (cancelled) return;
+            result += Math.sqrt(i);
+          }
+          resolve({ result });
+        });
+      }
+
+      default:
+        throw new Exception(400, `Unknown action: ${data?.action}`);
+    }
+  }
+
+  private fibonacci(n: number): number {
+    if (n <= 1) return n;
+    return this.fibonacci(n - 1) + this.fibonacci(n - 2);
+  }
+
+  // 对外暴露请求方法
+  public request<T = any>(data: T, options?: {
+    timeout?: number;
+    signal?: AbortSignal;
+  }): Promise<T> {
+    return this._send<T>(data, options);
+  }
+
+  // 对外暴露推送方法
+  public notify(data: any): void {
+    this._push(data);
+  }
+}
 ```
 
-三者均不依赖 `@hile/core` 容器，可以独立使用。
+#### 2. 主线程
+
+```typescript
+// main.ts
+import { Worker } from 'node:worker_threads';
+import { ComputeWorker } from './shared';
+
+async function main() {
+  // 创建 Worker 线程
+  const worker = new Worker('./worker.js');
+  console.log('Worker 线程已启动');
+
+  // 主线程端：传入 Worker 实例
+  const wt = new ComputeWorker(worker);
+
+  try {
+    // 发送计算请求
+    const result1 = await wt.request({ action: 'compute', value: 42 });
+    console.log('计算结果:', result1); // { result: 84 }
+
+    // 斐波那契计算（CPU 密集型，交给 Worker 线程）
+    const result2 = await wt.request({ action: 'fibonacci', n: 40 });
+    console.log('斐波那契结果:', result2); // { result: 102334155 }
+
+    // 校验
+    const result3 = await wt.request({ action: 'validate', input: '  hello  ' });
+    console.log('校验结果:', result3); // { valid: true, normalized: 'hello' }
+
+    // 错误处理
+    try {
+      await wt.request({ action: 'unknown' });
+    } catch (e) {
+      if (e instanceof Exception) {
+        console.log(`错误 ${e.status}: ${e.message}`);
+      }
+    }
+
+  } finally {
+    wt.dispose();
+    await worker.terminate();
+    console.log('Worker 线程已关闭');
+  }
+}
+
+main().catch(console.error);
+```
+
+#### 3. Worker 线程
+
+```typescript
+// worker.js
+import { ComputeWorker } from './shared';
+
+// Worker 线程端：不传参数，自动使用 parentPort
+const wt = new ComputeWorker();
+
+console.log('Worker 线程已就绪');
+
+// 捕获未处理的 Promise 拒绝
+process.on('unhandledRejection', (err) => {
+  console.error('未处理的拒绝:', err);
+});
+```
+
+### 使用 MessageChannel 测试
+
+在同一进程内测试通信，不需要真的创建 Worker 线程：
+
+```typescript
+// test.ts
+import { MessageChannel } from 'node:worker_threads';
+import { MessageWorkerThread } from '@hile/message-worker-thread';
+import { Exception } from '@hile/message-modem';
+
+class TestWorker extends MessageWorkerThread {
+  protected async exec(data: any): Promise<any> {
+    switch (data?.action) {
+      case 'echo':
+        return { echo: data.message };
+      case 'add':
+        return { sum: data.a + data.b };
+      default:
+        throw new Exception(400, 'Unknown action');
+    }
+  }
+
+  public request<T>(data: T, options?: any): Promise<T> {
+    return this._send<T>(data, options);
+  }
+}
+
+// 使用 MessageChannel 模拟两端
+const { port1, port2 } = new MessageChannel();
+const side1 = new TestWorker(port1);
+const side2 = new TestWorker(port2);
+
+async function test() {
+  // side1 请求 side2
+  const result1 = await side1.request({ action: 'echo', message: 'Hello!' });
+  console.log('测试 1 通过:', result1); // { echo: 'Hello!' }
+
+  // side2 请求 side1
+  const result2 = await side2.request({ action: 'add', a: 10, b: 20 });
+  console.log('测试 2 通过:', result2); // { sum: 30 }
+
+  side1.dispose();
+  side2.dispose();
+  port1.close();
+  port2.close();
+}
+
+test();
+```
+
+### `_push` 单向通知示例
+
+```typescript
+import { Worker } from 'node:worker_threads';
+import { MessageWorkerThread } from '@hile/message-worker-thread';
+
+class ProgressWorker extends MessageWorkerThread {
+  protected async exec(data: any): Promise<any> {
+    if (data?.action === 'process') {
+      const total = data.items.length;
+      for (let i = 0; i < total; i++) {
+        // 处理每个项目
+        await this.processItem(data.items[i]);
+        // 发送进度通知（不等待响应）
+        this._push({
+          type: 'progress',
+          current: i + 1,
+          total,
+          percent: Math.round(((i + 1) / total) * 100),
+        });
+      }
+      return { completed: true };
+    }
+    return { error: 'unknown' };
+  }
+
+  private async processItem(item: any): Promise<void> {
+    // 模拟异步处理
+    return new Promise(resolve => setTimeout(resolve, 200));
+  }
+
+  public request<T>(data: T, options?: any): Promise<T> {
+    return this._send<T>(data, options);
+  }
+}
+
+const worker = new Worker('./worker.js');
+const wt = new ProgressWorker(worker);
+
+// 主线程通过 exec 接收进度通知
+class MainThread extends MessageWorkerThread {
+  protected async exec(data: any): Promise<any> {
+    if (data?.type === 'progress') {
+      console.log(`进度: ${data.percent}% (${data.current}/${data.total})`);
+      return { received: true };
+    }
+    return { echo: data };
+  }
+}
+```
+
+### `_stream` 流式传输示例
+
+```typescript
+import { Worker } from 'node:worker_threads';
+import { MessageWorkerThread } from '@hile/message-worker-thread';
+
+class StreamWorker extends MessageWorkerThread {
+  protected async exec(data: any): Promise<any> {
+    if (data?.action === 'generateNumbers') {
+      // 返回 AsyncIterable 实现流式传输
+      return async function* () {
+        for (let i = 0; i < data.count; i++) {
+          await new Promise(r => setTimeout(r, 100));
+          yield { index: i, value: Math.random(), timestamp: Date.now() };
+        }
+      }();
+    }
+    return { error: 'unknown' };
+  }
+
+  public request<T>(data: T, options?: any): Promise<T> {
+    return this._send<T>(data, options);
+  }
+
+  public generateStream(count: number, options?: { signal?: AbortSignal }) {
+    return this._stream({ action: 'generateNumbers', count }, options);
+  }
+}
+
+const worker = new Worker('./worker.js');
+const wt = new StreamWorker(worker);
+
+const stream = wt.generateStream(10);
+for await (const chunk of stream) {
+  console.log('收到:', chunk);
+}
+```
 
 ---
 
-## 与 @hile/message-ipc 的对比
+## API 参考总表
 
-| 特性 | message-ipc | message-worker-thread |
-|------|-------------|----------------------|
+### MessageWorkerThread（抽象类）
+
+继承自 `MessageModem`。
+
+| 方法 | 可见性 | 签名 | 说明 |
+|------|--------|------|------|
+| `constructor` | `public` | `(port?: Worker \| MessagePort)` | 主线程传 Worker/MessagePort；Worker 线程不传参 |
+| `post` | `protected` | `(data: MessageTransferFormat<T>) => void` | 已实现。调用 `port.postMessage(data, [])` |
+| `exec` | `protected abstract` | `(data: any, signal?: AbortSignal) => Promise<any>` | **子类必须实现**。处理对端请求 |
+| `_send` | `protected` | `(data, { timeout?, signal? }) => Promise<T>` | 发送双向请求，默认超时 30 秒 |
+| `_push` | `protected` | `(data, { timeout?, signal? }) => void` | 发送单向推送 |
+| `_stream` | `protected` | `(data, { signal? }) => Readable` | 发送流式请求 |
+| `dispose` | `public` | `() => void` | 移除监听、拒绝待处理请求、释放资源 |
+| `receive` | `public` | `(msg: MessageTransferFormat) => void` | 接收消息（构造函数中已绑定） |
+
+---
+
+## 最佳实践
+
+### 1. Worker 线程中的错误隔离
+
+如果 Worker 线程中的 `exec` 抛出未捕获的错误，Worker 线程的 `error` 事件会被触发。建议在主线程监听此事件：
+
+```typescript
+const worker = new Worker('./worker.js');
+worker.on('error', (err) => {
+  console.error('Worker 线程错误:', err.message);
+});
+
+worker.on('exit', (code) => {
+  if (code !== 0) {
+    console.log(`Worker 退出，状态码 ${code}，正在重启...`);
+    // 重新创建 Worker
+  }
+});
+```
+
+### 2. 超时设置策略
+
+Worker 线程通常用于 CPU 密集型计算，这类操作可能没有明确的结束时间。设置适当的超时：
+
+```typescript
+// 短期任务（预期 < 5 秒）
+const fast = await wt.request(data, { timeout: 5000 });
+
+// 长期任务（预期 < 60 秒）
+const slow = await wt.request(data, { timeout: 60000 });
+
+// 不确定的任务——允许中止但不设超时
+const uncertain = await wt.request(data, { timeout: 0 }); // 0 表示使用默认值（30000）
+// 或者通过信号手动控制
+const ac = new AbortController();
+const manual = wt.request(data, { signal: ac.signal });
+// 场景变化时取消
+ac.abort();
+```
+
+### 3. 资源管理
+
+`Worker` 实例是昂贵的资源。**始终**在使用完后调用 `worker.terminate()`：
+
+```typescript
+// 单个 Worker 场景
+const worker = new Worker('./worker.js');
+const wt = new MyWT(worker);
+try {
+  // ... 使用
+} finally {
+  wt.dispose();
+  await worker.terminate();
+}
+
+// Worker 池场景
+class WorkerPool {
+  private workers: { worker: Worker; modem: MyWT; busy: boolean }[] = [];
+
+  async execute(data: any): Promise<any> {
+    const entry = this.workers.find(w => !w.busy);
+    if (!entry) throw new Error('No available worker');
+    entry.busy = true;
+    try {
+      return await entry.modem.request(data);
+    } finally {
+      entry.busy = false;
+    }
+  }
+
+  async shutdown(): Promise<void> {
+    for (const entry of this.workers) {
+      entry.modem.dispose();
+      await entry.worker.terminate();
+    }
+  }
+}
+```
+
+### 4. 传递 transferable objects
+
+当前 `post` 实现使用了空的 transfer list `[]`。如果需要传递 `ArrayBuffer` 并转移所有权（避免复制），可以重写 `post` 方法：
+
+```typescript
+class OptimizedWorker extends MessageWorkerThread {
+  private transferables: Map<number, Transferable[]> = new Map();
+
+  public sendWithTransfer<T>(data: T, transfer: Transferable[]): Promise<T> {
+    // 暂存 transferables，在 post 中使用
+    const id = (this as any).createIncrementId();
+    this.transferables.set(id, transfer);
+    return this._send<T>(data);
+  }
+
+  protected post<T>(data: MessageTransferFormat<T>): void {
+    const transfer = this.transferables.get(data.id) || [];
+    this.transferables.delete(data.id);
+    this.port.postMessage(data, transfer);
+  }
+}
+```
+
+---
+
+## 与 MessageIpc 的对比
+
+| 特性 | `@hile/message-ipc` | `@hile/message-worker-thread` |
+|------|---------------------|------------------------------|
 | 底层 API | `process.send` / `child.send` | `port.postMessage` |
 | 进程模型 | 独立进程（`fork`） | 同进程多线程（`new Worker`） |
 | 内存 | 独立堆，JSON 序列化 | 可共享 `SharedArrayBuffer` |
-| 序列化 | JSON（默认） | structured clone |
+| 序列化 | JSON（默认）或 structured clone（advanced） | structured clone（默认） |
+| `Buffer` 支持 | 否（默认 JSON） | 是 |
 | 传输通道 | `ChildProcess` | `Worker` / `MessagePort` |
-| 构造参数 | `ChildProcess \| 不传` | `Worker \| MessagePort \| 不传` |
+| 构造函数参数 | `ChildProcess \| 不传` | `Worker \| MessagePort \| 不传` |
+| 资源开销 | 较高 | 较低 |
+| 隔离性 | 完全隔离（不同进程） | 共享进程空间 |
 
 ---
 
-## 注意事项
-
-<Warning>
-  `MessageWorkerThread` 是抽象类，不能直接实例化。必须继承并实现 `exec` 方法。
-</Warning>
-
-<Warning>
-  Worker 线程端不传参数时，必须确保代码运行在 Worker 线程内（`parentPort` 可用）。在主线程中不传参数会抛出错误。
-</Warning>
-
-<Warning>
-  使用完毕后务必调用 `dispose()` 移除消息监听器。主线程端还需要 `await worker.terminate()` 关闭 Worker 线程。
-</Warning>
-
----
-
-## 常见问题
+## 常见错误排查
 
 <AccordionGroup>
-  <Accordion title="报错 'parentPort is not available' 怎么办？">
-    这表示代码在主线程中运行，不在 Worker 线程内。主线程端必须传入 `Worker` 或 `MessagePort` 实例：
+  <Accordion title="parentPort is not available — 这是什么意思？">
+    这表示代码在主线程中运行，没有 `parentPort` 可用。`parentPort` 是 Node.js 在 Worker 线程环境中自动注入的全局变量，主线程中没有它。
+
+    **解决方案：** 在主线程端必须传入 `Worker` 或 `MessagePort` 实例：
 
     ```typescript
-    //  主线程
+    // 主线程（正确）
     const worker = new Worker('./worker.js');
     const wt = new MyWT(worker);
 
-    //   Worker 线程内
+    // Worker 线程（正确）
     const wt = new MyWT(); // 自动使用 parentPort
+
+    // 主线程（错误——会抛出此错误）
+    const wt = new MyWT(); // 主线程中没有 parentPort
     ```
   </Accordion>
-  <Accordion title="Worker 线程可以主动向主线程发请求吗？">
-    可以。通信是双向对称的。只要主线程端的子类也实现了 `exec`，Worker 线程就可以通过 `request()` 向主线程发请求。
+
+  <Accordion title="Worker 线程没有收到消息">
+
+    检查以下几点：
+
+    1. Worker 线程文件路径是否正确（相对于主线程入口）
+    2. Worker 线程中是否创建了 `MessageWorkerThread` 实例？
+    3. Worker.js 中有没有其他代码调用了 `parentPort.removeAllListeners('message')`？
+    4. 是否在 Worker 线程准备好之前就发送了消息？
+
+    ```typescript
+    // 主线程——worker 文件路径是相对于当前文件的
+    const worker = new Worker('./worker.js');
+    ```
+
+    <Note>
+      Worker 构造函数中的路径是相对于当前文件（`__dirname`）解析的，不是相对于 `process.cwd()`。
+    </Note>
   </Accordion>
-  <Accordion title="如何管理多个 Worker 线程？">
-    为每个 `new Worker()` 创建独立的子类实例：
+
+  <Accordion title="postMessage 时出现 DataCloneError">
+    某些类型的对象无法通过 structured clone 算法序列化：
+
+    ```typescript
+    // 无法序列化的类型
+    wt.request({ fn: () => {} });          // Function 不支持
+    wt.request({ sym: Symbol('foo') });    // Symbol 不支持
+    wt.request({ weak: new WeakMap() });   // WeakMap 不支持
+
+    // 可以序列化的类型
+    wt.request({ buf: Buffer.from('hi') }); // Buffer 支持
+    wt.request({ date: new Date() });        // Date 支持
+    wt.request({ map: new Map([['a', 1]]) }); // Map 支持
+    ```
+  </Accordion>
+
+  <Accordion title="dispose() 后 Worker 线程仍然运行">
+    `dispose()` 只移除了事件监听器和清理 `MessageModem` 的内部状态，不会自动终止 Worker 线程。你需要调用 `worker.terminate()`：
+
+    ```typescript
+    // 主线程端
+    wt.dispose();
+    await worker.terminate(); // 等待 Worker 线程实际退出
+    ```
+  </Accordion>
+
+  <Accordion title="如何同时管理多个 Worker 线程？">
+    为每个 Worker 创建独立的 `MessageWorkerThread` 子类实例：
 
     ```typescript
     const workers = Array.from({ length: 4 }, () => new Worker('./worker.js'));
-    const wts = workers.map(w => new MyWT(w));
+    const modems = workers.map(w => new MyWT(w));
 
-    await Promise.all(wts.map(wt => wt.request('ping')));
+    // 向所有 Worker 发送请求
+    const results = await Promise.all(
+      modems.map(m => m.request({ action: 'compute', value: 42 }))
+    );
+    console.log('所有结果:', results);
+
+    // 清理
+    for (let i = 0; i < workers.length; i++) {
+      modems[i].dispose();
+      await workers[i].terminate();
+    }
     ```
   </Accordion>
-  <Accordion title="可以传递 SharedArrayBuffer 吗？">
-    `postMessage` 支持 transferable objects，但当前 `MessageWorkerThread` 的 `post` 实现只调用 `postMessage(data, [])` 不传 transfer list（空数组）。如需传递 SharedArrayBuffer 或 transferable objects，可在子类中覆写 `post` 方法。
+
+  <Accordion title="Worker 线程中的 console.log 没有输出？">
+    Worker 线程的 `console.log` 默认输出到主进程的 stdout。如果你看不到输出，可能是：
+
+    1. Worker 线程代码出错，根本没有执行到 `console.log`
+    2. 主线程的 stdout 被重定向
+
+    可以在 Worker 线程中使用 `process.stderr.write()` 作为调试替代，或在 Worker 线程构造时设置 `eval: true` 并直接传代码字符串进行测试。
   </Accordion>
-  <Accordion title="和 MessageChannel 有什么区别？">
-    `MessageChannel` 创建一对 `MessagePort`，可以在同进程内使用。`Worker` 则是独立线程。两者都可以作为 `MessageWorkerThread` 的通道参数，因为 `Worker` 和 `MessagePort` 都支持 `postMessage` + `on('message')` 接口。
+
+  <Accordion title="使用 MessageChannel 时需要 close 两个端口吗？">
+    是的。使用 `MessageChannel` 后，两个端口都需要关闭：
+
+    ```typescript
+    const { port1, port2 } = new MessageChannel();
+    const wt1 = new MyWT(port1);
+    const wt2 = new MyWT(port2);
+
+    // ... 使用 ...
+
+    wt1.dispose();
+    wt2.dispose();
+    port1.close();
+    port2.close();
+    ```
+
+    如果忘记了 `close()`，创建的端口不会被垃圾回收，可能导致内存泄漏。
   </Accordion>
 </AccordionGroup>
+
+---
+
+## 完整示例：并行图像处理
+
+### 场景
+
+主线程将多张图片分发给 Worker 线程并行处理。
+
+### 主线程
+
+```typescript
+// main.ts
+import { Worker } from 'node:worker_threads';
+import { MessageWorkerThread } from '@hile/message-worker-thread';
+import { Exception } from '@hile/message-modem';
+
+class ImageWorker extends MessageWorkerThread {
+  protected async exec(data: any, signal?: AbortSignal): Promise<any> {
+    return { error: 'main thread does not process images' };
+  }
+
+  public processImage<T = any>(imageData: ArrayBuffer, options: {
+    format?: string;
+    quality?: number;
+  }): Promise<T> {
+    return this._send<T>({
+      action: 'process',
+      imageData,
+      options,
+    });
+  }
+}
+
+async function main() {
+  const imageCount = 10;
+  const workerCount = 4;
+
+  // 创建 Worker 池
+  const pool: ImageWorker[] = [];
+  const workers: Worker[] = [];
+
+  for (let i = 0; i < workerCount; i++) {
+    const worker = new Worker('./image-worker.js');
+    workers.push(worker);
+    pool.push(new ImageWorker(worker));
+  }
+
+  // 模拟图片数据
+  const images = Array.from({ length: imageCount }, (_, i) => ({
+    id: i,
+    data: new ArrayBuffer(1024 * 1024), // 1MB 模拟图片
+  }));
+
+  // 分发到 Worker（轮询）
+  const results = await Promise.all(
+    images.map((img, index) => {
+      const worker = pool[index % workerCount];
+      return worker.processImage(img.data, { format: 'jpeg', quality: 80 });
+    })
+  );
+
+  console.log(`处理完成 ${results.length} 张图片`);
+
+  // 清理
+  for (let i = 0; i < workerCount; i++) {
+    pool[i].dispose();
+    await workers[i].terminate();
+  }
+}
+
+main().catch(console.error);
+```
+
+### Worker 线程
+
+```typescript
+// image-worker.js
+import { MessageWorkerThread } from '@hile/message-worker-thread';
+import { Exception } from '@hile/message-modem';
+
+class ImageProcessor extends MessageWorkerThread {
+  protected async exec(data: any, signal?: AbortSignal): Promise<any> {
+    if (data?.action === 'process') {
+      // 模拟图片处理
+      const startTime = Date.now();
+      await new Promise(r => setTimeout(r, 500));
+
+      return {
+        processed: true,
+        size: data.imageData.byteLength,
+        format: data.options?.format || 'png',
+        quality: data.options?.quality || 90,
+        processingTime: Date.now() - startTime,
+      };
+    }
+    throw new Exception(400, 'Unknown action');
+  }
+}
+
+const processor = new ImageProcessor();
+```
+
+---
+
+## 与其他包的关系
+
+```
+@hile/message-modem                 ← 抽象基类（传输无关）
+  ├── @hile/message-ipc             ← Node.js IPC（fork 父子进程）
+  ├── @hile/message-worker-thread   ← Worker Threads（worker_threads）
+  └── @hile/message-ws              ← WebSocket（ws 模块）
+```

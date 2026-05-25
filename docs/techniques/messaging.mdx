@@ -1,23 +1,968 @@
 ---
-title: 消息与微服务发现
-description: "message-modem 抽象、传输实现、文件路由与 micro 注册发现的关系"
+title: 消息通信与微服务
+description: "@hile/message-modem 协议抽象、三种传输实现、文件路由加载、以及 @hile/micro 微服务框架的完整指南"
 ---
 
-Hile 的消息栈既可以 **脱离 `@hile/core` 单独使用**，也可以与 HTTP/CLI 应用同进程共存。
+import { Accordion, AccordionGroup } from '@mintlify/components';
 
-## 分层关系
+## 概述
 
-1. **`@hile/message-modem`** — 传输无关的请求/响应抽象：超时、中止、错误传播；**无外部依赖**。
-2. **传输实现**（择一或多）  
-   - **`@hile/message-ipc`** — 父子进程 IPC  
-   - **`@hile/message-worker-thread`** — Worker 线程  
-   - **`@hile/message-ws`** — WebSocket（依赖 **`ws`**）
-3. **`@hile/message-loader`** — 按目录结构加载「消息路由」，生成路由表；可与上述传输组合。
-4. **`@hile/micro`** — 在 **message-loader + message-ws** 之上的 **`Registry` / `Application`**，提供按 namespace 的**实例注册与发现**；**不依赖 core 容器**。
+Hile 的消息通信栈是一套从底层到高层、从抽象到具体、层层递进的工具集：
 
-## 与 Web 栈对比
+```
+┌──────────────────────────────────────────────────┐
+│ @hile/message-modem                               │
+│ 传输无关的请求/响应协议抽象                         │
+│ 定义了 REQUEST / RESPONSE / ABORT 三种消息模式     │
+├──────────────────────────────────────────────────┤
+│ 传输实现（三选一或组合使用）                        │
+│ ┌──────────────┬──────────────┬─────────────────┐ │
+│ │ @hile/       │ @hile/       │ @hile/          │ │
+│ │ message-ws   │ message-ipc  │ message-worker- │ │
+│ │ (WebSocket)  │ (进程间 IPC) │ thread (线程)    │ │
+│ └──────────────┴──────────────┴─────────────────┘ │
+├──────────────────────────────────────────────────┤
+│ @hile/message-loader                               │
+│ 按文件系统目录结构加载消息路由                       │
+├──────────────────────────────────────────────────┤
+│ @hile/micro                                        │
+│ 基于 WebSocket 的完整微服务框架                     │
+│ Registry（注册中心）+ Application（应用）           │
+│ 服务发现、熔断重试、Topic 发布订阅                  │
+└──────────────────────────────────────────────────┘
+```
 
-- **`@hile/http`**：HTTP 语义、Koa、REST 风格控制器。  
-- **消息栈**：更适合进程间/长连接、RPC 式消息、或多实例注册发现。
+**与 HTTP 栈的区别：**
 
-按需阅读：[@hile/message-modem](/packages/message-modem)、[@hile/message-ipc](/packages/message-ipc)、[@hile/message-worker-thread](/packages/message-worker-thread)、[@hile/message-ws](/packages/message-ws)、[@hile/message-loader](/packages/message-loader)、[@hile/micro](/packages/micro)。
+| | @hile/http | 消息栈 |
+|--|-----------|--------|
+| 协议 | HTTP/1.1 | 自定义二进制/文本协议 |
+| 传输 | TCP | WebSocket / IPC / Worker Threads |
+| 适用场景 | REST API、浏览器 | 进程间通信、微服务、长连接 |
+| 路由风格 | RESTful 路径 | 消息路径（类 URL） |
+
+## @hile/message-modem——消息通信抽象层
+
+`@hile/message-modem` 是整个消息栈的基石。它定义了一套传输无关的请求/响应协议。
+
+### 三种消息模式
+
+```typescript
+enum MESSAGE_MODEM_TYPE {
+  REQUEST,   // 请求消息
+  RESPONSE,  // 响应消息
+  ABORT,     // 中止消息
+}
+```
+
+### 消息格式
+
+每个消息都是一个 `MessageTransferFormat` 对象：
+
+```typescript
+interface MessageTransferFormat<T = any> {
+  id: number;       // 消息唯一 ID（自动递增）
+  mode: MESSAGE_MODEM_TYPE;  // 消息类型
+  twoway: boolean;  // 是否需要响应（true = 双向，false = 单向推送）
+  stream?: boolean; // 是否为流式消息
+  data?: T;         // 消息体
+}
+```
+
+### 核心通信流程
+
+```
+发送方                             接收方
+  │                                  │
+  │── REQUEST(id=1, data="hello") ──>│
+  │                                  │── exec("hello")
+  │                                  │── 处理完成
+  │<── RESPONSE(id=1, data="world") ─│
+  │                                  │
+  │── REQUEST(id=2, data="noreply")─>│  (twoway=false，无需响应)
+  │                                  │
+  │── ABORT(id=1) ──────────────────>│  (中止 id=1 的请求处理)
+```
+
+### MessageModem 抽象类
+
+`MessageModem` 是一个抽象类（abstract class），提供了所有消息通信共用的逻辑：
+
+- **消息 ID 管理** —— 自动递增确保唯一性
+- **请求/响应匹配** —— 根据 ID 关联请求和响应
+- **超时控制** —— 指定时间未收到响应自动 reject
+- **中止传播** —— ABORT 消息可以取消正在执行的操作
+- **流式传输** —— 支持 Readable Stream 分块传输
+- **资源清理** —— `_dispose()` 方法清理所有待处理的请求和流
+
+#### 需要子类实现的方法
+
+```typescript
+abstract class MessageModem {
+  // 子类必须实现：如何发送消息到远端
+  protected abstract post<T>(data: MessageTransferFormat<T>): void;
+
+  // 子类必须实现：如何处理接收到的请求
+  protected abstract exec(data: any, signal?: AbortSignal): Promise<any>;
+}
+```
+
+#### 子类可用的方法
+
+```typescript
+abstract class MessageModem {
+  // 发送请求并等待响应（双向）
+  protected _send<T>(data: any, options?: {
+    timeout?: number;   // 超时时间，默认 30000ms
+    signal?: AbortSignal;  // 外部中止信号
+  }): Promise<T>;
+
+  // 推送消息（单向，不等待响应）
+  protected _push<T>(data: T, options?: {
+    timeout?: number;
+    signal?: AbortSignal;
+  }): void;
+
+  // 流式请求
+  protected _stream(data: any, options?: {
+    signal?: AbortSignal;
+  }): Readable;
+
+  // 接收消息（由子类在收到数据时调用）
+  public receive(msg: MessageTransferFormat): void;
+
+  // 清理资源
+  protected _dispose(): void;
+}
+```
+
+### 异常类型
+
+```typescript
+// 通用异常
+class Exception {
+  constructor(public status: number | string, message: string);
+}
+
+// 超时异常
+class TimeoutException extends Exception {
+  static readonly code = 'ETIMEDOUT';
+}
+
+// 中止异常
+class AbortException extends Exception {
+  static readonly code = 'ECONNABORTED';
+}
+```
+
+### 响应格式
+
+```typescript
+interface MessageReturnFormat<T = any> {
+  status: string | number;  // 状态码，200 表示成功
+  data: T;                  // 响应数据
+  message: string;          // 错误消息（非 200 时提供）
+}
+```
+
+### 流式传输
+
+`@hile/message-modem` 支持流式传输（通过 `_stream` 方法）：
+
+**发送方：**
+
+```typescript
+// 子类中：
+const stream = this._stream({ query: 'SELECT ...' });
+// stream 是一个 Readable（objectMode）
+for await (const chunk of stream) {
+  console.log(chunk); // 每个分块
+}
+```
+
+**接收方：**
+
+在 `exec` 方法中返回 `AsyncIterable`：
+
+```typescript
+protected exec(data: any, signal?: AbortSignal): Promise<any> {
+  // 返回 async generator
+  return Promise.resolve(async function* () {
+    for (let i = 0; i < 10; i++) {
+      yield { seq: i, data: `chunk-${i}` };
+    }
+  }());
+}
+```
+
+## 三种传输实现
+
+### @hile/message-ws（WebSocket）
+
+基于 `ws` 库的 WebSocket 通信实现。
+
+```typescript
+import { MessageWs } from '@hile/message-ws';
+import WebSocket from 'ws';
+
+// 1. 继承 MessageWs
+class MyWs extends MessageWs {
+  // 必须实现：处理接收到的请求
+  protected exec(data: any, signal?: AbortSignal): Promise<any> {
+    console.log('收到消息:', data);
+    return Promise.resolve({ received: true, data });
+  }
+
+  // 对外暴露的请求方法
+  public request(data: any, timeout?: number) {
+    return this._send(data, { timeout });
+  }
+
+  // 对外暴露的推送方法
+  public push(data: any) {
+    this._push(data);
+  }
+}
+
+// 2. 客户端使用
+const ws = new WebSocket('ws://localhost:8080');
+ws.on('open', () => {
+  const modem = new MyWs(ws);
+
+  // 发送请求并等待响应
+  modem.request('hello').then(res => {
+    console.log('响应:', res);
+  });
+
+  // 单向推送
+  modem.push({ event: 'ping' });
+});
+```
+
+构造函数接收一个已连接的 `WebSocket` 实例。消息通过 JSON 序列化/反序列化传输。
+
+### @hile/message-ipc（进程间通信）
+
+基于 Node.js `child_process` 的 IPC 通信实现。
+
+```typescript
+import { MessageIpc } from '@hile/message-ipc';
+import { fork } from 'node:child_process';
+
+// 1. 定义 IPC 通信类
+class MyIpc extends MessageIpc {
+  protected exec(data: any, signal?: AbortSignal): Promise<any> {
+    return Promise.resolve({ processed: data });
+  }
+
+  public request(data: any, timeout?: number) {
+    return this._send(data, { timeout });
+  }
+}
+
+// 2. 父进程端
+const child = fork('./worker.js');
+const ipc = new MyIpc(child);
+
+const result = await ipc.request('hello');
+console.log('子进程响应:', result);
+
+// 3. 子进程端（worker.js）
+// 不传参数，自动绑定 process.on('message')
+const ipc = new MyIpc();
+// 现在子进程可以接收父进程的请求并响应
+
+// 清理
+ipc.dispose();
+child.kill();
+```
+
+构造函数有两种调用方式：
+- 父进程端：传入 `fork()` 返回的 `ChildProcess` 实例
+- 子进程端：不传参数，自动绑定 `process.on('message')` 和 `process.send()`
+
+### @hile/message-worker-thread（Worker 线程）
+
+基于 Node.js `worker_threads` 的线程间通信实现。
+
+```typescript
+import { MessageWorkerThread } from '@hile/message-worker-thread';
+import { Worker } from 'node:worker_threads';
+
+// 1. 定义通信类
+class MyWT extends MessageWorkerThread {
+  protected exec(data: any, signal?: AbortSignal): Promise<any> {
+    return Promise.resolve({ fromWorker: data });
+  }
+
+  public request(data: any, timeout?: number) {
+    return this._send(data, { timeout });
+  }
+}
+
+// 2. 主线程端
+const worker = new Worker('./worker.mjs');
+const wt = new MyWT(worker);
+
+const result = await wt.request('ping');
+console.log('Worker 响应:', result);
+
+// 3. Worker 线程端（worker.mjs）
+import { MyWT } from './my-wt';
+const wt = new MyWT(); // 不传参数，自动绑定 parentPort
+
+// 清理
+wt.dispose();
+await worker.terminate();
+```
+
+构造函数有两种调用方式：
+- 主线程端：传入 `new Worker()` 返回的 `Worker` 实例
+- Worker 线程端：不传参数，自动绑定 `parentPort`
+
+## @hile/message-loader——文件系统消息路由加载
+
+`@hile/message-loader` 基于 `@hile/loader` 提供的文件扫描和路径编译能力，将文件系统目录映射为消息路由。
+
+### 基础概念
+
+每个文件默认导出一个 `defineMessage(...)` 的返回值，文件路径被编译为路由路径。当消息到达时，Loader 根据路径找到对应的处理器并执行。
+
+### defineMessage
+
+```typescript
+import { defineMessage } from '@hile/message-loader';
+
+// 定义消息处理器
+export default defineMessage(async (context) => {
+  // context: { params, data, url }
+  return { processed: true, input: context.data };
+});
+```
+
+`defineMessage` 接收一个处理函数，返回 `MessageRegisterProps`：
+
+```typescript
+interface MessageRegisterProps<T = any> {
+  id: number;         // 自动递增 ID
+  fn: MessageFunction<T>;  // 处理函数
+}
+
+type MessageFunction<T = any, E extends Record<string, any> = {}> = (data: {
+  params?: Record<string, string>;  // 路径参数
+  data: T;                          // 消息体
+  url: string;                      // 原始路径
+} & E) => any;                      // 额外注入的字段
+```
+
+### MessageLoader 类
+
+```typescript
+import { MessageLoader } from '@hile/message-loader';
+
+const loader = new MessageLoader({
+  suffix: 'msg',          // 文件后缀（默认 'msg'）
+  defaultSuffix: '/index', // 默认索引文件后缀
+  prefix: '/-',           // 路由前缀
+});
+
+// 从目录加载消息处理器
+await loader.load('./messages');
+
+// 分发消息
+const result = await loader.dispatch('/-/ping', { data: 'hello' });
+
+// 注册单个消息处理器
+const unregister = loader.register('/custom', async (ctx) => {
+  // ctx.params — 路径参数
+  // ctx.data — 消息数据
+  // ctx.url — 请求路径
+  return { done: true };
+});
+
+// 注销
+unregister();
+```
+
+### 文件命名到路由的映射
+
+假设 `suffix: 'msg'`、`prefix: '/-'`：
+
+```
+messages/
+├── ping.msg.ts          → /-/ping
+├── users/
+│   ├── index.msg.ts     → /-/users
+│   ├── [id].msg.ts      → /-/users/:id
+│   └── [id].posts.msg.ts → /-/users/:id/posts
+└── echo.msg.ts          → /-/echo
+```
+
+### 与传输层结合
+
+MessageLoader 不直接与传输层绑定。你可以把它和任意传输实现组合：
+
+```typescript
+// WebSocket + MessageLoader
+class MyWs extends MessageWs {
+  constructor(ws: WebSocket, private loader: MessageLoader) {
+    super(ws);
+  }
+
+  protected async exec(data: { url: string, data: any }): Promise<any> {
+    return await this.loader.dispatch(data.url, data.data);
+  }
+
+  public request(url: string, data: any, timeout?: number) {
+    return this._send({ url, data }, { timeout });
+  }
+}
+```
+
+## @hile/micro——微服务框架
+
+`@hile/micro` 是基于 WebSocket 的完整微服务框架，构建在 `@hile/message-loader` 和 `@hile/message-ws` 之上。
+
+### 架构角色
+
+```
+┌──────────────────┐
+│    Registry       │  注册中心：维护服务拓扑和 Topic 发布订阅
+│   (port: 9876)    │
+└────────┬─────────┘
+         │ WebSocket 连接
+    ┌────┴────┐
+    │         │
+    ▼         ▼
+┌────────┐ ┌────────┐
+│ App A  │ │ App B  │  应用服务：连接 Registry，提供服务
+│:9100   │ │:9200   │  A 调用 B 通过 Registry 发现地址
+└────────┘ └────────┘
+```
+
+### 类层次
+
+```
+MessageModem                   请求/响应协议
+  └── MessageWs                WebSocket 传输
+        └── Client             远端代理 + 心跳
+
+MessageLoader                  路由注册与分发
+  └── Server                   WebSocket 服务端
+        ├── Registry           注册中心
+        └── Application        应用服务
+```
+
+### Server——服务端基类
+
+`Server` 是所有微服务节点的基类。它封装了 WebSocket 监听、连接管理和路由分发。
+
+```typescript
+import { Server } from '@hile/micro';
+
+// 创建服务端
+const server = new Server('my-service', {
+  advertiseHost: '127.0.0.1',
+  // 其他 MessageLoader 配置
+  suffix: 'msg',
+  prefix: '/-',
+});
+
+// 启动监听
+const teardown = await server.listen(9100);
+console.log(`服务端启动在 ${server.host}:${server.port}`);
+
+// 注册消息处理器
+server.register('/hello', async ({ data, client }) => {
+  return { message: 'Hello!', from: client.host };
+});
+
+// 出站连接
+const client = await server.connect('10.0.0.2', 9200);
+const result = await client.request('/hello', { name: 'Alice' });
+
+// 连接事件
+server.events.on('connect', (client, extras) => {
+  console.log(`客户端连接: ${client.host}:${client.port}`);
+});
+server.events.on('disconnect', (client, extras) => {
+  console.log(`客户端断开: ${client.host}:${client.port}`);
+});
+
+// 关闭
+await teardown();
+```
+
+**关键属性：**
+- `server.clients` —— `Map<string, Client>`，当前所有连接的客户端
+- `server.host` —— 宣告地址（advertiseHost）
+- `server.port` —— 监听端口（listen 后生效）
+- `server.events` —— Node.js EventEmitter，发射 `connect` 和 `disconnect` 事件
+
+**advertiseHost：**
+
+构造时必须指定宣告地址（或让系统自动获取 IPv4）。这个地址会在出站连接时告诉对端"我是谁"。如果不传，会使用 `getLocalIPv4()` 自动获取。自动获取失败时构造方法会抛出错误。
+
+#### 与 HTTP 服务器集成
+
+`Server` 可以作为独立服务运行，也可以挂载到已有的 HTTP 服务器上：
+
+```typescript
+import http from 'node:http';
+import { Server } from '@hile/micro';
+
+const httpServer = http.createServer();
+const wsServer = new Server('my-service', {
+  advertiseHost: '127.0.0.1',
+});
+
+// 将 WebSocket 升级逻辑挂载到 HTTP 服务器
+httpServer.on('upgrade', (req, socket, head) => {
+  wsServer.handleUpgrade(req, socket, head);
+});
+
+httpServer.listen(3000);
+await wsServer.setPort(3000); // 设置端口，用于出站连接 URL 构造
+```
+
+### Client——远端连接代理
+
+`Client` 是远端节点的代理类，通过继承 `MessageWs` 获得完整的请求/响应能力，并添加了心跳保活机制。
+
+```typescript
+// Client 由 Server 自动创建
+const client = server.clients.get('10.0.0.2:9200');
+
+// 请求（等待响应）
+const result = await client.request('/api', { key: 'value' }, {
+  timeout: 5000,
+  signal: abortController.signal,
+});
+
+// 推送（单向，不等待响应）
+client.push('/log', { event: 'click' });
+
+// 流式请求
+const stream = client.stream('/large-data', { query: 'SELECT ...' });
+for await (const chunk of stream) {
+  console.log(chunk);
+}
+
+// 手动断开
+client.dispose();
+```
+
+**心跳保活：**
+
+Client 自动发送心跳检测连接健康状态，可通过环境变量配置：
+
+| 环境变量 | 默认值 | 说明 |
+|----------|--------|------|
+| `MICRO_HEARTBEAT_INTERVAL` | `10000`（10 秒） | 心跳发送间隔 |
+| `MICRO_HEARTBEAT_TIMEOUT` | `20000`（20 秒） | 超过此时间未收到心跳判定为超时 |
+| `MICRO_HEARTBEAT_CHECK_INTERVAL` | `5000`（5 秒） | 超时检查间隔 |
+
+### Registry——注册中心
+
+`Registry` 继承自 `Server`，提供服务注册与发现能力。
+
+```typescript
+import { Registry } from '@hile/micro';
+
+// 启动注册中心
+const registry = new Registry({ advertiseHost: '127.0.0.1' });
+const closeRegistry = await registry.listen(9876);
+console.log('注册中心已启动');
+
+// Registry 自动注册以下路由：
+// /-/find — 服务发现
+// /-/declare / /-/undeclare — Topic 发布/取消
+// /-/subscribe / /-/unsubscribe — Topic 订阅/取消
+// /-/topic/update — Topic 更新推送
+```
+
+#### 服务发现
+
+Registry 根据 WebSocket 连接的 URL 路径自动注册服务：
+
+```
+ws://registry:9876/{callerHost}/{callerPort}/{namespace}
+```
+
+连接建立时，Registry 从路径中提取 `{callerHost}:{callerPort}` 和 `{namespace}`，将地址加入对应 namespace 的实例列表。
+
+**`/-/find` 路由：**
+
+Application 通过 `/-/find` 查询某个 namespace 下的可用实例：
+
+```typescript
+// 请求体
+{ namespace: 'payments', exclude?: ['10.0.0.1:9100'] }
+
+// 响应
+{ host: '10.0.0.2', port: 9100 }  // 随机选择一个
+```
+
+`exclude` 参数用于排除已知不可用的实例（如熔断器排除的节点）。如果没有可用实例，返回 `undefined`。
+
+#### Topic 发布订阅
+
+Registry 内置了 Topic 系统，支持发布/订阅模式：
+
+| 路由 | 方向 | 说明 |
+|------|------|------|
+| `/-/declare` | Publisher → Registry | 声明一个 topic 并发布初始数据 |
+| `/-/undeclare` | Publisher → Registry | 取消声明 topic |
+| `/-/subscribe` | Subscriber → Registry | 订阅 topic，返回当前数据 |
+| `/-/unsubscribe` | Subscriber → Registry | 取消订阅 |
+| `/-/topic/update` | 任意 → Registry | 推送 topic 更新（转发给所有订阅者） |
+
+#### 配置文件监听
+
+Registry 监听 `~/.registry/configs/` 目录下的 YAML 文件：
+
+```yaml
+# ~/.registry/configs/my-service.config.yaml
+feature:
+  new-ui: true
+  dark-mode: false
+limit:
+  max-requests: 1000
+```
+
+每个配置项会被发布为一个 topic，路径格式为 `registry:{namespace}/{key}`。文件变更时自动推送给所有订阅者。
+
+### Application——应用服务
+
+`Application` 是微服务框架中最常用的类。它继承自 `Server`，并增加了连接 Registry、服务发现、熔断重试和发布订阅功能。
+
+#### 创建 Application
+
+```typescript
+import { Application } from '@hile/micro';
+
+const app = new Application({
+  namespace: 'my-service',                    // 本服务标识
+  registry: { host: '127.0.0.1', port: 9876 }, // Registry 地址
+  advertiseHost: '127.0.0.1',                 // 宣告地址
+  registryLookupTimeoutMs: 10_000,            // 服务发现超时（默认 10000）
+  requestTimeoutMs: 30_000,                   // 请求超时（默认 30000）
+});
+```
+
+#### 启动
+
+```typescript
+const teardown = await app.listen(0);
+// port 传 0 表示使用随机可用端口
+// listen 时会自动连接 Registry
+// 如果连接 Registry 失败，listen 会抛出错误
+```
+
+`listen` 的过程：
+1. 启动 WebSocket 监听
+2. 连接到 Registry
+3. 如果连接失败，回滚（关闭监听）并抛出错误
+
+返回的 `teardown` 函数：
+1. 清理所有路由
+2. 停止 Registry 重连
+3. 关闭监听
+
+#### 注册路由（Provider 侧）
+
+作为服务提供者，你需要注册消息处理路由：
+
+```typescript
+const unregister = app.register('/charge', async ({ data, params, client }) => {
+  // data — 请求数据
+  // params — 路径参数（如 /charge/:id）
+  // client — 发起请求的 Client 实例（由 @hile/micro 自动注入）
+  return { charged: true, amount: data.amount };
+});
+
+// 取消注册
+unregister();
+
+// 带路径参数
+app.register('/user/:id/profile', async ({ params }) => {
+  const user = await findUser(params.id);
+  return user;
+});
+```
+
+#### 服务调用（Consumer 侧）
+
+```typescript
+// call — 一站式远程调用
+const result = await app.call('payments', '/charge', { amount: 100 });
+// → { charged: true, amount: 100 }
+
+// 带选项
+await app.call('payments', '/charge', { amount: 100 }, {
+  timeout: 5000,   // 超时 5 秒
+  retries: 3,      // 失败重试 3 次
+  signal: abortController.signal,
+});
+```
+
+`app.call()` 的内部流程：
+
+```
+call('payments', '/charge', data)
+  → get('payments') —— 从 Registry 发现 payments 服务的实例
+    → 构建 WebSocket 连接
+    → 返回 Client 实例
+  → client.request('/charge', data) —— 发送请求
+    → 等待响应
+    → 成功 → 返回结果，记录成功
+    → 失败 → 触发熔断，重试
+```
+
+#### 熔断器
+
+`call()` 内置熔断器。当调用某个 peer 失败时，该 peer 被暂时排除。
+
+| 场景 | 行为 |
+|------|------|
+| 调用 peer A 失败 | A 加入熔断名单（30 秒冷却期） |
+| 再次 `call` 同一服务 | 熔断名单通过 `exclude` 传给 Registry，返回其他 peer |
+| 所有 peer 都被排除 | 重置熔断名单，允许重试所有 peer |
+| 调用成功 | 该 peer 从熔断名单中移除 |
+
+```typescript
+// 熔断器的实现逻辑（简化）
+async function call(namespace, url, data) {
+  const exclude = getActiveExcludes(namespace);
+  const client = await get(namespace, exclude); // 排除熔断节点
+
+  try {
+    const result = await client.request(url, data);
+    recordSuccess(namespace, client); // 移出熔断名单
+    return result;
+  } catch (err) {
+    recordFailure(namespace, client); // 加入熔断名单
+    if (retries > 0) return call(namespace, url, data, { retries: retries - 1 });
+    throw err;
+  }
+}
+```
+
+#### 缓存降级
+
+当 Registry 不可达时，Application 会自动降级：
+
+```typescript
+// 第一次调用成功，缓存了 Client
+const result = await app.call('payments', '/charge', { amount: 100 });
+
+// ... Registry 宕机 ...
+
+// 第二次调用，Registry 不可达，但之前缓存的连接还在
+// 自动降级使用缓存的 Client
+const result2 = await app.call('payments', '/charge', { amount: 200 });
+```
+
+#### 流式调用
+
+```typescript
+// Consumer 侧
+const stream = await app.stream('payments', '/stream-data', { query: 'SELECT ...' });
+for await (const chunk of stream) {
+  console.log(chunk);
+}
+
+// Provider 侧
+app.register('/stream-data', async function* ({ data }) {
+  for (const item of fetchData(data.query)) {
+    yield item;
+  }
+});
+```
+
+#### 健康检查
+
+每个 Application 自动注册 `/-/health`：
+
+```typescript
+const health = await app.dispatch('/-/health', {});
+// {
+//   status: 'ok',
+//   registry: true,       // Registry 连接状态
+//   uptime: 123.45,       // 进程启动时长（秒）
+//   namespaces: ['payments']  // 已缓存的 namespace
+// }
+```
+
+#### 发布订阅
+
+Application 提供了高层次的 Topic 发布订阅 API：
+
+**发布：**
+
+```typescript
+const ref = await app.publish('config/feature-flag', { enabled: true });
+
+// 更新数据（自动推送给所有订阅者）
+await ref.update({ enabled: false });
+
+// 取消发布
+await ref.unpublish();
+```
+
+**订阅：**
+
+```typescript
+const unsubscribe = await app.subscribe('config/feature-flag', (data) => {
+  console.log('配置更新:', data);
+  // → { enabled: true }
+  // 订阅时回调会立即收到当前值
+});
+```
+
+特性：
+- 对同一 topic 重复 `subscribe` 是幂等的
+- 首次订阅时回调立即收到当前数据
+- Registry 重连后自动重新订阅所有 topic
+- 返回的 `unsubscribe` 函数用于取消订阅
+
+#### Registry 重连
+
+Application 与 Registry 断开连接时自动重连：
+
+1. 检测到 `disconnect` 事件
+2. 立即重试连接
+3. 连接失败 → 3 秒后再次重试
+4. 重连成功后重新订阅所有 topic
+5. `teardown` 被调用后停止重连
+
+### @hile/micro-dynamic-configs
+
+`@hile/micro-dynamic-configs` 是基于 `@hile/micro` 的 Topic 系统和 Redis 实现的动态配置管理工具。
+
+```typescript
+import { MicroDynamicConfigsServer } from '@hile/micro-dynamic-configs';
+import { z } from 'zod';
+
+// 定义配置结构
+const configSchema = z.object({
+  featureX: z.boolean().default(false),
+  maxRetries: z.number().int().min(1).max(10).default(3),
+  welcomeMessage: z.string().default('Hello'),
+});
+
+// 创建配置服务器
+const configServer = new MicroDynamicConfigsServer({
+  app,          // Application 实例
+  redis,        // Redis 客户端
+  schema: configSchema,  // Zod schema
+  redis_key: 'app:dynamic-config',  // Redis 存储 key
+});
+
+// 初始化（从 Redis 加载、发布所有字段到 Topic）
+const cleanup = await configServer.initialize();
+
+// 读取当前配置
+console.log(configServer.value); // { featureX: false, maxRetries: 3, ... }
+
+// 保存配置（自动校验、持久化到 Redis、推送给所有订阅者）
+await configServer.save({
+  featureX: true,
+  maxRetries: 5,
+});
+
+// 监听配置变更
+configServer.on('change:featureX', (newValue, oldValue) => {
+  console.log(`featureX 从 ${oldValue} 变为 ${newValue}`);
+});
+
+// 清理
+await cleanup();
+```
+
+## 完整示例
+
+### 启动 Registry
+
+```typescript
+// registry-start.ts
+import { Registry } from '@hile/micro';
+
+const registry = new Registry({ advertiseHost: '127.0.0.1' });
+const close = await registry.listen(9876);
+console.log('Registry 已启动');
+```
+
+### 服务提供者
+
+```typescript
+// provider-start.ts
+import { Application } from '@hile/micro';
+
+const provider = new Application({
+  namespace: 'payments',
+  registry: { host: '127.0.0.1', port: 9876 },
+  advertiseHost: '127.0.0.1',
+});
+
+provider.register('/charge', async ({ data }) => {
+  return { charged: true, amount: data.amount, transactionId: 'txn_001' };
+});
+
+const close = await provider.listen(9100);
+console.log('支付服务已启动');
+```
+
+### 服务消费者
+
+```typescript
+// consumer-start.ts
+import { Application } from '@hile/micro';
+
+const consumer = new Application({
+  namespace: 'checkout',
+  registry: { host: '127.0.0.1', port: 9876 },
+  advertiseHost: '127.0.0.1',
+});
+
+await consumer.listen(9200);
+
+// 调用远程服务
+const result = await consumer.call('payments', '/charge', { amount: 99.99 });
+console.log(result); // { charged: true, amount: 99.99, transactionId: 'txn_001' }
+```
+
+运行顺序：
+
+```bash
+# 终端 1：先启动 Registry
+node registry-start.ts
+
+# 终端 2：启动服务提供者
+node provider-start.ts
+
+# 终端 3：启动服务消费者
+node consumer-start.ts
+```
+
+## 常见问题
+
+<AccordionGroup>
+  <Accordion title="@hile/micro 和 @hile/core 的关系是什么？">
+    `@hile/micro` **不依赖** `@hile/core`，可以独立使用。你不需要容器来运行微服务。但如果你已经在使用 `@hile/core` 管理应用服务，也可以将 `Application` 作为容器内的一个服务注册，由容器管理它的生命周期。
+  </Accordion>
+  <Accordion title="三种传输实现如何选择？">
+    - **WebSocket**：不同进程、不同机器之间的通信（最常见的微服务场景）
+    - **IPC**：同机父子进程之间的通信（`child_process.fork()`）
+    - **Worker Threads**：同进程内线程间的通信（`worker_threads`）
+  </Accordion>
+  <Accordion title="如何处理连接断开？">
+    Client 内置心跳检测，心跳超时自动断开。Application 与 Registry 断开后自动重连。应用层可以通过 `server.events.on('disconnect', ...)` 监听断开事件并做相应处理。
+  </Accordion>
+  <Accordion title="call 的 retries 参数是重试多少次？">
+    `retries` 表示最多重试次数。例如 `retries: 2` 表示：第 1 次调用 + 最多 2 次重试 = 最多 3 次尝试。每次重试都会尝试不同的 peer（通过熔断器排除已失败节点）。
+  </Accordion>
+  <Accordion title="Registry 是单点故障吗？">
+    目前 Registry 是单节点设计。生产环境可以通过进程管理工具（如 PM2、systemd）保证 Registry 的高可用性。Application 在 Registry 不可用时具有缓存降级能力，不会立即影响已有连接的调用。
+  </Accordion>
+</AccordionGroup>
