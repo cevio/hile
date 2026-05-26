@@ -1,7 +1,7 @@
 {
   "name": "@hile/http-next",
   "description": "Hile http-next - HTTP service framework with Next.js",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
