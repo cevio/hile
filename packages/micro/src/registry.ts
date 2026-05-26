@@ -86,13 +86,10 @@ export class Registry extends Server {
     });
     this.events.on('disconnect', (client: Client, extras: string[]) => {
       const key = client.host + ':' + client.port;
-      // 清理 topic 中的关联
-      for (const [topic, { publishers, subscribers }] of this.topics) {
+      // 清理 topic 中的关联（不删除 topic，保留 data 供后续 subscriber 使用）
+      for (const [, { publishers, subscribers }] of this.topics) {
         if (publishers.has(key)) publishers.delete(key);
         if (subscribers.has(key)) subscribers.delete(key);
-        if (publishers.size === 0 && subscribers.size === 0) {
-          this.topics.delete(topic);
-        }
       }
       // 清理 namespace 中的关联
       const namespace = extras.join('/');

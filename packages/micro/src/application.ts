@@ -139,6 +139,7 @@ export class Application extends Server {
         clearTimeout(this.reconnectTimeout);
         this.reconnectTimeout = undefined;
       }
+      this.registry?.dispose();
       this.registry = undefined;
       await callback();
     };

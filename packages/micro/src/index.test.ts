@@ -1351,3 +1351,79 @@ describe('@hile/micro registry utility functions', () => {
     expect(parseConfigFilename('my.namespace.config.yaml')).toBe('my.namespace');
   });
 });
+
+describe('@hile/micro registry topic persistence', () => {
+  it('preserves topic data after all publishers and subscribers disconnect', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const subscriber = new Application({
+      namespace: 'sub',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+
+    try {
+      // Publisher declares topic with data
+      await publisher.publish('persist:topic', { key: 'should-survive' });
+
+      // Subscriber subscribes and gets the data
+      const cb = vi.fn();
+      const fallback = await subscriber.subscribe<{ key: string }>('persist:topic', cb);
+      expect(cb).toHaveBeenCalledWith({ key: 'should-survive' });
+
+      // Disconnect both publisher and subscriber
+      await fallback();
+      await disposePublisher();
+      await disposeSubscriber();
+      // Allow disconnect events to propagate
+      await new Promise(r => setTimeout(r, 100));
+
+      // Topic should still exist with its data
+      const topic = (registry as any).topics.get('persist:topic');
+      expect(topic).toBeDefined();
+      expect(topic.data).toEqual({ key: 'should-survive' });
+    } finally {
+      await disposeRegistry();
+    }
+  });
+});
+
+describe('@hile/micro application teardown', () => {
+  it('disposes registry client on teardown', async () => {
+    const registryPort = await getAvailablePort();
+    const appPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const app = new Application({
+      namespace: 'td',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeApp = await app.listen(appPort);
+
+    const appKey = `127.0.0.1:${appPort}`;
+    expect((registry as any).clients.has(appKey)).toBe(true);
+
+    await disposeApp();
+    await new Promise(r => setTimeout(r, 100));
+
+    // Registry client should be removed after teardown
+    expect((registry as any).clients.has(appKey)).toBe(false);
+
+    await disposeRegistry();
+  });
+});

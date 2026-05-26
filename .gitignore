@@ -7,3 +7,8 @@ lerna-debug.log
 build
 .next
 superpowers/
+.agents
+.claude
+.codegraph
+.cursor
+.vscode
