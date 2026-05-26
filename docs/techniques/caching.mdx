@@ -133,16 +133,16 @@ const userCache = defineCache('user:{id:string}:info', async ({ id }) => {
 
 | 参数 | 说明 |
 |------|------|
-| `key` | 模板字符串，`{name:type}` 占位符 |
+| `key` | 模板字符串，`\{name:type\}` 占位符 |
 | `fn` | 回源函数，接收解析后参数，返回 `Cache<R>` |
 
 ### 模板键语法
 
 | 模板类型 | TypeScript 类型 | 示例 |
 |----------|----------------|------|
-| `{name:string}` | `string` | `user:{id:string}:info` |
-| `{name:number}` | `number` | `page:{page:number}` |
-| `{name:boolean}` | `boolean` | `{verified:boolean}` |
+| `\{name:string\}` | `string` | `user:\{id:string\}:info` |
+| `\{name:number\}` | `number` | `page:\{page:number\}` |
+| `\{name:boolean\}` | `boolean` | `\{verified:boolean\}` |
 
 ### Cache 类
 
@@ -181,7 +181,7 @@ const cache = new RedisCache('myapp:')  // 前缀作为命名空间
 
 | 前缀 | 模板 | params | 实际 Redis key |
 |------|------|--------|----------------|
-| `myapp:` | `user:{id:string}` | `{id:'u-001'}` | `myapp:user:u-001` |
+| `myapp:` | `user:\{id:string\}` | `\{id:'u-001'\}` | `myapp:user:u-001` |
 
 ### loadCache —— 获取缓存操作
 
