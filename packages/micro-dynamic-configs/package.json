@@ -24,7 +24,7 @@
   "dependencies": {
     "@hile/ioredis": "workspace:^",
     "@hile/micro": "workspace:^",
-    "ioredis": "^5.10.0",
+    "ioredis": "^5.11.0",
     "zod": "^4.4.3"
   }
 }

@@ -24,6 +24,6 @@
   },
   "dependencies": {
     "@hile/message-modem": "workspace:^",
-    "ws": "^8.19.0"
+    "ws": "^8.21.0"
   }
 }

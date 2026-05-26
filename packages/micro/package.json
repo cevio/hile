@@ -26,7 +26,7 @@
     "@hile/message-loader": "workspace:^",
     "@hile/message-ws": "workspace:^",
     "internal-ip": "^9.0.0",
-    "ws": "^8.19.0",
+    "ws": "^8.21.0",
     "yaml": "^2.9.0"
   }
 }

@@ -22,6 +22,6 @@
   },
   "dependencies": {
     "@hile/core": "workspace:^",
-    "ioredis": "^5.10.0"
+    "ioredis": "^5.11.0"
   }
 }

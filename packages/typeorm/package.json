@@ -24,6 +24,6 @@
   },
   "dependencies": {
     "@hile/core": "workspace:^",
-    "typeorm": "^0.3.28"
+    "typeorm": "^1.0.0"
   }
 }
