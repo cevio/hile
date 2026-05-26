@@ -1,6 +1,6 @@
 ---
 title: 配置管理
-description: "环境变量加载、包配置、Registry 配置分发与 CLI 配置命令的完整指南"
+description: "环境变量加载、auto_load_packages、Registry 配置分发与 CLI 配置命令的完整指南"
 ---
 
 import { Accordion, AccordionGroup } from '@mintlify/components';
@@ -9,476 +9,99 @@ import { Accordion, AccordionGroup } from '@mintlify/components';
 
 Hile 的配置管理分布在多个层次：
 
-1. **环境变量** —— 通过 `process.env` 访问，是集成包（TypeORM、ioredis）的主要配置方式
-2. **package.json** —— 存放 Hile 相关的元配置（如自动加载包列表）
-3. **YAML 配置文件** —— 通过 Registry 分发，适合运行时的动态配置
+1. **环境变量** —— 通过 `process.env` 访问，集成包的主要配置方式
+2. **package.json** —— `hile.auto_load_packages` 声明自动加载的包
+3. **YAML 配置文件** —— 通过 Registry 分发，适合运行时动态配置
 
-## 环境变量配置
+## 环境变量
 
 ### NODE_ENV
 
-`NODE_ENV` 是 Node.js 生态中最基础的环境变量。Hile 用它来决定：
-
-```bash
-# 开发模式
-export NODE_ENV=development
-
-# 生产模式
-export NODE_ENV=production
-```
-
-CLI 的 `--dev` 选项会自动设置 `NODE_ENV=development`，否则设置为 `production`：
+CLI 根据 `--dev` 选项自动设置：
 
 ```typescript
 // start.ts 中的逻辑
 if (options.dev) {
-  process.env.NODE_ENV = 'development';
+  process.env.NODE_ENV = 'development'
 } else {
-  process.env.NODE_ENV = 'production';
+  process.env.NODE_ENV = 'production'
 }
 ```
 
-`NODE_ENV` 影响的行为：
+影响的行为：
 
 | 场景 | development | production |
 |------|-------------|------------|
 | 控制器目录 | `src/` | `dist/` |
-| 文件编译 | tsx 实时编译 | 预先编译的 JS |
-| 容器事件日志 | 自动订阅并打印 | 不打印 |
-| TypeORM 日志 | 开启 | 关闭（除非单独配置） |
-| Next.js 模式 | 开发模式（HMR） | 生产模式 |
+| 文件编译 | tsx 实时编译 | 预编译 JS |
+| 容器事件日志 | 自动订阅彩色输出 | 不输出 |
+| TypeORM 日志 | 开启 | 关闭 |
 
-### 集成包的环境变量
+### 集成包环境变量
 
-集成包从 `process.env` 读取连接配置：
+**@hile/typeorm：**
 
-**@hile/typeorm 读取的环境变量：**
-
-| 变量名 | 说明 | 示例 |
-|--------|------|------|
+| 变量 | 说明 | 示例 |
+|------|------|------|
 | `TYPEORM_TYPE` | 数据库类型 | `mysql`、`postgres` |
-| `TYPEORM_HOST` | 数据库主机 | `localhost` |
-| `TYPEORM_USERNAME` | 数据库用户名 | `root` |
-| `TYPEORM_PASSWORD` | 数据库密码 | `password123` |
-| `TYPEORM_DATABASE` | 数据库名称 | `my_app` |
-| `TYPEORM_PORT` | 数据库端口 | `3306` |
+| `TYPEORM_HOST` | 主机 | `localhost` |
+| `TYPEORM_USERNAME` | 用户名 | `root` |
+| `TYPEORM_PASSWORD` | 密码 | `password123` |
+| `TYPEORM_DATABASE` | 数据库名 | `my_app` |
+| `TYPEORM_PORT` | 端口 | `3306` |
 | `TYPEORM_CHARSET` | 字符集 | `utf8mb4` |
-| `TYPEORM_ENTITY_PREFIX` | 实体表前缀 | `app_` |
+| `TYPEORM_ENTITY_PREFIX` | 表前缀 | `app_` |
 | `TYPEORM_ENTITIES` | 实体路径 | `dist/entities/**/*.js` |
-| `TYPEORM_SYNCHRONIZE` | 自动同步表结构 | `true`（谨慎使用） |
+| `TYPEORM_SYNCHRONIZE` | 自动同步 | `"true"` 开启 |
 
-**@hile/ioredis 读取的环境变量：**
+**@hile/ioredis：**
 
-| 变量名 | 说明 | 示例 |
-|--------|------|------|
-| `REDIS_HOST` | Redis 主机 | `localhost` |
-| `REDIS_PORT` | Redis 端口 | `6379` |
-| `REDIS_USERNAME` | Redis 用户名 | `default` |
-| `REDIS_PASSWORD` | Redis 密码 | `redispass` |
-| `REDIS_DB` | Redis 数据库编号 | `0` |
+| 变量 | 说明 | 示例 |
+|------|------|------|
+| `REDIS_HOST` | 主机 | `localhost` |
+| `REDIS_PORT` | 端口 | `6379` |
+| `REDIS_USERNAME` | 用户名 | `default` |
+| `REDIS_PASSWORD` | 密码 | `redispass` |
+| `REDIS_DB` | 数据库编号 | `0` |
 
-### 设置环境变量的方式
+### 设置方式
 
-**方式一：命令行直接设置**
+**命令行：**
 
 ```bash
-TYPEORM_HOST=db.example.com TYPEORM_DATABASE=myapp hile start --dev
+TYPEORM_HOST=db.example.com hile start --dev
 ```
 
-**方式二：使用 .env 文件（推荐）**
-
-这也是最常用且推荐的方式。
-
-## --env-file 加载 .env 文件
-
-`hile start` 支持通过 `--env-file`（或 `-e`）选项加载 `.env` 文件。这个选项可以重复指定，支持加载多个文件。
-
-### 基本用法
+**.env 文件（推荐）：**
 
 ```bash
-# 加载单个 .env 文件
+# .env
+TYPEORM_TYPE=mysql
+TYPEORM_HOST=localhost
+TYPEORM_PORT=3306
+TYPEORM_USERNAME=root
+TYPEORM_PASSWORD=password123
+TYPEORM_DATABASE=my_app
+REDIS_HOST=localhost
+REDIS_PORT=6379
+```
+
+## --env-file 加载
+
+```bash
+# 单个文件
 hile start --dev --env-file .env
 
-# 加载多个文件
-hile start --dev --env-file .env --env-file .env.local
-
-# 简写
-hile start -d -e .env
+# 多个文件（先加载优先）
+hile start --dev -e .env -e .env.local
 ```
 
-### 加载顺序和覆盖规则
-
-`--env-file` 使用 Node.js 原生的 `process.loadEnvFile()` 加载环境变量。加载规则：
-
-1. **先加载的文件优先级更高** —— 如果同一个 key 在多个文件中出现，先加载的文件中的值被保留
-2. **不会覆盖已存在的环境变量** —— 如果 `process.env` 中已有某个 key，文件中的值不会覆盖它
-
-```bash
-# .env 文件内容：
-DATABASE_URL=mysql://localhost:3306/db
-DEBUG=true
-
-# .env.local 文件内容：
-DATABASE_URL=mysql://localhost:3306/db_local  # 不会覆盖 .env 中的值
-LOG_LEVEL=debug
-
-# 加载顺序：先 .env，后 .env.local
-hile start --dev --env-file .env --env-file .env.local
-
-# 结果：
-# DATABASE_URL = mysql://localhost:3306/db （来自 .env，先加载）
-# DEBUG = true
-# LOG_LEVEL = debug
-```
-
-### 典型的多环境配置
-
-```bash
-# 开发环境
-hile start --dev -e .env -e .env.development
-
-# 生产环境
-NODE_ENV=production hile start -e .env -e .env.production
-```
-
-推荐的 `.env` 文件组织结构：
-
-```
-.env           # 基础配置（所有环境共享）
-.env.development  # 开发环境覆盖
-.env.production   # 生产环境覆盖
-.env.local        # 本地配置（不提交到 git）
-```
-
-`.env.local` 通常被添加到 `.gitignore`，用于存储本地特有的配置。
-
-## package.json 中的 hile 配置
-
-`package.json` 中的 `hile` 字段用于存放 Hile 框架的元配置。
-
-### auto_load_packages
-
-最常用的配置项。它是一个字符串数组，列出了需要在启动时自动 `import()` 的包名。
-
-```json
-{
-  "name": "my-app",
-  "hile": {
-    "auto_load_packages": [
-      "@hile/typeorm",
-      "@hile/ioredis"
-    ]
-  }
-}
-```
-
-**工作原理：**
-
-当 `hile start` 执行时，CLI 会：
-
-1. 读取当前目录下的 `package.json`
-2. 检查是否有 `hile.auto_load_packages` 字段
-3. 对数组中的每个包名，调用 `import(packageName)`
-4. 检查导入结果的 `default` 导出是否是 `defineService` 的返回值（通过 `isService` 判断）
-5. 如果是，调用 `loadService` 初始化该服务
-
-```typescript
-// CLI start 中的简化逻辑
-const packageJson = require('./package.json');
-if (packageJson.hile?.auto_load_packages) {
-  for (const pkg of packageJson.hile.auto_load_packages) {
-    const mod = await import(pkg);
-    const service = mod.default;
-    if (isService(service)) {
-      await loadService(service);
-    }
-  }
-}
-```
-
-这意味着 `@hile/typeorm` 和 `@hile/ioredis` 等包的 `default export` 必须是 `defineService(...)` 的返回值，CLI 才能在启动时自动加载它们。
-
-### 完整的 package.json 配置示例
-
-```json
-{
-  "name": "my-api-service",
-  "version": "1.0.0",
-  "hile": {
-    "auto_load_packages": [
-      "@hile/typeorm",
-      "@hile/ioredis",
-      "@hile/cache"
-    ]
-  },
-  "scripts": {
-    "dev": "hile start --dev -e .env",
-    "start": "NODE_ENV=production hile start -e .env",
-    "build": "tsc"
-  },
-  "dependencies": {
-    "@hile/cli": "workspace:*",
-    "@hile/core": "workspace:*",
-    "@hile/http": "workspace:*",
-    "@hile/typeorm": "workspace:*",
-    "@hile/ioredis": "workspace:*",
-    "@hile/cache": "workspace:*"
-  }
-}
-```
-
-## Registry 配置管理
-
-`@hile/micro` 包的 Registry 提供了 YAML 文件配置管理功能。
-
-### 工作目录
-
-Registry 启动时自动在用户家目录创建 `.registry/` 工作目录：
-
-```
-~/.registry/
-└── configs/
-    ├── my-service.config.yaml
-    └── payment.config.yaml
-```
-
-### YAML 配置文件格式
-
-配置文件按 namespace 分文件管理，命名格式为 `{namespace}.config.yaml`：
-
-```yaml
-# ~/.registry/configs/my-service.config.yaml
-server:
-  port: 8080
-  host: "0.0.0.0"
-
-database:
-  host: "db.example.com"
-  port: 5432
-  pool: 10
-
-debug: true
-```
-
-### Registry 对配置文件的处理
-
-当 Registry 启动时，会扫描 `configs/` 目录下的所有 `*.config.yaml` 文件，并进行以下操作：
-
-1. **解析 YAML** —— 读取每个文件，解析为 JavaScript 对象
-2. **创建 topic** —— 对每个配置项，创建一个 topic，路径为 `registry:{namespace}/{key}`
-3. **自动监听文件变化** —— 通过 `fs.watch` 监听目录，文件变化时自动更新
-
-```yaml
-# my-service.config.yaml
-debug: true
-```
-
-被解析为 topic：
-```
-registry:my-service/debug  →  true
-```
-
-```yaml
-# my-service.config.yaml
-database:
-  host: localhost
-  port: 5432
-```
-
-被解析为两个 topic：
-```
-registry:my-service/database.host  →  "localhost"
-registry:my-service/database.port  →  5432
-```
-
-### 从 Application 订阅配置
-
-Application 可以通过 `subscribe` 订阅 Registry 上的配置变更：
-
-```typescript
-import { Application } from '@hile/micro';
-
-const app = new Application({
-  namespace: 'my-service',
-  registry: { host: '127.0.0.1', port: 9876 },
-});
-
-// 订阅配置变更
-const unsubscribe = await app.subscribe(
-  'registry:my-service/debug',
-  (payload) => {
-    console.log('debug 配置更新:', payload);
-    // 当 debug 配置变化时，自动调整日志级别
-    if (payload === true) {
-      enableDebugLogging();
-    }
-  }
-);
-
-// 订阅时回调会立即收到当前值
-// 后续文件变更时自动推送新值
-```
-
-### 配置变更的实时推送
-
-当 `~/.registry/configs/my-service.config.yaml` 文件被修改时：
-
-1. `fs.watch` 检测到文件变化
-2. Registry 重新读取文件
-3. 解析新的配置项
-4. 对新配置项创建 topic
-5. 通过 topic 推送给所有已订阅的 Application
-
-```bash
-# 编辑配置文件
-vim ~/.registry/configs/my-service.config.yaml
-
-# Registry 自动感知变化，无需重启
-# Application 自动收到新配置
-```
-
-兼容 vim/vi 的保存方式：vim 保存文件时会先写入临时文件再重命名，Registry 能正确处理这种场景。
-
-## CLI 配置命令
-
-除了手动编辑 YAML 文件，CLI 也提供了便捷的管理命令。
-
-### 列出所有配置
-
-```bash
-hile registry configs
-```
-
-输出示例：
-
-```
-Configs in /Users/username/.registry/configs:
-  my-service
-  payment
-  logging
-```
-
-### 查看配置
-
-```bash
-# YAML 格式输出（默认）
-hile registry configs get my-service
-
-# JSON 格式输出
-hile registry configs get my-service --json
-```
-
-输出示例（YAML）：
-
-```yaml
-server:
-  port: 8080
-  host: 0.0.0.0
-debug: true
-```
-
-### 设置配置项
-
-```bash
-# 设置字符串
-hile registry configs set my-service port=8080
-
-# 设置数字（自动识别）
-hile registry configs set my-service pool=10
-
-# 设置布尔值
-hile registry configs set my-service debug=true
-
-# 设置 null
-hile registry configs set my-service config=null
-```
-
-**值的类型推断规则：**
-
-| 输入 | 推断类型 | 结果 |
-|------|----------|------|
-| `8080` | number | `8080` |
-| `3.14` | number | `3.14` |
-| `true` / `false` | boolean | `true` / `false` |
-| `null` | null | `null` |
-| `hello` | string | `"hello"` |
-| `{...}` 开头 | JSON | 自动 `JSON.parse` |
-| `[...]` 开头 | JSON | 自动 `JSON.parse` |
-
-```bash
-# JSON 对象
-hile registry configs set my-service db='{"host":"localhost","port":3306}'
-
-# JSON 数组
-hile registry configs set my-service whitelist='["10.0.0.1","10.0.0.2"]'
-```
-
-### 删除配置
-
-```bash
-# 删除特定字段（需要确认）
-hile registry configs del my-service port
-
-# 删除整个 namespace（需要确认）
-hile registry configs del my-service
-
-# 跳过确认
-hile registry configs del my-service -y
-
-# 跳过确认删除特定字段
-hile registry configs del my-service port -y
-```
-
-## 配置的分层架构
-
-不同层次的配置适用于不同场景：
-
-| 层次 | 存储方式 | 作用范围 | 变更方式 | 典型用途 |
-|------|----------|----------|----------|----------|
-| 环境变量 | `process.env` | 进程级 | 重启进程 | 数据库连接、密钥 |
-| package.json | `package.json#hile` | 项目级 | 修改文件 | 自动加载包 |
-| YAML 配置 | `~/.registry/configs/` | 全局 | 实时推送 | 运行时开关、限流 |
-
-### 最佳实践
-
-**1. 敏感信息用环境变量**
-
-```bash
-# .env（不提交到 git）
-DB_PASSWORD=supersecret
-API_KEY=sk-xxx
-```
-
-`.env` 文件应添加到 `.gitignore`。
-
-**2. 运行时开关用 Registry 配置**
-
-```typescript
-// 像 feature toggle 这样需要运行时调整的配置
-// 用 Registry 的 topic 订阅实现实时更新
-const unsubscribe = await app.subscribe(
-  'registry:my-service/feature/new-ui',
-  (enabled) => {
-    if (enabled) {
-      enableNewUI();
-    }
-  }
-);
-```
-
-**3. 项目级配置用 package.json**
-
-```json
-{
-  "hile": {
-    "auto_load_packages": ["@hile/typeorm"]
-  }
-}
-```
-
-这些配置不常变化，跟随项目代码一起版本控制。
-
-**4. 多环境用不同的 .env 文件**
+加载规则：
+- 使用 Node.js 原生 `process.loadEnvFile()`
+- **先加载的文件优先级更高**（同一 key 不被后加载的覆盖）
+- 不会覆盖 `process.env` 中已有的值
+
+### 多环境配置
 
 ```bash
 # 开发
@@ -488,105 +111,84 @@ hile start --dev -e .env -e .env.development
 hile start -e .env -e .env.production
 ```
 
-**5. 应用内配置用服务+容器**
+推荐文件组织：
 
-对于应用内部的配置（如业务规则），使用 `defineService` 注册为容器服务：
-
-```typescript
-// config.service.ts
-import { defineService } from '@hile/core';
-
-export const appConfig = defineService('app-config', async () => ({
-  maxUploadSize: 10 * 1024 * 1024, // 10MB
-  supportedLanguages: ['zh-CN', 'en-US'],
-  pageSize: 20,
-}));
-
-// 在其他服务中
-import { loadService } from '@hile/core';
-import { appConfig } from './config.service';
-
-const svc = defineService('user-service', async (shutdown) => {
-  const config = await loadService(appConfig);
-  // 使用 config 中的配置
-});
+```
+.env              # 基础配置（所有环境共享）
+.env.development  # 开发覆盖
+.env.production   # 生产覆盖
+.env.local        # 本地配置（.gitignore）
 ```
 
-## 完整示例
+## package.json 中的 hile 配置
 
-```typescript
-// .env 文件内容：
-// TYPEORM_HOST=localhost
-// TYPEORM_PORT=5432
-// TYPEORM_USERNAME=app
-// TYPEORM_PASSWORD=secret
-// TYPEORM_DATABASE=myapp
-// REDIS_HOST=localhost
-// REDIS_PORT=6379
+### auto_load_packages
 
-// src/services/index.boot.ts
-import { defineService, loadService, container } from '@hile/core';
-
-const appConfig = defineService('app-config', async () => ({
-  port: Number(process.env.PORT) || 3000,
-  debug: process.env.DEBUG === 'true',
-}));
-
-// 从 Registry 获取动态配置
-async function setupDynamicConfig() {
-  const { Application } = await import('@hile/micro');
-  const app = new Application({
-    namespace: 'my-service',
-    registry: { host: '127.0.0.1', port: 9876 },
-  });
-  await app.listen(0);
-
-  const unsubscribe = await app.subscribe(
-    'registry:my-service/feature/new-ui',
-    (payload) => {
-      console.log('New UI feature flag:', payload);
-    }
-  );
-
-  return async () => {
-    unsubscribe();
-    await app.shutdown();
-  };
+```json
+{
+  "hile": {
+    "auto_load_packages": ["@hile/typeorm", "@hile/ioredis"]
+  }
 }
-
-// 启动
-async function main() {
-  const config = await loadService(appConfig);
-  console.log('应用配置:', config);
-
-  const cleanup = await setupDynamicConfig();
-  // ... 启动其他服务 ...
-
-  // 优雅关闭
-  process.on('SIGTERM', async () => {
-    await cleanup();
-    await container.shutdown();
-  });
-}
-
-main().catch(console.error);
 ```
+
+CLI 启动时对每个包名执行：`import(pkg)` → `isService(mod.default)` → `loadService(mod.default)`。
+
+## Registry 配置管理
+
+### 工作目录
+
+```
+~/.registry/
+└── configs/
+    ├── my-service.config.yaml
+    └── payment.config.yaml
+```
+
+### YAML 文件格式
+
+```yaml
+# my-service.config.yaml
+server:
+  port: 8080
+  host: "0.0.0.0"
+debug: true
+```
+
+Registry 启动时扫描 `configs/` 目录，每个顶级 key 被发布为 topic：`registry:{namespace}/{key}`。
+
+### 配置文件监听
+
+Registry 通过 `fs.watch` 监听 `configs/` 目录，文件变更时自动重新读取并推送变更给订阅者。兼容 vim 的保存方式（写临时文件再重命名）。
+
+## 配置分层最佳实践
+
+| 层次 | 存储方式 | 作用范围 | 典型用途 |
+|------|----------|----------|----------|
+| 环境变量 | `process.env` | 进程级 | 数据库连接、密钥 |
+| package.json | `package.json#hile` | 项目级 | 自动加载包 |
+| YAML 配置 | `~/.registry/configs/` | 全局实时 | 运行时开关 |
+
+**1. 敏感信息用环境变量**：`.env` 加入 `.gitignore`
+
+**2. 运行时开关用 Registry**：通过 topic 订阅实现无需重启的配置变更
+
+**3. 项目级配置用 package.json**：跟随代码版本控制
+
+**4. 多环境用不同 env 文件**：`.env.development` / `.env.production`
 
 ## 常见问题
 
 <AccordionGroup>
-  <Accordion title="--env-file 和 Node.js 自带的 --env-file 有什么区别？">
-    语义完全相同。CLI 内部使用了 Node.js 的 `process.loadEnvFile()`。都是先加载的文件中的 key 不后被加载的文件覆盖。
+  <Accordion title="--env-file 和 Node.js 的 --env-file 有什么区别？">
+    语义完全相同。CLI 内部使用 `process.loadEnvFile()`。
   </Accordion>
-  <Accordion title="Registry 配置文件变更后，Application 需要重启吗？">
-    不需要。Registry 通过 `fs.watch` 监听文件变化，变更后自动通过 topic 推送给所有已订阅的 Application。Application 收到推送后立即执行回调函数。
+  <Accordion title="Registry 配置变更需要重启吗？">
+    不需要。Registry 通过 `fs.watch` 监听文件变化，自动推送变更。
   </Accordion>
-  <Accordion title="如何保护敏感配置不被提交到 git？">
-    - 将 `.env` 和 `.env.local` 添加到 `.gitignore`
-    - 将 `.env.example` 提交到 git，包含所有需要的 key 但不包含真实值
-    - 生产环境的敏感配置通过 CI/CD 环境变量注入，不放入文件
-  </Accordion>
-  <Accordion title="多个 Application 可以共享同一份 Registry 配置吗？">
-    可以。多个 Application 都可以订阅同一个 topic。当配置变更时，所有订阅的 Application 都会收到推送。
+  <Accordion title="如何保护敏感配置？">
+    - `.env` 和 `.env.local` 加入 `.gitignore`
+    - `.env.example` 提交到 git（不含真实值）
+    - 生产环境通过 CI/CD 或 K8s Secrets 注入
   </Accordion>
 </AccordionGroup>

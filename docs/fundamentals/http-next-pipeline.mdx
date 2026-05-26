@@ -1,233 +1,166 @@
 ---
 title: HttpNext 与全栈集成
-description: "同一端口下集成 Koa API 和 Next.js SSR：HttpNext 的架构、配置、中间件链和开发/生产模式差异"
+description: "同一端口下集成 Koa API 和 Next.js SSR：HttpNext 类的架构、配置、中间件链和开发/生产模式差异"
 ---
 
 import { Accordion, AccordionGroup } from '@mintlify/components';
 
 ## @hile/http-next 解决的问题
 
-现代 Web 应用往往同时包含两种类型的请求：
-
-1. **API 请求** —— 返回 JSON 数据，供前端调用
-2. **页面请求** —— 返回 HTML，需要服务端渲染（SSR）
-
-传统做法是把 API 和页面拆成两个服务（或两个端口），但这会导致跨域问题、部署复杂化、以及额外的网络开销。
-
-`@hile/http-next` 解决了这个问题：它把 `@hile/http`（Koa API 服务）和 Next.js（SSR 页面服务）绑定在**同一个 HTTP 端口**上。请求到达时，先尝试匹配静态文件和 API 路由，最后才交给 Next.js 做 SSR。
+`@hile/http-next` 将 API 服务（Koa）和 Next.js SSR 绑定在**同一个端口**上：
 
 ```
 同一端口 3000：
-  /api/users     → @hile/http 控制器（JSON）
-  /public/logo.png → 静态文件
-  /about         → Next.js 页面（SSR）
-  /              → Next.js 首页
+  /logo.png      → 静态文件（public/）
+  /_next/static/* → Next.js 构建产物
+  /-/users       → API 控制器（JSON）
+  /about         → Next.js 页面（SSR HTML）
 ```
 
 ## 与 @hile/http 的关系
 
-`@hile/http-next` 建立在 `@hile/http` 之上，是对它的扩展：
-
-```
-@hile/http (基础 HTTP 框架)
-  └── @hile/http-next (添加了 Next.js 集成)
-      - 内部创建了一个 Http 实例
-      - 自动管理中间件链
-      - 自动加载控制器
-      - 自动集成 Next.js handler
-```
-
-关键区别：
+`HttpNext` 内部创建了一个 `Http` 实例，在它之上添加 Next.js 集成：
 
 | 特性 | @hile/http | @hile/http-next |
 |------|------------|-----------------|
 | API 路由 | 支持 | 支持 |
-| 中间件 | 支持 | 支持 |
-| 文件路由 | 支持（需手动 load） | 自动加载 |
-| 静态文件 | 需手动配置 | 内置支持 |
+| 中间件 | `http.use()` | `app.use()`（转发给内部 Http） |
+| 文件路由 | `http.load()` 手动调用 | `start()` 时自动加载 |
+| 静态文件 | 手动配置 | 内置 koa-static |
 | Next.js | 不支持 | 完整集成 |
-| 启动方式 | `listen()` | `start()` |
+| 启动方式 | `http.listen()` | `app.start()` |
 
-## HttpNext 配置
+## HttpNext 类
 
-`HttpNext` 的构造函数接收 `HttpNextProps`，它继承了 `HttpProps` 的所有属性（如 `port`、`keys` 等），并添加了一些新选项。
-
-### 完整配置
+### 构造参数
 
 ```typescript
-import HttpNext from '@hile/http-next';
+import HttpNext from '@hile/http-next'
 
 const app = new HttpNext({
   // ---- 继承自 HttpProps ----
   port: 3000,
   keys: ['my-cookie-key'],
-  ignoreDuplicateSlashes: true,
 
-  // ---- HttpNext 新增选项 ----
-
-  // 项目根目录（默认 process.cwd()）
-  cwd: '/path/to/my-app',
-
-  // 静态资源目录，相对于 cwd（可选，支持数组）
-  publicPath: 'public',
-
-  // 控制器目录名（基于 src 或 dist 目录）
-  // 默认 'controllers'
-  controllerDirectory: 'controllers',
-
-  // 控制器路由前缀（默认 '/-'）
-  controllerPrefix: '/-',
-
-  // 控制器文件后缀（默认 'controller'）
-  controllerSuffix: 'controller',
-
-  // 额外控制器配置
-  specialControllers: [
+  // ---- HttpNext 新增 ----
+  cwd: '/path/to/project',          // 项目根目录，默认 process.cwd()
+  publicPath: 'public',              // 静态资源目录（支持数组）
+  controllerDirectory: 'controllers', // 控制器目录名，默认 'controllers'
+  controllerPrefix: '/-',            // API 路由前缀，默认 '/-'
+  controllerSuffix: 'controller',    // 控制器文件后缀，默认 'controller'
+  specialControllers: [              // 额外控制器
     { directory: 'admin/controllers', prefix: '/admin' },
   ],
-
-  // Next.js 构建产物目录（默认 cwd/.next）
-  nextArtifactsDir: '.next',
-});
+  nextArtifactsDir: '.next',        // Next.js 构建产物目录
+})
 ```
 
 ### 选项详解
 
-#### cwd
+**`cwd`**：项目根目录。所有相对路径基于此。默认 `process.cwd()`。
 
-项目根目录。所有相对路径都基于此目录计算。默认为 `process.cwd()`，即你运行命令时的目录。
+**`controllerDirectory` + `controllerPrefix`**：控制器目录和路由前缀。
 
-```typescript
-// 如果项目结构如下：
-// /home/user/my-app/
-//   ├── src/
-//   │   ├── controllers/
-//   │   └── pages/        ← Next.js 页面
-//   ├── public/
-//   └── .next/
+- 开发时目录：`{cwd}/src/{controllerDirectory}/`
+- 生产时目录：`{cwd}/dist/{controllerDirectory}/`
+- 路由前缀默认 `/-`
 
-const app = new HttpNext({
-  port: 3000,
-  cwd: '/home/user/my-app',  // 项目根目录
-});
-```
+**`controllerSuffix`**：控制器文件后缀（不含扩展名）。默认 `controller`，匹配 `*.controller.{ts,js,tsx,jsx}`。
 
-#### controllerDirectory 和 controllerPrefix
-
-这是两个最重要的选项，决定了 API 路由的组织方式。
-
-- `controllerDirectory`：控制器目录名，开发时基于 `src/`，生产时基于 `dist/`
-- `controllerPrefix`：所有控制器路由的前缀，用于和 Next.js 页面路由隔离
+**`publicPath`**：静态资源目录，相对于 `cwd`。支持单目录或数组：
 
 ```typescript
-// 默认值：
-controllerDirectory = 'controllers'
-controllerPrefix = '/-'
+new HttpNext({ port: 3000, publicPath: ['public', 'uploads'] })
 ```
 
-这意味着：
-- 开发时，控制器目录为 `src/controllers/`
-- 生产时，控制器目录为 `dist/controllers/`
-- 控制器的路由前缀为 `/-`
-
-文件命名到路由的映射示例：
-
-```
-src/controllers/
-├── users.controller.ts         → /-/users
-├── users/
-│   ├── index.controller.ts     → /-/users
-│   ├── [id].controller.ts      → /-/users/:id
-│   └── [id]/
-│       └── posts.controller.ts → /-/users/:id/posts
-├── auth/
-│   ├── login.controller.ts     → /-/auth/login
-│   └── register.controller.ts  → /-/auth/register
-```
-
-为什么用 `/-` 前缀？因为它：
-- 不太可能和 Next.js 页面路由冲突
-- 语义清晰：`/` 开头表示这是 API，`-` 避免和常见的页面路由名（如 `/users`）重复
-
-#### controllerSuffix
-
-控制器文件的后缀（不含扩展名）。默认是 `controller`，所以匹配 `*.controller.{ts,js,tsx,jsx}`。
+**`specialControllers`**：额外的控制器目录，使用独立前缀：
 
 ```typescript
-// 改为 handler 后缀
-const app = new HttpNext({
-  port: 3000,
-  controllerSuffix: 'handler',
-});
-// 匹配 *.handler.ts 文件
-```
-
-#### publicPath
-
-用户静态资源目录，相对于 `cwd`。支持单目录或多个目录：
-
-```typescript
-// 单目录
-const app = new HttpNext({
-  port: 3000,
-  publicPath: 'public',
-});
-
-// 多目录
-const app = new HttpNext({
-  port: 3000,
-  publicPath: ['public', 'uploads'],
-});
-```
-
-静态文件中间件通过 `koa-static` 实现，在路由器之前执行。这意味着静态文件优先级最高：
-
-```
-请求 /logo.png
-  → 检查 public/logo.png → 命中 → 直接返回文件
-  → 未命中 → 继续检查下一个中间件
-```
-
-#### nextArtifactsDir
-
-Next.js 构建产物目录，默认是 `cwd/.next`。
-
-```typescript
-// 自定义构建产物目录
-const app = new HttpNext({
-  port: 3000,
-  nextArtifactsDir: '/data/builds/.next',
-});
-```
-
-`.next/static/` 目录也会通过 `koa-static` 作为静态文件提供服务，确保 Next.js 的静态资源（JS、CSS、图片等）可以被正确加载。
-
-#### specialControllers
-
-有时你需要在默认控制器目录之外再加一些控制器。比如有一个管理后台，它的控制器放在单独的目录里：
-
-```typescript
-const app = new HttpNext({
+new HttpNext({
   port: 3000,
   specialControllers: [
-    {
-      directory: 'admin/controllers',  // src/admin/controllers/
-      prefix: '/admin',                // 路由前缀
-    },
+    { directory: 'admin/controllers', prefix: '/admin' },
   ],
-});
+})
+// src/admin/controllers/dashboard.controller.ts → /admin/dashboard
 ```
 
-`specialControllers` 在默认控制器加载之后依次加载。目录解析同样基于 `cwd` 和 `src/dist` 环境：
+### 方法
 
-- 开发时：`src/admin/controllers/`
-- 生产时：`dist/admin/controllers/`
+**`use(middleware)`**：注册 Koa 中间件（转发给内部 Http 实例），返回 this。
 
-## 控制器目录约定和路由前缀
+**`load(directory)`**：手动加载控制器目录：
 
-### 文件命名到路由的完整转换规则
+```typescript
+app.load('./extra-controllers')
+```
 
-假设 `controllerDirectory = 'controllers'`，`controllerSuffix = 'controller'`：
+**`start(onListen?)`**：启动服务。返回关闭函数。
+
+## 4 层中间件链
+
+`start()` 完成后的中间件顺序：
+
+```
+第 1 层：koa-static(publicPath/)     ← 用户静态文件
+第 2 层：koa-static(.next/static/)   ← Next.js 构建产物
+第 3 层：router.routes()            ← API 控制器（find-my-way）
+第 4 层：Next.js handler            ← SSR / SSG / RSC（兜底）
+```
+
+请求处理流程：
+
+```
+请求到达
+  → 1. public/ 有文件？ → 返回文件
+  → 2. .next/static/ 有文件？ → 返回文件
+  → 3. find-my-way 匹配到控制器？ → 执行控制器 → 响应
+  → 4. 交给 Next.js → SSR / 404
+```
+
+Next.js handler 放在最后，确保静态文件和 API 路由优先处理。
+
+## start 方法完整流程
+
+```
+app.start()
+  → 1. http.use(koaStatic('.next/static'))
+  → 2. http.load(controllerDirectory, { prefix: '/-', ... })
+  → 3. 依次 load specialControllers
+  → 4. http.listen(async (server) => {
+       → onListen 回调（如果提供）
+       → NextServer({ dev, httpServer, dir })
+       → app.prepare()
+       → http.use(forwardToNextMiddleware(handler))
+     })
+  → 返回 stop 函数
+```
+
+关键实现细节：
+
+- `forwardToNextMiddleware` 设置 `ctx.respond = false`，让 Koa 不处理响应
+- 设置 `ctx.status = 200`（Koa 默认 404）
+- 将 `ctx.req`/`ctx.res` 直接交给 Next.js
+
+## 开发模式 vs 生产模式
+
+通过 `NODE_ENV` 自动切换：
+
+| 特性 | development | production |
+|------|-------------|------------|
+| 控制器目录 | `src/controllers/` | `dist/controllers/` |
+| Next.js | `dev: true`（HMR） | `dev: false` |
+| 启动方式 | tsx 实时编译 | 预先编译的 JS |
+
+```bash
+# 开发
+hile start --dev
+
+# 生产
+hile start
+```
+
+## 控制器目录约定
 
 ```
 src/controllers/
@@ -236,322 +169,8 @@ src/controllers/
 ├── users/
 │   ├── index.controller.ts          → /-/users
 │   ├── [id].controller.ts           → /-/users/:id
-│   ├── [id].posts.controller.ts     → /-/users/:id/posts
-│   └── active.controller.ts         → /-/users/active
-└── auth/
-    ├── index.controller.ts          → /-/auth
-    ├── login.controller.ts          → /-/auth/login
-    ├── register.controller.ts       → /-/auth/register
-    └── [provider].callback.controller.ts → /-/auth/:provider/callback
+│   └── [id]/posts.controller.ts     → /-/users/:id/posts
 ```
-
-规则说明：
-1. 去掉 `.controller.ts` 后缀
-2. `index` 文件名会被替换为父路径（因为 `defaultSuffix: '/index'`）
-3. `[param]` 转换为 `:param`（find-my-way 路径参数）
-4. 添加前缀 `/-`
-
-### 控制器文件内容
-
-每个文件 `export default` 一个 `defineController(...)` 的返回值：
-
-```typescript
-// src/controllers/users.controller.ts
-import { defineController, createControllerMetadata } from '@hile/http';
-import { z } from 'zod';
-
-const meta = createControllerMetadata({
-  method: 'GET',
-  schema: {
-    query: z.object({
-      page: z.coerce.number().default(1),
-      limit: z.coerce.number().default(20),
-    }),
-  },
-});
-
-export default defineController(meta, async (ctx) => {
-  return { users: [], page: ctx.query.page };
-});
-```
-
-```typescript
-// src/controllers/users/[id].controller.ts
-import { defineController, createControllerMetadata } from '@hile/http';
-import { z } from 'zod';
-
-const meta = createControllerMetadata({
-  method: 'GET',
-  schema: {
-    params: z.object({
-      id: z.coerce.number(),
-    }),
-  },
-});
-
-export default defineController(meta, async (ctx) => {
-  return { id: ctx.params.id, name: 'Alice' };
-});
-```
-
-## 静态文件服务
-
-静态文件服务在 `HttpNext` 中有两层：
-
-1. **用户静态文件**（通过 `publicPath` 配置）
-2. **Next.js 构建产物**（`.next/static/`，自动配置）
-
-### 用户静态文件
-
-放在 `public/` 目录下的文件可以作为静态资源访问：
-
-```
-public/
-├── logo.png         → http://localhost:3000/logo.png
-├── favicon.ico      → http://localhost:3000/favicon.ico
-├── robots.txt       → http://localhost:3000/robots.txt
-└── assets/
-    └── style.css    → http://localhost:3000/assets/style.css
-```
-
-### Next.js 构建产物
-
-`HttpNext` 会自动将 `.next/static/` 目录暴露为 `/static/` 路径。这是 Next.js 正常运作所必需的，因为 Next.js 的 JS/CSS chunk 都从这里加载。
-
-## 4 层中间件链
-
-`HttpNext.start()` 完成后，Koa 中间件链的最终顺序是：
-
-```
-第 1 层：koa-static(publicPath)  ← 用户静态文件
-    │
-第 2 层：koa-static(.next/static/)  ← Next.js 构建产物
-    │
-第 3 层：router.routes()  ← API 控制器（find-my-way）
-    │
-第 4 层：Next.js handler  ← SSR / SSG / RSC
-```
-
-### 请求处理流程
-
-```
-请求到达
-  │
-  ▼
-1. koa-static(public/)
-  │
-  ├── 文件存在 → 直接返回文件（200）
-  │
-  └── 文件不存在
-      │
-      ▼
-2. koa-static(.next/static/)
-      │
-      ├── 文件存在 → 直接返回文件（200）
-      │
-      └── 文件不存在
-          │
-          ▼
-3. find-my-way 路由匹配
-          │
-          ├── 匹配到控制器 → 执行控制器 → 返回 JSON（或其它响应）
-          │                  响应插件链处理后写入 ctx.body
-          │
-          └── 未匹配（defaultRoute → next()）
-              │
-              ▼
-4. Next.js handler
-              │
-              ├── 有对应页面 → SSR 渲染 → 返回 HTML
-              │
-              └── 无对应页面 → Next.js 404
-```
-
-### 中间件的注册过程
-
-这个顺序不是随意确定的。`HttpNext.start()` 的内部实现按特定顺序添加这些中间件：
-
-```typescript
-// HttpNext.start() 的简化流程
-async function start() {
-  // 1. 添加 Next.js 静态资源中间件（在构造函数中已添加了 publicPath）
-  this.http.use(koaStatic(resolve(this.nextArtifactsDir, 'static')));
-
-  // 2. 加载默认控制器目录
-  await this.http.load(this.controllerDirectory, {
-    suffix: this.controllerSuffix,
-    defaultSuffix: '/index',
-    prefix: this.controllerPrefix,
-    conflict: 'error',
-  });
-
-  // 3. 加载特殊控制器目录
-  for (const sc of this.specialControllers) {
-    await this.http.load(sc.directory, {
-      suffix: this.controllerSuffix,
-      defaultSuffix: '/index',
-      prefix: sc.prefix,
-      conflict: 'error',
-    });
-  }
-
-  // 4. 调用 http.listen，其中：
-  //    a. 注入 router.routes() 为最后一道 Koa 中间件
-  //    b. 创建 HTTP Server
-  //    c. 在 onListen 回调中创建 Next.js 并添加 Next.js handler
-  //    d. server.listen(port)
-  const stop = await this.http.listen(async (server) => {
-    const app = NextServer({ dev, httpServer: server, dir: this.cwd });
-    await app.prepare();
-    const handler = app.getRequestHandler();
-    this.http.use(this.createForwardToNextMiddleware(handler));
-  });
-}
-```
-
-关键点在于：`http.listen` 内部才创建 Next.js handler，而它是在 `listen` 的 `onListen` 回调中通过 `this.http.use()` 注册的。因为 `use` 中间件是按注册顺序执行的，而 `router.routes()` 已经在 `listen` 开始时被注入，所以 Next.js handler 会在路由匹配之后。
-
-## 开发模式与生产模式
-
-`HttpNext` 根据 `process.env.NODE_ENV` 自动切换行为：
-
-### 开发模式
-
-当 `NODE_ENV === 'development'` 时：
-
-```typescript
-// HttpNext 内部
-this.isDevelopment = process.env.NODE_ENV === 'development';
-
-// 控制器目录使用 src/
-this.controllerDirectory = resolve(this.cwd, 'src', controllerDirectory || 'controllers');
-
-// Next.js 以开发模式启动
-const app = NextServer({
-  dev: true, // 启用热更新、错误覆盖层等
-  dir: this.cwd,
-});
-```
-
-特点：
-- 控制器从 `src/` 目录加载
-- Next.js 启用热模块替换（HMR）
-- 修改代码后自动重新加载
-- 启动时需要 TypeScript 编译（通过 `tsImport` 或 tsx）
-
-### 生产模式
-
-当 `NODE_ENV !== 'development'` 时：
-
-```typescript
-// 控制器目录使用 dist/
-this.controllerDirectory = resolve(this.cwd, 'dist', controllerDirectory || 'controllers');
-
-// Next.js 以生产模式启动
-const app = NextServer({
-  dev: false,
-  dir: this.cwd,
-});
-```
-
-特点：
-- 控制器从 `dist/` 目录加载（需先构建）
-- Next.js 使用 `.next/` 中的构建产物
-- 需要先运行 `next build` 构建项目
-- 性能更好，不包含开发工具
-
-### 切换方式
-
-通过 `NODE_ENV` 环境变量切换：
-
-```bash
-# 开发模式
-NODE_ENV=development node server.js
-# 或使用 CLI
-hile start --dev
-
-# 生产模式
-NODE_ENV=production node server.js
-# 或
-NODE_ENV=production hile start
-```
-
-## start 方法完整流程
-
-`HttpNext.start()` 是启动入口。它的完整流程如下：
-
-```typescript
-// HttpNext.start() 的详细流程
-public async start(onListen?) {
-  // 步骤 1：添加 Next.js 构建产物的静态文件服务
-  this.http.use(koaStatic(resolve(this.nextArtifactsDir, 'static')));
-
-  // 步骤 2：加载默认控制器
-  await this.http.load(this.controllerDirectory, {
-    suffix: this.controllerSuffix,
-    defaultSuffix: '/index',
-    prefix: this.controllerPrefix,
-    conflict: 'error',
-  });
-
-  // 步骤 3：加载特殊控制器
-  for (const sc of this.specialControllers) {
-    await this.http.load(sc.directory, {
-      suffix: this.controllerSuffix,
-      defaultSuffix: '/index',
-      prefix: sc.prefix,
-      conflict: 'error',
-    });
-  }
-
-  // 步骤 4：启动 HTTP 服务
-  const stop = await this.http.listen(async (server) => {
-    // 4a. 调用用户提供的 onListen 回调
-    if (onListen) await onListen(server);
-
-    // 4b. 计算 .next 目录路径
-    const artifacts = resolve(this.nextArtifactsDir);
-
-    // 4c. 创建 Next.js 实例
-    const app = NextServer({
-      dev: this.isDevelopment,
-      httpServer: server,
-      dir: this.cwd,
-    });
-
-    // 4d. 等待 Next.js 准备完成
-    await app.prepare();
-
-    // 4e. 获取 Next.js 请求处理函数
-    const handler = app.getRequestHandler();
-
-    // 4f. 添加 Next.js handler 作为最后一道中间件
-    this.http.use(this.createForwardToNextMiddleware(handler));
-  });
-
-  // 返回关闭函数
-  return stop;
-}
-```
-
-### 关于 createForwardToNextMiddleware
-
-这个方法创建了一个特殊的 Koa 中间件，将请求转发给 Next.js：
-
-```typescript
-private createForwardToNextMiddleware(handler) {
-  return async (ctx) => {
-    // 告诉 Koa 不要自己处理响应
-    ctx.respond = false;
-    // 设置默认状态为 200（Koa 默认是 404）
-    ctx.status = 200;
-    // 将原生的 req/res 交给 Next.js 处理
-    await handler(ctx.req, ctx.res);
-  };
-}
-```
-
-这里的 `ctx.respond = false` 是关键：它告诉 Koa "我来处理响应，你不需要操心"。这样 Next.js 可以完全控制 HTTP 响应，包括状态码、头部和 body。
 
 ## 完整示例
 
@@ -560,154 +179,66 @@ private createForwardToNextMiddleware(handler) {
 ```
 my-app/
 ├── package.json
-├── next.config.js
 ├── tsconfig.json
 ├── src/
 │   ├── controllers/
-│   │   ├── users.controller.ts
-│   │   ├── users/
-│   │   │   └── [id].controller.ts
-│   │   └── auth/
-│   │       ├── login.controller.ts
-│   │       └── register.controller.ts
-│   ├── pages/
-│   │   ├── index.tsx
-│   │   ├── about.tsx
-│   │   └── users/
-│   │       ├── index.tsx
-│   │       └── [id].tsx
+│   │   └── users.controller.ts
+│   ├── pages/              ← Next.js 页面
+│   │   └── index.tsx
 │   └── services/
 │       └── index.boot.ts
-├── public/
-│   ├── logo.png
-│   └── favicon.ico
-└── .next/ (构建产物)
+└── public/
+    └── logo.png
 ```
 
-### 服务启动文件
+### 启动文件
 
 ```typescript
 // src/services/index.boot.ts
-import HttpNext from '@hile/http-next';
+import HttpNext from '@hile/http-next'
+import { defineService } from '@hile/core'
 
-const app = new HttpNext({
-  port: 3000,
-  publicPath: 'public',
-  controllerDirectory: 'controllers',
-  controllerPrefix: '/-',
-});
+export default defineService('http-next', async (shutdown) => {
+  const app = new HttpNext({
+    port: 3000,
+    publicPath: 'public',
+    controllerPrefix: '/-',
+  })
 
-// 可以添加自定义中间件
-app.use(async (ctx, next) => {
-  const start = Date.now();
-  await next();
-  console.log(`${ctx.status} ${ctx.method} ${ctx.url} - ${Date.now() - start}ms`);
-});
+  app.use(async (ctx, next) => {
+    const start = Date.now()
+    await next()
+    console.log(`${ctx.status} ${ctx.method} ${ctx.url} - ${Date.now() - start}ms`)
+  })
 
-// 启动
-export default app.start();
+  const stop = await app.start()
+  shutdown(stop)
+  return app
+})
 ```
 
-### 控制器示例
-
-```typescript
-// src/controllers/users.controller.ts
-import { defineController, createControllerMetadata } from '@hile/http';
-import { z } from 'zod';
-
-const getUsersMeta = createControllerMetadata({
-  method: 'GET',
-  schema: {
-    query: z.object({
-      page: z.coerce.number().default(1),
-      limit: z.coerce.number().max(100).default(20),
-    }),
-  },
-});
-
-export default defineController(getUsersMeta, async (ctx) => {
-  // GET /-/users?page=1&limit=20
-  return { users: [], page: Number(ctx.query.page) };
-});
-```
-
-```typescript
-// src/controllers/users/[id].controller.ts
-import { defineController, createControllerMetadata } from '@hile/http';
-import { z } from 'zod';
-
-const meta = createControllerMetadata({
-  method: 'GET',
-  schema: {
-    params: z.object({ id: z.coerce.number() }),
-  },
-});
-
-export default defineController(meta, async (ctx) => {
-  // GET /-/users/42
-  const userId = ctx.params.id;
-  return { id: userId, name: `User ${userId}` };
-});
-```
-
-### Next.js 页面
-
-```tsx
-// src/pages/users/[id].tsx
-import { useRouter } from 'next/router';
-
-export default function UserPage() {
-  const router = useRouter();
-  const { id } = router.query;
-
-  return (
-    <div>
-      <h1>User {id}</h1>
-      <p>This page is rendered by Next.js</p>
-    </div>
-  );
-}
-```
-
-### 请求处理演示
+### 请求处理
 
 ```
-# 静态文件
-GET /logo.png → 返回 public/logo.png（200）
-
-# API 路由
-GET /-/users → 返回 JSON { users: [], page: 1 }（200）
-GET /-/users/42 → 返回 JSON { id: '42', name: 'User 42' }（200）
-
-# Next.js 页面
-GET / → Next.js 渲染首页（200）
-GET /users/42 → Next.js 渲染用户页（200）
-GET /not-found → Next.js 404
+GET /logo.png     → public/logo.png（200）
+GET /-/users      → API 控制器返回 JSON（200）
+GET /             → Next.js 首页渲染（200）
+GET /nonexistent  → Next.js 404
 ```
 
 ## 常见问题
 
 <AccordionGroup>
   <Accordion title="如何自定义控制器路由前缀？">
-    通过 `controllerPrefix` 选项：
     ```typescript
-    const app = new HttpNext({
-      port: 3000,
-      controllerPrefix: '/api', // 改为 /api 前缀
-    });
+    new HttpNext({ port: 3000, controllerPrefix: '/api' })
+    // users.controller.ts → /api/users
     ```
-    此时 `users.controller.ts` 匹配 `/api/users`。
   </Accordion>
-  <Accordion title="为什么 Next.js handler 要放在最后？">
-    因为请求应该先经过 API 路由和静态文件。如果 Next.js handler 放在前面，它会接管所有请求（包括本应由 API 处理的），导致 API 路由无法被正确匹配。放在最后意味着「之前的中间件都没有处理这个请求，交给 Next.js 看看它有没有对应的页面」。
+  <Accordion title="为什么 Next.js handler 放在最后？">
+    请求应该先经过静态文件和 API 路由。放在最后意味着"前面的中间件都没处理，交给 Next.js"。
   </Accordion>
-  <Accordion title="开发时修改控制器文件需要重启吗？">
-    开发模式下（`--dev`），控制器文件使用 `tsImport` 动态加载。但文件系统路由加载只在 `start()` 时执行一次。所以修改控制器文件后，需要重启服务才能生效。这与 Next.js 的 HMR 不同（Next.js 页面修改后自动热更新）。
-  </Accordion>
-  <Accordion title="如何在 HttpNext 中使用 WebSocket？">
-    可以在 `HttpNext` 的 `http` 实例上添加 WebSocket 支持。由于 `http.listen()` 返回的是 Node.js 的 `http.Server`，你可以使用 `server.on('upgrade', ...)` 处理 WebSocket 升级请求。
-  </Accordion>
-  <Accordion title="如果不用 Next.js 页面目录，只想用纯 API 模式怎么办？">
-    直接使用 `@hile/http` 即可，不需要 `@hile/http-next`。`HttpNext` 是为同时需要 API + Next.js 页面设计的。
+  <Accordion title="不用 Next.js 只想纯 API 怎么办？">
+    直接使用 `@hile/http` 即可，不需要 `@hile/http-next`。
   </Accordion>
 </AccordionGroup>

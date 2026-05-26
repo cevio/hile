@@ -5,1376 +5,145 @@ description: "深入理解 Hile 的分层架构设计——从服务容器到应
 
 # 架构概览
 
-Hile 设计为**分层架构**，各层职责清晰、可按需引入。理解 Hile 的架构有助于你正确使用各个包，并在项目中进行合理的架构决策。
+Hile 设计为**分层架构**，各层职责清晰、可按需引入。
 
-## 总体分层架构
-
-Hile 分为四层：**基础层**（服务容器）、**集成层**（数据/缓存集成）、**通信层**（消息/微服务）和**应用层**（HTTP/CLI），以及**工具层**（辅助开发工具）。
+## 总体分层
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                          应用层 (Application Layer)                   │
-│                                                                     │
-│  ┌──────────────┐  ┌──────────────────┐  ┌───────────────────────┐  │
-│  │  @hile/http   │  │ @hile/http-next  │  │  业务代码 (你的代码)   │  │
-│  │  HTTP 服务    │  │ Next.js 桥接     │  │  controllers / models │  │
-│  └──────┬───────┘  └──────────────────┘  │  services / pages      │  │
-│         │                                └───────────────────────┘  │
-├─────────┼───────────────────────────────────────────────────────────┤
-│         │                      集成层 (Integration Layer)            │
-│         ▼                                                          │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────────┐  │
-│  │ @hile/typeorm│  │ @hile/ioredis│  │ @hile/cache              │  │
-│  │ TypeORM 集成  │  │ Redis 集成   │  │ 类型安全缓存              │  │
-│  └──────┬───────┘  └──────┬───────┘  └──────────┬───────────────┘  │
-│         │                │                      │                  │
-├─────────┼────────────────┼──────────────────────┼──────────────────┤
-│         │                │                      │                  │
-│         ▼                ▼                      ▼                  │
-│  ┌──────────────────────────────────────────────────────────────┐  │
-│  │                   基础层 (Core Layer)                          │  │
-│  │                                                              │  │
-│  │  @hile/core — 异步服务容器                                    │  │
-│  │  ┌────────────────────────────────────────────────────────┐  │  │
-│  │  │  defineService(key, fn)  →  注册服务                     │  │  │
-│  │  │  loadService(props)      →  解析服务（自动初始化 + 缓存） │  │  │
-│  │  │  container.shutdown()    →  优雅关闭所有服务             │  │  │
-│  │  │  container.on(event)     →  监听生命周期事件             │  │  │
-│  │  │  依赖图追踪 · 循环依赖检测 · 并发合并 · 超时控制          │  │  │
-│  │  └────────────────────────────────────────────────────────┘  │  │
-│  └──────────────────────────────────────────────────────────────┘  │
-├───────────────────────────────────────────────────────────────────┤
-│                       通信层 (Communication Layer)                  │
-│                                                                   │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │ @hile/message-modem (抽象协议层)                            │  │
-│  │  _send() / _push() / _stream() / receive()                 │  │
-│  │  请求/响应/中止 协议定义                                    │  │
-│  └──────┬────────────────────┬───────────────────┬───────────┘  │
-│         │                    │                   │              │
-│  ┌──────▼──────┐  ┌─────────▼────────┐  ┌───────▼──────────┐  │
-│  │message-ws  │  │ message-ipc      │  │ message-worker-   │  │
-│  │WebSocket   │  │ Node IPC         │  │ thread           │  │
-│  │实现        │  │ 实现             │  │ Worker Threads   │  │
-│  └─────────────┘  └──────────────────┘  │ 实现             │  │
-│                                         └──────────────────┘  │
-│                                                                   │
-│  ┌────────────────────────────────────────────────────────────┐  │
-│  │ @hile/message-loader (消息路由层)                           │  │
-│  │ defineMessage() / dispatch() / 文件系统加载 *.msg.* 文件    │  │
-│  └────────────────────────────────────────────────────────────┘  │
-│         │                                                        │
-│  ┌──────▼──────────────────────────────────────────────────────┐ │
-│  │ @hile/micro (微服务框架)                                     │ │
-│  │ ┌──────────┐ ┌──────────┐ ┌────────────┐ ┌────────────┐    │ │
-│  │ │ Server   │ │ Client   │ │ Registry   │ │Application │    │ │
-│  │ │WS 服务端 │ │WS 客户端 │ │注册中心    │ │集成客户端  │    │ │
-│  │ │+ 路由    │ │+ 心跳    │ │+ pub/sub   │ │+ 断路器    │    │ │
-│  │ └──────────┘ └──────────┘ └────────────┘ └────────────┘    │ │
-│  └──────────────────────────────────────────────────────────────┘│
-│         │                                                        │
-│  ┌──────▼──────────────────────────────────────────────────────┐ │
-│  │ @hile/micro-dynamic-configs (动态配置服务)                    │ │
-│  │ Redis 持久化 + Registry topic 发布/订阅 + Zod schema 校验    │ │
-│  └──────────────────────────────────────────────────────────────┘ │
-├───────────────────────────────────────────────────────────────────┤
-│                     工具层 (Tool Layer)                            │
-│                                                                   │
-│  @hile/cli     @hile/loader     @hile/logger     @hile/schedule  │
-│  @hile/model   create-hile                                         │
-└───────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│                    应用层 (Application Layer)                │
+│  @hile/http (HTTP 服务)    @hile/http-next (Next.js 桥接)   │
+│  业务代码 (controllers / services / models)                 │
+├────────────────────────────────────────────────────────────┤
+│                    集成层 (Integration Layer)                │
+│  @hile/typeorm (数据库)   @hile/ioredis (Redis)             │
+│  @hile/cache (类型安全缓存)                                  │
+├────────────────────────────────────────────────────────────┤
+│                    基础层 (Core Layer)                       │
+│  @hile/core — Container 异步服务容器                        │
+│  register / resolve / shutdown / 依赖追踪 / 事件系统          │
+├────────────────────────────────────────────────────────────┤
+│                    通信层 (Communication Layer)              │
+│  @hile/message-modem (抽象协议)                             │
+│    ├── @hile/message-ws (WebSocket)                        │
+│    ├── @hile/message-ipc (IPC)                             │
+│    └── @hile/message-worker-thread (Worker)                │
+│  @hile/message-loader (消息路由)                             │
+│  @hile/micro (微服务：Server/Client/Registry/Application)    │
+│  @hile/micro-dynamic-configs (动态配置)                      │
+├────────────────────────────────────────────────────────────┤
+│                    工具层 (Tool Layer)                       │
+│  @hile/cli    @hile/loader    @hile/logger    @hile/schedule │
+│  @hile/model  create-hile                                    │
+└────────────────────────────────────────────────────────────┘
 ```
 
 ## 各层详解
 
-### 1. 基础层：@hile/core（服务容器）
+### 1. 基础层：@hile/core
 
-基础层是 Hile 的基石，只有一个包：<code>@hile/core</code>。它不依赖任何外部包，只使用 Node.js 内置的 <code>AsyncLocalStorage</code>。
+`Container` 类是 Hile 的基石，零外部依赖。
 
-#### 核心职责
+**核心 API**：
 
-<AccordionGroup>
-  <Accordion title="服务注册与解析">
-    <code>defineService(key, fn)</code> 将工厂函数 <code>fn</code> 注册到容器中。容器记录服务 key，但不立即执行 <code>fn</code>。只有当 <code>loadService(props)</code> 被调用时，容器才真正执行工厂函数并缓存结果。
+| 方法 | 说明 |
+|------|------|
+| `register(key, fn)` | 注册服务工厂函数 |
+| `resolve(props)` | 解析服务（执行工厂 + 缓存结果） |
+| `shutdown()` | 优雅关闭，LIFO 顺序执行所有 teardown |
+| `on(listener)` / `off(listener)` | 订阅/取消容器事件 |
+| `getDependencyGraph()` | 返回 `{ nodes, edges }` 依赖图 |
+| `getStartupOrder()` | 返回服务启动顺序 |
+| `hasService(key)` / `hasMeta(key)` | 查询服务状态 |
+| `getMetaByKey(key)` | 获取服务详细状态（status, lifecycle, value） |
+| `getLifecycle(key)` | 获取生命周期阶段 |
 
-    <code>fn</code> 函数接收一个 <code>shutdown</code> 参数，用于注册关闭回调：
+全局快捷函数：`defineService(key, fn)` = `container.register(key, fn)`，`loadService(props)` = `container.resolve(props)`。
 
-    ```typescript
-    import { defineService, loadService } from '@hile/core'
+**特性**：
+- 并发请求合并：多个同时 `loadService` 同一服务，工厂只执行一次
+- 依赖追踪：基于 `AsyncLocalStorage` 自动记录服务间依赖
+- 循环依赖检测：运行时检测 A→B→A 等循环
+- 超时控制：`startTimeoutMs` / `shutdownTimeoutMs`
+- 9 种事件类型覆盖全生命周期
 
-    // 定义服务（不执行）
-    const myService = defineService('my-service', async (shutdown) => {
-      console.log('服务正在初始化...')
-      const instance = { startTime: Date.now() }
+### 2. 集成层
 
-      // 注册关闭回调
-      shutdown(() => {
-        console.log('服务正在关闭...')
-      })
+**@hile/typeorm**：`createDataSource()` 手动模式 + default export 容器模式。`transaction()` 事务辅助函数支持 LIFO 补偿回调。环境变量配置。
 
-      return instance
-    })
+**@hile/ioredis**：`createRedis()` 手动模式 + default export 容器模式。环境变量配置。
 
-    // 解析服务（执行 fn 并缓存结果）
-    const instance = await loadService(myService) // 输出: "服务正在初始化..."
-    const sameInstance = await loadService(myService) // 不再执行 fn
-    console.log(instance === sameInstance) // true
-    ```
-  </Accordion>
-  <Accordion title="并发请求合并">
-    当多个地方同时 <code>loadService</code> 同一个服务时，容器只执行一次工厂函数，所有调用者共享同一个 Promise：
+**@hile/cache**：`defineCache()` 模板键语法定义缓存，`RedisCache` 类提供读穿透（read-through）缓存。内部通过 `loadService(ioredisService)` 获取 Redis 连接。
 
-    ```typescript
-    const service = defineService('expensive', async () => {
-      console.log('只执行一次')
-      await new Promise(r => setTimeout(r, 1000))
-      return { data: 'expensive' }
-    })
+### 3. 通信层
 
-    // 同时发起三个请求
-    const [a, b, c] = await Promise.all([
-      loadService(service),
-      loadService(service),
-      loadService(service),
-    ])
-    // 输出 "只执行一次"（只有一次）
-    // a === b === c （同一个对象）
-    ```
+通信层**不依赖** `@hile/core`，可独立使用。
 
-    实现原理：容器内部维护一个 <code>Map<ServiceKey, Paddings></code>，<code>Paddings.status</code> 有三种状态：
-    - <code>0</code>：运行中——后续请求加入等待队列
-    - <code>1</code>：完成——直接返回缓存值
-    - <code>-1</code>：失败——直接返回错误
-  </Accordion>
-  <Accordion title="依赖图追踪">
-    容器使用 <code>AsyncLocalStorage</code> 自动追踪服务之间的依赖关系。当在服务 A 的工厂函数中 <code>loadService(B)</code> 时，容器自动记录 A → B 的依赖边：
+**协议抽象**：`MessageModem` 抽象基类定义 REQUEST/RESPONSE/ABORT 协议。
 
-    ```typescript
-    const serviceB = defineService('service-b', async () => ({ b: true }))
+**传输实现**：三个抽象类（`MessageWs`、`MessageIpc`、`MessageWorkerThread`）各自实现 `post()` 和 `exec()`，提供 `_send`/`_push`/`_stream`/`_dispose`。
 
-    const serviceA = defineService('service-a', async () => {
-      const b = await loadService(serviceB) // 容器自动记录 A → B 依赖
-      return { a: true, b }
-    })
+**消息路由**：`MessageLoader` 继承 `Loader`，使用 rou3 路由器，`defineMessage()` 定义处理器。
 
-    await loadService(serviceA)
+**微服务框架**：
+- `Server`：WebSocket 服务端 + 消息路由 + 出站连接
+- `Client`：远端代理 + 心跳保活
+- `Registry`：注册中心 + namespace 管理 + topic 发布/订阅 + YAML 配置监听
+- `Application`：集成 Registry + 断路器 + 重试 + 缓存降级 + topic 管理
 
-    // 获取依赖图
-    const graph = container.getDependencyGraph()
-    console.log(graph.edges) // [{ from: 'service-a', to: 'service-b' }]
-    ```
+### 4. 应用层
 
-    依赖图用于：
-    - **循环依赖检测**：如果 A → B → C → A，容器会在 resolve 时抛出循环依赖错误
-    - **启动顺序**：容器按依赖顺序启动服务（被依赖的服务先启动）
-    - **关闭顺序**：容器按 LIFO 顺序关闭（后注册的先关闭），但依赖关系确保被依赖的服务在依赖它的服务之后关闭
-  </Accordion>
-  <Accordion title="优雅关闭">
-    容器管理所有服务的关闭流程：
+**@hile/http**：`Http` 类（Koa + find-my-way）。全局中间件 → 路由匹配 → 路由中间件 → 控制器 → 响应插件链。
 
-    ```typescript
-    // 手动触发关闭
-    await container.shutdown()
-    ```
+支持三种路由注册：手动（`get/post/put/delete/trace/patch/route`）、`defineController`（带 Zod 校验）、文件系统路由（`load`）。
 
-    关闭流程：
-    1. 发出 <code>container:shutdown:start</code> 事件
-    2. 按 LIFO 顺序遍历 <code>shutdownQueues</code>（后注册 shutdown 回调的服务先关闭）
-    3. 对每个服务，逆序执行其注册的所有 shutdown 回调
-    4. 发出 <code>container:shutdown:done</code> 事件
+**@hile/http-next**：`HttpNext` 类。4 层中间件链：static(public) → static(.next) → API 控制器 → Next.js handler。
 
-    如果某个服务的 shutdown 回调抛出错误，容器会记录错误但继续关闭其他服务——不会因为一个服务的关闭失败而阻止其他服务的关闭。
+### 5. 工具层
 
-    容器会循环检查 shutdown 队列，直到所有服务都关闭。这可以处理"关闭期间又有新服务完成启动并注册了 teardown"的竞态场景。
-  </Accordion>
-  <Accordion title="事件系统">
-    容器提供事件监听机制，可以订阅服务的全生命周期事件：
-
-    ```typescript
-    const unsubscribe = container.on((event) => {
-      switch (event.type) {
-        case 'service:init':
-          console.log(`服务 ${event.key} 开始初始化`)
-          break
-        case 'service:ready':
-          console.log(`服务 ${event.key} 就绪，耗时 ${event.durationMs}ms`)
-          break
-        case 'service:error':
-          console.error(`服务 ${event.key} 失败:`, event.error)
-          break
-        case 'container:shutdown:done':
-          console.log(`容器关闭完成，总耗时 ${event.durationMs}ms`)
-          break
-      }
-    })
-
-    // 取消监听
-    unsubscribe()
-    // 或
-    container.off(listener)
-    ```
-  </Accordion>
-  <Accordion title="超时控制">
-    Container 构造函数接受 <code>startTimeoutMs</code> 和 <code>shutdownTimeoutMs</code> 两个超时配置：
-
-    ```typescript
-    const container = new Container({
-      startTimeoutMs: 5000,    // 服务启动超时（5 秒）
-      shutdownTimeoutMs: 3000, // 服务关闭超时（3 秒）
-    })
-    ```
-
-    - 如果服务在 <code>startTimeoutMs</code> 内未完成初始化，<code>loadService</code> 会 reject
-    - 如果 shutdown 回调在 <code>shutdownTimeoutMs</code> 内未完成，容器会继续执行下一个回调
-    - 默认不超时（值为 undefined 时）
-  </Accordion>
-</AccordionGroup>
-
-#### 容器实例
-
-<code>@hile/core</code> 导出一个全局单例容器实例：
-
-```typescript
-import { container } from '@hile/core'
-
-// 这个 container 是全局唯一的
-// 在浏览器环境（或测试环境）可以创建独立实例
-const myContainer = new Container({ startTimeoutMs: 5000 })
-```
-
-<code>defineService</code> 和 <code>loadService</code> 是全局便捷函数，它们操作的是全局单例容器。如果你需要隔离的容器（例如在测试中），可以使用 <code>new Container()</code> 创建独立实例。
-
----
-
-### 2. 集成层（Integration Layer）
-
-集成层包含与外部数据存储系统集成的包，它们都作为容器服务注册到 <code>@hile/core</code> 中。
-
-#### @hile/typeorm——数据库集成
-
-**职责**：创建和管理 TypeORM 的 <code>DataSource</code> 实例。
-
-**工作方式**：
-
-<Accordion title="自动模式（容器服务）">
-  <code>@hile/typeorm</code> 的默认导出一个 <code>defineService</code> 注册。当 CLI 自动加载时（通过 <code>auto_load_packages</code>），它会在容器中注册一个 Symbol-for 服务：
-
-  ```typescript
-  // @hile/typeorm 内部
-  export default defineService(Symbol.for('@hile/typeorm'), async (shutdown) => {
-    const connection = await createDataSource() // 从环境变量读取配置
-    shutdown(() => connection.destroy()) // 注册关闭回调
-    return connection
-  })
-  ```
-
-  **环境变量配置**：
-
-  | 环境变量 | 说明 | 默认值 |
-  |----------|------|--------|
-  | <code>TYPEORM_TYPE</code> | 数据库类型（mysql, postgres, sqlite 等） | 必填 |
-  | <code>TYPEORM_HOST</code> | 数据库主机 | 必填 |
-  | <code>TYPEORM_PORT</code> | 端口 | 必填 |
-  | <code>TYPEORM_USERNAME</code> | 用户名 | 必填 |
-  | <code>TYPEORM_PASSWORD</code> | 密码 | 必填 |
-  | <code>TYPEORM_DATABASE</code> | 数据库名 | 必填 |
-  | <code>TYPEORM_ENTITIES</code> | 实体文件路径（如 <code>dist/entities/*.js</code>） | [] |
-  | <code>TYPEORM_SYNCHRONIZE</code> | 是否自动同步表结构（设为 <code>"true"</code> 开启） | false |
-  | <code>TYPEORM_CHARSET</code> | 字符集 | 可选 |
-  | <code>TYPEORM_ENTITY_PREFIX</code> | 表名前缀 | 可选 |
-
-  <Warning>
-  生产环境下不要开启 <code>TYPEORM_SYNCHRONIZE=true</code>，这可能导致数据丢失。应该使用 migration 管理数据库结构变更。
-  </Warning>
-</Accordion>
-
-<Accordion title="手动模式">
-  你也可以不使用容器，手动创建 DataSource：
-
-  ```typescript
-  import { createDataSource } from '@hile/typeorm'
-
-  const dataSource = await createDataSource({
-    // 手动传入 TypeORM 配置
-    type: 'mysql',
-    host: 'localhost',
-    port: 3306,
-    username: 'root',
-    password: 'secret',
-    database: 'mydb',
-  })
-  ```
-</Accordion>
-
-<Accordion title="事务辅助函数">
-  <code>transaction()</code> 函数封装了 TypeORM 的事务流程，并支持 LIFO 补偿回调：
-
-  ```typescript
-  import { transaction } from '@hile/typeorm'
-
-  const result = await transaction(dataSource, async (runner, rollback) => {
-    const user = await runner.manager.save(User, { name: 'Alice' })
-
-    // 注册补偿回调：如果后续操作失败，撤销已执行的操作
-    rollback(async () => {
-      await runner.manager.delete(User, user.id)
-    })
-
-    const order = await runner.manager.save(Order, {
-      userId: user.id,
-      amount: 100,
-    })
-
-    rollback(async () => {
-      await runner.manager.delete(Order, order.id)
-    })
-
-    return { user, order }
-  })
-  // 如果 transaction 函数整体成功，自动 commit
-  // 如果回调中抛错，自动 rollback 并按 LIFO 顺序执行补偿回调
-  ```
-
-  补偿回调按 LIFO 顺序执行：先撤销 order，再撤销 user。这与操作顺序相反，确保数据一致性。
-</Accordion>
-
-#### @hile/ioredis——Redis 集成
-
-**职责**：创建和管理 ioredis 的 <code>Redis</code> 客户端。
-
-**工作方式**：
-
-<Accordion title="自动模式（容器服务）">
-  与 typeorm 类似，<code>@hile/ioredis</code> 的默认导出一个 <code>defineService</code> 注册：
-
-  ```typescript
-  export default defineService(Symbol.for('@hile/ioredis'), async (shutdown) => {
-    const client = await createRedis()
-    shutdown(() => client.disconnect())
-    return client
-  })
-  ```
-
-  **环境变量配置**：
-
-  | 环境变量 | 说明 | 默认值 |
-  |----------|------|--------|
-  | <code>REDIS_HOST</code> | Redis 主机 | 必填 |
-  | <code>REDIS_PORT</code> | Redis 端口 | 必填 |
-  | <code>REDIS_USERNAME</code> | 用户名 | 可选 |
-  | <code>REDIS_PASSWORD</code> | 密码 | 可选 |
-  | <code>REDIS_DB</code> | 数据库编号 | 0 |
-</Accordion>
-
-<Accordion title="手动模式">
-  ```typescript
-  import { createRedis } from '@hile/ioredis'
-
-  const redis = await createRedis({
-    host: 'localhost',
-    port: 6379,
-    db: 0,
-  })
-  ```
-</Accordion>
-
-#### @hile/cache——类型安全缓存
-
-**职责**：在 Redis 之上提供类型安全的缓存操作层。它依赖 <code>@hile/ioredis</code>（通过容器获取 Redis 客户端）。
-
-**核心概念**：
-
-<code>defineCache(key, fn)</code> 定义缓存规则：
-
-```typescript
-import { defineCache, Cache, RedisCache } from '@hile/cache'
-
-// 定义缓存规则
-// 模板字符串 {id:string} 会被推导为参数类型
-const userCache = defineCache('user:{id:string}:profile', async (params) => {
-  // params.id 的类型是 string（因为模板中声明了 id:string）
-  // 这里通常是从数据库获取数据
-  const data = await db.query('SELECT * FROM users WHERE id = ?', [params.id])
-  return new Cache(data).setExpire(60) // 60 秒过期
-})
-
-// 使用缓存
-const redisCache = new RedisCache('myapp:') // 前缀
-const cache = await redisCache.loadCache(userCache)
-
-// 读取（缓存命中直接返回，未命中则执行 fn 并写入缓存）
-const user = await cache.read({ id: '123' })
-
-// 写入（强制刷新缓存）
-await cache.write({ id: '123' })
-
-// 删除缓存
-await cache.remove({ id: '123' })
-
-// 检查是否存在
-const exists = await cache.has({ id: '123' })
-```
-
-**类型推导**：模板字符串 <code>'user:{id:string}:{page:number}:data'</code> 会自动推导出参数类型 <code>{ id: string, page: number }</code>。支持 <code>string</code>、<code>number</code>、<code>boolean</code> 三种参数类型。
-
-**与 @hile/ioredis 的关系**：<code>RedisCache</code> 在内部调用 <code>loadService(ioredisService)</code> 获取 Redis 客户端。这意味着在使用 <code>RedisCache</code> 之前，<code>@hile/ioredis</code> 服务必须在容器中可用（通过 <code>auto_load_packages</code> 或手动 <code>loadService</code>）。
-
----
-
-### 3. 通信层（Communication Layer）
-
-通信层包含消息通信和微服务相关的包。这一层**可以脱离 <code>@hile/core</code> 容器独立使用**，也可以在 boot 中通过容器集成。
-
-#### 消息通信协议——@hile/message-modem
-
-<code>MessageModem</code> 是一个抽象基类，定义了消息通信的完整协议：
-
-```
-┌─────────────────────────────────────────────────────┐
-│                    MessageModem                      │
-│                   (抽象基类, 不可实例化)              │
-├─────────────────────────────────────────────────────┤
-│  公开方法:                                           │
-│    receive(msg)  →  接收并分发消息                    │
-│                                                      │
-│  受保护方法 (子类可调用):                              │
-│    _send(data, opts?)  →  发送并等待响应 (Promise)    │
-│    _push(data, opts?)  →  发送但不等待响应 (void)     │
-│    _stream(data, opts?) →  发送并获取可读流 (Readable)│
-│    _dispose()         →  清理所有待处理的请求          │
-│                                                      │
-│  抽象方法 (子类必须实现):                              │
-│    abstract post(data)  →  将消息发送到远端           │
-│    abstract exec(data, signal?) →  处理接收到的消息    │
-└─────────────────────────────────────────────────────┘
-```
-
-**消息协议格式**：
-
-```typescript
-interface MessageTransferFormat<T = any> {
-  id: number        // 消息 ID（用于关联请求和响应）
-  mode: MESSAGE_MODEM_TYPE  // REQUEST | RESPONSE | ABORT
-  twoway: boolean   // 是否为双向通信
-  stream?: boolean  // 是否为流式传输
-  data?: T          // 消息数据
-}
-```
-
-**三种通信模式**：
-
-| 模式 | 方法 | 行为 |
-|------|------|------|
-| 双向（请求-响应） | <code>_send()</code> | 发送请求，等待响应。支持超时和中止 |
-| 单向（推送） | <code>_push()</code> | 发送消息，不等待响应。适用于日志、通知等场景 |
-| 流式 | <code>_stream()</code> | 发送请求，以 <code>Readable</code> 流形式接收数据块。适用于大文件传输、实时数据流 |
-
-**错误处理**：message-modem 定义了三类异常：
-
-```typescript
-import { Exception, TimeoutException, AbortException } from '@hile/message-modem'
-
-// Exception — 通用异常（携带 HTTP 风格的 status code 和消息）
-throw new Exception(400, '无效参数')
-
-// TimeoutException — 请求超时（status = "ETIMEDOUT"）
-// 在 _send 中设置了 timeout 选项，超时后自动抛出
-
-// AbortException — 请求被中止（status = "ECONNABORTED"）
-// 通过 AbortSignal 中止请求时抛出
-```
-
-#### 传输层实现
-
-三个包各自实现 <code>MessageModem</code> 的 <code>post()</code> 和 <code>exec()</code> 方法：
-
-<Accordion title="@hile/message-ws — WebSocket 实现">
-  基于 <code>ws</code> 模块，通过 WebSocket 连接传输 JSON 序列化的消息。
-
-  ```typescript
-  import { MessageWs } from '@hile/message-ws'
-  import WebSocket from 'ws'
-
-  // 定义一个 WebSocket 消息处理器
-  class EchoServer extends MessageWs {
-    constructor(ws: WebSocket) {
-      super(ws)
-    }
-
-    // exec 方法处理接收到的请求
-    protected async exec(data: any): Promise<any> {
-      return data // 原样返回
-    }
-  }
-
-  // 客户端使用
-  const ws = new WebSocket('ws://localhost:8080')
-  ws.on('open', async () => {
-    const modem = new EchoServer(ws)
-    const result = await modem._send('hello')
-    console.log(result) // 'hello'
-  })
-  ```
-
-  消息通过 <code>JSON.stringify</code> 序列化，通过 <code>JSON.parse</code> 反序列化。自动绑定 WebSocket 的 <code>message</code> 事件。
-
-  跨包协作：<code>@hile/micro</code> 的 <code>Client</code> 和 <code>Server</code> 都继承自 <code>MessageWs</code>，所以在微服务通信中，WebSocket 是默认传输方式。
-</Accordion>
-
-<Accordion title="@hile/message-ipc — IPC 实现">
-  基于 <code>child_process.fork()</code> 的 IPC 通道。
-
-  ```typescript
-  import { MessageIpc } from '@hile/message-ipc'
-  import { fork } from 'node:child_process'
-
-  // 子进程中的处理器
-  class WorkerIpc extends MessageIpc {
-    protected async exec(data: any): Promise<any> {
-      return { received: data }
-    }
-  }
-
-  // 父进程中
-  const child = fork('./worker.js')
-  const ipc = new WorkerIpc(child)
-  const result = await ipc._send('hello')
-  console.log(result) // { received: 'hello' }
-
-  // 不需要显式通道：在子进程中可以直接 new MessageIpcChild() 而不传参数
-  // 它会自动使用 process 作为通道
-  ```
-
-  构造时传入 <code>ChildProcess</code> 实例（父进程端）或不传参数（子进程端，自动绑定 process）。自动绑定 <code>process.on('message')</code> 事件。
-
-  与 <code>@hile/message-ws</code> 的 API 完全相同——唯一的区别是传输层从 WebSocket 换成了 Node.js IPC 通道。这意味着你可以在不改变业务逻辑的情况下切换通信方式。
-</Accordion>
-
-<Accordion title="@hile/message-worker-thread — Worker Threads 实现">
-  基于 <code>worker_threads</code> 模块。
-
-  ```typescript
-  import { MessageWorkerThread } from '@hile/message-worker-thread'
-  import { Worker } from 'node:worker_threads'
-
-  // 主线程
-  const worker = new Worker('./worker.js')
-  const wt = new MessageWorkerThread(worker)
-  const result = await wt._send('ping')
-  console.log(result) // 'pong'
-  wt.dispose()
-  await worker.terminate()
-
-  // Worker 线程（worker.js）
-  import { MessageWorkerThread } from '@hile/message-worker-thread'
-
-  class MyWorker extends MessageWorkerThread {
-    protected async exec(data: any): Promise<any> {
-      return 'pong'
-    }
-  }
-  const handler = new MyWorker() // 不传参数，自动绑定 parentPort
-  ```
-
-  构造时传入 <code>Worker</code> 或 <code>MessagePort</code> 实例（主线程端），或不传参数（Worker 线程端，自动绑定 <code>parentPort</code>）。通过 <code>port.postMessage()</code> 传输消息。
-</Accordion>
-
-#### 消息路由——@hile/message-loader
-
-**职责**：从文件系统加载消息处理器，并根据 URL 路径进行分发。它起到了"消息路由器"的作用。
-
-<code>@hile/message-loader</code> 继承自 <code>@hile/loader</code> 的抽象 <code>Loader</code> 类：
-
-```
-┌──────────────────────────────┐
-│     @hile/loader.Loader      │  ← 抽象基类
-│  (抽象类)                     │
-│  - bind(file, module): void  │  ← 子类实现
-│  - load(directory): Promise  │  ← 批量加载
-└──────────────┬───────────────┘
-               │ 继承
-┌──────────────▼───────────────┐
-│ @hile/message-loader         │
-│   .MessageLoader             │
-│  - bind(): 注册到 rou3 路由    │
-│  - dispatch(): 分发消息        │
-│  - register(): 手动注册        │
-└──────────────────────────────┘
-```
-
-**文件系统路由**：在目录中放置 <code>*.msg.ts</code> 文件，<code>default export</code> 一个 <code>defineMessage(fn)</code> 的返回值：
-
-```typescript
-// src/messages/hello.msg.ts
-import { defineMessage } from '@hile/message-loader'
-
-export default defineMessage(async ({ params, data, url }) => {
-  return { message: `Hello ${data.name}!` }
-})
-```
-
-加载后，可以通过 <code>dispatch()</code> 分发：
-
-```typescript
-const loader = new MessageLoader({ prefix: '/-', suffix: 'msg' })
-await loader.load('./src/messages')
-
-// 分发消息（URL 自动从文件路径编译）
-const result = await loader.dispatch('/-/hello', { name: 'World' })
-console.log(result) // { message: 'Hello World!' }
-```
-
-<code>MessageLoader</code> 是 <code>@hile/micro</code> 中 <code>Server</code> 的基类，这意味着微服务服务端天然具备消息路由能力。
-
-#### @hile/micro 系列——微服务框架
-
-这是最复杂的一组包，它构建了完整的微服务通信体系：
-
-<Accordion title="Server — WebSocket 服务端">
-  <code>Server</code> 继承 <code>MessageLoader</code>，添加了 WebSocket 服务端功能：
-
-  ```typescript
-  import { Server } from '@hile/micro'
-
-  const server = new Server('my-service', {
-    advertiseHost: '192.168.1.100', // 宣告给其他节点的地址
-    suffix: 'msg',
-    prefix: '/-',
-  })
-
-  // 手动注册消息处理器
-  server.register('/-/hello', async ({ data }) => {
-    return { greeting: `Hello ${data.name}` }
-  })
-
-  // 从文件系统加载消息处理器
-  await server.load('./src/messages')
-
-  // 启动 WebSocket 服务端
-  const teardown = await server.listen(9876)
-
-  // 关闭时
-  await teardown()
-  ```
-
-  Server 的核心功能：
-  1. **WebSocket 服务端**：监听端口，接受客户端连接
-  2. **消息路由**：从 <code>MessageLoader</code> 继承，支持文件和手动注册
-  3. **客户端管理**：维护连接池（<code>clients</code> Map），连接/断开事件
-  4. **出站连接**：<code>connect(host, port)</code> 方法主动连接到其他 Server
-
-  **连接握手过程**：客户端连接到服务端时，URL 路径携带宣告信息：
-  ```
-  ws://host:port/{advertiseHost}/{advertisePort}/{namespace}
-  ```
-  服务端通过路径解析出客户端的地址和 namespace，存储到客户端列表中。
-
-  Server 还可以通过 <code>handleUpgrade()</code> 方法将 HTTP 升级为 WebSocket 连接，方便与 HTTP 服务共享端口。
-</Accordion>
-
-<Accordion title="Client — WebSocket 客户端">
-  <code>Client</code> 继承 <code>MessageWs</code>，添加了心跳检测和事件通知：
-
-  ```typescript
-  import { Client } from '@hile/micro'
-
-  // Client 通常由 Server 内部创建，但也可以手动实例化
-
-  // 主要方法
-  client.request(url, data, options?) // 发送请求并等待响应
-  client.push(url, data, options?)    // 推送消息（不等待响应）
-  client.stream(url, data, options?)  // 流式请求
-  client.dispose()                    // 关闭连接
-  ```
-
-  **心跳机制**：
-  - 每 <code>MICRO_HEARTBEAT_INTERVAL</code>（默认 10 秒）发送一次心跳
-  - 如果 <code>MICRO_HEARTBEAT_TIMEOUT</code>（默认 20 秒）内未收到心跳响应，标记为离线
-  - 每 <code>MICRO_HEARTBEAT_CHECK_INTERVAL</code>（默认 5 秒）检查一次心跳状态
-  - 环境变量可自定义这些间隔
-
-  **事件**：
-  - <code>connect</code>：连接建立
-  - <code>disconnect</code>：连接断开
-  - 事件通过 <code>EventEmitter</code> 发出
-</Accordion>
-
-<Accordion title="Registry — 注册中心">
-  <code>Registry</code> 继承 <code>Server</code>，是微服务体系中的注册中心：
-
-  ```bash
-  # 通过 CLI 启动注册中心
-  hile registry --port 9876 --host 127.0.0.1
-  ```
-
-  **Registry 的功能**：
-  1. **Namespace 管理**：客户端连接时携带 namespace，Registry 按 namespace 分组存储客户端地址
-  2. **服务发现**：<code>/-/find</code> 处理器返回指定 namespace 下的随机客户端地址
-  3. **Topic 发布/订阅**：完整的 <code>declare</code> / <code>undeclare</code> / <code>subscribe</code> / <code>unsubscribe</code> 协议
-  4. **Topic 更新推送**：发布者调用 <code>/-/topic/update</code>，Registry 推送给所有订阅者
-  5. **配置文件监听**：<code>watchEnvFile()</code> 监听 <code>~/.registry/configs/</code> 目录下的 YAML 文件变更
-
-  **Registry 配置管理**：
-  ```bash
-  # 查看所有配置
-  hile registry configs
-
-  # 查看某个 namespace 的配置
-  hile registry configs get my-svc
-
-  # 设置配置项
-  hile registry configs set my-svc port=8080
-
-  # 删除配置
-  hile registry configs del my-svc port
-
-  # 跳过确认删除整个 namespace
-  hile registry configs del my-svc -y
-  ```
-
-  配置存储在 <code>~/.registry/configs/&lt;ns&gt;.config.yaml</code> 文件中。Registry 监听文件变更，当文件被修改时自动更新并推送变更给订阅者。
-</Accordion>
-
-<Accordion title="Application — 集成客户端">
-  <code>Application</code> 继承 <code>Server</code>，是微服务节点的完整实现。它将 Registry 客户端集成到 Server 中，提供：
-
-  ```typescript
-  import { Application } from '@hile/micro'
-
-  const app = new Application({
-    namespace: 'user-service',  // 服务所属 namespace
-    registry: {                  // Registry 地址
-      host: '127.0.0.1',
-      port: 9876,
-    },
-    advertiseHost: '192.168.1.100', // 本机宣告地址
-    registryLookupTimeoutMs: 10000, // 服务发现超时
-    requestTimeoutMs: 30000,        // 请求超时
-  })
-
-  // 1. 启动服务（自动连接 Registry）
-  const teardown = await app.listen(0) // 随机端口
-
-  // 2. 调用其他服务
-  const result = await app.call('order-service', '/-/createOrder', {
-    userId: 1,
-    items: [],
-  })
-
-  // 3. 流式调用
-  const stream = await app.stream('data-service', '/-/largeFile', { fileId: 123 })
-
-  // 4. 发布 topic
-  const publisher = await app.publish('config-update', { featureX: true })
-  await publisher.update({ featureX: false }) // 更新
-  await publisher.unpublish()                 // 取消发布
-
-  // 5. 订阅 topic
-  const unsubscribe = await app.subscribe('config-update', (data) => {
-    console.log('配置更新:', data)
-  })
-  ```
-
-  **Application 的核心能力**：
-  1. **自动连接 Registry**：启动后自动连接 Registry 并注册本服务
-  2. **服务发现**：<code>get(namespace)</code> 从 Registry 查找指定 namespace 下的服务地址并建立连接
-  3. **断路器（Circuit Breaker）**：连续失败的节点被暂时隔离（默认 30 秒冷却期）
-  4. **重试机制**：<code>call()</code> 支持重试参数（默认 1 次重试）
-  5. **缓存降级**：Registry 不可用时，使用上一次成功的节点地址
-  6. **健康检查**：注册 <code>/-/health</code> 处理器
-  7. **Topic 管理**：完整的发布/订阅/更新/取消发布能力
-  8. **自动重连**：与 Registry 断开后自动重连（3 秒间隔）
-</Accordion>
-
-#### @hile/micro-dynamic-configs——动态配置
-
-<code>MicroDynamicConfigsServer</code> 将 Redis 持久化、Registry topic 发布/订阅、Zod schema 校验结合在一起：
-
-```typescript
-import { MicroDynamicConfigsServer } from '@hile/micro-dynamic-configs'
-import { Application } from '@hile/micro'
-import Redis from 'ioredis'
-import { z } from 'zod'
-
-const configSchema = z.object({
-  featureX: z.boolean().default(false),
-  maxRetries: z.number().min(1).max(10).default(3),
-  allowedOrigins: z.array(z.string()).default([]),
-})
-
-const app = new Application({
-  namespace: 'config-service',
-  registry: { host: '127.0.0.1', port: 9876 },
-})
-
-const redis = new Redis({ host: 'localhost' })
-
-const configServer = new MicroDynamicConfigsServer({
-  app,
-  redis,
-  schema: configSchema,
-  redis_key: 'config:my-service',
-})
-
-// 初始化：从 Redis 加载已有配置，发布到 Registry
-await configServer.initialize()
-
-// 读取当前配置（类型安全）
-console.log(configServer.value.featureX)
-
-// 修改配置（自动写入 Redis + 推送到 Registry）
-await configServer.save({ featureX: true })
-
-// 监听特定字段变更
-configServer.on('change:featureX', (newValue, oldValue) => {
-  console.log(`featureX 从 ${oldValue} 变更为 ${newValue}`)
-})
-```
-
-**数据流**：
-```
-运维/管理端                  MicroDynamicConfigsServer          Registry (注册中心)
-    │                              │                                │
-    │  save({ featureX: true })    │                                │
-    │─────────────────────────────>│                                │
-    │                              │  Redis.set('config:xx', ...)   │
-    │                              │────────────────> Redis 持久化  │
-    │                              │                                │
-    │                              │  app.publish('topic', value)   │
-    │                              │──────────────────────────────>│  Registry 推送
-    │                              │                                │  给所有订阅者
-    │                              │  emit('change:featureX', ...)  │
-    │                              │───> 本地事件通知              │
-```
-
----
-
-### 4. 应用层（Application Layer）
-
-应用层包含直接面向用户请求的包：HTTP 服务和 Next.js 集成。
-
-#### @hile/http——HTTP 服务框架
-
-**请求处理管线**：
-
-```
-客户端请求
-    │
-    ▼
-┌──────────────────────┐
-│  全局中间件链         │  ← http.use() 注册的中间件
-│  (middleware 1)      │
-│  (middleware 2)      │
-│  ...                 │
-└──────────┬───────────┘
-           │
-           ▼
-┌──────────────────────┐
-│  find-my-way 路由器   │  ← 根据 method + path 匹配
-│  找到对应的路由处理器   │
-└──────────┬───────────┘
-           │
-           ▼
-┌──────────────────────┐
-│  路由中间件链          │  ← defineController 中注册的中间件
-│  (校验中间件)          │     内置 Zod 校验
-│  (控制器函数)          │
-└──────────┬───────────┘
-           │
-           ▼
-┌──────────────────────┐
-│  响应插件链           │  ← defineResponsePlugin 注册的插件
-│  (plugin 1)          │     可修改返回结果
-│  (plugin 2)          │
-│  ...                 │
-└──────────┬───────────┘
-           │
-           ▼
-      返回响应给客户端
-```
-
-**三种路由注册方式**：
-
-```typescript
-import { Http } from '@hile/http'
-
-const http = new Http({ port: 3000 })
-
-// 方式 1：手动路由
-http.get('/hello', async (ctx) => { ctx.body = 'world' })
-http.post('/users', async (ctx) => { ctx.body = 'created' })
-
-// 方式 2：使用 defineController（支持 Zod 校验）
-import { defineController, createControllerMetadata } from '@hile/http'
-import { z } from 'zod'
-
-export default defineController(
-  createControllerMetadata({
-    method: 'GET',
-    middlewares: [],
-    schema: {
-      query: z.object({ page: z.coerce.number().default(1) }),
-      params: z.object({}),
-      body: z.object({}),
-    },
-  }),
-  async (ctx) => {
-    // ctx.query 现在有类型推导
-    return { page: ctx.query.page }
-  },
-)
-
-// 方式 3：文件系统路由
-await http.load('./src/controllers', {
-  suffix: 'controller',
-  prefix: '/api',
-})
-```
-
-**文件系统路由映射规则**：
-
-| 文件路径 | 编译后的路由路径 | 最终 URL（prefix: /api） |
-|----------|---------|---------|
-| <code>src/controllers/hello.controller.ts</code> | <code>/hello</code> | <code>/api/hello</code> |
-| <code>src/controllers/users/index.controller.ts</code> | <code>/users</code>（defaultSuffix: /index） | <code>/api/users</code> |
-| <code>src/controllers/users/[id].controller.ts</code> | <code>/users/:id</code> | <code>/api/users/:id</code> |
-| <code>src/controllers/users/[id]/posts.controller.ts</code> | <code>/users/:id/posts</code> | <code>/api/users/:id/posts</code> |
-
-**Zod 校验中间件**：<code>defineController</code> 支持通过 <code>createControllerMetadata</code> 传入 Zod schema，自动校验 <code>query</code>、<code>params</code>、<code>body</code>：
-
-```typescript
-import { z } from 'zod'
-
-const getUsers = defineController(
-  createControllerMetadata({
-    method: 'GET',
-    schema: {
-      query: z.object({
-        page: z.coerce.number().min(1).default(1),
-        limit: z.coerce.number().min(1).max(100).default(20),
-      }),
-    },
-  }),
-  async (ctx) => {
-    // 校验失败会自动返回 400 错误
-    return { users: [], page: ctx.query.page }
-  },
-)
-```
-
-**响应插件链**：通过 <code>defineResponsePlugin</code> 注册全局响应处理器，在控制器返回结果后对响应进行后处理：
-
-```typescript
-import { defineResponsePlugin } from '@hile/http'
-
-// 所有响应都包装在 { code, data } 中
-defineResponsePlugin(async (ctx, result, next) => {
-  if (result !== undefined) {
-    return await next({ code: 0, data: result, message: 'success' })
-  }
-  return await next(result)
-})
-```
-
-#### @hile/http-next——Next.js 桥接
-
-**架构原理**：<code>HttpNext</code> 将 Next.js 作为 Koa 中间件的最后一环，实现了 API 路由和页面路由共享同一端口。
-
-**请求处理顺序**：
-
-```
-客户端请求 → Koa 全局中间件 → HttpNext 静态资源中间件
-  → 加载 API 控制器路由（prefix: "/-"）
-  → Next.js 处理器（兜底）
-```
-
-具体来说，<code>HttpNext.start()</code> 内部执行的是：
-
-```typescript
-// 1. 注册静态资源中间件
-http.use(serveStatic('.next/static'))
-
-// 2. 加载 API 控制器（从 src/controllers/）
-await http.load(controllerDirectory, { prefix: '/-', ... })
-
-// 3. 在 http.listen 回调中创建 NextServer 并注册
-http.listen(async (server) => {
-  const app = NextServer({ dev, httpServer: server, ... })
-  await app.prepare()
-  const handler = app.getRequestHandler()
-  http.use(async (ctx) => {
-    ctx.respond = false     // 让 Koa 不处理响应
-    ctx.status = 200        // Koa 默认 404，next 会正确处理
-    await handler(ctx.req, ctx.res)  // 交给 Next.js 处理
-  })
-})
-```
-
-**为什么 API 路由要用 <code>/-</code> 前缀？** Next.js 会基于 <code>app/</code> 目录生成页面路由，如果 API 路由没有前缀，可能出现路径冲突（例如 <code>/about</code> 既可能是 API 路由又是 Next.js 页面路由）。使用 <code>/-/</code> 前缀可以明确区分：<code>/-/users</code> 走 API，<code>/users</code> 走 Next.js 页面。
-
-**配置详解**：
-
-```typescript
-import { HttpNext } from '@hile/http-next'
-
-const app = new HttpNext({
-  // HTTP 配置
-  port: 3000,
-
-  // 项目根目录（默认为 process.cwd()）
-  cwd: '/path/to/project',
-
-  // 静态资源目录（可选，支持数组配置多个）
-  publicPath: ['public'],
-
-  // API 控制器目录（相对于 src 或 dist，默认为 "controllers"）
-  controllerDirectory: 'controllers',
-
-  // API 路由前缀（默认为 "/-"）
-  controllerPrefix: '/-',
-
-  // 控制器文件后缀（默认为 "controller"）
-  controllerSuffix: 'controller',
-
-  // 特殊控制器区域（额外的控制器目录，使用不同前缀）
-  specialControllers: [
-    { directory: 'admin-controllers', prefix: '/admin' },
-  ],
-
-  // .next 构建产物目录（默认为项目根目录下的 .next）
-  nextArtifactsDir: '.next',
-})
-
-app.use(async (ctx, next) => {
-  const start = Date.now()
-  await next()
-  console.log(`${ctx.method} ${ctx.url} ${Date.now() - start}ms`)
-})
-
-await app.start()
-```
-
----
-
-### 5. 工具层（Tool Layer）
-
-工具层包含支持开发流程的辅助包。
-
-#### @hile/cli—命令行启动器
-
-**职责**：提供 <code>hile</code> 命令行工具，负责启动服务和管理注册中心。
-
-**启动流程详解**：
-
-```
-hile start --dev
-    │
-    ├── 1. 加载 --env-file 文件
-    │      (process.loadEnvFile)
-    │
-    ├── 2. 设置 NODE_ENV
-    │      开发模式：NODE_ENV=development
-    │      生产模式：NODE_ENV=production
-    │
-    ├── 3. 开发模式订阅容器事件日志
-    │      (container.on → 彩色日志输出)
-    │
-    ├── 4. 读取 package.json
-    │      查找 hile.auto_load_packages
-    │      → 自动加载 @hile/typeorm 等服务
-    │
-    ├── 5. 扫描 boot 文件
-    │      开发模式：glob src/**/*.boot.ts
-    │      生产模式：glob dist/**/*.boot.js
-    │
-    ├── 6. 加载并解析所有 boot 文件
-    │      → 对每个 boot 文件执行 loadService
-    │      → boot 文件中的 defineService 被触发
-    │      → 服务开始初始化
-    │
-    └── 7. 注册退出钩子
-           → 进程退出时执行 container.shutdown()
-```
-
-**boot 文件示例**：
-
-```typescript
-// src/services/http.boot.ts
-import { defineService } from '@hile/core'
-import { Http } from '@hile/http'
-
-export default defineService('http', async (shutdown) => {
-  const http = new Http({ port: 3000 })
-  // ... 配置路由
-
-  const close = await http.listen()
-  shutdown(close) // 注册优雅关闭
-
-  return http
-})
-```
-
-**命令行参考**：
-
-```
-hile start [name]               启动服务
-  --dev, -d                     开发模式
-  --silent, -s                  静默模式（不输出容器事件日志）
-  --env-file, -e <path>         加载 env 文件（可多次指定）
-
-hile registry                   启动注册中心
-  --port <port>                 注册中心端口（默认 9876）
-  --host <host>                 注册中心主机（默认 127.0.0.1）
-
-hile registry configs           管理注册中心配置
-  get <namespace>               查看配置
-  set <namespace> <key>=<value> 设置配置项
-  del <namespace> [key]         删除配置
-
-hile -v                         查看版本
-hile -h                         查看帮助
-```
-
-#### @hile/loader——文件系统加载器抽象
-
-<code>Loader</code> 是一个抽象基类，提供通用的"从文件系统加载模块"功能：
-
-```typescript
-export abstract class Loader<TFile, TOptions> {
-  // 子类实现：将文件内容绑定到系统中
-  protected abstract bind(file: ScannedFile, module: TFile): (() => void) | void
-
-  // 批量从目录加载
-  async load(directory: string): Promise<() => void>
-}
-```
-
-它提供了：
-
-1. **目录扫描**：<code>scanDirectory(directory, options)</code> - 按后缀模式扫描目录
-2. **路径编译**：<code>compileRoutePath(path, options)</code> - 将文件路径编译为 URL 路径
-3. **路由路径转换**：<code>toRouterPath(path)</code> - 将 <code>[param]</code> 转换为 <code>:param</code>
-4. **路径规范化**：<code>normalizePath(path)</code> - 反斜杠转正斜杠、移除括号内容
-
-<code>@hile/http</code> 的 <code>Loader</code> 和 <code>@hile/message-loader</code> 都使用了这些工具函数。
-
-#### @hile/logger——结构化日志
-
-**职责**：基于 pino 的日志服务。
-
-```typescript
-import { createLogger } from '@hile/logger'
-
-// 创建日志器
-const logger = createLogger({
-  level: 'info',      // 日志级别
-  pretty: true,       // 开发环境可读格式（生产环境自动输出 JSON）
-  redact: ['password', 'secret'], // 脱敏字段
-})
-
-logger.info('服务启动成功')
-logger.error({ err }, '数据库连接失败')
-```
-
-默认导出是一个 <code>defineService</code> 注册：
-
-```typescript
-// 自动注册到容器
-import logger from '@hile/logger'
-// 等同于 defineService(Symbol.for('@hile/logger'), ...)
-// 注册了一个 flush 关闭回调
-```
-
-#### @hile/schedule——定时任务
-
-**职责**：基于 node-schedule 的定时任务管理器。
-
-```typescript
-import { Scheduler, defineJob } from '@hile/schedule'
-
-const scheduler = new Scheduler()
-
-// 方式 1：手动添加
-scheduler.add('daily-report', '0 8 * * *', async () => {
-  console.log('生成日报表...')
-})
-
-scheduler.add('delayed-task', { delay: 5000 }, async () => {
-  console.log('5 秒后执行')
-})
-
-// 方式 2：文件系统加载
-// src/tasks/report.schedule.ts
-export default defineJob('0 8 * * *', async () => {
-  console.log('每天 8 点执行')
-})
-
-await scheduler.load('./src/tasks', { suffix: 'schedule' })
-
-// 管理
-scheduler.remove('daily-report')  // 移除任务
-scheduler.stop()                  // 停止所有任务
-scheduler.getJobs()               // 获取所有任务信息
-```
-
-**任务文件约定**：
-- 文件名后缀：<code>*.schedule.ts</code>（可自定义）
-- 默认导出：<code>defineJob(expression, handler)</code> 的返回值
-- <code>expression</code> 可以是 cron 表达式字符串或 <code>{ delay: number }</code> 对象
-
-**支持的 cron 格式**：node-schedule 支持标准的 cron 格式：<code>* * * * *</code>（分 时 日 月 周）
-
-#### @hile/model——业务模型层
-
-**职责**：将业务逻辑从控制器中分离出来，形成可复用的 Model 层。
-
-**核心概念**：Model 是"有输入、有输出、可包含中间件管道"的业务逻辑单元。
-
-```typescript
-import { defineModel, loadModel } from '@hile/model'
-
-// 最简单的 Model
-const greetModel = defineModel(async (input: { name: string }) => {
-  return { greeting: `Hello ${input.name}!` }
-})
-
-// 使用
-const result = await loadModel(greetModel, { name: 'World' })
-console.log(result) // { greeting: 'Hello World!' }
-```
-
-**带依赖注入的 Model**：
-
-```typescript
-import { defineModel, loadModel } from '@hile/model'
-import typeormService from '@hile/typeorm'
-
-const userModel = defineModel({
-  services: [typeormService] as const, // 容器服务依赖
-  async main([db], input: { id: number }) {
-    const user = await db.query('SELECT * FROM users WHERE id = ?', [input.id])
-    return user
-  },
-})
-```
-
-**带 Pipeline 中间件的 Model**：
-
-```typescript
-import { defineModel, Pipeline, PipelineContext } from '@hile/model'
-
-// 定义校验中间件
-const validateInput: PipelineMiddleware = async (ctx, next) => {
-  if (!ctx.args.userId) throw new Error('userId 必填')
-  await next()
-}
-
-// 定义日志中间件
-const logExecution: PipelineMiddleware = async (ctx, next) => {
-  const start = Date.now()
-  await next()
-  console.log(`执行耗时: ${Date.now() - start}ms`)
-}
-
-const userModel = defineModel({
-  pipelines: [validateInput, logExecution],
-  async main(input: { userId: number }) {
-    // 经过中间件处理后执行
-    return await db.query('SELECT * FROM users WHERE id = ?', [input.userId])
-  },
-})
-```
-
-**Model 使用场景**：Model 层适合放置可复用的业务逻辑，控制器负责"接收请求、调用 Model、返回响应"，Model 负责"执行业务逻辑"。这种分离使业务逻辑可以被不同控制器复用，也更容易测试。
-
-#### create-hile——项目脚手架
-
-**职责**：交互式创建 Hile 项目。
-
-```bash
-# 使用 npm
-npm create hile create my-app
-
-# 或使用 npx
-npx create-hile create my-app
-```
-
-**内置模板选择**：
-
-| 模板名称 | 说明 | 适用场景 |
-|----------|------|----------|
-| <code>default</code> | 默认项目模板 | 通用 Hile 项目 |
-| <code>next</code> | Next.js 全栈模板 | 含 Next.js 页面的全栈应用 |
-| <code>micro-http</code> | Micro + HTTP 模板 | 微服务 HTTP 节点 |
-| <code>micro</code> | Micro 独立服务模板 | 纯微服务节点 |
-| <code>micro-http-next</code> | Next.js + Micro + HTTP | 全栈 + 微服务 |
-| <code>monorepo</code> | Monorepo 模板（pnpm workspace） | 大型项目 |
-
-**交互流程**：脚手架会先让你选择模板，然后询问是否安装依赖。它会将模板文件复制到目标目录，将 <code>_env</code>、<code>_env.prod</code>、<code>_gitignore</code> 等"避名文件"重命名为正确的名称。
-
----
+| 包 | 说明 |
+|---|------|
+| `@hile/cli` | `hile start` / `hile registry` 命令 |
+| `@hile/loader` | `Loader` 抽象基类 + `scanDirectory` / `compileRoutePath` 工具函数 |
+| `@hile/logger` | 基于 pino 的 `createLogger()` + 容器模式 |
+| `@hile/schedule` | 基于 node-schedule 的 `Scheduler` + `defineJob` |
+| `@hile/model` | `defineModel` / `loadModel` + Pipeline 中间件 |
+| `create-hile` | 6 种模板的交互式脚手架 |
 
 ## 包间协作方式
 
-Hile 的包间协作主要有三种方式：
+### 方式 1：通过容器协作
 
-### 方式 1：通过服务容器协作（@hile/core）
-
-通过 <code>defineService</code> 注册到容器，其他服务通过 <code>loadService</code> 使用：
+集成包通过 `defineService` 注册到容器，其他代码通过 `loadService` 获取：
 
 ```
-@hile/typeorm ──→  register via defineService ──→  @hile/core 容器
-@hile/ioredis  ──→  register via defineService ──→  @hile/core 容器
-                                                      │
-                 业务 Controller  ──→  loadService(typeormService)
-                 业务 Controller  ──→  loadService(ioredisService)
+@hile/typeorm → defineService → Container
+                                    ↑
+业务代码 → loadService(typeormService)
 ```
 
 ### 方式 2：通过类继承协作
 
-消息通信体系通过类继承实现抽象与实现的分离：
+消息通信体系通过抽象类 + 继承实现多态：
 
 ```
-@hile/message-modem.MessageModem  (抽象基类)
-  ├── @hile/message-ws.MessageWs  (WebSocket 实现)
-  │     └── @hile/micro.Client    (微服务客户端)
-  ├── @hile/message-ipc.MessageIpc  (IPC 实现)
-  └── @hile/message-worker-thread.MessageWorkerThread  (Worker 实现)
-
-@hile/loader.Loader  (抽象基类)
-  ├── @hile/http.Loader  (HTTP 路由加载器)
-  └── @hile/message-loader.MessageLoader  (消息路由加载器)
-        └── @hile/micro.Server  (微服务服务端)
-              └── @hile/micro.Registry  (注册中心)
-              └── @hile/micro.Application  (微服务应用节点)
+MessageModem → MessageWs → Client
+Loader → MessageLoader → Server → Registry / Application
 ```
 
 ### 方式 3：通过函数调用协作
 
-工具类和辅助函数独立存在，通过直接函数调用来协作：
-
-```
-@hile/loader.compileRoutePath()  ──→  被 @hile/http.Loader 和 @hile/message-loader 使用
-@hile/loader.scanDirectory()     ──→  被 @hile/schedule.Scheduler.load() 使用
-@hile/micro-dynamic-configs      ──→  依赖 @hile/micro.Application 和 ioredis
-@hile/cache.RedisCache           ──→  内部 loadService(ioredisService) 获取 Redis 客户端
-```
-
----
+工具函数通过直接调用协作：`compileRoutePath()` 被 `@hile/http` 和 `@hile/message-loader` 共同使用。
 
 ## 总结
 
-Hile 的四层架构设计遵循了**关注点分离**原则：
-
 | 层级 | 职责 | 典型包 |
 |------|------|--------|
-| **基础层** | 服务生命周期管理、依赖注入 | <code>@hile/core</code> |
-| **集成层** | 外部系统集成（数据库、缓存） | <code>@hile/typeorm</code>, <code>@hile/ioredis</code>, <code>@hile/cache</code> |
-| **通信层** | 进程间通信、服务发现、配置分发 | message-* 系列, <code>@hile/micro</code> 系列 |
-| **应用层** | 用户请求处理、页面渲染 | <code>@hile/http</code>, <code>@hile/http-next</code> |
-| **工具层** | 命令行、抽象加载器、日志、定时任务、业务模型 | <code>@hile/cli</code>, <code>@hile/loader</code>, <code>@hile/logger</code>, <code>@hile/schedule</code>, <code>@hile/model</code>, <code>create-hile</code> |
-
-这种分层架构让你可以根据项目需要，选择合适的包组合，不必背负不需要的依赖。
+| **基础层** | 服务生命周期、依赖注入 | `@hile/core` |
+| **集成层** | 外部系统集成 | `@hile/typeorm`, `@hile/ioredis`, `@hile/cache` |
+| **通信层** | 进程间通信、服务发现 | message-* 系列, `@hile/micro` 系列 |
+| **应用层** | HTTP 请求处理、SSR | `@hile/http`, `@hile/http-next` |
+| **工具层** | CLI、加载器、日志、定时、模型 | `@hile/cli`, `@hile/loader`, `@hile/logger`, `@hile/schedule`, `@hile/model`, `create-hile` |
 
 ## 下一步
 
@@ -1383,7 +152,7 @@ Hile 的四层架构设计遵循了**关注点分离**原则：
     从零搭建一个可运行的 Hile 项目
   </Card>
   <Card title="服务容器" icon="cube" href="/fundamentals/container">
-    深入学习 defineService、loadService 和依赖图
+    深入学习 Container API 和依赖图
   </Card>
   <Card title="HTTP 管线" icon="server" href="/fundamentals/http-pipeline">
     理解 HTTP 请求的完整处理流程

@@ -7,592 +7,323 @@ import { Accordion, AccordionGroup } from '@mintlify/components';
 
 ## 服务的完整生命周期
 
-一个服务从"被注册"到"被销毁"会经历一系列阶段。理解这些阶段能帮你更好地管理资源、排查问题和编写可靠的代码。
-
-### 阶段总览
+一个服务从"被注册"到"被销毁"会经历一系列阶段：
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    defineService                      │
-│  注册到容器（此时只是登记，不执行工厂函数）              │
-└─────────────────────┬───────────────────────────────┘
-                      │
-                      ▼  loadService 首次调用
-┌─────────────────────────────────────────────────────┐
-│                    init                                │
-│  工厂函数开始执行，状态码 = 0（运行中）                │
-│  AsyncLocalStorage 记录当前服务 key                   │
-│  发射事件：service:init                               │
-└─────────────────────┬───────────────────────────────┘
-                      │
-          ┌───────────┼───────────┐
-          │ 成功      │           │ 失败
-          ▼           │           ▼
-┌─────────────────┐   │   ┌──────────────────────────┐
-│     ready         │   │   │      stopping              │
-│  状态码 = 1       │   │   │  状态码 = -1               │
-│  结果已缓存        │   │   │  错误已记录               │
-│  发射事件：ready   │   │   │  立即执行已注册的 teardown │
-│  通知等待队列      │   │   │  发射事件：error           │
-└────────┬────────┘   │   └───────────┬────────────────┘
-         │            │               │
-         │            │               ▼
-         │            │   ┌──────────────────────────┐
-         │            │   │      stopped               │
-         │            │   │  teardown 执行完毕        │
-         │            │   │  通知等待队列（全部 reject）│
-         │            │   └──────────────────────────┘
-         │            │
-         ▼            ▼
-┌─────────────────────────────────────────────────────┐
-│                 container.shutdown()                  │
-│  按 LIFO 顺序遍历所有服务                              │
-│  对每个服务：                                         │
-│    lifecycle → stopping                               │
-│    执行所有 teardown（同服务内也是 LIFO）              │
-│    lifecycle → stopped                                │
-└─────────────────────────────────────────────────────┘
+defineService(key, fn)
+  │  注册到容器（只登记，不执行）
+  ▼
+loadService(props) 首次调用
+  │
+  ▼
+┌──────────────┐
+│  init         │  lifecycle = 'init', status = 0
+│  工厂函数执行  │  发射 service:init
+└───┬──────┬───┘
+    │      │
+ 成功│      │失败
+    ▼      ▼
+┌────────┐ ┌──────────┐
+│ ready   │ │ stopping  │  lifecycle = 'stopping'
+│status=1 │ │ 执行已有  │  发射 service:error
+│缓存结果 │ │ teardown  │
+│通知队列 │ └────┬─────┘
+└───┬────┘      ▼
+    │      ┌──────────┐
+    │      │ stopped   │  通知队列(reject)
+    │      └──────────┘
+    ▼
+container.shutdown()
+    │
+    ▼
+┌──────────┐
+│ stopping  │  按 LIFO 顺序执行所有 teardown
+│(每个服务)│  发射 service:shutdown:start/done/error
+└────┬─────┘
+     ▼
+┌──────────┐
+│ stopped   │  lifecycle = 'stopped'
+└──────────┘
 ```
 
-### 阶段详解
+## 阶段详解
 
-#### 1. init（初始化中）
+### 1. init（初始化中）
 
-当第一次调用 `loadService(serviceProps)` 时，服务进入 init 阶段。在这个阶段：
+第一次调用 `loadService` 时进入 init 阶段：
 
-- 容器创建 `Paddings` 数据结构，`status = 0`，`lifecycle = 'init'`
-- 记录启动时间戳 `startedAt`
-- 记录启动顺序到 `startupOrder` 数组
+- 创建 `Paddings` 数据结构：`status = 0`，`lifecycle = 'init'`
+- 记录 `startedAt` 时间戳
+- 记录到 `startupOrder` 数组
 - 发射 `service:init` 事件
-- 在 AsyncLocalStorage 中压入当前服务 key
+- AsyncLocalStorage 压入当前服务 key
 - 执行工厂函数
 
-此时如果其他代码也 `loadService` 同一个服务，它们会进入等待队列，不会重复执行工厂函数。
+此时其他 `loadService` 同一服务的调用进入等待队列。
 
-```typescript
-const svc = defineService('slow-service', async (shutdown) => {
-  // 这里就是 init 阶段
-  await new Promise(r => setTimeout(r, 1000)); // 模拟耗时初始化
-  return 'ready';
-});
+### 2. ready（就绪）
 
-// 同时调用两次
-const [a, b] = await Promise.all([
-  loadService(svc),
-  loadService(svc),
-]);
-// 工厂函数只执行了一次，耗时约 1 秒而非 2 秒
-```
-
-#### 2. ready（就绪）
-
-工厂函数成功返回后，服务进入 ready 阶段：
+工厂函数成功返回后：
 
 - `status = 1`，`lifecycle = 'ready'`
-- 结果被缓存到 `Paddings.value`
-- 记录完成时间戳 `endedAt`
-- 发射 `service:ready` 事件，携带 `durationMs`（耗时）
-- 通知所有等待队列的消费者，全部 resolve
+- 结果缓存到 `Paddings.value`
+- 记录 `endedAt`
+- 发射 `service:ready` 事件（携带 `durationMs`）
+- 通知所有等待队列，全部 resolve
 
-此时再调用 `loadService` 同一服务，会直接从缓存返回，工厂函数不会重复执行。
+之后再 `loadService` 同一服务直接返回缓存。
 
-```typescript
-// 就绪后
-const meta = container.getMetaByKey('slow-service');
-console.log(meta.status);    // 1
-console.log(meta.lifecycle); // 'ready'
-console.log(meta.value);     // 'ready'
-```
+### 3. stopping（关闭中）
 
-#### 3. stopping（关闭中）
-
-服务进入 stopping 阶段的两种方式：
+两种进入方式：
 
 **方式一：初始化失败**
-如果工厂函数抛错或返回的 Promise reject，容器会自动触发关闭流程：
 
 - `status = -1`，`lifecycle = 'stopping'`
-- 错误被记录到 `Paddings.error`
 - 发射 `service:error` 事件
-- 立即执行已注册的清理回调（teardown）
-- 所有 teardown 执行完毕后，`lifecycle = 'stopped'`
+- 立即执行已注册的 teardown
 - 通知等待队列，全部 reject
 
-**方式二：手动调用 container.shutdown()**
-当调用 `container.shutdown()` 时，对所有已就绪的服务按 LIFO 顺序关闭：
+**方式二：container.shutdown()**
 
 - `lifecycle = 'stopping'`
-- 发射 `service:shutdown:start` 事件
-- 按 LIFO 顺序执行所有 teardown
-- 全部执行完毕后，`lifecycle = 'stopped'`
-- 发射 `service:shutdown:done` 事件，携带 `durationMs`
+- 发射 `service:shutdown:start`
+- 按 LIFO 执行所有 teardown
+- 发射 `service:shutdown:done`
 
-#### 4. stopped（已停止）
+### 4. stopped（已停止）
 
-所有清理回调执行完毕后，服务进入最终状态：
-- `lifecycle = 'stopped'`
-- teardown 列表被清空
-- shutdown 队列中移除该服务
+所有 teardown 执行完毕。teardown 列表被清空，从 shutdown 队列中移除。
 
-## 服务初始化失败的处理
-
-当服务初始化失败时，容器做了以下工作：
+## 服务初始化失败
 
 ```typescript
 const svc = defineService('unstable', async (shutdown) => {
-  // 先注册清理
-  shutdown(() => console.log('清理资源 A'));
-  shutdown(() => console.log('清理资源 B'));
+  shutdown(() => console.log('清理 A'))
+  shutdown(() => console.log('清理 B'))
+  throw new Error('启动失败')
+})
 
-  // 然后初始化失败
-  throw new Error('启动失败了');
-});
-
-try {
-  await loadService(svc);
-} catch (e) {
-  console.log(e.message); // '启动失败了'
-}
-// 输出：
-// 清理资源 B  ← 按 LIFO 顺序
-// 清理资源 A
+try { await loadService(svc) } catch (e) { console.log(e.message) }
+// 输出：清理 B → 清理 A → '启动失败'
 ```
 
 关键行为：
-1. **先注册的 teardown 仍然会执行** —— 即使初始化失败，之前注册的清理回调不会被跳过
-2. **teardown 失败不影响错误传递** —— 即使某个清理回调抛错，原始错误仍然会被传给 `loadService` 的调用者
-3. **所有等待者都收到错误** —— 初始化失败时，队列中所有等待的 Promise 都会被 reject
-
-```typescript
-// teardown 自身抛错也不影响主流程
-const svc = defineService('messy', async (shutdown) => {
-  shutdown(() => { throw new Error('teardown 报错'); });
-  throw new Error('服务启动失败');
-});
-
-try {
-  await loadService(svc);
-} catch (e) {
-  console.log(e.message); // '服务启动失败' —— 不是 teardown 的错误
-}
-```
+- 之前注册的 teardown 仍会执行
+- teardown 失败不影响原始错误传递
+- 所有等待者都收到错误
 
 ## 容器事件详解
 
 ### 事件类型
 
-ContainerEvent 是一个联合类型，包含 9 种具体事件：
-
 ```typescript
 type ContainerEvent =
-  // 服务开始初始化
   | { type: 'service:init'; key: ServiceKey }
-
-  // 服务初始化成功
   | { type: 'service:ready'; key: ServiceKey; durationMs: number }
-
-  // 服务初始化失败
   | { type: 'service:error'; key: ServiceKey; error: any; durationMs: number }
-
-  // 服务开始关闭
   | { type: 'service:shutdown:start'; key: ServiceKey }
-
-  // 服务关闭完成
   | { type: 'service:shutdown:done'; key: ServiceKey; durationMs: number }
-
-  // 服务关闭出错
   | { type: 'service:shutdown:error'; key: ServiceKey; error: any }
-
-  // 容器开始关闭
   | { type: 'container:shutdown:start' }
-
-  // 容器关闭完成
   | { type: 'container:shutdown:done'; durationMs: number }
-
-  // 容器级错误（非单个服务错误，如循环依赖）
-  | { type: 'container:error'; error: any };
+  | { type: 'container:error'; error: any }
 ```
 
-### 事件触发时机对照表
+### 实际用途
 
-| 事件 | 触发时机 | 典型场景 |
-|------|----------|----------|
-| `service:init` | 工厂函数开始执行 | 可以记录"XX 服务开始初始化"日志 |
-| `service:ready` | 工厂函数成功返回 | 可以记录"XX 服务就绪，耗时 XXms" |
-| `service:error` | 工厂函数抛错或 reject | 可以记录"XX 服务启动失败" |
-| `service:shutdown:start` | 开始执行某服务的 teardowns | 可以知道当前在关闭哪个服务 |
-| `service:shutdown:done` | 某服务的所有 teardowns 执行完毕 | 可以知道某服务已关闭 |
-| `service:shutdown:error` | 单个 teardown 函数执行失败 | 可能意味着资源未正确释放 |
-| `container:shutdown:start` | container.shutdown() 被调用 | 可以在这里拒绝新请求 |
-| `container:shutdown:done` | 所有服务关闭完成 | 可以安全地退出进程 |
-| `container:error` | 容器检测到循环依赖等 | 可以触发告警 |
-
-### 事件订阅的实际用途
-
-**用途一：开发调试**
-
-在开发环境订阅事件，可以实时看到服务状态变化：
+**开发调试：**
 
 ```typescript
-import { container, formatServiceKey } from '@hile/core';
+import { container, formatServiceKey } from '@hile/core'
 
 container.on((event) => {
-  const key = 'key' in event ? formatServiceKey(event.key) : '';
-
+  const key = 'key' in event ? formatServiceKey(event.key) : ''
   switch (event.type) {
     case 'service:init':
-      console.log(`🔄 开始初始化: ${key}`);
-      break;
+      console.log(`[INIT] ${key}`)
+      break
     case 'service:ready':
-      console.log(`✅ 就绪: ${key} (${event.durationMs}ms)`);
-      break;
+      console.log(`[READY] ${key} (${event.durationMs}ms)`)
+      break
     case 'service:error':
-      console.error(`❌ 失败: ${key} (${event.durationMs}ms):`, event.error);
-      break;
+      console.error(`[ERROR] ${key}:`, event.error)
+      break
     case 'container:shutdown:start':
-      console.log('🛑 容器开始关闭');
-      break;
+      console.log('[SHUTDOWN] 开始')
+      break
     case 'container:shutdown:done':
-      console.log(`✅ 容器关闭完成 (${event.durationMs}ms)`);
-      break;
+      console.log(`[SHUTDOWN] 完成 (${event.durationMs}ms)`)
+      break
   }
-});
+})
 ```
 
-**用途二：监控告警**
-
-在生产环境，可以将事件发送到监控系统：
+**监控告警：**
 
 ```typescript
 container.on((event) => {
   if (event.type === 'service:error') {
-    // 发送到 Sentry / Grafana 等
-    sendToMonitor({
-      level: 'error',
-      message: `服务初始化失败: ${formatServiceKey(event.key)}`,
-      duration: event.durationMs,
-      error: event.error,
-    });
+    sendToMonitor({ level: 'error', message: `服务 ${formatServiceKey(event.key)} 启动失败` })
   }
-
   if (event.type === 'service:shutdown:error') {
-    // 清理回调出错，可能需要人工介入
-    sendToMonitor({
-      level: 'warning',
-      message: `服务关闭出错: ${formatServiceKey(event.key)}`,
-      error: event.error,
-    });
+    sendToMonitor({ level: 'warning', message: `服务关闭出错` })
   }
-});
+})
 ```
 
-**用途三：性能分析**
+### CLI 开发模式自动订阅
 
-记录服务启动耗时，定位瓶颈：
+`hile start --dev` 自动订阅容器事件，输出彩色日志：
 
-```typescript
-const timings: Record<string, number> = {};
-
-container.on((event) => {
-  if (event.type === 'service:ready') {
-    timings[formatServiceKey(event.key)] = event.durationMs;
-  }
-  if (event.type === 'container:shutdown:done') {
-    // 启动完成后输出性能报告
-    console.table(timings);
-  }
-});
 ```
-
-### CLI 开发模式自动订阅事件
-
-当你使用 `hile start --dev` 启动服务时，CLI 会自动订阅容器事件并输出带颜色的日志：
-
-```bash
-$ hile start --dev
 [hile] service(http-server) init
-[hile] service(config) ready (2ms)
-[hile] service(database) ready (105ms)
-[hile] service(http-server) ready (108ms)
+[hile] service(http-server) ready (15ms)
+[hile] container shutdown start
+[hile] service(http-server) stopping
+[hile] service(http-server) stopped (3ms)
+[hile] container shutdown done (5ms)
 ```
 
-这是通过 `start.ts` 中的 `logContainerEvent` 函数实现的。它会在开发模式（`NODE_ENV === 'development'`）下自动订阅事件，并输出带有颜色标记的日志。
-
-如果不想看到这些日志，可以用 `--silent` 选项：
-
-```bash
-hile start --dev --silent
-```
+使用 `--silent` 选项可抑制日志：`hile start --dev --silent`
 
 ## shutdown 流程详解
 
-### 触发 shutdown 的方式
+### 触发方式
 
-**方式一：手动调用**
+**方式一：CLI 退出钩子（自动）**
+
+CLI 通过 `async-exit-hook` 注册了进程退出钩子。当收到 SIGINT（Ctrl+C）或 SIGTERM 时，自动触发 `container.shutdown()`。
+
+**方式二：手动调用**
 
 ```typescript
-import { container } from '@hile/core';
-await container.shutdown();
+import { container } from '@hile/core'
+await container.shutdown()
 ```
 
-**方式二：CLI 退出钩子**
+### 执行算法（简化）
 
-CLI 通过 `registerExitHook` 注册了进程退出钩子。当进程收到 SIGINT（Ctrl+C）或 SIGTERM 信号时，会自动触发 `container.shutdown()`：
-
-```typescript
-// 来自 exitHook.ts 的简化逻辑
-import exitHook from 'async-exit-hook';
-import { container } from '@hile/core';
-
-exitHook(async (exit) => {
-  await container.shutdown();
-  // 关闭 stdin 读取，避免进程挂起
-  if (process.stdin.isTTY) {
-    process.stdin.unref();
-  }
-  exit();
-});
 ```
-
-这意味着在 CLI 托管的模式下，你不需要手动调用 `container.shutdown()`，退出钩子会帮你处理。
-
-### shutdown 的执行算法
-
-```typescript
-// 伪代码：container.shutdown() 的执行逻辑
-async function shutdown() {
-  emit('container:shutdown:start');
-
-  while (true) {
-    // 第一层循环：处理所有已注册的 teardown
-    while (shutdownQueues.length > 0) {
-      const key = shutdownQueues[shutdownQueues.length - 1]; // 取最后一个（LIFO）
-      await shutdownService(key);
-    }
-
-    // 让出事件循环，捕获"晚注册"的 teardown
-    await new Promise(r => setImmediate(r));
-
-    // 如果没有新的 teardown 注册，则结束
-    if (shutdownQueues.length === 0) break;
-  }
-
-  emit('container:shutdown:done');
-}
-
-async function shutdownService(key) {
-  emit('service:shutdown:start', { key });
-
-  const teardowns = getTeardowns(key);
-  // 逆序遍历：LIFO
-  for (let i = teardowns.length - 1; i >= 0; i--) {
-    try {
-      await withTimeout(teardowns[i](), shutdownTimeoutMs);
-    } catch (error) {
-      emit('service:shutdown:error', { key, error });
-      // 不阻断，继续执行下一个 teardown
-    }
-  }
-
-  emit('service:shutdown:done', { key, durationMs });
-}
+container.shutdown()
+  → emit('container:shutdown:start')
+  → while (shutdownQueues.length > 0):
+      key = shutdownQueues[last]  // LIFO
+      → emit('service:shutdown:start')
+      → 逆序执行该服务的所有 teardown
+        每个 teardown 独立 try/catch，失败不阻断
+      → emit('service:shutdown:done')
+  → setImmediate 让出事件循环（捕获晚注册 teardown）
+  → 检查 shutdownQueues 是否为空，非空继续
+  → emit('container:shutdown:done')
 ```
 
 ### 关闭顺序示例
 
 ```typescript
-// 注册三个服务
 const svcA = defineService('a', async (shutdown) => {
-  shutdown(() => console.log('关闭 A'));
-  return 'a';
-});
+  shutdown(() => console.log('关闭 A'))
+  return 'a'
+})
 const svcB = defineService('b', async (shutdown) => {
-  shutdown(() => console.log('关闭 B'));
-  return 'b';
-});
+  shutdown(() => console.log('关闭 B'))
+  return 'b'
+})
 const svcC = defineService('c', async (shutdown) => {
-  shutdown(() => console.log('关闭 C'));
-  return 'c';
-});
+  shutdown(() => console.log('关闭 C'))
+  return 'c'
+})
 
-// 按 A → B → C 的顺序启动
-await loadService(svcA);
-await loadService(svcB);
-await loadService(svcC);
+await loadService(svcA)
+await loadService(svcB)
+await loadService(svcC)
 
-// 关闭时：C → B → A（后注册的先关闭）
-await container.shutdown();
-// 输出：
-// 关闭 C
-// 关闭 B
-// 关闭 A
+await container.shutdown()
+// 输出：关闭 C → 关闭 B → 关闭 A
 ```
 
-### 晚注册 Teardown 的捕获
+### 晚注册 Teardown
 
-假设有以下场景：
-1. 服务 A 已就绪，注册了 teardown
-2. 服务 B 正在初始化，尚未完成
-3. 此时调用 `container.shutdown()`
-4. shutdown 先处理 A（A 关闭完成）
-5. 然后 B 完成初始化，注册了 teardown
-6. shutdown 继续处理 B
+如果 shutdown 开始后还有服务完成初始化并注册 teardown，容器通过 `setImmediate` 让出事件循环来捕获：
 
 ```typescript
 const svcA = defineService('a', async (shutdown) => {
-  shutdown(() => console.log('关闭 A'));
-  return 'a';
-});
+  shutdown(() => console.log('关闭 A'))
+  return 'a'
+})
 const svcB = defineService('b', async (shutdown) => {
-  // 延迟注册 teardown
-  await new Promise(r => setImmediate(r));
-  shutdown(() => console.log('关闭 B'));
-  return 'b';
-});
+  await new Promise(r => setImmediate(r))  // 延迟完成
+  shutdown(() => console.log('关闭 B'))
+  return 'b'
+})
 
-// 同时启动 A 和 B
-const [resultA] = await Promise.all([
-  loadService(svcA),
-  loadService(svcB).then(r => {
-    // B 完成时，shutdown 可能已经开始
-    console.log('B 就绪');
-    return r;
-  }),
-]);
-
-// 立即关闭
-await container.shutdown();
-// 输出：
-// 关闭 A
-// B 就绪
-// 关闭 B
+Promise.all([loadService(svcA), loadService(svcB)])
+await container.shutdown()
+// 输出：关闭 A → 关闭 B（B 的 teardown 晚注册但仍被捕获）
 ```
-
-这就是 `setImmediate` 的作用：在第一次遍历结束后再检查一次有没有新注册的 teardown，确保不遗漏。
 
 ## 超时控制
 
 ### 启动超时
 
 ```typescript
-import { Container } from '@hile/core';
+const container = new Container({ startTimeoutMs: 5000 })
 
-const container = new Container({
-  startTimeoutMs: 5000, // 每个服务的启动超时：5 秒
-});
-
-const slowService = defineService('slow', async () => {
-  await new Promise(r => setTimeout(r, 10000)); // 10 秒
-  return '太慢了';
-});
+const slowSvc = container.register('slow', async (shutdown) => {
+  await new Promise(r => setTimeout(r, 10000))
+  return 'too slow'
+})
 
 try {
-  await loadService(slowService);
+  await container.resolve(slowSvc)
 } catch (e) {
-  console.log(e.message); // 'service startup timeout: slow exceeded 5000ms'
+  // service startup timeout: slow exceeded 5000ms
 }
 ```
 
-启动超时通过 `Promise.race` 实现。超时发生后：
-
-1. 该服务的 Promise 被 reject
-2. 发射 `service:error` 事件
-3. 执行已注册的 teardown（如果有）
-4. 等待队列中的全部 reject
-
-注意：超时不会取消工厂函数的执行，它只是让 Promise reject。工厂函数仍然会继续运行，只是结果不会被使用。
+超时后：Promise reject，发射 `service:error`，执行已注册的 teardown。工厂函数不会因此停止执行。
 
 ### 关闭超时
 
 ```typescript
-const container = new Container({
-  shutdownTimeoutMs: 3000, // 每个 teardown 的超时：3 秒
-});
-
-const svc = defineService('slow-shutdown', async (shutdown) => {
-  shutdown(async () => {
-    await new Promise(r => setTimeout(r, 10000)); // 10 秒
-    console.log('永远不会被执行到');
-  });
-  return 'ok';
-});
-
-await loadService(svc);
-await container.shutdown();
-// 输出：
-// 3 秒后跳过此 teardown，继续执行下一个
+const container = new Container({ shutdownTimeoutMs: 3000 })
 ```
 
-关闭超时发生后：
-1. 发射 `service:shutdown:error` 事件
-2. 跳过超时的 teardown
-3. 继续执行下一个 teardown（不阻断整体流程）
+超时后：发射 `service:shutdown:error`，跳过该 teardown，继续执行下一个。
 
-### 超时设计的哲学
-
-Hile 的超时是**软超时**，不是硬超时。这意味着：
-
-- **不强制停止函数执行** —— 超时只是让 Promise reject，函数本身会继续跑
-- **不杀死进程** —— 即使超时，进程也不会被终止
-- **用于异常检测** —— 超时主要用于发现异常情况（如数据库连接挂了导致启动阻塞）
+Hile 的超时是**软超时**：不强制停止函数执行，不杀死进程，仅让 Promise reject。
 
 ## 完整调试示例
 
-结合事件、生命周期和日志，你可以对应用状态有完全的可见性：
-
 ```typescript
-import { Container, defineService, loadService } from '@hile/core';
+import { Container, defineService, loadService } from '@hile/core'
 
-// 创建一个带事件日志的容器
-const container = new Container({ startTimeoutMs: 3000 });
+const container = new Container({ startTimeoutMs: 3000 })
 
 container.on((event) => {
-  const timestamp = new Date().toISOString().slice(11, 23);
-  const key = 'key' in event ? event.key : '-';
-
+  const ts = new Date().toISOString().slice(11, 23)
+  const key = 'key' in event ? event.key : '-'
   switch (event.type) {
-    case 'service:init':
-      console.log(`[${timestamp}] INIT    ${key}`);
-      break;
-    case 'service:ready':
-      console.log(`[${timestamp}] READY   ${key} (${event.durationMs}ms)`);
-      break;
-    case 'service:error':
-      console.log(`[${timestamp}] ERROR   ${key} (${event.durationMs}ms): ${event.error.message}`);
-      break;
-    case 'service:shutdown:start':
-      console.log(`[${timestamp}] STOP    ${key}`);
-      break;
-    case 'service:shutdown:done':
-      console.log(`[${timestamp}] STOPPED ${key} (${event.durationMs}ms)`);
-      break;
-    case 'service:shutdown:error':
-      console.log(`[${timestamp}] FAIL    ${key}: ${event.error.message}`);
-      break;
-    case 'container:shutdown:start':
-      console.log(`[${timestamp}] SHUTDOWN BEGIN`);
-      break;
-    case 'container:shutdown:done':
-      console.log(`[${timestamp}] SHUTDOWN DONE (${event.durationMs}ms)`);
-      break;
+    case 'service:init':    console.log(`[${ts}] INIT    ${key}`); break
+    case 'service:ready':   console.log(`[${ts}] READY   ${key} (${event.durationMs}ms)`); break
+    case 'service:error':   console.log(`[${ts}] ERROR   ${key}: ${event.error.message}`); break
+    case 'container:shutdown:start': console.log(`[${ts}] SHUTDOWN BEGIN`); break
+    case 'container:shutdown:done':  console.log(`[${ts}] SHUTDOWN DONE (${event.durationMs}ms)`); break
   }
-});
+})
 
-// 定义几个服务
 const svcA = defineService('A', async (shutdown) => {
-  shutdown(() => new Promise(r => setTimeout(r, 100)));
-  return 'A';
-});
+  shutdown(() => new Promise(r => setTimeout(r, 100)))
+  return 'A'
+})
 const svcB = defineService('B', async (shutdown) => {
-  shutdown(() => new Promise(r => setTimeout(r, 50)));
-  return 'B';
-});
+  shutdown(() => new Promise(r => setTimeout(r, 50)))
+  return 'B'
+})
 
-await loadService(svcA);
-await loadService(svcB);
-
-// 关闭
-await container.shutdown();
+await loadService(svcA)
+await loadService(svcB)
+await container.shutdown()
 ```
 
 输出类似：
@@ -603,11 +334,7 @@ await container.shutdown();
 [15:30:01.236] INIT    B
 [15:30:01.237] READY   B (1ms)
 [15:30:01.238] SHUTDOWN BEGIN
-[15:30:01.238] STOP    B
 [15:30:01.289] STOPPED B (51ms)
-[15:30:01.289] STOP    A
 [15:30:01.390] STOPPED A (101ms)
 [15:30:01.391] SHUTDOWN DONE (153ms)
 ```
-
-可以看到清晰的关闭顺序：B → A，以及每个阶段的耗时。

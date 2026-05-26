@@ -1,113 +1,107 @@
 ---
 title: 服务容器
-description: "深入理解 Hile 的 IoC 服务容器：defineService、loadService、依赖注入、循环依赖检测、优雅关闭与事件系统"
+description: "深入理解 Hile 的 IoC 服务容器：Container 类、defineService、loadService、依赖追踪、循环依赖检测、优雅关闭与事件系统"
 ---
 
 import { Accordion, AccordionGroup } from '@mintlify/components';
 
-## 什么是 IoC 容器？为什么需要它？
+## 什么是 IoC 容器？
 
-IoC（Inversion of Control，控制反转）容器是一种"帮你管好所有依赖"的设计模式。在传统的 Node.js 应用中，你可能会这样组织代码：
+IoC（Inversion of Control，控制反转）容器帮你管理所有依赖的创建和销毁。在传统 Node.js 应用中，你这样组织代码：
 
 ```typescript
 // 没有容器的写法：手动管理依赖
-import { createConnection } from 'typeorm';
-import Redis from 'ioredis';
-
-const db = await createConnection({ /* ... */ });
-const redis = new Redis({ /* ... */ });
-
-// 到处传参，到处耦合
-const server = new HttpServer({ port: 3000, db, redis });
+const db = await createConnection({ /* ... */ })
+const redis = new Redis({ /* ... */ })
+const server = new HttpServer({ port: 3000, db, redis })
 ```
 
-这种写法有几个问题：
+问题：
+1. **初始化顺序靠人脑记** —— 必须先创建 db，再创建 redis，最后创建 server
+2. **全局状态难以管理** —— 测试时想 mock 某个依赖，得把整个初始化流程重写
+3. **没有优雅关闭** —— 进程退出时需要按依赖逆序释放资源
 
-1. **初始化顺序靠人脑记** —— 必须先创建 db，再创建 redis，最后创建 server。如果依赖链变长（A 依赖 B，B 依赖 C），你得像剥洋葱一样一层层手动初始化。
-2. **全局状态难以管理** —— 单元测试时想 mock 某个依赖，得把整个初始化流程重写一遍。
-3. **没有优雅关闭** —— 进程退出时需要按依赖逆序释放资源（先关 server 停止接请求，再关 db），这些都没有内置保障。
+Hile 的容器（`@hile/core` 中的 `Container` 类）是一个**异步容器**：服务的工厂函数可以是异步的，容器会等待异步初始化完成。
 
-**IoC 容器就是来解决这些问题的。** 你把"如何创建服务"告诉容器，容器帮你管理：
+## 全局默认容器
 
-- **什么时候创建** —— 按需懒加载，用到了才创建
-- **创建几次** —— 全局单例，只创建一次
-- **依赖谁** —— 自动追踪，自动等待依赖就绪
-- **怎么关闭** —— 注册清理函数，容器按正确顺序自动执行
-
-Hile 的 IoC 容器由 `@hile/core` 包提供。它是一个**异步容器**：服务的初始化函数可以是异步的（返回 Promise），容器会等待异步初始化完成后再使用该服务。
-
-## 默认容器（globalThis.HILE_GLOBAL_CONTAINER）
-
-当你 `import` 任何 `@hile/core` 的 API 时，Hile 会自动创建一个全局默认容器，挂载到 `globalThis.HILE_GLOBAL_CONTAINER` 上：
+当你 `import` 任何 `@hile/core` 的 API 时，Hile 自动创建一个全局默认容器，挂载到 `globalThis.HILE_GLOBAL_CONTAINER`：
 
 ```typescript
-import { container } from '@hile/core';
+import { container } from '@hile/core'
 
-// container 就是全局默认容器
-// 它在底层等价于：
-// globalThis.HILE_GLOBAL_CONTAINER ??= new Container();
+// container 是全局默认容器
+// 等价于：globalThis.HILE_GLOBAL_CONTAINER ??= new Container()
 ```
 
-这个默认容器是整个应用共享的。无论你在哪个模块 `import { container }`，拿到的都是同一个实例。
+所有 `defineService` 和 `loadService` 快捷函数都操作这个全局容器。无论你在哪个模块 `import { container }`，拿到的都是同一个实例。
 
-你完全不需要手动创建容器。默认容器已经适用于绝大多数场景。只有当你在**单进程中运行多个互相隔离的应用**时（例如在一个测试文件中并行跑多个独立的服务集群），才需要创建隔离容器。
+## Container 类——核心 API
+
+`Container` 类提供以下公开方法：
+
+| 方法 | 说明 |
+|------|------|
+| `register(key, fn)` | 注册服务（不执行工厂函数） |
+| `resolve(props)` | 解析服务（执行工厂函数并缓存结果） |
+| `shutdown()` | 优雅关闭所有已注册 teardown 的服务 |
+| `on(listener)` | 订阅容器事件，返回取消订阅函数 |
+| `off(listener)` | 取消订阅 |
+| `hasService(key)` | 检查服务是否已 register |
+| `hasMeta(key)` | 检查服务是否已有运行状态（已 resolve 过） |
+| `getMetaByKey(key)` | 获取服务的 Paddings（status、lifecycle、value 等） |
+| `getLifecycle(key)` | 获取服务生命周期阶段 |
+| `getDependencyGraph()` | 返回 `{ nodes, edges }` 依赖图 |
+| `getStartupOrder()` | 返回服务启动顺序数组 |
 
 ## defineService(key, fn) —— 注册服务
 
-`defineService` 是使用容器的入口。它做的唯一一件事就是**注册**：告诉容器"我有一个服务，它叫这个 key，它的工厂函数是这个"。
-
-**注册时不会执行工厂函数**。工厂函数要等到第一次 `loadService` 时才真正执行。
+`defineService` 将工厂函数注册到容器。**注册时不会执行工厂函数**。
 
 ```typescript
-import { defineService } from '@hile/core';
+import { defineService } from '@hile/core'
 
-// 最简单的服务：没有依赖，没有清理
-const greeting = defineService('greeting', async () => {
-  console.log('工厂函数只会在第一次 loadService 时执行');
-  return '你好，世界！';
-});
+const greeting = defineService('greeting', async (shutdown) => {
+  console.log('只在 loadService 时执行')
+  shutdown(() => console.log('关闭时执行'))
+  return '你好，世界！'
+})
 ```
 
 ### 参数说明
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| `key` | `string \| symbol` | 服务的唯一标识。字符串可读性好，Symbol 可避免命名冲突 |
-| `fn` | `(shutdown) => R \| Promise<R>` | 工厂函数。接收一个 `shutdown` 函数作为参数，用于注册清理回调 |
+| `key` | `string \| symbol` | 服务唯一标识。字符串可读性好，Symbol 可避免命名冲突 |
+| `fn` | `(shutdown) => R \| Promise<R>` | 工厂函数。`shutdown` 参数用于注册清理回调 |
 
 ### key 的选择策略
 
-- **应用内的服务**用字符串：`'database'`、`'redis'`、`'http-server'` —— 清晰好记
-- **集成包（如 @hile/typeorm）** 用 `Symbol.for('包名')` —— 避免与用户定义的 key 冲突
-- Symbol 的对比用的是全局注册表，`Symbol.for('a') === Symbol.for('a')` 始终为 `true`
+- **应用内的服务**用字符串：`'database'`、`'redis'`、`'http-server'`
+- **集成包**用 `Symbol.for('包名')`：`Symbol.for('@hile/typeorm')`
 
 ```typescript
 // 集成包通常这样做：
-const SERVICE_KEY = Symbol.for('@hile/typeorm');
+const SERVICE_KEY = Symbol.for('@hile/typeorm')
 export default defineService(SERVICE_KEY, async (shutdown) => {
   // ...
-});
+})
 ```
 
-### shutdown 回调：注册清理函数
+### shutdown 回调
 
-工厂函数接收一个参数：`shutdown` 函数。你可以用它注册**一个或多个**清理回调：
+工厂函数接收 `shutdown` 参数，用于注册清理函数：
 
 ```typescript
 const db = defineService('database', async (shutdown) => {
-  const conn = await createConnection();
-
-  // 注册清理回调：关闭数据库连接
-  shutdown(() => conn.close());
-
-  // 可以注册多个清理回调
-  shutdown(() => console.log('数据库连接已关闭'));
-
-  return conn;
-});
+  const conn = await createConnection()
+  shutdown(() => conn.close())          // 注册清理
+  shutdown(() => console.log('已关闭'))  // 可以注册多个
+  return conn
+})
 ```
 
-清理回调的特性：
+特性：
 - 支持同步和异步函数
 - 同一个函数重复注册只会执行一次（去重）
 - 按 LIFO（后注册先执行）顺序执行
@@ -115,418 +109,290 @@ const db = defineService('database', async (shutdown) => {
 
 ## loadService(props) —— 获取服务实例
 
-注册服务后，通过 `loadService` 获取实例。它接收 `defineService` 的返回值。
-
 ```typescript
-import { defineService, loadService } from '@hile/core';
+import { defineService, loadService } from '@hile/core'
 
-const greeter = defineService('hello', async () => '你好！');
+const greeter = defineService('hello', async (shutdown) => {
+  return '你好！'
+})
 
-// 第一次调用：执行工厂函数，返回 '你好！'
-const result1 = await loadService(greeter);
-console.log(result1); // '你好！'
+// 第一次调用：执行工厂函数
+const result1 = await loadService(greeter)  // '你好！'
 
-// 第二次调用：直接返回缓存，工厂不会重复执行
-const result2 = await loadService(greeter);
-console.log(result2); // '你好！'
-console.log(result1 === result2); // true —— 同一个实例
+// 第二次调用：直接返回缓存
+const result2 = await loadService(greeter)  // '你好！'
+console.log(result1 === result2) // true
 ```
 
 ### 并发合并
 
-这是容器最重要的特性之一。假设同时有 10 个请求到达，它们都尝试 `loadService('database')`，而数据库连接还没创建。容器会：
-
-1. 只执行一次工厂函数（创建一个连接）
-2. 其他 9 个请求自动加入**等待队列**
-3. 连接创建成功后，10 个请求同时收到结果
-4. 如果创建失败，10 个请求全部收到错误
+同时有多个调用者 `loadService` 同一个服务时，容器只执行一次工厂函数，其他调用者自动加入等待队列：
 
 ```typescript
-const db = defineService('database', async () => {
-  console.log('只会打印一次');
-  return await createConnection();
-});
+const db = defineService('database', async (shutdown) => {
+  console.log('只会打印一次')
+  return await createConnection()
+})
 
-// 模拟并发
 const results = await Promise.all([
-  loadService(db),  // 这个会真正执行工厂
-  loadService(db),  // 这个在等待
-  loadService(db),  // 这个也在等待
-  // ...
-]);
-// 控制台只打印一次 "只会打印一次"
+  loadService(db),  // 真正执行
+  loadService(db),  // 等待
+  loadService(db),  // 等待
+])
+// 控制台只打印一次
 ```
 
 ## 服务间依赖
 
-在服务 A 的工厂函数里 `loadService` 服务 B，容器会自动记录依赖关系：**A 依赖 B**。
+在服务 A 的工厂函数里 `loadService` 服务 B，容器自动记录依赖关系：**A 依赖 B**。
 
 ```typescript
-import { defineService, loadService } from '@hile/core';
-
-// 先定义两个基础服务
-const config = defineService('config', async () => ({
-  dbHost: 'localhost',
-  dbPort: 3306,
-}));
+const config = defineService('config', async (shutdown) => ({
+  dbHost: 'localhost', dbPort: 3306,
+}))
 
 const database = defineService('database', async (shutdown) => {
-  // 在 database 的工厂函数里 load config
-  // 容器自动记录：database → config
-  const cfg = await loadService(config);
-
-  const conn = await createConnection({
-    host: cfg.dbHost,
-    port: cfg.dbPort,
-  });
-  shutdown(() => conn.close());
-  return conn;
-});
+  // 在 database 工厂里 load config → 自动记录 database → config
+  const cfg = await loadService(config)
+  const conn = await createConnection({ host: cfg.dbHost, port: cfg.dbPort })
+  shutdown(() => conn.close())
+  return conn
+})
 ```
-
-依赖关系的好处：
-- **自动等待** —— 当有人 `loadService(database)` 时，容器会确保先执行 `config` 的工厂
-- **循环依赖检测** —— 如果 A 依赖 B，B 又依赖 A，容器会立即抛出错误
-- **可视化** —— 你可以在任何时候查看完整的依赖图
 
 ## 循环依赖检测
 
-Hile 的容器会在运行时检测循环依赖。检测算法是：当服务 A 在初始化过程中请求服务 B 时，容器检查是否存在 **B → ... → A** 的路径。
+容器在运行时检测循环依赖。当服务 A 初始化中请求服务 B，容器检查是否存在 B → ... → A 的路径：
 
 ```typescript
-// ❌ 错误示例：循环依赖
-const serviceA = defineService('a', async () => {
-  await loadService(serviceB); // A 依赖 B
-  return 'a';
-});
-
-const serviceB = defineService('b', async () => {
-  await loadService(serviceA); // B 依赖 A —— 形成循环！
-  return 'b';
-});
-
+// 错误示例：循环依赖
+const serviceA = defineService('a', async (shutdown) => {
+  await loadService(serviceB)  // A 依赖 B
+  return 'a'
+})
+const serviceB = defineService('b', async (shutdown) => {
+  await loadService(serviceA)  // B 依赖 A —— 循环！
+  return 'b'
+})
 // 运行时抛出：circular dependency detected: a -> b
-await loadService(serviceA);
 ```
 
-自循环也会被检测到：
+自循环也会被检测：
 
 ```typescript
-// ❌ 错误示例：自循环
-const self = defineService('self', async () => {
-  await loadService(self); // 自己依赖自己
-  return 'self';
-});
-
-await loadService(self); // 抛出错误
+const self = defineService('self', async (shutdown) => {
+  await loadService(self)  // 自己依赖自己
+  return 'self'
+})
+// 抛出错误
 ```
 
-### 钻石依赖是安全的
+钻石依赖（A → B → C 且 A → C）是安全的。
 
-如果依赖图是 A → B → C 且 A → C（菱形结构，也叫 diamond dependency），这是安全的：
+## 服务状态
 
-```typescript
-const serviceC = defineService('c', async () => 'c');
-const serviceB = defineService('b', async () => {
-  await loadService(serviceC); // B → C
-  return 'b';
-});
-const serviceA = defineService('a', async () => {
-  await loadService(serviceB); // A → B
-  await loadService(serviceC); // A → C（再次请求 C，但 C 已经在初始化或已完成）
-  return 'a';
-});
+每个服务的内部状态通过 `getMetaByKey(key)` 查看：
 
-await loadService(serviceA); // 正常运行
-```
-
-同一个依赖可以被多个服务同时依赖，这是完全合法的。
-
-## 服务状态机
-
-每个服务的内部状态由三个值表示，通过 `getMetaByKey(key)` 可以查看：
-
-| 状态码 | 枚举值 | 含义 |
-|--------|--------|------|
-| `0` | 运行中 | 工厂函数正在执行（或等待依赖就绪） |
-| `1` | 已完成 | 工厂函数执行成功，结果已缓存 |
-| `-1` | 已失败 | 工厂函数抛出异常，服务不可用 |
+| 状态码 | 含义 |
+|--------|------|
+| `0` | 运行中——工厂函数正在执行 |
+| `1` | 已完成——工厂函数成功，结果已缓存 |
+| `-1` | 已失败——工厂函数抛错 |
 
 生命周期阶段（`getLifecycle(key)` 返回）：
 
 | 阶段 | 说明 |
 |------|------|
-| `undefined` | 服务尚未被 loadService |
+| `undefined` | 尚未被 loadService |
 | `'init'` | 工厂函数正在执行 |
-| `'ready'` | 服务就绪，可以正常使用 |
+| `'ready'` | 服务就绪 |
 | `'stopping'` | 正在执行清理回调 |
 | `'stopped'` | 清理已完成 |
 
 ## AsyncLocalStorage 依赖追踪
 
-Hile 的容器使用 Node.js 的 `AsyncLocalStorage` 来追踪调用链。当工厂函数执行时，容器会将当前服务的 key 存入 AsyncLocalStorage 的栈中。当工厂内部调用 `loadService` 时，容器可以知道"当前是谁在请求"，从而正确记录依赖边。
-
-这个机制对开发者是完全透明的。你不需要做任何额外操作，容器自动处理。
+容器使用 Node.js `AsyncLocalStorage` 追踪调用链。当工厂函数执行时，容器将当前服务 key 存入 AsyncLocalStorage 栈中。当工厂内部调用 `loadService` 时，容器知道"当前是谁在请求"，从而正确记录依赖边。这个机制对开发者完全透明。
 
 ## 查询 API
 
-容器提供了一系列查询方法，帮助你了解服务的状态。
-
 ```typescript
-import { container, defineService, loadService } from '@hile/core';
+import { container, defineService, loadService } from '@hile/core'
 
-const mySvc = defineService('my-service', async () => 'hello');
+const mySvc = defineService('my-service', async (shutdown) => 'hello')
 
-// 检查服务是否已注册（无论是否已加载）
-console.log(container.hasService('my-service'));  // true
+// 检查是否已 register
+container.hasService('my-service')  // true
 
-// 检查服务是否已加载（有元数据）
-console.log(container.hasMeta('my-service'));      // false，还没 load
+// 检查是否已 resolve（有运行状态）
+container.hasMeta('my-service')      // false
 
-await loadService(mySvc);
+await loadService(mySvc)
 
-console.log(container.hasMeta('my-service'));      // true
+container.hasMeta('my-service')      // true
 
 // 获取元数据
-const meta = container.getMetaByKey('my-service');
-console.log(meta.status);       // 1（已完成）
-console.log(meta.value);        // 'hello'
-console.log(meta.lifecycle);    // 'ready'
-console.log(meta.startedAt);    // 启动时间戳
-console.log(meta.endedAt);      // 完成时间戳
+const meta = container.getMetaByKey('my-service')
+meta.status       // 1（已完成）
+meta.value        // 'hello'
+meta.lifecycle    // 'ready'
+meta.startedAt    // 启动时间戳
+meta.endedAt      // 完成时间戳
 
-// 获取生命周期阶段
-console.log(container.getLifecycle('my-service')); // 'ready'
-```
+// 获取生命周期
+container.getLifecycle('my-service') // 'ready'
 
-### getDependencyGraph()
+// 获取依赖图
+const graph = container.getDependencyGraph()
+// { nodes: ['my-service'], edges: [] }
 
-返回当前容器的完整依赖图：
-
-```typescript
-const graph = container.getDependencyGraph();
-// {
-//   nodes: ['a', 'b', 'c'],           // 所有已注册的服务
-//   edges: [
-//     { from: 'a', to: 'b' },
-//     { from: 'a', to: 'c' },
-//   ]
-// }
-```
-
-### getStartupOrder()
-
-返回服务启动顺序的数组（按被 `loadService` 的顺序）：
-
-```typescript
-const order = container.getStartupOrder();
-// ['a', 'b', 'c'] —— 按启动时间排序
+// 获取启动顺序
+container.getStartupOrder()
+// ['my-service']
 ```
 
 ## 事件订阅
 
-容器是一个事件发射器。你可以订阅容器的各种生命周期事件。
+容器是一个事件发射器。`on()` 返回取消订阅函数：
 
 ```typescript
-import { container, formatServiceKey } from '@hile/core';
+import { container, formatServiceKey } from '@hile/core'
 
-// on 返回取消订阅函数
 const unsubscribe = container.on((event) => {
   switch (event.type) {
     case 'service:init':
-      console.log(`[容器] 服务 ${formatServiceKey(event.key)} 开始初始化`);
-      break;
+      console.log(`服务 ${formatServiceKey(event.key)} 开始初始化`)
+      break
     case 'service:ready':
-      console.log(`[容器] 服务 ${formatServiceKey(event.key)} 就绪（耗时 ${event.durationMs}ms）`);
-      break;
+      console.log(`服务 ${formatServiceKey(event.key)} 就绪（${event.durationMs}ms）`)
+      break
     case 'service:error':
-      console.error(`[容器] 服务 ${formatServiceKey(event.key)} 初始化失败：`, event.error);
-      break;
+      console.error(`服务 ${formatServiceKey(event.key)} 失败:`, event.error)
+      break
+    case 'service:shutdown:start':
+      console.log(`服务 ${formatServiceKey(event.key)} 开始关闭`)
+      break
+    case 'service:shutdown:done':
+      console.log(`服务 ${formatServiceKey(event.key)} 关闭完成（${event.durationMs}ms）`)
+      break
+    case 'service:shutdown:error':
+      console.error(`服务 ${formatServiceKey(event.key)} 关闭出错:`, event.error)
+      break
     case 'container:shutdown:start':
-      console.log('[容器] 开始优雅关闭');
-      break;
+      console.log('容器开始关闭')
+      break
     case 'container:shutdown:done':
-      console.log(`[容器] 优雅关闭完成（总耗时 ${event.durationMs}ms）`);
-      break;
+      console.log(`容器关闭完成（${event.durationMs}ms）`)
+      break
+    case 'container:error':
+      console.error('容器级错误:', event.error)
+      break
   }
-});
+})
 
 // 取消订阅
-unsubscribe();
-
-// 或者用 off
-const listener = (event) => { /* ... */ };
-container.on(listener);
-container.off(listener);
+unsubscribe()
 ```
 
-完整的事件类型列表：
+完整事件类型：
 
-| 事件类型 | 触发时机 | 携带数据 |
-|----------|----------|----------|
-| `service:init` | 服务开始初始化 | `key` |
+| 事件 | 触发时机 | 携带数据 |
+|------|----------|----------|
+| `service:init` | 工厂函数开始执行 | `key` |
 | `service:ready` | 初始化成功 | `key`, `durationMs` |
 | `service:error` | 初始化失败 | `key`, `error`, `durationMs` |
-| `service:shutdown:start` | 开始关闭某服务 | `key` |
-| `service:shutdown:done` | 服务关闭完成 | `key`, `durationMs` |
-| `service:shutdown:error` | 关闭过程中出错 | `key`, `error` |
-| `container:shutdown:start` | 容器开始关闭 | 无 |
+| `service:shutdown:start` | 开始关闭 | `key` |
+| `service:shutdown:done` | 关闭完成 | `key`, `durationMs` |
+| `service:shutdown:error` | 关闭出错 | `key`, `error` |
+| `container:shutdown:start` | 容器开始关闭 | — |
 | `container:shutdown:done` | 容器关闭完成 | `durationMs` |
-| `container:error` | 容器级错误 | `error` |
+| `container:error` | 容器级错误（如循环依赖） | `error` |
 
 ## ContainerOptions
 
-创建隔离容器时可以传入配置选项：
+创建隔离容器时可传入配置：
 
 ```typescript
-import { Container } from '@hile/core';
+import { Container } from '@hile/core'
 
 const container = new Container({
-  // 单个服务启动超时时间（毫秒）
-  // 如果服务在指定时间内未完成初始化，会 reject 并触发 service:error
-  startTimeoutMs: 5000,
-
-  // 单个清理回调执行的超时时间（毫秒）
-  // 如果清理回调在指定时间内未完成，会触发 service:shutdown:error 并跳过
-  shutdownTimeoutMs: 3000,
-});
+  startTimeoutMs: 5000,      // 启动超时（ms），超时后 reject
+  shutdownTimeoutMs: 3000,   // 关闭超时（ms），超时后跳过该回调
+})
 ```
 
-关于超时需要注意：
-- 超时不会杀死进程或强制终止函数执行
-- 超时只是让 Promise reject，函数本身可能会继续在后台运行
-- 默认没有超时限制（值为 `undefined` 或 `0`）
+超时不会强制终止函数执行，只让 Promise reject。
 
 ## container.shutdown() —— 优雅关闭
 
-优雅关闭是生产环境的关键能力。当进程收到退出信号时，你需要：
-1. 停止接受新请求（关闭 HTTP 服务）
-2. 等待正在处理的请求完成
-3. 释放资源（关闭数据库连接、Redis 连接等）
-
-### 关闭顺序
-
-`container.shutdown()` 按**服务注册的逆序**（LIFO）执行清理：
+`shutdown()` 按 **LIFO**（后注册先关闭）顺序执行所有服务的清理回调：
 
 ```typescript
 const http = defineService('http-server', async (shutdown) => {
-  const server = createServer();
-  shutdown(() => new Promise(resolve => server.close(resolve)));
-  return server;
-});
+  const server = createServer()
+  shutdown(() => new Promise(r => server.close(r)))
+  return server
+})
 
 const db = defineService('database', async (shutdown) => {
-  const conn = await createConnection();
-  shutdown(() => conn.close());
-  return conn;
-});
+  const conn = await createConnection()
+  shutdown(() => conn.close())
+  return conn
+})
 
 // db 先注册，http 后注册
-// shutdown 时：先关 http（不再接请求），再关 db（释放连接）
-await container.shutdown();
+// shutdown 时：先关 http（停止接请求），再关 db（释放连接）
+await container.shutdown()
 ```
 
-同一个服务内的多个清理回调也按 LIFO 执行：
+同一服务内的多个清理回调也按 LIFO 执行：
 
 ```typescript
 const svc = defineService('my-service', async (shutdown) => {
-  shutdown(() => console.log('清理 1'));
-  shutdown(() => console.log('清理 2'));
-  shutdown(() => console.log('清理 3'));
-  return 'ok';
-});
-
-await loadService(svc);
-await container.shutdown();
-// 输出顺序：
-// 清理 3
-// 清理 2
-// 清理 1
+  shutdown(() => console.log('清理 1'))
+  shutdown(() => console.log('清理 2'))
+  shutdown(() => console.log('清理 3'))
+  return 'ok'
+})
+await loadService(svc)
+await container.shutdown()
+// 输出：清理 3 → 清理 2 → 清理 1
 ```
 
-### 竞态处理
+### 晚注册 Teardown
 
-关闭过程中可能出现一种边缘情况：某个服务在 `shutdown()` 已经开始后才完成初始化，并注册了清理回调。Hile 的容器通过 `setImmediate` 让出一次事件循环，捕获这种"晚注册"的清理回调：
+关闭过程中，如果有服务在 shutdown 开始后才完成初始化并注册 teardown，容器通过 `setImmediate` 让出事件循环来捕获这种情况。
 
-```typescript
-// 容器的 shutdown 方法内部：
-while (true) {
-  while (this.shutdownQueues.length > 0) {
-    const key = this.shutdownQueues[this.shutdownQueues.length - 1];
-    await this.shutdownService(key);
-  }
-  await new Promise<void>(r => setImmediate(r)); // 让出一次事件循环
-  if (this.shutdownQueues.length === 0) break;   // 没有新注册的 teardown
-}
-```
-
-### 调用多次
-
-`shutdown()` 可以安全地多次调用。第二次调用时，所有清理回调已经被移除，所以不执行任何操作。
-
-```typescript
-await container.shutdown();
-await container.shutdown(); // 安全，不报错
-```
+`shutdown()` 可以安全地多次调用。
 
 ## formatServiceKey / isService
 
-`formatServiceKey` 将服务 key 格式化为可读字符串：
-
 ```typescript
-import { formatServiceKey } from '@hile/core';
+import { formatServiceKey, isService } from '@hile/core'
 
-formatServiceKey('hello');          // 'hello'
-formatServiceKey(Symbol('test'));   // 'Symbol(test)'
-```
+formatServiceKey('hello')          // 'hello'
+formatServiceKey(Symbol('test'))   // 'Symbol(test)'
 
-`isService` 检查一个对象是否是合法的服务注册信息：
-
-```typescript
-import { isService, defineService } from '@hile/core';
-
-const props = defineService('test', async () => {});
-console.log(isService(props)); // true
-
-console.log(isService({ key: 'x', fn: () => {} })); // false —— 缺少内部 flag
+const props = defineService('test', async (shutdown) => {})
+isService(props)  // true
+isService({ key: 'x', fn: () => {} })  // false
 ```
 
 ## 隔离容器：new Container()
 
-默认容器适用于单应用场景。但在以下情况，你可能需要创建隔离的容器实例：
-
-- **单元测试** —— 每个测试用例需要独立的容器状态
-- **多租户** —— 单进程中运行多个互不干扰的服务集群
-- **子应用** —— 比如微前端的每个子应用需要独立的容器
+在测试或多租户场景中，可以创建独立容器：
 
 ```typescript
-import { Container } from '@hile/core';
+import { Container } from '@hile/core'
 
-// 创建隔离容器
-const container = new Container({
-  startTimeoutMs: 5000,
-  shutdownTimeoutMs: 3000,
-});
+const container = new Container({ startTimeoutMs: 5000 })
 
-// 使用方式与默认容器完全相同
-const svc = container.register('my-service', async () => 'hello');
-const value = await container.resolve(svc);
-console.log(value); // 'hello'
-
-await container.shutdown();
+// 使用方式与全局容器一致
+const svc = container.register('my-service', async (shutdown) => 'hello')
+const value = await container.resolve(svc)
+await container.shutdown()
 ```
 
-隔离容器和默认容器的 API 完全一致。`defineService` 和 `loadService` 只是默认容器的快捷函数：
-
-```typescript
-// 这两行等价：
-defineService('key', fn);
-container.register('key', fn);
-
-// 这两行等价：
-await loadService(props);
-await container.resolve(props);
-```
+`defineService` 和 `loadService` 是全局容器的快捷函数，等价于 `container.register()` 和 `container.resolve()`。
 
 ## 最佳实践
 
@@ -534,187 +400,100 @@ await container.resolve(props);
 
 ```typescript
 // ✅ 推荐
-const db = defineService('db', async (shutdown) => {
-  const conn = await createConnection();
-  shutdown(() => conn.close());
-  return conn;
-});
-const instance = await loadService(db);
+const db = defineService('db', async (shutdown) => { /* ... */ })
+const instance = await loadService(db)
 
-// ❌ 不推荐（不必要的底层操作）
-const registerProps = container.register('db', async (shutdown) => { /* ... */ });
-const instance = await container.resolve(registerProps);
+// ❌ 不必要
+const props = container.register('db', async (shutdown) => { /* ... */ })
+const instance = await container.resolve(props)
 ```
 
-### 2. 服务工厂应该是幂等的
-
-服务的工厂函数应保证：无论被调用几次（实际上只会被调用一次），返回的结果都应该一致。
-
-### 3. 不要在服务工厂外部 loadService
+### 2. 在服务工厂内部声明依赖
 
 ```typescript
-// ✅ 推荐：在服务工厂内部声明依赖
-const svcA = defineService('a', async () => {
-  const b = await loadService(svcB);
-  return { b };
-});
+// ✅ 推荐：在工厂函数内部 loadService
+const svcA = defineService('a', async (shutdown) => {
+  const b = await loadService(svcB)
+  return { b }
+})
 
-// ❌ 不推荐：在模块顶层 loadService
-// 这会导致模块一被 import 就触发初始化
-const b = await loadService(svcB);
+// ❌ 不推荐：在模块顶层 loadService（导致副作用）
+const b = await loadService(svcB)
 ```
 
-### 4. 总是注册清理回调
-
-即使你的服务不需要清理任何东西，也建议注册一个空清理回调（这样 shutdown 流程能看到它）：
+### 3. 总是注册清理回调
 
 ```typescript
 const svc = defineService('my-service', async (shutdown) => {
-  shutdown(() => {});
-  return doSomething();
-});
+  const resource = await acquire()
+  shutdown(() => resource.release())  // 总是注册清理
+  return resource
+})
 ```
 
-如果确实不需要，也可以不注册。没有注册清理回调的服务在 shutdown 时被跳过。
+### 4. 合理命名 key
 
-### 5. 合理命名 key
-
-- 用 `kebab-case` 字符串：`'my-service'`、`'user-database'`
+- 用 `kebab-case` 字符串：`'http-server'`、`'user-database'`
 - 集成包用 `Symbol.for(...)`：`Symbol.for('@hile/typeorm')`
-- 不同团队可以约定 key 的命名空间：`'team-a:database'`、`'team-b:database'`
 
 ## 反模式
 
 ### 1. 在服务间传递容器引用
 
 ```typescript
-// ❌ 反模式：把容器传给服务
+// ❌ 反模式
 const svc = defineService('bad', async (shutdown) => {
-  return { container };
-});
+  return { container }
+})
 
-// ✅ 正确：按需在服务内 loadService
+// ✅ 正确：在服务内按需 loadService
 const svc = defineService('good', async (shutdown) => {
-  const db = await loadService(databaseService);
-  return { db };
-});
+  const db = await loadService(databaseService)
+  return { db }
+})
 ```
 
 ### 2. 用同一个 key 注册多个服务
 
-当一个 key 被重复注册时，后一次注册**不会覆盖**前一次的结果。第一个 `loadService` 触发工厂执行，后续的注册不会影响已缓存的结果。
-
-```typescript
-// 第一次注册
-const svc1 = defineService('my-svc', async () => '版本1');
-
-// 第二次注册（相同 key）
-const svc2 = defineService('my-svc', async () => '版本2');
-
-const result = await loadService(svc1);
-console.log(result); // '版本1' —— 结果取决于哪个先被 loadService
-```
-
-### 3. 在同步代码中使用 loadService
-
-`loadService` 返回 Promise，不要在没有 await 的情况下期望拿到值：
-
-```typescript
-// ❌ 错误
-const val = loadService(svc);
-console.log(val); // Promise { <pending> }
-
-// ✅ 正确
-const val = await loadService(svc);
-console.log(val); // 实际值
-```
+后注册的不会覆盖前注册的结果。第一个被 `loadService` 的优先。
 
 ## 完整示例
 
-下面是一个使用容器的完整应用示例：
-
 ```typescript
-import { defineService, loadService, container } from '@hile/core';
+import { defineService, loadService, container } from '@hile/core'
 
-// 1. 定义配置服务
-const config = defineService('config', async () => ({
+// 1. 配置服务
+const config = defineService('config', async (shutdown) => ({
   port: 3000,
   db: { host: 'localhost', port: 5432 },
-  redis: { host: 'localhost', port: 6379 },
-}));
+}))
 
-// 2. 定义数据库服务（依赖 config）
+// 2. 数据库服务（依赖 config）
 const database = defineService('database', async (shutdown) => {
-  const cfg = await loadService(config);
-  const conn = { id: 'db-conn' }; // 模拟数据库连接
-  console.log('数据库连接已建立');
-  shutdown(async () => {
-    console.log('数据库连接已关闭');
-  });
-  return conn;
-});
+  const cfg = await loadService(config)
+  console.log('数据库连接已建立')
+  shutdown(async () => console.log('数据库连接已关闭'))
+  return { id: 'db-conn' }
+})
 
-// 3. 定义 Redis 服务（依赖 config）
-const redis = defineService('redis', async (shutdown) => {
-  const cfg = await loadService(config);
-  const client = { id: 'redis-client' }; // 模拟 Redis 客户端
-  console.log('Redis 连接已建立');
-  shutdown(async () => {
-    console.log('Redis 连接已关闭');
-  });
-  return client;
-});
-
-// 4. 定义 HTTP 服务（依赖 database 和 redis）
+// 3. HTTP 服务（依赖 config 和 database）
 const httpServer = defineService('http-server', async (shutdown) => {
-  const cfg = await loadService(config);
-  const db = await loadService(database);
-  const rd = await loadService(redis);
+  const cfg = await loadService(config)
+  const db = await loadService(database)
+  console.log(`HTTP 服务器启动在 ${cfg.port}`)
+  shutdown(async () => console.log('HTTP 服务器已关闭'))
+  return { port: cfg.port }
+})
 
-  const server = { port: cfg.port }; // 模拟 HTTP 服务器
-  console.log(`HTTP 服务器启动在端口 ${cfg.port}`);
-  shutdown(async () => {
-    console.log('HTTP 服务器已关闭');
-  });
-  return server;
-});
+// 4. 启动：只需 load 最上层的服务
+await loadService(httpServer)
 
-// 5. 启动一切
-async function main() {
-  // 只 load HTTP 服务即可，容器会自动加载它的所有依赖
-  await loadService(httpServer);
-  console.log('所有服务就绪');
+// 5. 查看依赖图
+console.log(container.getDependencyGraph())
+// nodes: ['config', 'database', 'http-server']
+// edges: database→config, http-server→config, http-server→database
 
-  // 查看依赖图
-  console.log(container.getDependencyGraph());
-  // {
-  //   nodes: ['config', 'database', 'redis', 'http-server'],
-  //   edges: [
-  //     { from: 'database', to: 'config' },
-  //     { from: 'redis', to: 'config' },
-  //     { from: 'http-server', to: 'config' },
-  //     { from: 'http-server', to: 'database' },
-  //     { from: 'http-server', to: 'redis' },
-  //   ]
-  // }
-
-  // 6. 优雅关闭
-  await container.shutdown();
-}
-
-main().catch(console.error);
+// 6. 优雅关闭
+await container.shutdown()
+// 输出：HTTP 服务器已关闭 → 数据库连接已关闭
 ```
-
-运行输出：
-
-```
-数据库连接已建立
-Redis 连接已建立
-HTTP 服务器启动在端口 3000
-所有服务就绪
-HTTP 服务器已关闭
-Redis 连接已关闭
-数据库连接已关闭
-```
-
-注意关闭顺序：HTTP → Redis → Database。这是根据服务注册的逆序决定的。

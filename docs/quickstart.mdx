@@ -1,11 +1,11 @@
 ---
 title: 快速开始
-description: "从零开始：5 分钟搭建并运行你的第一个 Hile 项目。学习使用脚手架或手动搭建，理解服务容器、HTTP 服务和控制器的基本概念。"
+description: "从零开始：5 分钟搭建并运行你的第一个 Hile 项目。学习服务容器、HTTP 服务和控制器的基本概念。"
 ---
 
 # 快速开始
 
-本教程将从零开始，教你创建并运行第一个 Hile 项目。我们将提供**两种方式**：使用脚手架（推荐初学者）和手动搭建（更深入理解原理）。
+本教程将从零开始，教你创建并运行第一个 Hile 项目。
 
 ## 前置要求
 
@@ -13,23 +13,12 @@ description: "从零开始：5 分钟搭建并运行你的第一个 Hile 项目�
 
 | 工具 | 最低版本 | 说明 |
 |------|----------|------|
-| <strong>Node.js</strong> | 20.12+ | 需要原生 <code>process.loadEnvFile</code> 支持 |
-| <strong>pnpm</strong> | 8+ | 推荐使用，Hile 项目使用 pnpm workspace |
-| <strong>TypeScript</strong> | 5+ | 所有 Hile 包都是用 TypeScript 编写的 |
+| **Node.js** | 20.12+ | 需要原生 `process.loadEnvFile` 支持 |
+| **pnpm** | 8+ | Hile 项目使用 pnpm workspace |
 
 <Note>
-Hile 要求项目启用 <strong>ESM</strong>（ES Module），即在 <code>package.json</code> 中设置 <code>"type": "module"</code>。这是 Node.js 的模块系统设置，意味着你可以使用 <code>import/export</code> 语法，而不是 <code>require()</code>。
+Hile 要求项目启用 **ESM**（ES Module），即在 `package.json` 中设置 `"type": "module"`。这是 Node.js 的模块系统设置，意味着你可以使用 `import/export` 语法，而不是 `require()`。
 </Note>
-
-<Accordion title="什么是 ESM？为什么需要它？">
-  ESM（ES Module）是 JavaScript 的官方模块化标准。在 <code>package.json</code> 中设置 <code>"type": "module"</code> 后：
-
-  - 你可以使用 <code>import { something } from 'package'</code> 语法
-  - 所有 <code>.ts</code> / <code>.js</code> 文件默认被视为 ESM 模块
-  - TypeScript 编译时会将 <code>import</code> 保持为 <code>import</code>（而不是转换为 <code>require</code>）
-
-  Hile 选择 ESM 是因为它是 Node.js 的未来，所有最新的 Node.js 特性（如 <code>process.loadEnvFile</code>、Top-level await 等）都只支持 ESM。
-</Accordion>
 
 ## 方式一：使用脚手架（推荐）
 
@@ -37,111 +26,78 @@ Hile 要求项目启用 <strong>ESM</strong>（ES Module），即在 <code>packa
 
 ### 第 1 步：创建项目
 
-打开终端，运行以下命令：
+打开终端，运行：
 
 ```bash
 npx create-hile create my-first-app
 ```
 
-<Accordion title="npx 是什么？">
-  <code>npx</code> 是 npm 自带的包执行工具。它会自动下载 <code>create-hile</code> 包并执行其中的 <code>create</code> 命令，而不需要你手动安装。<code>npx create-hile create my-first-app</code> 相当于"使用 create-hile 创建一个名为 my-first-app 的新项目"。
-</Accordion>
+运行后会看到交互式界面，选择模板和是否安装依赖。
 
-运行后，你会看到一个交互式界面：
+**内置 6 种模板**：
 
-```
-? 请选择模板 (Use arrow keys)
-❯ 默认模板
-  Next.js 模板
-  Micro + HTTP 模板
-  Micro 独立服务模板
-  Next.js + Micro + HTTP 模板
-  Monorepo 模板（Lerna + pnpm workspace）
-```
+| 模板名 | 说明 |
+|--------|------|
+| `default` | 默认模板，适合纯 API 服务 |
+| `next` | Next.js 全栈模板 |
+| `micro-http` | Micro + HTTP 模板 |
+| `micro` | Micro 独立服务模板 |
+| `micro-http-next` | Next.js + Micro + HTTP 全栈微服务模板 |
+| `monorepo` | Monorepo 模板（Lerna + pnpm workspace） |
 
-选择 **默认模板**（按 Enter 确认），然后：
-
-```
-? 是否安装依赖 (Y/n)
-```
-
-选择 <code>Y</code>（回车确认），脚手架会自动安装依赖。
-
-<Accordion title="各模板的区别是什么？">
-  - <strong>默认模板</strong>：最基础的 Hile 项目，包含 core + cli + http，适合纯 API 服务
-  - <strong>Next.js 模板</strong>：包含 http-next，API 和 Next.js 页面共享端口，适合全栈应用
-  - <strong>Micro + HTTP 模板</strong>：包含 micro 和 http，适合微服务架构中的 HTTP 节点
-  - <strong>Micro 独立服务模板</strong>：仅包含 micro，适合纯微服务节点
-  - <strong>Next.js + Micro + HTTP 模板</strong>：全栈 + 微服务，适合复杂的微服务全栈应用
-  - <strong>Monorepo 模板</strong>：多包仓库结构（pnpm workspace），适合大型项目
-
-  对于本教程，默认模板就足够了。
-</Accordion>
+选择**默认模板**即可开始。
 
 ### 第 2 步：查看项目结构
-
-创建完成后，进入项目目录：
 
 ```bash
 cd my-first-app
 ```
 
-默认模板的项目结构如下：
+默认模板的项目结构：
 
 ```
 my-first-app/
 ├── src/
 │   ├── controllers/
 │   │   └── index.controller.ts     # 默认 API 控制器
-│   ├── models/
-│   │   └── index.model.ts           # 默认业务模型
 │   └── services/
 │       └── index.boot.ts            # 服务启动入口
-├── .env                             # 环境变量文件（模板中为 _env）
-├── _gitignore                       # 被重命名为 .gitignore
+├── .env                             # 环境变量文件
+├── .gitignore
 ├── package.json
-├── tsconfig.json
-└── tsconfig.next.json
+└── tsconfig.json
 ```
 
 关键文件说明：
 
 | 文件 | 作用 |
 |------|------|
-| <code>src/services/index.boot.ts</code> | **服务入口文件**。CLI 启动时会自动扫描并加载所有 <code>*.boot.ts</code> 文件。这个文件定义了 HTTP 服务并注册到容器中。 |
-| <code>src/controllers/index.controller.ts</code> | **API 控制器**。定义了 HTTP 路由处理器，默认响应 GET / 请求。 |
-| <code>src/models/index.model.ts</code> | **业务模型**。封装了业务逻辑，控制器通过 <code>loadModel</code> 调用它。 |
-| <code>.env</code> | **环境变量文件**。用于存放数据库密码、API 密钥等配置。 |
+| `src/services/index.boot.ts` | **服务入口文件**。CLI 启动时自动扫描并加载所有 `*.boot.ts` 文件。 |
+| `src/controllers/index.controller.ts` | **API 控制器**。定义 HTTP 路由处理器。 |
 
 ### 第 3 步：启动开发服务器
 
 ```bash
-cd my-first-app   # 如果不在项目目录
 pnpm run dev
 ```
 
-你会看到类似下面的输出：
+你会看到类似输出：
 
 ```
 [hile] service(http-server) init
 [hile] service(http-server) ready (15ms)
-Server running on http://localhost:3000
 ```
 
-<Accordion title="hile start --dev 做了什么？">
-  <code>pnpm run dev</code> 在 <code>package.json</code> 中定义为 <code>hile start --dev</code>。这条命令会：
+`hile start --dev` 做了什么：
 
-  1. 设置 <code>NODE_ENV=development</code>
-  2. 使用 <code>tsx</code> 直接运行 TypeScript 文件（无需预先编译）
-  3. 订阅容器事件并以彩色日志输出（[hile] 开头的行）
-  4. 扫描 <code>src/</code> 目录下所有 <code>*.boot.ts</code> 文件
-  5. 加载 boot 文件并启动所有服务
-  6. 注册退出钩子（Ctrl+C 时优雅关闭）
-</Accordion>
+1. 设置 `NODE_ENV=development`
+2. 使用 `tsx` 直接运行 TypeScript 文件（无需预先编译）
+3. 订阅容器事件并以彩色日志输出（`[hile]` 开头的行）
+4. 扫描 `src/` 目录下所有 `*.boot.ts` 文件
+5. 加载 boot 文件并启动所有服务
+6. 注册退出钩子（Ctrl+C 时优雅关闭）
 
 ### 第 4 步：测试 API
-
-现在打开另一个终端窗口（或使用 Postman/浏览器），发送一个 HTTP 请求：
 
 ```bash
 curl http://localhost:3000/
@@ -150,18 +106,12 @@ curl http://localhost:3000/
 你会看到 JSON 响应：
 
 ```json
-{"message":"Hello Hile","timestamp":1712345678901}
+{"message":"Hello Hile"}
 ```
-
-<Accordion title="为什么返回的是 JSON？">
-  控制器文件 <code>src/controllers/index.controller.ts</code> 中定义了一个 GET / 路由，其处理器返回了一个 JavaScript 对象。Hile 的 HTTP 服务基于 Koa，当 <code>ctx.body</code> 被赋予一个对象时，Koa 会自动将其序列化为 JSON 并设置 <code>Content-Type: application/json</code> 响应头。
-
-  实际上，<code>defineController</code> 的返回值会被自动赋值给 <code>ctx.body</code>，所以返回对象就会自动变成 JSON 响应。
-</Accordion>
 
 ### 第 5 步：理解启动流程
 
-现在让我们仔细看一下 <code>src/services/index.boot.ts</code> 中的代码，理解它是如何工作的：
+看一下 `src/services/index.boot.ts` 中的代码：
 
 ```typescript
 // src/services/index.boot.ts
@@ -170,28 +120,25 @@ import { Http } from '@hile/http'
 
 // defineService 将 HTTP 服务注册到全局容器中
 // 第一个参数 'http-server' 是这个服务的唯一标识（key）
-// 第二个参数 async (shutdown) => { ... } 是工厂函数
+// 第二个参数是工厂函数，接收 shutdown 用于注册关闭回调
 export default defineService('http-server', async (shutdown) => {
   // 1. 创建 HTTP 服务实例，监听 3000 端口
   const http = new Http({ port: 3000 })
 
-  // 2. 加载 API 路由
-  //    扫描 src/controllers/ 目录下所有 *.controller.ts 文件
-  //    自动将文件路径映射为 API 路径
+  // 2. 加载控制器路由（扫描 src/controllers/ 目录）
   await http.load('./src/controllers', {
-    suffix: 'controller',         // 文件后缀标记
-    prefix: '',                   // URL 前缀（这里为空）
-    defaultSuffix: '/index',      // index.controller.ts → /
+    suffix: 'controller',      // 匹配 *.controller.ts 文件
+    prefix: '/',               // URL 前缀
+    defaultSuffix: '/index',   // index.controller.ts → /
   })
 
-  // 3. 启动 HTTP 服务
+  // 3. 启动 HTTP 服务，listen 返回关闭函数
   const close = await http.listen()
 
-  // 4. 注册关闭回调
-  //    当容器关闭时，会自动调用 close() 关闭 HTTP 服务
+  // 4. 注册关闭回调：容器关闭时自动调用 close()
   shutdown(close)
 
-  // 5. 返回 HTTP 实例，供其他服务使用
+  // 5. 返回 HTTP 实例
   return http
 })
 ```
@@ -200,105 +147,34 @@ export default defineService('http-server', async (shutdown) => {
 
 ```
 1. CLI 执行 hile start --dev
-2. → 扫描 src/**/*.boot.ts，找到 src/services/index.boot.ts
+2. → 扫描 src/**/*.boot.ts
 3. → 加载该文件，获取 default export
 4. → 调用 loadService(props)，执行工厂函数
-5. → 创建 Http 实例（此时还未监听端口）
-6. → 调用 http.load()，扫描控制器目录
-7. → 调用 http.listen()，启动 HTTP 服务（开始监听端口）
-8. → 调用 shutdown(close)，注册关闭回调
-9. → 服务就绪，继续等待请求
+5. → new Http({ port: 3000 })（此时还未监听端口）
+6. → http.load() 扫描控制器目录
+7. → http.listen() 启动 HTTP 服务（开始监听端口）
+8. → shutdown(close) 注册关闭回调
+9. → 服务就绪，等待请求
 ```
 
 <Warning>
-<strong>重要概念</strong>：<code>defineService</code> 只是"注册"服务，不会立即执行。真正执行工厂函数的是 <code>loadService</code>。CLI 在扫描到 boot 文件后会自动调用 <code>loadService</code>。如果你没有使用 CLI，需要手动调用 <code>loadService</code> 来启动服务。
+**重要概念**：`defineService` 只是"注册"服务，不会立即执行工厂函数。真正执行工厂函数的是 `loadService`。CLI 在扫描到 boot 文件后会自动调用 `loadService`。
 </Warning>
-
-### 第 6 步：修改控制器
-
-现在让我们修改控制器文件，添加一个带参数的路由。
-
-打开 <code>src/controllers/index.controller.ts</code>：
-
-```typescript
-// src/controllers/index.controller.ts
-import { defineController } from '@hile/http'
-
-// defineController 定义一个路由处理器
-// 参数 1: HTTP 方法（'GET' | 'POST' | 'PUT' | 'DELETE' 等）
-// 参数 2: 处理器函数 (ctx) => { ... }
-//         ctx 是 Koa 的 Context 对象，包含 request、response 等信息
-export default defineController('GET', async (ctx) => {
-  return {
-    message: 'Hello Hile',
-    timestamp: Date.now(),
-  }
-})
-```
-
-让我们添加一个带名称参数的问候路由：
-
-```typescript
-// src/controllers/greeting.controller.ts
-import { defineController } from '@hile/http'
-
-export default defineController('GET', async (ctx) => {
-  // ctx.query 是 URL 查询参数对象
-  // 例如访问 /greeting?name=Alice，ctx.query 就是 { name: 'Alice' }
-  const name = ctx.query.name || 'World'
-
-  return {
-    greeting: `Hello ${name}!`,
-    timestamp: Date.now(),
-  }
-})
-```
-
-<Accordion title="文件名的路由映射规则">
-  文件名 <code>greeting.controller.ts</code> 被自动映射为 <code>GET /greeting</code>。
-
-  Hile 的 <code>Loader</code> 使用以下规则将文件路径转换为 URL：
-  1. 去掉 <code>.controller.ts</code> 后缀 → <code>greeting</code>
-  2. 添加前导斜杠 → <code>/greeting</code>
-  3. 如果文件名是 <code>index.controller.ts</code>，则映射为 <code>/</code>
-
-  更复杂的路径映射：
-  - <code>users/profile.controller.ts</code> → <code>/users/profile</code>
-  - <code>users/index.controller.ts</code> → <code>/users</code>（index 被替换为父路径）
-  - <code>users/[id].controller.ts</code> → <code>/users/:id</code>（[param] 变为 :param，即 URL 路径参数）
-  - <code>admin/[module]/list.controller.ts</code> → <code>/admin/:module/list</code>
-</Accordion>
-
-保存文件后，如果开发服务器还在运行（<code>pnpm run dev</code>），请先停止（Ctrl+C）再重新启动。这是纯 API 项目，没有热重载功能。
-
-重启后，打开浏览器访问 <code>http://localhost:3000/greeting?name=Alice</code>，你应该看到：
-
-```json
-{"greeting":"Hello Alice!","timestamp":1712345678901}
-```
-
-如果省略 <code>name</code> 参数，访问 <code>http://localhost:3000/greeting</code>：
-
-```json
-{"greeting":"Hello World!","timestamp":1712345678901}
-```
 
 ---
 
 ## 方式二：手动搭建项目
 
-如果你想更深入地理解 Hile 的工作原理，或者脚手架生成的代码无法满足你的需求，可以手动搭建项目。
+如果你想更深入地理解 Hile 的工作原理，可以手动搭建项目。
 
-### 第 1 步：初始化项目目录
-
-创建项目目录并初始化 <code>package.json</code>：
+### 第 1 步：初始化项目
 
 ```bash
 mkdir my-handmade-api && cd my-handmade-api
 pnpm init
 ```
 
-编辑 <code>package.json</code>，添加 <code>"type": "module"</code> 和脚本：
+编辑 `package.json`，添加 `"type": "module"` 和脚本：
 
 ```json
 {
@@ -312,27 +188,18 @@ pnpm init
 }
 ```
 
-<Accordion title="什么是 pnpm init？">
-  <code>pnpm init</code> 会创建一个基础的 <code>package.json</code> 文件，包含 <code>name</code>、<code>version</code> 等基本信息。你随后需要手动编辑它来添加 <code>"type": "module"</code> 和 <code>scripts</code>。
-
-  <code>"type": "module"</code> 告诉 Node.js 使用 ESM 模块系统，这是 Hile 的要求。
-</Accordion>
-
-### 第 2 步：安装 Hile 依赖
+### 第 2 步：安装依赖
 
 ```bash
 pnpm add @hile/core @hile/http @hile/cli
 ```
 
-<Accordion title="这三个包各自的职责是什么？">
-  - <code>@hile/core</code>：**服务容器**。管理服务的创建、缓存、依赖追踪和优雅关闭。是所有 Hile 应用的基础。
-  - <code>@hile/http</code>：**HTTP 框架**。基于 Koa，提供路由、中间件、控制器等功能。是让外界访问你服务的入口。
-  - <code>@hile/cli</code>：**命令行启动器**。提供 <code>hile start</code> 命令，自动扫描 boot 文件、加载服务、处理进程信号。
-</Accordion>
+三个包各自的职责：
+- `@hile/core`：**服务容器**。管理服务的创建、缓存、依赖追踪和优雅关闭。
+- `@hile/http`：**HTTP 框架**。基于 Koa + find-my-way，提供路由、中间件、控制器。
+- `@hile/cli`：**命令行启动器**。提供 `hile start` 命令，自动扫描 boot 文件。
 
 ### 第 3 步：创建 tsconfig.json
-
-在项目根目录创建 <code>tsconfig.json</code>：
 
 ```json
 {
@@ -352,175 +219,66 @@ pnpm add @hile/core @hile/http @hile/cli
 }
 ```
 
-<Accordion title="每个 compilerOptions 的含义">
-  - <code>target: "ES2022"</code>：编译目标为 ES2022，这意味着你可以使用最新的 JavaScript 特性
-  - <code>module: "ESNext"</code>：保持 ESM 模块格式，不转换为 CommonJS
-  - <code>moduleResolution: "bundler"</code>：使用 bundler 风格的模块解析（更宽松，适合 pnpm）
-  - <code>strict: true</code>：启用所有严格类型检查选项
-  - <code>esModuleInterop: true</code>：允许默认导入 CommonJS 模块
-  - <code>skipLibCheck: true</code>：跳过声明文件的类型检查（加快编译速度）
-  - <code>outDir: "./dist"</code>：编译输出目录
-  - <code>rootDir: "./src"</code>：源代码目录
-  - <code>declaration: true</code>：生成 <code>.d.ts</code> 类型声明文件
-</Accordion>
-
 ### 第 4 步：创建目录结构
 
 ```bash
 mkdir -p src/services src/controllers
 ```
 
-这将创建：
-- <code>src/services/</code>：存放 boot 文件（服务启动入口）
-- <code>src/controllers/</code>：存放控制器文件（API 路由处理器）
-
 ### 第 5 步：创建 HTTP 服务
 
-在 <code>src/services/http.boot.ts</code> 中创建 HTTP 服务：
+在 `src/services/http.boot.ts` 中：
 
 ```typescript
 // src/services/http.boot.ts
-// 这个文件会被 CLI 自动加载，因为它的后缀是 .boot.ts
-
 import { defineService } from '@hile/core'
 import { Http } from '@hile/http'
 
-// defineService 将 HTTP 服务注册到全局容器
-// 第一个参数 'http-server' 是服务的 key，用于标识和依赖引用
-// 第二个参数是工厂函数，返回服务实例
 export default defineService('http-server', async (shutdown) => {
-  // === 1. 创建 HTTP 服务 ===
   const http = new Http({
-    port: 3000,               // 监听端口
-    // 以下为 find-my-way 路由器的可选配置
-    ignoreDuplicateSlashes: true,  // 忽略重复斜杠
-    ignoreTrailingSlash: true,     // 忽略末尾斜杠
-    maxParamLength: 100,           // URL 参数最大长度
+    port: 3000,
+    ignoreDuplicateSlashes: true,
+    ignoreTrailingSlash: true,
+    maxParamLength: 100,
   })
 
-  // === 2. 注册全局中间件 ===
-  // 中间件是按顺序执行的函数链，每个中间件可以：
-  // - 在请求到达控制器之前做预处理（日志、鉴权）
-  // - 调用 await next() 将控制权交给下一个中间件
-  // - 在控制器返回之后做后处理（响应时间计算）
-
-  // 请求日志中间件
+  // 注册全局中间件（Koa 中间件）
   http.use(async (ctx, next) => {
-    const start = Date.now()           // 请求开始时间
-    await next()                        // 交给下一个中间件/路由
-    const ms = Date.now() - start       // 请求处理耗时
+    const start = Date.now()
+    await next()
+    const ms = Date.now() - start
     console.log(`${ctx.method} ${ctx.url} - ${ms}ms`)
   })
 
-  // === 3. 手动注册路由 ===
-  // 这是方式一：直接在 boot 文件中使用 http.get/post 注册路由
+  // 手动注册路由
   http.get('/manual', async (ctx) => {
-    ctx.body = { message: 'This is a manually registered route' }
+    ctx.body = { message: '手动注册的路由' }
   })
 
-  // === 4. 加载文件系统路由 ===
-  // 这是方式二：扫描 controllers 目录自动加载路由
+  // 从文件系统加载路由
   await http.load('./src/controllers', {
-    suffix: 'controller',         // 匹配 *.controller.ts 文件
-    prefix: '/api',               // 所有 API 路径加 /api 前缀
-    defaultSuffix: '/index',      // index.controller.ts → /
-    conflict: 'error',            // 路由冲突时报错（可选：'warn' | 'override'）
+    suffix: 'controller',
+    prefix: '/api',
+    defaultSuffix: '/index',
   })
 
-  // === 5. 启动服务 ===
   const close = await http.listen()
-  // http.listen() 启动 HTTP 服务并返回关闭函数
-  // 调用 close() 会关闭 HTTP 服务
-
-  // === 6. 注册关闭回调 ===
-  // 当收到 SIGTERM/SIGINT 信号时，容器会调用这个函数
   shutdown(close)
 
   console.log(`Server running on http://localhost:${http.port}`)
-
-  // 返回服务实例（会被容器缓存）
   return http
 })
 ```
 
-<Accordion title="什么是中间件（middleware）？">
-  <strong>中间件</strong>是 Koa（以及 Express/Next.js 等框架）的核心概念。它是一个函数，接收两个参数：
-
-  ```typescript
-  async (ctx, next) => {
-    // 1. 请求到达时的预处理
-    const start = Date.now()
-
-    // 2. next() 将控制权交给下一个中间件或路由处理器
-    await next()
-
-    // 3. 请求处理完成后的后处理
-    const ms = Date.now() - start
-    console.log(`耗时: ${ms}ms`)
-  }
-  ```
-
-  <strong>ctx</strong>（Context）是 Koa 的上下文对象，包含：
-  - <code>ctx.request</code> / <code>ctx.req</code>：请求对象
-  - <code>ctx.response</code> / <code>ctx.res</code>：响应对象
-  - <code>ctx.method</code>：请求方法（GET / POST 等）
-  - <code>ctx.url</code>：请求 URL
-  - <code>ctx.query</code>：URL 查询参数
-  - <code>ctx.params</code>：路由路径参数
-  - <code>ctx.body</code>：设置响应体
-  - <code>ctx.state</code>：中间件之间共享的状态
-  - <code>ctx.throw(status, message)</code>：抛出错误
-
-  中间件的执行顺序是"洋葱模型"：
-
-  ```
-  请求 → 中间件 1(进入) → 中间件 2(进入) → 路由处理器
-       ← 中间件 1(返回) ← 中间件 2(返回) ← 响应
-  ```
-
-  这意味着你可以把"耗时计算"这样的中间件放在最外层，它会覆盖所有内部的处理时间。
-</Accordion>
-
-<Accordion title="http.load 中的 conflict 选项是什么？">
-  当你从文件系统加载路由时，可能会遇到同一个 URL+方法被定义了多次的情况（例如两个控制文件都定义了 <code>GET /users</code>）。<code>conflict</code> 选项决定如何处理这种情况：
-
-  - <code>'error'</code>（默认）：抛出错误，启动失败。这是最安全的方式，可以防止意外的路由覆盖。
-  - <code>'warn'</code>：打印警告，保留先注册的路由。
-  - <code>'override'</code>：后注册的路由覆盖先注册的。
-
-  如果你需要自定义冲突处理逻辑，可以传入 <code>onConflict</code> 回调：
-
-  ```typescript
-  await http.load('./src/controllers', {
-    conflict: 'warn',
-    onConflict: (ctx) => {
-      // ctx.routeKey: 'GET:/api/users'
-      // ctx.method: 'GET'
-      // ctx.url: '/api/users'
-      // ctx.strategy: 'warn'
-      // ctx.resolution: 'keep'（保留已有的）
-      console.warn(`路由冲突: ${ctx.routeKey}`)
-    },
-  })
-  ```
-</Accordion>
-
 ### 第 6 步：创建控制器
 
-在 <code>src/controllers</code> 目录下创建控制器文件。
-
-**基础控制器**：<code>src/controllers/hello.controller.ts</code>
+`src/controllers/hello.controller.ts`：
 
 ```typescript
-// src/controllers/hello.controller.ts
-// 这个文件会被自动映射为 GET /api/hello（因为为 prefix 设为了 /api）
-
 import { defineController } from '@hile/http'
 
-// defineController 定义一个路由控制器
-// 最简单的用法：传递 HTTP 方法和处理器函数
+// 这个文件自动映射为 GET /api/hello
 export default defineController('GET', async (ctx) => {
-  // 返回一个对象，Koa 会自动将它序列化为 JSON
   return {
     message: 'Hello, Hile!',
     url: ctx.url,
@@ -530,83 +288,16 @@ export default defineController('GET', async (ctx) => {
 })
 ```
 
-**带中间件的控制器**：<code>src/controllers/users.controller.ts</code>
+**带 Zod 校验的控制器**：`src/controllers/greeting.controller.ts`：
 
 ```typescript
-// src/controllers/users.controller.ts
-// 自动映射为:
-//   GET /api/users
-//   POST /api/users
-
-import { defineController } from '@hile/http'
-
-// 定义两个控制器，导出为一个数组
-const getUsers = defineController('GET', async (ctx) => {
-  // ctx.query 包含 URL 查询参数
-  // 例如 GET /api/users?page=1&limit=10
-  const page = Number(ctx.query.page) || 1
-  const limit = Number(ctx.query.limit) || 10
-
-  return {
-    users: [
-      { id: 1, name: 'Alice' },
-      { id: 2, name: 'Bob' },
-    ],
-    page,
-    limit,
-    total: 2,
-  }
-})
-
-const createUser = defineController('POST', [async (ctx, next) => {
-  // 这是前置中间件：验证请求体
-  // 如果请求体中没有 name 字段，返回 400 错误
-  if (!ctx.request.body?.name) {
-    ctx.throw(400, 'name is required')
-    return
-  }
-  await next()  // 继续执行路由处理器
-}], async (ctx) => {
-  // 路由处理器
-  // ctx.request.body 是请求体（需要 body parser 中间件）
-  return {
-    created: true,
-    user: {
-      id: 3,
-      name: ctx.request.body?.name || 'Unknown',
-    },
-  }
-})
-
-// 导出多个控制器：数组中的每个元素都会被注册
-export default [getUsers, createUser]
-```
-
-<Note>
-<strong>路由注册细节</strong>：当你导出数组时，Hile 会循环注册数组中的每个控制器。这意味着 <code>users.controller.ts</code> 中的 <code>getUsers</code> 注册为 <code>GET /api/users</code>，<code>createUser</code> 注册为 <code>POST /api/users</code>。
-</Note>
-
-**带 Zod 校验的控制器**：<code>src/controllers/greeting.controller.ts</code>
-
-```typescript
-// src/controllers/greeting.controller.ts
-// 演示如何用 Zod 校验请求参数
-
 import { defineController, createControllerMetadata } from '@hile/http'
 import { z } from 'zod'
-
-// createControllerMetadata 用于创建带 Zod schema 的控制器元数据
-// 它包含三个部分：
-// - method: HTTP 方法
-// - schema: 校验规则（query / params / body）
-// - middlewares: 路由级别的中间件
 
 export default defineController(
   createControllerMetadata({
     method: 'GET',
     schema: {
-      // 校验 URL 查询参数
-      // z.coerce.number() 会将字符串 "1" 转换为数字 1
       query: z.object({
         name: z.string().min(1).max(50).default('World'),
         repeat: z.coerce.number().min(1).max(10).default(1),
@@ -614,114 +305,40 @@ export default defineController(
     },
   }),
   async (ctx) => {
-    // ctx.query 现在有类型推导了！TypeScript 知道：
-    // - ctx.query.name: string（默认 'World'）
-    // - ctx.query.repeat: number（默认 1）
-
     const greetings = Array.from(
       { length: ctx.query.repeat },
       (_, i) => `${i + 1}: Hello ${ctx.query.name}!`
     )
-
-    return {
-      greetings,
-      count: greetings.length,
-    }
+    return { greetings, count: greetings.length }
   }
 )
 ```
 
-<Accordion title="Zod 是什么？为什么要用它校验参数？">
-  <strong>Zod</strong> 是一个 TypeScript 优先的 schema 声明和校验库。它让你可以用 TypeScript 类型的方式定义数据结构，然后自动在运行时校验数据是否符合这个结构。
-
-  不使用 Zod 时，你需要在控制器中手动校验：
-
-  ```typescript
-  // 手动校验——容易遗漏、代码冗余
-  const name = ctx.query.name
-  if (!name || typeof name !== 'string' || name.length > 50) {
-    ctx.throw(400, '无效的 name 参数')
-  }
-  ```
-
-  使用 Zod 后：
-
-  ```typescript
-  // Zod 自动校验——干净、类型安全
-  const schema = z.object({
-    name: z.string().min(1).max(50).default('World'),
-  })
-  // 如果校验失败，自动返回 400 错误
-  // 校验成功后，ctx.query 的类型被自动推导
-  ```
-
-  Hile 的 <code>createControllerMetadata</code> 自动将 Zod schema 包装为路由中间件。如果校验失败（<code>safeParse</code> 返回 <code>!success</code>），中间件会自动 <code>ctx.throw(400, 错误信息)</code>。
-</Accordion>
-
-### 第 7 步：配置自动加载（可选）
-
-在 <code>package.json</code> 中添加 <code>hile.auto_load_packages</code> 配置，让 CLI 自动加载某些包的默认导出：
-
-```json
-{
-  "name": "my-handmade-api",
-  "type": "module",
-  "scripts": {
-    "dev": "hile start --dev",
-    "build": "tsc -b",
-    "start": "hile start"
-  },
-  "hile": {
-    "auto_load_packages": [
-      "@hile/logger"
-    ]
-  }
-}
-```
-
-<Accordion title="auto_load_packages 是什么？">
-  当你安装了一些 Hile 包（如 <code>@hile/logger</code>、<code>@hile/typeorm</code>、<code>@hile/ioredis</code>），它们的默认导出是一个 <code>defineService</code> 注册。但是如果不手动 <code>import</code> 并 <code>loadService</code>，它们不会被加载。
-
-  <code>auto_load_packages</code> 告诉 CLI：启动时自动 import 这些包，并自动 <code>loadService</code> 它们的默认导出。
-
-  这样你就不需要在 boot 文件中手动加载它们了。例如，配置了 <code>@hile/logger</code> 后，你可以在任何地方直接 <code>import logger from '@hile/logger'</code> 并通过 <code>loadService(logger)</code> 获取日志实例。
-
-  注意：auto_load_packages 只适用于那些默认导出了 <code>defineService</code> 的包。不是所有 Hile 包都这样（例如 <code>@hile/http</code> 没有默认导出，它需要你在 boot 文件中手动创建 Http 实例）。
-</Accordion>
-
-### 第 8 步：启动并测试
-
-启动开发服务器：
+### 第 7 步：启动并测试
 
 ```bash
 pnpm run dev
 ```
 
-看到输出后，测试各个路由：
+测试路由：
 
 ```bash
 # 手动注册的路由
 curl http://localhost:3000/manual
-# {"message":"This is a manually registered route"}
+# → {"message":"手动注册的路由"}
 
-# 文件系统路由 + prefix
+# 文件系统路由（带 prefix /api）
 curl http://localhost:3000/api/hello
-# {"message":"Hello, Hile!","url":"/api/hello","method":"GET","timestamp":...}
+# → {"message":"Hello, Hile!","url":"/api/hello","method":"GET","timestamp":...}
 
-# 带查询参数的路由
-curl http://localhost:3000/api/greeting?name=Hile&repeat=3
-# {"greetings":["1: Hello Hile!","2: Hello Hile!","3: Hello Hile!"],"count":3}
-
-# POST 创建用户
-curl -X POST http://localhost:3000/api/users \
-  -H "Content-Type: application/json" \
-  -d '{"name":"Charlie"}'
-# {"created":true,"user":{"name":"Charlie","id":3}}
+# 带查询参数 + Zod 校验
+curl "http://localhost:3000/api/greeting?name=Hile&repeat=3"
+# → {"greetings":["1: Hello Hile!","2: Hello Hile!","3: Hello Hile!"],"count":3}
 ```
 
-### 第 9 步：理解优雅关闭
+### 第 8 步：理解优雅关闭
 
-按 <code>Ctrl+C</code> 停止开发服务器，你会看到：
+按 `Ctrl+C` 停止服务器，你会看到：
 
 ```
 ^C
@@ -731,183 +348,72 @@ curl -X POST http://localhost:3000/api/users \
 [hile] container shutdown done (5ms)
 ```
 
-这就是 Hile 的**优雅关闭**机制：
-
-1. 你按下 <code>Ctrl+C</code>，进程收到 <code>SIGINT</code> 信号
-2. CLI 注册的退出钩子（<code>async-exit-hook</code>）捕获信号
-3. 调用 <code>container.shutdown()</code> 关闭所有服务
-4. 容器按 LIFO 顺序执行每个服务的 shutdown 回调
-5. HTTP 服务收到 <code>close()</code> 调用，停止接受新连接
-6. 所有服务关闭后，进程安全退出
-
-这确保了在关闭过程中不会出现"数据库连接已断开，但 HTTP 请求还在处理"的竞态条件。
+这就是 Hile 的**优雅关闭**机制：CLI 通过 `async-exit-hook` 捕获 SIGINT/SIGTERM 信号，调用 `container.shutdown()`，按 LIFO 顺序执行每个服务的 shutdown 回调。
 
 ---
 
-## 概念解析
+## 文件路由映射规则
 
-### 什么是"服务容器"？
+Hile 将文件路径自动转换为 URL 路由：
 
-服务容器（<code>Container</code>）是 Hile 最核心的概念。可以把它想象成一个**智能的全局变量管理器**：
-
-- **你定义"如何创建"**（通过 <code>defineService</code>）
-- **容器管理"何时创建"和"何时销毁"**（通过 <code>loadService</code> 和 <code>shutdown</code>）
-- **容器确保"只创建一次"**（缓存单例）
-- **容器追踪"谁依赖谁"**（<code>AsyncLocalStorage</code> 依赖追踪）
-
-```typescript
-// 比喻：酒店入住
-// defineService = 预订房间（告诉前台哪天入住）
-// loadService = 入住房间（拿到钥匙，开始使用）
-// shutdown = 退房（归还钥匙，释放房间）
-
-const myBooking = defineService('room-301', async (checkout) => {
-  console.log('入住 301 房间')
-  const key = { roomNumber: 301 }
-
-  checkout(() => {
-    console.log('退房 301 房间')
-    // 归还钥匙、打扫房间
-  })
-
-  return key
-})
-
-// 入住
-const key = await loadService(myBooking)
-// 使用房间
-console.log(key.roomNumber) // 301
-// 退房（通常由 CLI 自动触发）
-await container.shutdown()
-```
-
-### 什么是 boot 文件？
-
-Boot 文件是 Hile 应用的"启动片"，约定以 <code>.boot.ts</code> 或 <code>.boot.js</code> 结尾。CLI 启动时会自动扫描并加载它们。
-
-为什么需要 boot 文件？因为一个应用可能有多个需要启动的服务：
-
-```typescript
-// src/services/http.boot.ts — HTTP 服务
-export default defineService('http', async (shutdown) => { ... })
-
-// src/services/database.boot.ts — 数据库连接
-export default defineService('db', async (shutdown) => { ... })
-
-// src/services/scheduler.boot.ts — 定时任务
-export default defineService('scheduler', async (shutdown) => { ... })
-```
-
-Boot 文件可以放在 <code>src/services/</code> 目录下，也可以放在 <code>src/</code> 的任何子目录中（CLI 会递归扫描）。
-
-### 什么是控制器？
-
-控制器是处理 HTTP 请求的"函数"。在 Hile 中，每个控制器对应一个 HTTP 路由（一个方法 + 一个路径）。
-
-```
-控制器文件                           → 路由路径
-src/controllers/users.controller.ts   → /users (GET)
-                                       /users (POST)
-```
-
-控制器通过 <code>defineController</code> 定义，返回值自动成为 HTTP 响应体。
+| 文件路径 | 路由路径（prefix: /api） |
+|----------|--------------------------|
+| `hello.controller.ts` | `/api/hello` |
+| `users/index.controller.ts` | `/api/users`（index → 父路径） |
+| `users/[id].controller.ts` | `/api/users/:id`（[param] → :param） |
+| `users/[id]/posts.controller.ts` | `/api/users/:id/posts` |
 
 ---
 
 ## 常见问题
 
 <Accordion title="为什么启动后访问路由返回 404？">
-  可能的原因：
+可能的原因：
 
-  1. **控制器文件没有使用正确的后缀**：文件名必须以 <code>.controller.ts</code> 结尾（或其他通过 <code>suffix</code> 选项指定的后缀）
-  2. **控制器文件需要 default export**：<code>export default defineController(...)</code>，命名导出不会被加载
-  3. **http.load 的目录路径不正确**：确保路径相对于运行目录是正确的
-  4. **路由前缀不匹配**：如果你设置了 <code>prefix: '/api'</code>，则访问 <code>/api/hello</code>，而不是 <code>/hello</code>
+1. **控制器文件后缀不正确**：文件名必须以 `.controller.ts` 结尾
+2. **控制器文件需要 default export**：`export default defineController(...)`，命名导出不会被加载
+3. **路由前缀不匹配**：如果设置了 `prefix: '/api'`，需访问 `/api/xxx`
+
 </Accordion>
 
-<Accordion title="为什么我修改了控制器文件后没有生效？">
-  纯 API 项目没有热重载功能（HMR 是 Next.js 的特性）。修改后你需要：
-
-  1. 按 <code>Ctrl+C</code> 停止服务器
-  2. 重新运行 <code>pnpm run dev</code>
-
-  或者使用 <code>nodemon</code> 等工具监听文件变更自动重启。
+<Accordion title="修改控制器后没有生效？">
+纯 API 项目没有热重载功能。需要按 `Ctrl+C` 停止后重新运行 `pnpm run dev`。
 </Accordion>
 
 <Accordion title="如何在一个控制器文件中定义多个路由？">
-  导出一个数组即可：
+导出数组即可：
 
-  ```typescript
-  const getUsers = defineController('GET', async (ctx) => { ... })
-  const createUser = defineController('POST', async (ctx) => { ... })
-
-  export default [getUsers, createUser]
-  ```
-
-  同一个文件中的所有路由共享相同的 URL 路径（基于文件名推导），但可以使用不同的 HTTP 方法。
+```typescript
+const getUsers = defineController('GET', async (ctx) => { ... })
+const createUser = defineController('POST', async (ctx) => { ... })
+export default [getUsers, createUser]
+```
 </Accordion>
 
-<Accordion title="如何在控制器中获取请求体（request body）？">
-  Hile 基于 Koa，默认没有 body parser。你需要添加一个 body parser 中间件：
+<Accordion title="如何在控制器中获取请求体？">
+Hile 基于 Koa，默认没有 body parser。需要添加中间件：
 
-  ```typescript
-  import bodyParser from 'koa-bodyparser'
+```typescript
+import bodyParser from 'koa-bodyparser'
+http.use(bodyParser())
+```
 
-  const http = new Http({ port: 3000 })
-  http.use(bodyParser())
-  ```
-
-  然后在控制器中通过 <code>ctx.request.body</code> 获取请求体。
-</Accordion>
-
-<Accordion title="如何处理跨域（CORS）？">
-  添加 <code>@koa/cors</code> 包和对应的中间件：
-
-  ```bash
-  pnpm add @koa/cors
-  ```
-
-  ```typescript
-  import cors from '@koa/cors'
-
-  const http = new Http({ port: 3000 })
-  http.use(cors())
-  ```
-
-  由于 Hile 的 <code>Http</code> 直接基于 Koa，你可以使用任何 Koa 中间件。
-</Accordion>
-
-<Accordion title="为什么网页报错了，但终端没有错误日志？">
-  检查是否注册了错误处理中间件。Koa 的默认错误处理会输出到 <code>stderr</code>，但如果你有 <code>try/catch</code> 可能会吞掉错误。建议添加一个全局错误处理中间件：
-
-  ```typescript
-  http.use(async (ctx, next) => {
-    try {
-      await next()
-    } catch (err) {
-      console.error('请求处理出错:', err)
-      ctx.status = err.status || 500
-      ctx.body = { error: err.message || 'Internal Server Error' }
-    }
-  })
-  ```
+然后在控制器中通过 `ctx.request.body` 获取。
 </Accordion>
 
 ---
 
 ## 下一步
 
-你已经完成了第一个 Hile 应用！现在可以深入了解：
-
 <CardGroup cols={2}>
   <Card title="服务容器" icon="cube" href="/fundamentals/container">
-    深入学习 <code>defineService</code>、<code>loadService</code> 和依赖图的管理
+    深入学习 defineService、loadService 和依赖图
   </Card>
   <Card title="HTTP 管线" icon="server" href="/fundamentals/http-pipeline">
-    理解完整的 HTTP 请求处理流程、中间件和响应插件
+    理解完整的 HTTP 请求处理流程
   </Card>
   <Card title="添加数据库" icon="database" href="/techniques/database">
-    集成 TypeORM 数据库，在控制器中查询数据
+    集成 TypeORM 数据库
   </Card>
   <Card title="生产部署" icon="check-circle" href="/deployment">
     构建、配置和生产部署

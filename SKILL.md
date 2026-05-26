@@ -3,781 +3,938 @@ name: hile
 description: "Code generation guide for the Hile monorepo (@hile/* packages). Covers service container, HTTP APIs, database (TypeORM), Redis, logging, job scheduling, message communication, microservices, model pipeline, and project scaffolding. Use this skill when generating or editing code that depends on @hile/core, @hile/logger, @hile/schedule, @hile/http, @hile/typeorm, @hile/ioredis, @hile/cache, @hile/micro, @hile/model, @hile/message-*, or create-hile."
 ---
 
-# Hile — Unified Code Generation Guide
+# Hile — AI Code Generation Guide
 
-This document is a **code generation reference**, not an abstract design doc. When writing or modifying code that uses `@hile/*` packages, find your scenario below and follow the examples directly.
-
----
-
-## Core Concepts (Universal)
-
-**Service Container (`@hile/core`)** is the foundation:
-
-- `defineService(key, fn)` — Register a service (does not execute)
-- `loadService(service)` — Get a service instance (executes fn on first call, caches afterwards)
-- `shutdown(fn)` — Register a cleanup callback inside the service function (LIFO order)
-
-**Boot mechanism (`@hile/cli`)** :
-
-- `src/services/*.boot.ts` — **Auto-scanned** by `hile start` at startup
-- `src/services/*.service.ts` — **Lazy-loaded** services, loaded via `loadService` inside boot files / other services / models
-- `package.json` `hile.auto_load_packages` — Module names (not file paths) to auto-load before boot scanning
+This document tells you **what to use when** and **how to use it correctly**. It is verified against source code, not documentation. For detailed explanations, see `docs/`.
 
 ---
 
-## 1. Package Quick Reference
+## Decision Tree: Which Package for What?
 
-| What you need | Package | Key exports |
-|--------------|---------|-------------|
-| Async singleton service, lifecycle management | `@hile/core` | `defineService` / `loadService` / `isService` / `container` |
-| Start app, scan boot files | `@hile/cli` | CLI `hile start` |
-| Shared file-scanning and route loader | `@hile/loader` | `scanDirectory` / `Loader` (abstract) / `compileRoutePath` / `toRouterPath` |
-| HTTP API (Koa + routing) | `@hile/http` | `Http` / `defineController` / `Loader` / `defineResponsePlugin` |
-| API + Next.js same port | `@hile/http-next` | `HttpNext` |
-| Database operations | `@hile/typeorm` | `createDataSource` / `transaction` / default export DataSource service |
-| Redis cache | `@hile/ioredis` | `createRedis` / default export Redis client service |
-| Templated Redis cache keys | `@hile/cache` | `defineCache` / `RedisCache` |
-| Request/response message abstraction | `@hile/message-modem` | `MessageModem` (abstract, implement post/exec) |
-| Parent-child process IPC | `@hile/message-ipc` | `MessageIpc` (abstract) |
-| Worker thread communication | `@hile/message-worker-thread` | `MessageWorkerThread` (abstract) |
-| WebSocket communication | `@hile/message-ws` | `MessageWs` (abstract) |
-| File-system message routing | `@hile/message-loader` | `MessageLoader` / `defineMessage` |
-| Microservice registry & discovery | `@hile/micro` | `Server` / `Client` / `Registry` / `Application` |
-| Dynamic config (ZK-like) | `@hile/micro-dynamic-configs` | `MicroDynamicConfigsServer` |
-| Business data pipeline (middleware chain) | `@hile/model` | `defineModel` / `loadModel` / `Pipeline` |
-| Structured logging (pino) | `@hile/logger` | `createLogger` |
-| Declarative job scheduling | `@hile/schedule` | `Scheduler` / `defineJob` |
-| Scaffold new Hile project | `create-hile` | CLI `create-hile create <name>` |
+```
+Need to manage service lifecycle (init/shutdown order)?
+  → @hile/core: defineService / loadService / container
 
----
+Need to start an HTTP API server?
+  → @hile/http: Http class + defineController
 
-## 2. @hile/logger — Structured Logging
+Need HTTP API + Next.js SSR on the same port?
+  → @hile/http-next: HttpNext class
 
-```typescript
-import { createLogger } from '@hile/logger';
+Need database access (MySQL/PostgreSQL/SQLite)?
+  → @hile/typeorm: createDataSource (manual) or default export (container)
 
-const logger = createLogger();
-logger.info('hello');
-logger.error({ err }, 'something went wrong');
+Need Redis?
+  → @hile/ioredis: createRedis (manual) or default export (container)
+
+Need typed cache with read-through on top of Redis?
+  → @hile/cache: defineCache + RedisCache
+
+Need process-to-process messaging (WebSocket / IPC / Worker)?
+  → @hile/message-modem + one of: message-ws / message-ipc / message-worker-thread
+
+Need file-system-based message routing?
+  → @hile/message-loader: MessageLoader + defineMessage
+
+Need service discovery + RPC across processes?
+  → @hile/micro: Registry (discovery) + Application (service node)
+
+Need runtime dynamic config with real-time push?
+  → @hile/micro-dynamic-configs: MicroDynamicConfigsServer
+
+Need structured logging?
+  → @hile/logger: createLogger
+
+Need cron jobs or delayed tasks?
+  → @hile/schedule: Scheduler + defineJob
+
+Need reusable business logic with middleware pipeline?
+  → @hile/model: defineModel / loadModel
+
+Need file-scanning utilities?
+  → @hile/loader: scanDirectory / compileRoutePath / toRouterPath / Loader (abstract)
+
+Need to scaffold a new project?
+  → create-hile: npx create-hile create <name>
 ```
 
-### Options
+---
+
+## 1. @hile/core — Service Container
+
+**When to use:** Any time you have a resource (DB connection, HTTP server, Redis client, etc.) that needs managed startup and graceful shutdown. Also for any singleton that other code depends on.
+
+### Core API
 
 ```typescript
-createLogger({
-  level?: 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal'
-  pretty?: boolean      // default: !production
-  redact?: string[]     // sensitive field paths, e.g. ['password', 'req.headers.authorization']
+import { defineService, loadService, container, isService, formatServiceKey } from '@hile/core'
+
+// REGISTER — does NOT execute the factory function
+const mySvc = defineService('my-key', async (shutdown) => {
+  // shutdown is a function: shutdown(cleanupFn)
+  const resource = await acquireResource()
+  shutdown(() => resource.release())  // LIFO order on shutdown
+  return resource
+})
+
+// RESOLVE — executes factory on first call, caches result
+const instance = await loadService(mySvc)
+
+// CONTAINER — global singleton, used directly for queries / event listening
+container.hasService('my-key')          // has it been register()'d?
+container.hasMeta('my-key')             // has it been resolve()'d?
+container.getLifecycle('my-key')        // 'init' | 'ready' | 'stopping' | 'stopped' | undefined
+container.getDependencyGraph()          // { nodes: ServiceKey[], edges: {from,to}[] }
+container.getStartupOrder()             // ServiceKey[]
+container.getMetaByKey('my-key')        // { status: -1|0|1, lifecycle, value, error, startedAt, endedAt }
+
+// EVENTS — 9 event types, on() returns unsubscribe function
+const off = container.on((event) => {
+  // event.type:
+  //   'service:init'        | 'service:ready'    | 'service:error'
+  //   'service:shutdown:start' | 'service:shutdown:done' | 'service:shutdown:error'
+  //   'container:shutdown:start' | 'container:shutdown:done' | 'container:error'
+})
+off()  // unsubscribe
+container.off(listener)  // alternative
+
+// SHUTDOWN — LIFO order, loops to catch late-registered teardowns
+await container.shutdown()
+```
+
+### Dependency tracking (automatic)
+
+When service A's factory calls `loadService(B)`, the container automatically records A→B. This is done via `AsyncLocalStorage` — transparent to you.
+
+```typescript
+const db = defineService('db', async (shutdown) => { /* ... */ })
+
+const api = defineService('api', async (shutdown) => {
+  const database = await loadService(db)  // auto-records: api → db
+  return createServer(database)
 })
 ```
 
-- **level** — 日志级别，默认 `LOG_LEVEL` 环境变量，未设置时 `'info'`
-- **pretty** — 开发环境默认启用 `pino-pretty` 美化输出，生产环境输出 JSON
-- **redact** — 敏感字段过滤
-
-### Child logger
+### Container options (for isolated instances)
 
 ```typescript
-const child = logger.child({ module: 'payment' });
-child.info('processing'); // { "module": "payment", "msg": "processing" }
+import { Container } from '@hile/core'
+const isolated = new Container({
+  startTimeoutMs: 5000,     // reject if factory exceeds this
+  shutdownTimeoutMs: 3000,  // skip teardown if it exceeds this
+})
 ```
 
-### Env variables
+### isService — validate before loadService
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LOG_LEVEL` | `'info'` | Default log level |
-| `NODE_ENV` | — | Controls `pretty` default |
+```typescript
+import { isService } from '@hile/core'
+// Used by CLI to verify auto_load_packages exports are valid services
+if (isService(mod.default)) {
+  await loadService(mod.default)
+}
+```
 
 ---
 
-## 3. @hile/schedule — Job Scheduling
+## 2. @hile/cli — Boot & Auto-Loading
+
+**When to use:** This is the runtime entry point. Every Hile app uses `hile start`. You don't import this package in code (except for programmatic start).
+
+### How boot works
+
+`hile start` does the following, in order:
+
+1. Load `--env-file` files via `process.loadEnvFile()` (first-loaded wins for duplicate keys)
+2. Set `NODE_ENV` (`--dev` → `'development'`, otherwise `'production'`)
+3. If dev + not silent: subscribe container events → colored console output
+4. Read `package.json` → `hile.auto_load_packages` (array of npm package names)
+5. Scan files:
+   - Dev: `src/**/*.boot.{ts,js}`
+   - Production: `dist/**/*.boot.{ts,js}`
+6. For each auto_load_packages entry: `import(pkg)` → if `isService(mod.default)` → `loadService(mod.default)`
+7. For each boot file: `import(file)` → if `isService(mod.default)` → `loadService(mod.default)`
+8. Register `async-exit-hook` → `container.shutdown()` on SIGINT/SIGTERM
+
+### Boot file requirements
+
+- Must be named `*.boot.ts` (dev) or `*.boot.js` (production)
+- Can be placed **anywhere** under `src/` (dev) or `dist/` (production) — CLI uses `**/*.boot.{ts,js}` glob
+- Must `export default` a `defineService(...)` return value
 
 ```typescript
-import { Scheduler, defineJob } from '@hile/schedule';
+// src/services/http.boot.ts — valid
+export default defineService('http', async (shutdown) => { /* ... */ })
 
-const scheduler = new Scheduler();
-
-// Cron expression
-scheduler.add('daily-report', '0 8 * * *', () => {
-  console.log('daily report');
-});
-
-// Delay (ms)
-scheduler.add('delayed-task', { delay: 5000 }, () => {
-  console.log('after 5 seconds');
-});
-
-scheduler.stop(); // cancel all jobs
+// src/app/boot.ts — ALSO valid (file name ends with .boot.ts)
+export default defineService('app', async (shutdown) => { /* ... */ })
 ```
 
-### Auto-load from directory
+### auto_load_packages
 
-Create `{name}.schedule.ts` files:
-
-```typescript
-// tasks/daily-report.schedule.ts
-import { defineJob } from '@hile/schedule';
-export default defineJob('0 8 * * *', () => {
-  console.log('daily report generated');
-});
+```json
+{
+  "hile": {
+    "auto_load_packages": ["@hile/typeorm", "@hile/ioredis", "@hile/logger"]
+  }
+}
 ```
 
-Load them:
+Only works for packages whose **default export** is a `defineService(...)` return value. Currently: `@hile/typeorm`, `@hile/ioredis`, `@hile/logger`.
 
-```typescript
-const scheduler = new Scheduler();
-const off = await scheduler.load(resolve(__dirname, 'tasks')); // returns unregister function
-// off() to unregister all
+### CLI commands
+
+```bash
+hile start [name]            # start services, optionally for a specific package/dir
+  --dev, -d                  # development mode (tsx, colored logs)
+  --silent, -s               # suppress container event logs
+  --env-file, -e <path>      # load env file (repeatable)
+
+hile registry                 # start registry center
+  --port <port>               # default 9876 (or REGISTRY_PORT env)
+  --host <host>               # default 127.0.0.1
+
+hile registry configs         # list config namespaces
+hile registry configs get <ns> [--json]
+hile registry configs set <ns> <key=value>
+hile registry configs del <ns> [key] [-y]
 ```
-
-Custom suffix:
-
-```typescript
-await scheduler.load('./jobs', { suffix: 'job' }); // loads *.job.ts, *.job.js, ...
-```
-
-### API
-
-- `defineJob(expression, handler)` — Returns `{ id: number, type: 'job', expression, handler }`
-- `scheduler.add(id, expression | { delay }, handler)` — 注册任务，重复 id 抛异常
-- `scheduler.remove(id)` — 取消任务
-- `scheduler.stop()` — 取消所有任务
-- `scheduler.getJobs(): JobInfo[]` — 返回已注册任务列表
-- `scheduler.load(directory, options?)` — 自动发现并注册任务文件
 
 ---
 
-## 4. @hile/core — Service Container
+## 3. @hile/http — HTTP API Server
 
-### Define and load a service
+**When to use:** Building REST APIs, HTTP endpoints. Underlying stack: Koa (middleware) + find-my-way (router).
+
+### Http class
 
 ```typescript
-// src/services/redis.service.ts — lazy-loaded service
-import { defineService, loadService } from '@hile/core';
+import { Http } from '@hile/http'
 
-export default defineService('my-redis', async (shutdown) => {
-  const client = new Redis(/* ... */);
-  await client.connect();
+const http = new Http({
+  port: 3000,                    // required
+  keys: ['secret1', 'secret2'], // optional, auto-generated if omitted
+  ignoreDuplicateSlashes: true,  // default true
+  ignoreTrailingSlash: true,     // default true
+  maxParamLength: Infinity,      // default Infinity
+  allowUnsafeRegex: false,       // default false
+  caseSensitive: true,           // default true
+})
 
-  // Register cleanup immediately after creating external resources
-  shutdown(() => client.disconnect());
+// Global middleware (Koa middleware, onion model)
+http.use(async (ctx, next) => {
+  const start = Date.now(); await next()
+  console.log(`${ctx.method} ${ctx.url} - ${Date.now() - start}ms`)
+})
 
-  return client;
-});
+// Manual routes (each returns unregister function)
+http.get('/users', handler)
+http.post('/users', handler)
+http.put('/users/:id', handler)
+http.delete('/users/:id', handler)
+http.patch('/users/:id', handler)
+http.trace('/debug', handler)
+http.route('OPTIONS', '/users', handler)  // generic
+
+// File-system route loading
+await http.load('./src/controllers', {
+  suffix: 'controller',       // match *.controller.{ts,js,tsx,jsx}
+  prefix: '/api',             // URL prefix
+  defaultSuffix: '/index',   // index.controller → / (parent path)
+  conflict: 'error',         // 'error' | 'warn' | 'override'
+})
+
+// Start & stop
+const close = await http.listen()                // starts HTTP server
+const close = await http.listen((server) => {})  // with callback
+close()  // stop server
 ```
 
-```typescript
-// src/services/http.boot.ts — auto-start entry (scanned by CLI)
-import { defineService, loadService } from '@hile/core';
-import { Http } from '@hile/http';
-import httpService from './http.service.js';
+### Route mapping from file names
 
-export default defineService('my-http', async (shutdown) => {
-  const http = new Http({ port: 3000 });
-  http.get('/hello', async (ctx) => { ctx.body = 'world'; });
-  const close = await http.listen();
-  shutdown(() => close());
-});
+```
+src/controllers/hello.controller.ts       → /api/hello
+src/controllers/users/index.controller.ts → /api/users
+src/controllers/users/[id].controller.ts  → /api/users/:id
+src/controllers/users/[id]/posts.controller.ts → /api/users/:id/posts
 ```
 
-### Access other services from within a service
+### defineController (3 overloads)
 
 ```typescript
-// Never use loadService at the module top level
-export default defineService('worker', async (shutdown) => {
-  // Always call loadService inside the service function
-  const ds = await loadService(typeormService);
-  const redis = await loadService(redisService);
-  // ...
-});
-```
+import { defineController, createControllerMetadata } from '@hile/http'
+import { z } from 'zod'
 
-### Lifecycle reference
-
-| Phase | Status | Description |
-|-------|--------|-------------|
-| Registration | — | `defineService` only registers, does not execute |
-| First `loadService` | `init -> ready` | Runs factory function, caches result for subsequent calls |
-| Startup failure | `init -> stopping -> stopped` | Runs registered shutdown callbacks, then clears queue |
-| `container.shutdown()` | Reverse LIFO | Later-starting services shut down first; loops until queue is empty |
-
----
-
-## 5. @hile/http — HTTP API
-
-### Define a controller
-
-```typescript
-// src/controllers/user.controller.ts
-// export default a single defineController or an array
-import { defineController } from '@hile/http';
-
-// Simple form: method + handler
+// Overload 1: method + handler (no Zod)
 export default defineController('GET', async (ctx) => {
-  return { list: [] };
-});
+  return { items: [] }  // return value becomes ctx.body via response plugin chain
+})
 
-// With middleware
+// Overload 2: method + middlewares + handler
 export default defineController('POST', [authMiddleware], async (ctx) => {
-  return { success: true };
-});
+  return { created: true }
+})
 
-// With Zod validation
-import { z, createControllerMetadata, defineController } from '@hile/http';
-
+// Overload 3: metadata + handler (with Zod validation)
 export default defineController(
   createControllerMetadata({
-    method: 'POST',
+    method: 'GET',
+    middlewares: [],        // optional
     schema: {
-      body: z.object({ name: z.string(), age: z.number() }),
+      query: z.object({ page: z.coerce.number().default(1) }),
+      params: z.object({ id: z.coerce.number() }),
+      body: z.object({ name: z.string() }),
     },
   }),
   async (ctx) => {
-    // ctx.request.body is already Zod-validated
-    return { result: ctx.request.body.name };
-  },
-);
+    // Zod validates but does NOT transform ctx.query/params/body types
+    // Validation failure → automatic ctx.throw(400)
+    return { page: ctx.query.page }
+  }
+)
 
-// File path to route mapping:
-//   src/controllers/user.controller.ts        → GET /user
-//   src/controllers/user/index.controller.ts  → GET /user
-//   src/controllers/user/[id].controller.ts   → GET /user/:id
+// One file can export multiple controllers:
+export default [
+  defineController('GET', getHandler),
+  defineController('POST', postHandler),
+]
 ```
 
-### Create and start an HTTP service (in boot file)
+### Response plugins (global post-processing)
 
 ```typescript
-// src/services/http.boot.ts
-import { defineService } from '@hile/core';
-import { Http } from '@hile/http';
-
-export default defineService('http', async (shutdown) => {
-  const http = new Http({ port: 3000 });
-
-  http.use(async (ctx, next) => {
-    const start = Date.now();
-    await next();
-    console.log(`${ctx.method} ${ctx.url} ${Date.now() - start}ms`);
-  });
-
-  // Load all controller files from directory
-  // Default suffix 'controller', conflict strategy 'error'
-  await http.load('./src/controllers', { suffix: 'controller', defaultSuffix: '/index' });
-
-  const close = await http.listen();
-  shutdown(() => close());
-});
-```
-
-### Response plugins
-
-```typescript
-import { defineResponsePlugin } from '@hile/http';
+import { defineResponsePlugin } from '@hile/http'
 
 defineResponsePlugin(async (ctx, result, next) => {
-  // Post-process all response results
-  const processed = result !== undefined ? { code: 0, data: result } : undefined;
-  return next(processed);
-});
+  // result = controller's return value
+  // Pass transformed value to next plugin in chain
+  return await next({ code: 0, data: result })
+})
 ```
 
 ### Route conflict strategies
 
-`Loader` supports three conflict strategies:
-- `'error'` (default) — Throw on duplicate routes
-- `'warn'` — Log a warning, keep existing route
-- `'override'` — Unregister old route, register new one
+| Strategy | Behavior |
+|----------|----------|
+| `'error'` (default) | Throw on duplicate method+path |
+| `'warn'` | Console.warn, keep existing |
+| `'override'` | Remove old, register new |
 
 ---
 
-## 6. @hile/http-next — HTTP + Next.js on the Same Port
+## 4. @hile/http-next — HTTP + Next.js Same Port
 
-### Standard project directory structure
+**When to use:** Full-stack apps where API routes and Next.js pages share port 3000. Combines Koa (API) + Next.js (SSR/SSG) + koa-static (static files).
 
-```
-project/
-├── src/
-│   ├── app/               # Next.js App Router pages
-│   │   ├── page.tsx
-│   │   └── ...
-│   ├── controllers/       # API controllers (default prefix /-)
-│   │   └── user.controller.ts    →  GET /-/user
-│   ├── models/            # Business logic (defineModel only here)
-│   │   ├── user/
-│   │   │   └── user.model.ts
-│   │   └── ...
-│   └── services/          # Infrastructure services
-│       ├── http.boot.ts   # HttpNext entry point
-│       └── ...
-├── next.config.ts
-└── package.json
-```
-
-### HttpNext boot template
+### HttpNext class
 
 ```typescript
-// src/services/http.boot.ts
-import { defineService } from '@hile/core';
-import { HttpNext } from '@hile/http-next';
+import HttpNext from '@hile/http-next'
 
-export default defineService('http', async (shutdown) => {
-  const httpNext = new HttpNext({
-    port: 3000,
-    cwd: resolve(__dirname, '../..'),  // Important: boot is in services/, one extra level
-  });
+const app = new HttpNext({
+  port: 3000,
+  cwd: '/path/to/project',              // default process.cwd()
+  publicPath: 'public',                  // or ['public', 'uploads']
+  controllerDirectory: 'controllers',    // default 'controllers'
+  controllerPrefix: '/-',               // default '/-'
+  controllerSuffix: 'controller',       // default 'controller'
+  specialControllers: [                  // extra controller dirs with own prefix
+    { directory: 'admin/controllers', prefix: '/admin' },
+  ],
+  nextArtifactsDir: '.next',            // default cwd/.next
+})
 
-  const stop = await httpNext.start();
-  shutdown(() => stop());
-});
+// Middleware (forwarded to internal Http instance)
+app.use(async (ctx, next) => { /* ... */ })
+
+// Manual controller loading
+app.load('./extra-controllers')
+
+// Start (returns stop function)
+const stop = await app.start()
 ```
 
-### Request processing order (static → API → Next)
+### Request processing order (4 layers)
 
 ```
-HTTP Request
-  → Koa middleware chain
-  → koa-static (`public/` directory)
-  → @hile/http routes (default prefix /-)
-  → Next.js request handler (page rendering)
+Request → koa-static(public/) → koa-static(.next/static/) → API controllers → Next.js handler
 ```
 
-### Model layer rules (important)
+API routes use `/-` prefix by default to avoid conflicts with Next.js pages. Next.js handler is last — it's the fallback.
 
-```typescript
-// src/models/user/user.model.ts
-// defineModel can only be used under src/models/
-import { defineModel } from '@hile/model';
+### Dev vs Production
 
-export default defineModel(async (userId: string) => {
-  return { id: userId, name: 'Alice' };
-});
-
-// src/app/user/page.tsx usage
-import { loadModel } from '@hile/model';
-import userModel from '@/models/user/user.model';
-
-// When page.tsx uses loadModel, it must export dynamic
-export const dynamic = 'force-dynamic';
-
-export default async function UserPage() {
-  const user = await loadModel(userModel, '1');
-  return <div>{user.name}</div>;
-}
-```
+| | development | production |
+|---|-------------|------------|
+| Controller dir | `src/controllers/` | `dist/controllers/` |
+| Next.js | `dev: true` (HMR) | `dev: false` |
+| TypeScript | tsx live compile | pre-compiled JS |
 
 ---
 
-## 7. @hile/typeorm — Database
+## 5. @hile/typeorm — Database (TypeORM)
 
-### Setup
+**When to use:** Need a SQL database. Two modes: container (auto-managed lifecycle) or manual (direct control).
+
+### Container mode (recommended for apps)
 
 ```json
 // package.json
-{
-  "hile": {
-    "auto_load_packages": ["@hile/typeorm"]
-  }
-}
+{ "hile": { "auto_load_packages": ["@hile/typeorm"] } }
 ```
 
-Environment variables: `TYPEORM_TYPE` / `TYPEORM_HOST` / `TYPEORM_USERNAME` / `TYPEORM_PASSWORD` / `TYPEORM_DATABASE` / `TYPEORM_PORT` / `TYPEORM_ENTITIES` / `TYPEORM_SYNCHRONIZE`
-
-### Container mode (recommended)
-
 ```typescript
-import { loadService } from '@hile/core';
-import typeormService from '@hile/typeorm';
+import { loadService } from '@hile/core'
+import typeormService from '@hile/typeorm'
 
-const ds = await loadService(typeormService);
+// Inside any service factory:
+const ds = await loadService(typeormService)
+// ds is a fully initialized TypeORM DataSource
 ```
 
 ### Manual mode
 
 ```typescript
-import { createDataSource } from '@hile/typeorm';
+import { createDataSource } from '@hile/typeorm'
 
-// From environment variables
-const ds = await createDataSource();
+// From env vars
+const ds = await createDataSource()
 
 // With explicit options
 const ds = await createDataSource({
-  type: 'mysql',
-  host: 'localhost',
-  username: 'root',
-  password: 'secret',
-  database: 'mydb',
-  entities: ['./entities/*.ts'],
-});
+  type: 'mysql', host: 'localhost', port: 3306,
+  username: 'root', password: 'secret', database: 'mydb',
+  entities: [User, Post],
+})
+
+await ds.destroy()  // manual cleanup
 ```
 
-### Transaction with compensating callbacks
+### Env vars
+
+`TYPEORM_TYPE`, `TYPEORM_HOST`, `TYPEORM_USERNAME`, `TYPEORM_PASSWORD`, `TYPEORM_DATABASE`, `TYPEORM_PORT`, `TYPEORM_CHARSET`, `TYPEORM_ENTITY_PREFIX`, `TYPEORM_ENTITIES`, `TYPEORM_SYNCHRONIZE` (string `"true"` to enable)
+
+### Transaction with LIFO compensation
 
 ```typescript
-import { transaction } from '@hile/typeorm';
+import { transaction } from '@hile/typeorm'
 
 await transaction(ds, async (runner, rollback) => {
-  const user = await runner.manager.save(User, { name: 'Alice' });
+  await runner.query('INSERT INTO users (name) VALUES (?)', ['Alice'])
 
-  // Register compensation: executed LIFO on transaction failure
-  rollback(async () => {
-    // e.g., clear cache, send rollback notification
-    await cache.del(`user:${user.id}`);
-  });
+  rollback(async () => { cache.del('user:alice') })   // compensation 1
+  rollback(async () => { notifyRollback() })           // compensation 2
 
-  await runner.manager.save(Log, { action: 'create_user', userId: user.id });
-  return user;
-});
-// Success → commitTransaction; Failure → rollbackTransaction + run compensation queue
+  if (somethingFailed) throw new Error('abort')
+  // On failure: rollbackTransaction → execute compensations LIFO (2 then 1)
+  return result
+})
+// On success: commitTransaction, compensations NOT executed
 ```
 
 ---
 
-## 8. @hile/ioredis — Redis
+## 6. @hile/ioredis — Redis
 
-```json
-// package.json
-{
-  "hile": {
-    "auto_load_packages": ["@hile/ioredis"]
-  }
-}
-```
-
-Environment variables: `REDIS_HOST` / `REDIS_PORT` / `REDIS_USERNAME` / `REDIS_PASSWORD` / `REDIS_DB`
+**When to use:** Need Redis for caching, sessions, queues, pub/sub.
 
 ### Container mode (recommended)
 
-```typescript
-import { loadService } from '@hile/core';
-import redisService from '@hile/ioredis';
+```json
+{ "hile": { "auto_load_packages": ["@hile/ioredis"] } }
+```
 
-const redis = await loadService(redisService);
-await redis.set('key', 'value');
-await redis.get('key');
+```typescript
+import { loadService } from '@hile/core'
+import redisService from '@hile/ioredis'
+
+const redis = await loadService(redisService)
+// redis is a fully connected ioredis instance
 ```
 
 ### Manual mode
 
 ```typescript
-import { createRedis } from '@hile/ioredis';
+import { createRedis } from '@hile/ioredis'
 
-// From environment variables
-const redis = await createRedis();
-
-// With explicit options
-const redis = await createRedis({ host: 'localhost', port: 6379 });
+const redis = await createRedis()                          // from env
+const redis = await createRedis({ host: 'x', port: 6379 }) // explicit
+await redis.disconnect()
 ```
+
+### Env vars
+
+`REDIS_HOST`, `REDIS_PORT`, `REDIS_USERNAME`, `REDIS_PASSWORD`, `REDIS_DB`
 
 ---
 
-## 9. @hile/cache — Cache Key Declaration
+## 7. @hile/cache — Typed Redis Cache
+
+**When to use:** Need read-through caching with typed cache keys. Built on top of `@hile/ioredis`.
 
 ```typescript
-import { defineCache, RedisCache } from '@hile/cache';
+import { defineCache, Cache, RedisCache } from '@hile/cache'
 
-// Declare a cache key with typed parameters
-const userCache = defineCache('user:{id:string}:{x:number}', async (params) => {
-  // params.id: string, params.x: number
-  const data = await fetchUser(params.id);
-  return new Cache(data).setExpire(60); // TTL 60 seconds
-});
+// Define a cache with typed key template
+// Supported types: string, number, boolean
+const userCache = defineCache('user:{id:string}:profile', async ({ id }) => {
+  const user = await db.findUser(id)
+  if (!user) return new Cache(undefined)   // cache miss → nothing stored
+  return new Cache(user).setExpire(300)    // TTL 300 seconds
+})
 
 // Usage
-const cache = new RedisCache('my-prefix:');
-const { read, write, remove, has } = await cache.loadCache(userCache);
+const cache = new RedisCache('myapp:')  // prefix = namespace
+const ops = await cache.loadCache(userCache)
 
-await read({ id: 'abc', x: 42 });     // Read (cache-through on miss)
-await write({ id: 'abc', x: 42 });    // Write
-await remove({ id: 'abc', x: 42 });   // Delete
-await has({ id: 'abc', x: 42 });      // Check existence
+await ops.read({ id: 'u-001' })     // Read-through: miss → fetch → cache → return
+await ops.write({ id: 'u-001' })    // Force fetch + update cache
+await ops.remove({ id: 'u-001' })   // Delete from cache (returns 1 or 0)
+await ops.has({ id: 'u-001' })      // Exists check (no fetch)
+
+// Cache-Aside pattern:
+// UPDATE: update DB → ops.remove(key)  // next read auto-refreshes
 ```
 
 ---
 
-## 10. Message Communication Architecture
+## 8. Message Communication Stack
 
-### Layer hierarchy
+### When to use which transport
 
-```
-@hile/message-modem (abstract base: request/response/abort/stream)
-  ├── @hile/message-ipc (parent-child process)
-  ├── @hile/message-worker-thread (Worker threads)
-  └── @hile/message-ws (WebSocket)
-        └── @hile/message-loader (file-system routing)
-              └── @hile/micro (service discovery)
-```
+| Scenario | Package | Base class to extend |
+|----------|---------|---------------------|
+| Different machines/processes, TCP | `@hile/message-ws` | `MessageWs` |
+| Parent-child processes (fork) | `@hile/message-ipc` | `MessageIpc` |
+| Worker threads | `@hile/message-worker-thread` | `MessageWorkerThread` |
 
-### MessageModem — implement a custom transport
+### @hile/message-modem — Protocol base
+
+All transport classes inherit from `MessageModem`. You implement two methods:
 
 ```typescript
-import { MessageModem, MessageTransferFormat } from '@hile/message-modem';
+import { MessageModem, MessageTransferFormat } from '@hile/message-modem'
 
-class MyModem extends MessageModem {
-  protected post(data: MessageTransferFormat): void {
-    // How to send data to the remote end
-    transport.send(JSON.stringify(data));
+class MyTransport extends MessageModem {
+  // REQUIRED: How to send raw data to remote end
+  protected post<T>(data: MessageTransferFormat<T>): void {
+    transport.send(JSON.stringify(data))
   }
+
+  // REQUIRED: How to process received requests
   protected async exec(data: any, signal?: AbortSignal): Promise<any> {
-    // How to handle received requests; streaming must return AsyncIterable
-    return processData(data);
+    return processData(data)
   }
+
+  // AVAILABLE (protected methods):
+  // this._send(data, opts?)  — bidirectional request, returns Promise<response>
+  // this._push(data, opts?)  — one-way push, returns void
+  // this._stream(data, opts?) — streaming request, returns Readable
+  // this._dispose()          — cleanup all pending
+  // this.receive(msg)        — call when data arrives from remote
 }
 
-const modem = new MyModem();
-// Bidirectional request: returns Promise<response>
-const res = await modem._send({ url: '/hello', data: 'world' });
-// With timeout and abort signal
-const res2 = await modem._send({ url: '/slow' }, { timeout: 5000, signal: abortSignal });
-
-modem._push({ url: '/log', data: 'info' });                    // One-way push
-modem._push({ url: '/log', data: 'info' }, { timeout: 1000 }); // Push with timeout
-
-const stream = modem._stream({ url: '/events' });              // Stream (returns Readable)
-for await (const chunk of stream) {
-  console.log('chunk:', chunk);
-}
+// Usage:
+const result = await modem._send({ url: '/hello', data: 'world' })
+const result = await modem._send(data, { timeout: 5000, signal: abortSig })
+modem._push({ url: '/log', data: 'info' })
+const stream = modem._stream({ url: '/events' })
+for await (const chunk of stream) { /* ... */ }
 ```
 
-### MessageLoader — file-system message routing
+### @hile/message-ws — WebSocket
+
+Constructor takes a **connected** WebSocket instance. JSON serialization.
 
 ```typescript
-// src/messages/ping.msg.ts —— normal request-response
-import { defineMessage } from '@hile/message-loader';
-export default defineMessage(async ({ params, data }) => {
-  return { type: 'pong', timestamp: Date.now() };
-});
+import { MessageWs } from '@hile/message-ws'
+import WebSocket from 'ws'
 
-// src/messages/events.msg.ts —— streaming response (async function* returns AsyncIterable)
-export default defineMessage(async function* ({ params, data }) {
-  for (let i = 0; i < 10; i++) {
-    await new Promise(r => setTimeout(r, 100));
-    yield { value: data.query, index: i };  // seq is auto-generated by MessageModem
+class MyWs extends MessageWs {
+  protected async exec(data: any, signal?: AbortSignal): Promise<any> {
+    return { received: true, data }
   }
-});
+  public request(data: any, timeout?: number) { return this._send(data, { timeout }) }
+}
 
-// Route mapping: src/messages/ping.msg.ts → /ping, events.msg.ts → /events
+const ws = new WebSocket('ws://localhost:8080')
+ws.on('open', () => { const m = new MyWs(ws); m.request('hello') })
+m.dispose()  // remove listeners + cleanup
+```
 
-// Load and dispatch
-import { MessageLoader } from '@hile/message-loader';
-const loader = new MessageLoader({ suffix: 'msg', prefix: '/-' });
-const unload = await loader.load('./src/messages'); // Returns an unload function
+### @hile/message-ipc — Process IPC
 
-// Normal call
-const result = await loader.dispatch('/-/ping', { /* data */ });
+- Parent side: `new MyIpc(forkedChild)`
+- Child side: `new MyIpc()` (auto-binds `process`)
 
-// Streaming call: dispatch returns AsyncIterable
-const stream = await loader.dispatch('/-/events', { query: 'test' });
-for await (const chunk of stream) {
-  console.log('chunk:', chunk);
+```typescript
+import { MessageIpc } from '@hile/message-ipc'
+import { fork } from 'child_process'
+
+class MyIpc extends MessageIpc {
+  protected async exec(data: any): Promise<any> { return { ok: true } }
+}
+const child = fork('./worker.js'); const ipc = new MyIpc(child)
+ipc.dispose(); child.kill()
+```
+
+### @hile/message-worker-thread — Worker Threads
+
+- Main thread: `new MyWT(worker)`
+- Worker thread: `new MyWT()` (auto-binds `parentPort`)
+
+```typescript
+import { MessageWorkerThread } from '@hile/message-worker-thread'
+import { Worker } from 'worker_threads'
+
+class MyWT extends MessageWorkerThread {
+  protected async exec(data: any): Promise<any> { return { ok: true } }
+}
+const worker = new Worker('./worker.mjs'); const wt = new MyWT(worker)
+wt.dispose(); await worker.terminate()
+```
+
+### @hile/message-loader — File-system message routing
+
+```typescript
+// src/messages/hello.msg.ts
+import { defineMessage } from '@hile/message-loader'
+export default defineMessage(async ({ params, data, url }) => {
+  return { greeting: `Hello ${data.name}` }
+})
+// File maps to route: /hello (with default prefix) or /-/hello (with prefix '/-')
+
+// Loading:
+import { MessageLoader } from '@hile/message-loader'
+const loader = new MessageLoader({ suffix: 'msg', prefix: '/-', defaultSuffix: '/index' })
+await loader.load('./src/messages')
+
+// Dispatch:
+const result = await loader.dispatch('/-/hello', { name: 'World' })
+
+// Manual registration:
+loader.register('/custom', async ({ data }) => ({ done: true }))
+```
+
+Route mapping: `users/[id].msg.ts` → `/users/:id`, `users/index.msg.ts` → `/users`
+
+### Combining transport + loader
+
+```typescript
+class MyWs extends MessageWs {
+  constructor(ws: WebSocket, private loader: MessageLoader) { super(ws) }
+  protected async exec(data: { url: string; data: any }): Promise<any> {
+    return this.loader.dispatch(data.url, data.data)
+  }
 }
 ```
 
 ---
 
-## 11. @hile/micro — Microservices
+## 9. @hile/micro — Microservices
 
-### Registry
+### Class hierarchy
 
-```typescript
-import { Registry } from '@hile/micro';
-const registry = new Registry();
-await registry.listen(9876);  // Start WebSocket registry
+```
+MessageModem → MessageWs → Client
+Loader → MessageLoader → Server → Registry
+                                → Application
 ```
 
-### Application (service provider + consumer)
-
-The recommended approach on the provider side is **file-system routing**: place message handlers in `*.msg.ts` files and load them via `app.load()`:
+### Server — WebSocket server + routing
 
 ```typescript
-// src/messages/hello.msg.ts —— message handler file
-import { defineMessage } from '@hile/message-loader';
-export default defineMessage(async ({ params, data }) => {
-  return `hello ${data.name}`;
-});
-// File path → route: src/messages/hello.msg.ts → /hello
+import { Server } from '@hile/micro'
 
-// src/messages/events.msg.ts —— streaming message handler
-export default defineMessage(async function* ({ params, data }) {
-  for (let i = 0; i < 10; i++) {
-    await new Promise(r => setTimeout(r, 500));
-    yield { value: data.type, index: i };  // seq is auto-generated by MessageModem
-  }
-});
-// File path → route: src/messages/events.msg.ts → /events (paired with app.stream)
+const server = new Server('namespace', { advertiseHost: '127.0.0.1' })
+const teardown = await server.listen(9100)
+
+server.register('/hello', async ({ data, client }) => ({ ok: true }))
+await server.load('./src/messages')  // file-system routing
+server.connect('10.0.0.2', 9200)    // outbound connection
+
+server.events.on('connect', (client) => {})
+server.events.on('disconnect', (client) => {})
+server.handleUpgrade(req, socket, head)  // mount on existing HTTP server
+await teardown()
 ```
 
+### Registry — Service discovery center
+
 ```typescript
-// src/services/app.boot.ts —— entry point
-import { Application } from '@hile/micro';
-import { resolve } from 'node:path';
+import { Registry } from '@hile/micro'
+const registry = new Registry({ advertiseHost: '127.0.0.1' })
+await registry.listen(9876)
+```
+
+Built-in routes: `/-/find` (discovery), `/-/declare` / `/-/undeclare` (topic publish), `/-/subscribe` / `/-/unsubscribe` (topic subscribe), `/-/topic/update` (push update).
+
+Watches `~/.registry/configs/*.config.yaml` for file-based config.
+
+### Application — Service node (provider + consumer)
+
+```typescript
+import { Application } from '@hile/micro'
 
 const app = new Application({
   namespace: 'my-service',
   registry: { host: '127.0.0.1', port: 9876 },
-});
+  advertiseHost: '127.0.0.1',
+  registryLookupTimeoutMs: 10_000,  // default
+  requestTimeoutMs: 30_000,          // default
+})
 
-// Load all message handlers from the filesystem (recommended)
-await app.load(resolve(__dirname, '../messages'));
+// Register message handlers (provider side)
+app.register('/charge', async ({ data, params, client }) => ({ done: true }))
+await app.load('./src/messages')  // file-system routing (recommended)
 
-// Call another service (consumer side)
-const result = await app.call('other-service', '/hello', { name: 'world' });
+// Call other services (consumer side)
+const result = await app.call('other-service', '/hello', { name: 'Alice' })
+const result = await app.call('other-svc', '/slow', data, {
+  timeout: 5000,      // overrides requestTimeoutMs
+  retries: 2,         // default 1
+  signal: abortSig,
+})
 
-// With timeout and retry options
-const result2 = await app.call('other-service', '/slow', { data: 1 }, {
-  timeout: 5000,       // Timeout, inherits Application's requestTimeoutMs by default
-  retries: 0,          // Retry count, default 1
-  signal: abortSignal, // Cancellable
-});
+// Streaming RPC
+const stream = await app.stream('data-svc', '/events', { query: '...' })
+for await (const chunk of stream) { /* ... */ }
 
-// Streaming: for large result sets or SSE (returns Node.js Readable stream, works with for await...of)
-const stream = await app.stream('other-service', '/events', { type: 'user-updates' });
-for await (const chunk of stream) {
-  console.log('received:', chunk);
-}
-// stream also supports options: { retries?, signal? }
-const stream2 = await app.stream('other-service', '/events', { type: 'test' }, { retries: 2 });
+// Pub/Sub (async, requires connected Registry)
+const ref = await app.publish('order.created', { orderId: 1 })
+await ref.update({ orderId: 1, status: 'paid' })   // push update
+await ref.unpublish()                                 // retire topic
 
-// Pub/Sub — cross-service event broadcasting
-// All service instances under the same registry + namespace receive subscribed events
-// publish does not wait for subscribers to finish
-const event = await app.publish('order.created', { orderId: 1, amount: 99 });
+const unsub = await app.subscribe('order.created', (data) => {
+  console.log('received:', data)
+})
+// Re-subscribing same topic is idempotent (returns existing unsubscribe)
+unsub()  // stop listening
 
-// event.update(data) — push an update (same event name, new data)
-await event.update({ orderId: 1, amount: 199 });
+// Health check (auto-registered)
+const health = await app.dispatch('/-/health', {})
+// { status: 'ok', registry: true, uptime: 123, namespaces: [...] }
 
-// event.unpublish() — retire the event; subsequent subscribers will no longer receive it
-await event.unpublish();
-
-// subscribe returns an unsubscribe function
-const unsubscribe = app.subscribe('order.created', (data) => {
-  console.log('order created:', data.orderId, data.amount);
-});
-// Call unsubscribe() to stop listening
-unsubscribe();
-
-await app.listen(3001);
+await app.listen(0)  // 0 = random port
 ```
 
-If programmatic registration is needed, `app.register(path, fn)` is also available (returns an unsubscribe function), but `app.load()` is preferred for better directory organization and route separation.
+### Built-in reliability
 
-### Circuit breaker and retry
-
-`Application.call()` and `Application.stream()` have built-in:
-- **Circuit breaker**: Nodes that fail consecutively are excluded for a 30-second cooldown
-- **Auto retry**: 1 retry by default, tries other nodes on failure
-- **Cache degradation**: When the Registry is unavailable, uses the last successful node cache
+- **Circuit breaker**: Failed nodes excluded for 30s cooldown. All excluded → auto-reset.
+- **Cache degradation**: Registry unavailable → uses last-known-good addresses.
+- **Auto-reconnect**: Registry disconnect → retry every 3s. Re-subscribes all topics on reconnect.
+- **Heartbeat**: Client sends heartbeat per `MICRO_HEARTBEAT_INTERVAL` (default 10s), timeout at `MICRO_HEARTBEAT_TIMEOUT` (default 20s).
 
 ---
 
-## 12. @hile/model — Business Pipeline
+## 10. @hile/micro-dynamic-configs — Runtime Config
+
+**When to use:** Need configuration that can be changed at runtime without restarting services. Persisted to Redis, pushed via Registry topics.
 
 ```typescript
-import { defineModel, loadModel, Pipeline } from '@hile/model';
-import typeormService from '@hile/typeorm';
-import redisService from '@hile/ioredis';
+import { MicroDynamicConfigsServer } from '@hile/micro-dynamic-configs'
+import { z } from 'zod'
+
+const schema = z.object({
+  featureX: z.boolean().default(false),
+  maxRetries: z.number().int().min(1).max(10).default(3),
+})
+
+const server = new MicroDynamicConfigsServer({ app, redis, schema, redis_key: 'app:config' })
+await server.initialize()  // load from Redis, publish all fields to Registry
+
+console.log(server.value.featureX)  // read current value
+
+await server.save({ featureX: true })  // validate → Redis.set → topic push → emit event
+
+server.on('change:featureX', (newVal, oldVal) => {
+  console.log(`featureX: ${oldVal} → ${newVal}`)
+})
+```
+
+Data flow: `save()` → Zod validate → Redis persist → `app.publish()` → Registry pushes to subscribers → `emit('change:key')`
+
+---
+
+## 11. @hile/model — Business Logic Pipeline
+
+**When to use:** Reusable business logic that needs dependency injection (container services) and/or middleware pipeline (validation, logging, etc.).
+
+```typescript
+import { defineModel, loadModel } from '@hile/model'
+import typeormService from '@hile/typeorm'
 
 // Full form: services + pipelines + main
-export default defineModel({
-  services: [typeormService, redisService], // Auto-resolved
-  pipelines: [async (ctx, next) => {
-    console.log('before:', ctx.args);
-    await next();
-    console.log('after');
-  }],
-  main: async ([ds, redis], input: { id: string }) => {
-    const user = await ds.manager.findOne(User, { where: { id: input.id } });
-    return user;
+const userModel = defineModel({
+  services: [typeormService] as const,  // auto loadService'd
+  pipelines: [
+    async (ctx, next) => {  // ctx.args = the input object
+      if (!ctx.args.userId) throw new Error('userId required')
+      await next()
+    },
+  ],
+  async main([ds], input: { userId: number }) {
+    return ds.manager.findOne(User, { where: { id: input.userId } })
   },
-});
+})
 
-// Consumption: each loadModel re-executes main
-const result = await loadModel(userModel, { id: '1' });
+// Simple form: just a function
+const greet = defineModel(async (input: { name: string }) => {
+  return { greeting: `Hello ${input.name}` }
+})
 
-// Shorthand (no services / pipelines)
-export default defineModel(async (input: { id: string }) => {
-  return { id: input.id };
-});
+// Usage: each call re-executes main
+const user = await loadModel(userModel, { userId: 1 })
+```
+
+`loadModel(model, input)` — input must be an object. `isModel(value)` checks if something is a valid model definition.
+
+---
+
+## 12. @hile/logger — Structured Logging
+
+**When to use:** Any logging need. Based on pino.
+
+```typescript
+import { createLogger } from '@hile/logger'
+
+const logger = createLogger({
+  level: 'info',                       // 'trace'|'debug'|'info'|'warn'|'error'|'fatal'
+  pretty: true,                        // default: NODE_ENV !== 'production'
+  redact: ['password', 'authorization'],
+})
+
+logger.info({ userId: 1 }, 'user created')
+logger.error({ err }, 'something failed')
+logger.child({ module: 'payment' })  // pino child logger
+```
+
+Defaults: `level` from `LOG_LEVEL` env (fallback `'info'`). `pretty` auto-enabled in non-production.
+
+Also available as container service (default export): add `@hile/logger` to `auto_load_packages`.
+
+---
+
+## 13. @hile/schedule — Job Scheduling
+
+**When to use:** Cron jobs, delayed tasks. Based on node-schedule.
+
+```typescript
+import { Scheduler, defineJob } from '@hile/schedule'
+
+const scheduler = new Scheduler()
+
+// Cron
+scheduler.add('daily', '0 8 * * *', async () => { /* ... */ })
+
+// Delay (ms)
+scheduler.add('once', { delay: 5000 }, async () => { /* ... */ })
+
+// File-system loading
+await scheduler.load('./src/tasks', { suffix: 'schedule' })  // *.schedule.{ts,js}
+
+// Management
+scheduler.remove('daily')    // cancel one
+scheduler.stop()             // cancel all
+scheduler.getJobs()          // [{ id, type: 'cron'|'delay', expression }]
+```
+
+### defineJob for file-based tasks
+
+```typescript
+// src/tasks/report.schedule.ts
+import { defineJob } from '@hile/schedule'
+export default defineJob('0 8 * * *', async () => {
+  console.log('daily report')
+})
 ```
 
 ---
 
-## 13. create-hile — Scaffolding
+## 14. @hile/loader — File System Utilities
+
+**When to use:** Building custom file-system loaders. `@hile/http` and `@hile/message-loader` both use it internally.
+
+```typescript
+import { scanDirectory, compileRoutePath, toRouterPath, normalizePath, Loader } from '@hile/loader'
+
+// Scan directory for files matching suffix
+const files = await scanDirectory('./dir', { suffix: 'handler' })
+// Returns: [{ absolute, relative, routePath }, ...]
+
+// Path utilities
+compileRoutePath('/users/index', { defaultSuffix: '/index', prefix: '/api' })  // '/api/users'
+toRouterPath('users/[id]/posts')     // 'users/:id/posts'
+normalizePath('a\\b//c')             // 'a/b/c'
+
+// Build a custom loader by extending Loader
+class MyLoader extends Loader<MyFileType> {
+  protected bind(file, module) {
+    // register module to your system, return unregister function
+  }
+}
+```
+
+---
+
+## 15. create-hile — Project Scaffolding
 
 ```bash
 npx create-hile create my-project
-# Choose a template: default / next / micro-http / micro / micro-http-next / monorepo
-cd my-project && pnpm install && pnpm run dev
+npx create-hile create my-project --skip-install
 ```
 
-Templates:
-- `default` — Plain HTTP (Koa + @hile/http)
-- `next` — Next.js + @hile/http-next
-- `micro-http` — Microservice + HTTP (no Next)
-- `micro` — Pure microservice
-- `micro-http-next` — Next.js + microservice + HTTP (full-stack)
-- `monorepo` — Lerna + pnpm workspace
+6 templates: `default`, `next`, `micro-http`, `micro`, `micro-http-next`, `monorepo`
 
 ---
 
-## 14. Common Anti-Patterns (Forbidden)
+## 16. Anti-Patterns
 
 ```typescript
-// ❌ Top-level await loadService
-import service from './service.js';
-const instance = await loadService(service); // Forbidden
+// ❌ loadService at module top level (causes side-effect on import)
+import { loadService } from '@hile/core'
+const instance = await loadService(someService)  // NEVER do this
 
-// ❌ Boot file exports a plain function
-export default async () => { ... }; // Forbidden: must return defineService result
-
-// ❌ Controller writes ctx.body AND returns
-export default defineController('GET', async (ctx) => {
-  ctx.body = { x: 1 }; // Forbidden: only return
-  return { x: 1 };
-});
-
-// ❌ Controller signature is (ctx, next)
-export default defineController('GET', async (ctx, next) => { // Forbidden
-  await next();
-});
-
-// ❌ Boot file outside src/services/
-// src/index.boot.ts  →  Forbidden
+// ❌ Boot file exports something other than defineService result
+export default async () => { /* ... */ }  // must be defineService(...)
 
 // ❌ auto_load_packages uses file paths
-{ "hile": { "auto_load_packages": ["./src/services/db.service.ts"] } }  // Forbidden: must be module name
+{ "hile": { "auto_load_packages": ["./src/my-service.ts"] } }  // must be npm package names
 
-// ❌ Using loadService inside src/app/ (http-next)
-// Forbidden: src/app/ only allows loadModel
+// ❌ Controller BOTH sets ctx.body AND returns a value
+export default defineController('GET', async (ctx) => {
+  ctx.body = { x: 1 }  // don't do this
+  return { x: 1 }      // only return
+})
 
-// ❌ Defining model inside src/app/ (http-next)
-// Forbidden: defineModel only works in src/models/
+// ❌ Passing non-ServiceRegisterProps to loadService
+await loadService({ key: 'x', fn: () => {} })  // missing internal flag, will fail
+// Only pass return values from defineService()
 
-// ❌ Putting infrastructure in src/models/ or business logic in src/services/
+// ❌ Re-using the same service key for different factories
+defineService('same-key', async () => 'A')
+defineService('same-key', async () => 'B')
+// The first one to be loadService'd wins; second is effectively ignored
+
+// ❌ Forgetting shutdown callback for resources
+defineService('db', async (shutdown) => {
+  const conn = await createConnection()
+  return conn  // BUG: no shutdown(() => conn.close())
+})
+
+// ❌ Not awaiting loadService
+const val = loadService(svc)  // val is Promise, not the actual value
 ```
 
 ---
 
-## 15. Quick Reference: What API to Use in Which File
+## 17. Key Conventions
 
-| File | Allowed imports |
-|------|----------------|
-| `src/services/*.boot.ts` | `defineService`, `loadService`, `loadModel` |
-| `src/services/*.service.ts` | `defineService`, `loadService`, `loadModel` |
-| `src/models/*.model.ts` | `defineModel`, `loadService`, `loadModel` (can compose other models) |
-| `src/controllers/*.controller.ts` (http-next) | `defineController`, `loadService`, `loadModel` |
-| `src/app/**/page.tsx` (http-next) | `loadModel` (only models from `src/models`) |
-| `src/app/**/layout.tsx` (http-next) | `loadModel` optional (no `force-dynamic` required) |
-
----
-
-## 16. File Naming Conventions
-
-| Suffix | Type | Loaded by | Location constraint |
-|--------|------|-----------|-------------------|
-| `*.boot.ts` / `*.boot.js` | Service entry (auto-start) | CLI auto-scan | `src/services/` |
-| `*.service.ts` / `*.service.js` | Service (lazy-loaded) | `loadService` | `src/services/` |
-| `*.model.ts` / `*.model.js` | Business model | `loadModel` | `src/models/` |
-| `*.controller.ts` / `*.controller.js` | HTTP controller | `http.load()` scan | Default `src/controllers/` |
-| `*.msg.ts` / `*.msg.js` | Message handler | `loader.load()` scan | Custom (e.g. `src/messages/`) |
-| `*.schedule.ts` / `*.schedule.js` | Scheduled job | `scheduler.load()` scan | Custom (e.g. `src/schedules/`) |
+| Convention | Detail |
+|-----------|--------|
+| Boot files | `*.boot.ts` / `*.boot.js`, scanned by CLI with `**/*.boot.{ts,js}` glob |
+| Controller files | `*.controller.{ts,js,tsx,jsx}`, loaded by `http.load()` with configurable suffix |
+| Message files | `*.msg.{ts,js,tsx,jsx}`, loaded by `MessageLoader.load()` / `app.load()` |
+| Schedule files | `*.schedule.{ts,js,tsx,jsx}`, loaded by `Scheduler.load()` |
+| Service keys | `kebab-case` strings for app services, `Symbol.for('pkg-name')` for integration packages |
+| ESM only | All packages are ESM. Projects need `"type": "module"` in package.json |
