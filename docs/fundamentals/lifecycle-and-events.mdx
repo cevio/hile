@@ -10,38 +10,25 @@ import { Accordion, AccordionGroup } from '@mintlify/components';
 一个服务从"被注册"到"被销毁"会经历一系列阶段：
 
 ```mermaid
-stateDiagram-v2
-    [*] --> Registered: defineService(key, fn)
-    Registered --> Init: loadService() 首次调用
+flowchart TB
+    A["defineService(key, fn)<br/>注册到容器（只登记，不执行）"]
+    B["loadService() 首次调用"]
+    C["init<br/>lifecycle='init', status=0<br/>工厂函数执行<br/>发射 service:init"]
+    D["ready<br/>lifecycle='ready', status=1<br/>结果已缓存 · 通知等待队列<br/>发射 service:ready"]
+    E["stopping（失败路径）<br/>lifecycle='stopping'<br/>执行已有 teardown<br/>发射 service:error"]
+    F["stopped（失败路径）<br/>lifecycle='stopped'<br/>通知队列（reject）"]
+    G["container.shutdown()"]
+    H["stopping（关闭路径）<br/>LIFO 执行所有 teardown<br/>发射 service:shutdown:start"]
+    I["stopped（关闭路径）<br/>lifecycle='stopped'<br/>发射 service:shutdown:done"]
 
-    state Init {
-        [*] --> 工厂函数执行中
-        工厂函数执行中 --> [*]: lifecycle='init', status=0\n发射 service:init
-    }
-
-    Init --> Ready: 工厂成功返回
-    Init --> FailedStopping: 工厂抛错/reject
-
-    state Ready {
-        [*] --> 结果已缓存
-        结果已缓存 --> [*]: lifecycle='ready', status=1\n发射 service:ready\n通知等待队列
-    }
-
-    Ready --> ShutdownStopping: container.shutdown()
-
-    state FailedStopping {
-        [*] --> 执行已有teardown
-        执行已有teardown --> FailedStopped: lifecycle='stopping'\n发射 service:error
-    }
-
-    FailedStopped --> [*]: lifecycle='stopped'\n通知队列(reject)
-
-    state ShutdownStopping {
-        [*] --> LIFO执行所有teardown
-        LIFO执行所有teardown --> ShutdownStopped: 发射 service:shutdown:start/done/error
-    }
-
-    ShutdownStopped --> [*]: lifecycle='stopped'
+    A --> B
+    B --> C
+    C -->|成功| D
+    C -->|抛错/reject| E
+    E --> F
+    D --> G
+    G --> H
+    H --> I
 ```
 
 ## 阶段详解
