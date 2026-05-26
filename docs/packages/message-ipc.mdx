@@ -84,18 +84,15 @@ flowchart TB
 `MessageIpc` 的通信也是**双向对称**的。父进程可以请求子进程，子进程也可以请求父进程。
 
 ```mermaid
-sequenceDiagram
-    participant Parent as 父进程
-    participant Child as 子进程
-
-    Parent->>Child: child = fork('./worker.js')
-    Note over Parent: ipc = new MyIpc(child)
-    Note over Child: ipc = new MyIpc()
-
-    Parent->>Child: REQUEST: ipc.request({ action: 'compute', value: 42 })
-    Note over Child: exec({ action: 'compute', value: 42 })
-    Note over Child: → { result: 84 }
-    Child->>Parent: RESPONSE: { result: 84 }
+flowchart LR
+  P["父进程"]
+  C["子进程"]
+  P -->|"child = fork('./worker.js')"| C
+  P -->|"new MyIpc(child)"| P1["ipc 父进程端"]
+  C -->|"new MyIpc()"| C1["ipc 子进程端"]
+  P1 -->|"_send({ action: 'compute' })"| C1
+  C1 -->|"exec() → { result: 84 }"| C2["处理请求"]
+  C2 -->|"_send RESPONSE"| P1
 ```
 
 <Note>
