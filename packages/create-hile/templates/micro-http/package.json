@@ -14,13 +14,13 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "@hile/core": "^1.1.2",
-    "@hile/http": "^1.1.3",
-    "@hile/micro": "^2.0.0",
-    "@hile/message-loader": "^1.0.9",
+    "@hile/core": "^2.0.1",
+    "@hile/http": "^2.0.2",
+    "@hile/micro": "^2.0.2",
+    "@hile/message-loader": "^2.0.1",
     "detect-port": "^2.1.0"
   },
   "devDependencies": {
-    "@hile/cli": "^2.0.0"
+    "@hile/cli": "^2.0.3"
   }
 }
