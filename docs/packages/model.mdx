@@ -51,13 +51,20 @@ pnpm add @hile/model
 
 Pipeline 是类似 Koa 的洋葱模型中间件链。请求经过中间件层层处理，最后到达 `main` 函数，结果再反向穿过中间件：
 
-```
-请求 (input)
-  │
-  ▼
-中间件 1 (日志) ──▶ next() ──▶ ... ──▶ main(input) ──▶ 结果
-  │                                                    │
-  └──────────── 后置处理 ◀──────── await next() ◀───────┘
+```mermaid
+flowchart LR
+    A["请求 (input)"]
+    B["中间件 1 (日志)"]
+    C["next()"]
+    D["..."]
+    E["main(input)"]
+    F["结果"]
+    G["后置处理"]
+
+    A --> B
+    B --> C --> D --> E --> F
+    F -.->|"await next() 返回"| G
+    G -.-> B
 ```
 
 中间件的核心能力：

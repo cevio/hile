@@ -51,15 +51,22 @@ import {
 
 ### 核心设计理念
 
-```
-你的业务逻辑                    MessageModem                   底层传输
-  (exec 实现)                      (核心协议)                    (post 实现)
+```mermaid
+flowchart LR
+    subgraph BL["你的业务逻辑 (exec 实现)"]
+        exec["exec(data, signal)"]
+    end
+    subgraph MM["MessageModem (核心协议)"]
+        core["请求/响应配对<br/>超时控制<br/>主动中止<br/>错误传播<br/>流式传输"]
+    end
+    subgraph TP["底层传输 (post 实现)"]
+        transport["WebSocket / IPC / Worker"]
+    end
 
-┌──────────────┐   REQUEST    ┌──────────────┐   JSON/Buffer   ┌──────────────┐
-│  接收方逻辑   │◄─────────────│  MessageModem │◄───────────────│   WebSocket  │
-│  (处理请求)   │────RESPONSE─►│  (协议引擎)   │───send(data)──►│    / IPC     │
-└──────────────┘              └──────────────┘                 │   / Worker   │
-                                                                └──────────────┘
+    BL -- "REQUEST" --> MM
+    MM -- "RESPONSE" --> BL
+    MM -- "post(data)" --> TP
+    TP -- "receive(msg)" --> MM
 ```
 
 <Note>
@@ -634,133 +641,110 @@ private createIncrementId() {
 
 ### 双向请求（`_send`）
 
-```
-发送方 (Sender)                     接收方 (Receiver)
-    │                                   │
-    │  _send({ action: 'ping' })        │
-    │                                   │
-    │  createIncrementId() → id=1       │
-    │  ┌───────────────────────┐        │
-    │  │ id: 1                 │        │
-    │  │ mode: REQUEST (0)     │        │
-    │  │ twoway: true          │        │
-    │  │ data: {action:'ping'} │        │
-    │  └─────────┬─────────────┘        │
-    │            │ post(data)           │
-    │────────────┼──────────────────────│
-    │            │                      │ receive(msg)
-    │            │                      │ mode === REQUEST → onRequest(msg)
-    │            │                      │ exec(data) → { pong: true }
-    │            │                      │
-    │            │                      │ 创建响应：
-    │            │                      │ ┌───────────────────────┐
-    │            │                      │ │ id: 1                 │
-    │            │                      │ │ mode: RESPONSE (1)    │
-    │            │                      │ │ data: {               │
-    │            │                      │ │   status: 200         │
-    │            │                      │ │   data: { pong: true }│
-    │            │                      │ │   message: ""         │
-    │            │                      │ │ }                     │
-    │            │                      │ └─────────┬─────────────┘
-    │◄───────────┼──────────────────────│           │ post(data)
-    │            │                      │
-    │            │ receive(msg)         │
-    │            │ mode === RESPONSE    │
-    │            │ status === 200       │
-    │            │ resolve({pong:true}) │
-    │            │                      │
-    │  _send 返回 Promise<{pong:true}>  │
+```mermaid
+flowchart LR
+    subgraph S["发送方 (Sender)"]
+        send["_send({ action: 'ping' })"]
+        id1["createIncrementId() → id=1"]
+        msg1["构造消息:<br/>id:1, mode:REQUEST(0)<br/>twoway:true<br/>data:{action:'ping'}"]
+        resolve["resolve({pong:true})"]
+        ret["返回 Promise"]
+    end
+    subgraph R["接收方 (Receiver)"]
+        recv["receive(msg)"]
+        onreq["mode===REQUEST<br/>→ onRequest(msg)"]
+        execc["exec(data)<br/>→ { pong: true }"]
+        msg2["构造响应:<br/>id:1, mode:RESPONSE(1)<br/>data:{status:200,<br/>data:{pong:true}}"]
+    end
+
+    send --> id1 --> msg1
+    msg1 -- "post(data)" --> recv
+    recv --> onreq --> execc
+    execc --> msg2
+    msg2 -- "post(data)" --> resolve
+    resolve --> ret
 ```
 
 ### 单向推送（`_push`）
 
-```
-发送方                             接收方
-    │                                   │
-    │  _push({ event: 'heartbeat' })    │
-    │                                   │
-    │  id → id=x                        │
-    │  ┌───────────────────────┐         │
-    │  │ id: x                 │         │
-    │  │ mode: REQUEST (0)     │         │
-    │  │ twoway: false        │         │
-    │  │ data: {event:'hb'}   │         │
-    │  └─────────┬─────────────┘         │
-    │            │ post(data)            │
-    │────────────┼───────────────────────│
-    │  return void                       │ receive(msg)
-    │            │                      │ mode === REQUEST, twoway=false
-    │            │                      │ onRequest(msg) → exec(data)
-    │            │                      │ exec 返回值不会被回复！
+```mermaid
+flowchart LR
+    subgraph S["发送方"]
+        push["_push({ event: 'heartbeat' })"]
+        msg["构造消息:<br/>id:x, mode:REQUEST(0)<br/>twoway:false<br/>data:{event:'hb'}"]
+        ret["return void"]
+    end
+    subgraph R["接收方"]
+        recv["receive(msg)"]
+        onreq["mode===REQUEST<br/>twoway===false<br/>→ onRequest(msg)"]
+        execc["exec(data)<br/>返回值不被回复"]
+    end
+
+    push --> msg
+    msg -- "post(data)" --> recv
+    recv --> onreq --> execc
+    push --> ret
 ```
 
 ### 流式传输（`_stream`）
 
-```
-发送方                             接收方
-    │                                   │
-    │  _stream({ query: 'users' })      │
-    │                                   │
-    │  id → id=x                        │
-    │  stream = new Readable()          │
-    │  ┌─────────────────────────┐      │
-    │  │ id: x, twoway: true     │      │
-    │  │ mode: REQUEST (0)      │      │
-    │  │ stream: true           │      │
-    │  │ data: {query:'users'}  │      │
-    │  └─────────┬───────────────┘      │
-    │────────────┼──────────────────────│
-    │            │                      │ receive(msg)
-    │            │                      │ onStreamRequest(msg)
-    │            │                      │ exec(data) → AsyncIterable
-    │            │                      │ for await (const chunk of iterable) {
-    │            │                      │   post({ id: x, mode: RESPONSE,
-    │            │                      │         stream: true,
-    │            │                      │         data: { status:200, seq:0,
-    │◄───────────┼──────────────────────│                payload:chunk, final:false }})
-    │            │ stream.push(chunk)   │ }
-    │            │                      │
-    │            │                      │ post({ id: x, mode: RESPONSE,
-    │            │                      │       stream: true,
-    │            │                      │       data: { status:200, seq:1,
-    │◄───────────┼──────────────────────│              payload:chunk2, final:false }})
-    │            │ stream.push(chunk2)  │
-    │            │                      │
-    │            │                      │ post({ id: x, mode: RESPONSE,
-    │            │                      │       stream: true,
-    │            │                      │       data: { status:200, seq:2,
-    │◄───────────┼──────────────────────│              payload:undefined, final:true }})
-    │            │ stream.push(null)    │
-    │            │ 流结束               │
+```mermaid
+flowchart LR
+    subgraph S["发送方"]
+        stream["_stream({ query: 'users' })"]
+        rstream["stream = new Readable()"]
+        msg["构造消息:<br/>id:x, mode:REQUEST(0)<br/>twoway:true, stream:true<br/>data:{query:'users'}"]
+        push1["stream.push(chunk)"]
+        push2["stream.push(chunk2)"]
+        push3["stream.push(null)<br/>流结束"]
+    end
+    subgraph R["接收方"]
+        recv["receive(msg)"]
+        onstream["onStreamRequest(msg)"]
+        execc["exec(data)<br/>→ AsyncIterable"]
+        loop["for await chunk of iterable"]
+        resp1["post RESPONSE<br/>seq:0, final:false"]
+        resp2["post RESPONSE<br/>seq:1, final:false"]
+        resp3["post RESPONSE<br/>seq:2, final:true"]
+    end
+
+    stream --> rstream --> msg
+    msg -- "post(data)" --> recv
+    recv --> onstream --> execc --> loop
+    loop --> resp1 --> push1
+    loop --> resp2 --> push2
+    loop --> resp3 --> push3
+    resp1 -.->|"RESPONSE"| push1
+    resp2 -.->|"RESPONSE"| push2
+    resp3 -.->|"RESPONSE (final)"| push3
 ```
 
 ### 中止流程（Abort）
 
-```
-发送方                             接收方
-    │                                   │
-    │  ac = new AbortController()       │
-    │  _send(data, { signal: ac.signal })│
-    │                                   │
-    │  ──── REQUEST ──────────────────► │
-    │                                   │ exec(data, controller.signal)
-    │                                   │
-    │  ac.abort()  // 用户主动取消      │
-    │                                   │
-    │  发送 ABORT 消息：                 │
-    │  ┌───────────────────────┐         │
-    │  │ id: x                 │         │
-    │  │ mode: ABORT (2)       │         │
-    │  │ twoway: false         │         │
-    │  │ data: <被取消的请求ID>  │         │
-    │  └─────────┬─────────────┘         │
-    │────────────┼───────────────────────│
-    │            │                      │ receive(msg)
-    │            │                      │ mode === ABORT
-    │            │                      │ controller.abort()
-    │            │                      │ exec 收到 abort 信号
-    │                                   │
-    │  reject(new AbortException())     │
+```mermaid
+flowchart LR
+    subgraph S["发送方"]
+        ac["ac = new AbortController()"]
+        send["_send(data, { signal: ac.signal })"]
+        request["发送 REQUEST"]
+        abort["ac.abort()<br/>用户主动取消"]
+        abortMsg["构造 ABORT 消息:<br/>id:x, mode:ABORT(2)<br/>twoway:false"]
+        reject["reject(AbortException)"]
+    end
+    subgraph R["接收方"]
+        execSig["exec(data, controller.signal)"]
+        recv["receive(msg)"]
+        modeABORT["mode === ABORT"]
+        controllerAbort["controller.abort()"]
+        execAbort["exec 收到 abort 信号"]
+    end
+
+    ac --> send --> request
+    request --> execSig
+    abort --> abortMsg
+    abortMsg -- "post(ABORT)" --> recv
+    recv --> modeABORT --> controllerAbort --> execAbort
+    abort --> reject
 ```
 
 ---

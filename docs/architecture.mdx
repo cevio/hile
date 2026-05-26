@@ -9,33 +9,29 @@ Hile 设计为**分层架构**，各层职责清晰、可按需引入。
 
 ## 总体分层
 
-```
-┌────────────────────────────────────────────────────────────┐
-│                    应用层 (Application Layer)                │
-│  @hile/http (HTTP 服务)    @hile/http-next (Next.js 桥接)   │
-│  业务代码 (controllers / services / models)                 │
-├────────────────────────────────────────────────────────────┤
-│                    集成层 (Integration Layer)                │
-│  @hile/typeorm (数据库)   @hile/ioredis (Redis)             │
-│  @hile/cache (类型安全缓存)                                  │
-├────────────────────────────────────────────────────────────┤
-│                    基础层 (Core Layer)                       │
-│  @hile/core — Container 异步服务容器                        │
-│  register / resolve / shutdown / 依赖追踪 / 事件系统          │
-├────────────────────────────────────────────────────────────┤
-│                    通信层 (Communication Layer)              │
-│  @hile/message-modem (抽象协议)                             │
-│    ├── @hile/message-ws (WebSocket)                        │
-│    ├── @hile/message-ipc (IPC)                             │
-│    └── @hile/message-worker-thread (Worker)                │
-│  @hile/message-loader (消息路由)                             │
-│  @hile/micro (微服务：Server/Client/Registry/Application)    │
-│  @hile/micro-dynamic-configs (动态配置)                      │
-├────────────────────────────────────────────────────────────┤
-│                    工具层 (Tool Layer)                       │
-│  @hile/cli    @hile/loader    @hile/logger    @hile/schedule │
-│  @hile/model  create-hile                                    │
-└────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+  subgraph app["  应用层 Application Layer  "]
+    direction LR
+    a1["@hile/http"] --- a2["@hile/http-next"] --- a3["业务代码"]
+  end
+  subgraph integration["  集成层 Integration Layer  "]
+    direction LR
+    i1["@hile/typeorm"] --- i2["@hile/ioredis"] --- i3["@hile/cache"]
+  end
+  subgraph core["  基础层 Core Layer  "]
+    c1["@hile/core<br/>Container · register/resolve/shutdown<br/>依赖追踪 · 循环检测 · 事件系统"]
+  end
+  subgraph comm["  通信层 Communication Layer  "]
+    direction LR
+    m1["message-modem → ws/ipc/worker-thread"]
+    m2["message-loader → micro → micro-dynamic-configs"]
+  end
+  subgraph tool["  工具层 Tool Layer  "]
+    direction LR
+    t1["@hile/cli · loader · logger · schedule · model · create-hile"]
+  end
+  app ~~~ integration ~~~ core ~~~ comm ~~~ tool
 ```
 
 ## 各层详解

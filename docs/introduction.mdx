@@ -181,77 +181,47 @@ Hile 目前包含 **19 个包**，分为以下几类：
 
 ### 完整依赖关系图
 
-```
-                                    create-hile
-                                   （脚手架，无运行时依赖）
-                                        │
-                                        │ 生成项目模板
-                                        ▼
-             ┌─────────────────────────────────────────────────┐
-             │                  @hile/core                     │
-             │    Container: register / resolve / shutdown     │
-             │    依赖追踪 · 循环检测 · 事件系统 · 超时控制      │
-             └──┬───────┬────────┬────────┬───────────────────┘
-                │       │        │        │
-    ┌───────────▼─┐ ┌──▼──────┐ │  ┌─────▼──────────┐
-    │ @hile/cli   │ │@hile/   │ │  │ @hile/typeorm  │
-    │ hile start  │ │logger   │ │  │ createDataSource│
-    │ hile registry│ │create   │ │  │ transaction()  │
-    └─────┬───────┘ │Logger() │ │  └────────────────┘
-          │         └─────────┘ │
-          │                     │  ┌─────────────────┐
-          │ 依赖 micro          │  │  @hile/model    │
-          │ (registry 命令)     │  │ defineModel     │
-          │                     │  │ loadModel       │
-          │                     │  │ Pipeline        │
-          │                     │  └─────────────────┘
-          │         ┌───────────▼──────────┐
-          │         │    @hile/ioredis     │
-          │         │    createRedis()     │
-          │         └───────────┬──────────┘
-          │                     │
-          │         ┌───────────▼──────────┐
-          │         │    @hile/cache       │
-          │         │  defineCache         │
-          │         │  RedisCache          │
-          │         └──────────────────────┘
-          │
-          │   ┌──────────────────────────────────────────────────┐
-          │   │               @hile/loader                       │
-          │   │   Loader 抽象基类 · scanDirectory                │
-          │   │   compileRoutePath · toRouterPath · normalizePath│
-          │   └──┬───────────────────┬────────────────┬─────────┘
-          │      │                   │                │
-          │      ▼                   ▼                ▼
-          │  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-          │  │ @hile/http   │ │@hile/message-│ │@hile/schedule│
-          │  │ Http 类      │ │loader        │ │Scheduler     │
-          │  │ define       │ │MessageLoader │ │defineJob     │
-          │  │ Controller   │ │defineMessage │ │              │
-          │  └──────┬───────┘ └──────┬───────┘ └──────────────┘
-          │         │                │
-          │         ▼                ▼
-          │  ┌──────────────┐ ┌─────────────────────────────────┐
-          │  │@hile/http-   │ │        @hile/micro              │
-          │  │next          │ │  Server → Registry              │
-          │  │HttpNext 类   │ │         → Application           │
-          │  └──────────────┘ │  Client（继承 MessageWs）        │
-          │                   └───────────┬─────────────────────┘
-          │                               │
-          │                   ┌───────────▼─────────────────────┐
-          │                   │ @hile/micro-dynamic-configs     │
-          │                   │ MicroDynamicConfigsServer       │
-          │                   └─────────────────────────────────┘
-          │
-          ▼
-┌──────────────────────────────────────────────────────────────┐
-│              消息通信传输层（独立于 @hile/core）                 │
-│                                                              │
-│  @hile/message-modem  (抽象基类，零外部依赖)                    │
-│     ├── @hile/message-ws               (WebSocket, 依赖 ws)    │
-│     ├── @hile/message-ipc              (IPC, 零外部依赖)        │
-│     └── @hile/message-worker-thread    (Worker, 零外部依赖)     │
-└──────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    create-hile["create-hile<br/>（脚手架，无运行时依赖）"]
+    core["@hile/core<br/>Container · register/resolve/shutdown<br/>依赖追踪 · 循环检测 · 事件系统 · 超时控制"]
+
+    create-hile -->|生成项目模板| core
+
+    core --> cli["@hile/cli<br/>hile start · hile registry"]
+    core --> logger["@hile/logger<br/>createLogger()"]
+    core --> typeorm["@hile/typeorm<br/>createDataSource() · transaction()"]
+    core --> model["@hile/model<br/>defineModel · loadModel · Pipeline"]
+    core --> ioredis["@hile/ioredis<br/>createRedis()"]
+
+    cli -->|registry 命令依赖| micro
+
+    ioredis --> cache["@hile/cache<br/>defineCache · RedisCache"]
+
+    loader["@hile/loader<br/>Loader 抽象基类<br/>scanDirectory · compileRoutePath<br/>toRouterPath · normalizePath"]
+    http["@hile/http<br/>Http · defineController<br/>defineResponsePlugin"]
+    messageLoader["@hile/message-loader<br/>MessageLoader · defineMessage"]
+    schedule["@hile/schedule<br/>Scheduler · defineJob"]
+
+    loader --> http
+    loader --> messageLoader
+    loader --> schedule
+
+    http --> httpNext["@hile/http-next<br/>HttpNext（Next.js 桥接）"]
+
+    messageLoader --> micro["@hile/micro<br/>Server → Registry<br/>Server → Application<br/>Client（继承 MessageWs）"]
+
+    micro --> dynamicConfigs["@hile/micro-dynamic-configs<br/>MicroDynamicConfigsServer"]
+
+    subgraph transport[消息通信传输层 · 独立于 @hile/core]
+        modem["@hile/message-modem<br/>抽象基类 · 零外部依赖"]
+        ws["@hile/message-ws<br/>WebSocket · 依赖 ws"]
+        ipc["@hile/message-ipc<br/>IPC · 零外部依赖"]
+        wt["@hile/message-worker-thread<br/>Worker · 零外部依赖"]
+        modem --> ws
+        modem --> ipc
+        modem --> wt
+    end
 ```
 
 <Note>

@@ -47,19 +47,23 @@ process.on('message', (msg) => {
 
 ### 继承链
 
-```
-MessageModem (abstract)          
-  │  post(data): void —— 抽象     ← 如何发送消息
-  │  exec(data, signal): Promise —— 抽象  ← 如何处理请求
-  │
-  └── MessageIpc (abstract)       
-       │  post(data): void —— 已实现  ← channel.send(data)
-       │  exec(data, signal): Promise —— 抽象  ← 仍需子类实现
-       │  dispose(): void —— 已实现  ← 移除监听器 + _dispose()
-       │
-       └── 你的子类
-            exec(data, signal): Promise —— 实现
-            request(data, options?) —— 你添加
+```mermaid
+flowchart TB
+    subgraph MessageModem["MessageModem (abstract)"]
+        A1["post(data): void (abstract)"]
+        A2["exec(data, signal): Promise (abstract)"]
+    end
+    subgraph MessageIpc["MessageIpc (abstract)"]
+        B1["post(data): void (已实现)"]
+        B2["exec(data, signal): Promise (抽象)"]
+        B3["dispose(): void (已实现)"]
+    end
+    subgraph YourClass["你的子类"]
+        C1["exec(data, signal): Promise (实现)"]
+        C2["request(data, options?) (你添加)"]
+    end
+    MessageModem --> MessageIpc
+    MessageIpc --> YourClass
 ```
 
 ### 双端支持
@@ -79,18 +83,19 @@ MessageModem (abstract)
 
 `MessageIpc` 的通信也是**双向对称**的。父进程可以请求子进程，子进程也可以请求父进程。
 
-```
-父进程                             子进程
-  │                                   │
-  │  child = fork('./worker.js')      │
-  │  ipc = new MyIpc(child)           │  ipc = new MyIpc()  // 无参数
-  │                                   │
-  │  ipc.request({ action: 'compute', value: 42 })
-  │────── REQUEST ──────────────────► │
-  │                                   │  exec({ action: 'compute', value: 42 })
-  │                                   │  → { result: 84 }
-  │◄────── RESPONSE ──────────────────│
-  │  resolve({ result: 84 })          │
+```mermaid
+sequenceDiagram
+    participant Parent as 父进程
+    participant Child as 子进程
+
+    Parent->>Child: child = fork('./worker.js')
+    Note over Parent: ipc = new MyIpc(child)
+    Note over Child: ipc = new MyIpc()
+
+    Parent->>Child: REQUEST: ipc.request({ action: 'compute', value: 42 })
+    Note over Child: exec({ action: 'compute', value: 42 })
+    Note over Child: → { result: 84 }
+    Child->>Parent: RESPONSE: { result: 84 }
 ```
 
 <Note>
@@ -919,11 +924,15 @@ const ipc = new WorkerIpc();
 
 ## 与其他包的关系
 
-```
-@hile/message-modem              ← 抽象基类（传输无关）
-  ├── @hile/message-ipc          ← Node.js IPC（fork 父子进程）
-  ├── @hile/message-worker-thread ← Worker Threads（worker_threads）
-  └── @hile/message-ws           ← WebSocket（ws 模块）
+```mermaid
+flowchart TB
+    Modem["@hile/message-modem<br/>抽象基类（传输无关）"]
+    Ipc["@hile/message-ipc<br/>Node.js IPC（fork 父子进程）"]
+    Worker["@hile/message-worker-thread<br/>Worker Threads（worker_threads）"]
+    Ws["@hile/message-ws<br/>WebSocket（ws 模块）"]
+    Modem --> Ipc
+    Modem --> Worker
+    Modem --> Ws
 ```
 
 | 特性 | message-ipc | message-worker-thread | message-ws |

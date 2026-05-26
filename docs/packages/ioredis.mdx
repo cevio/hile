@@ -332,21 +332,15 @@ if (await acquireLock('order:1:lock')) {
 
 ### 初始化流程
 
-```
-createRedis() 调用
-    │
-    ├── new Redis(options) — 创建客户端
-    │    （ioredis 开始尝试连接）
-    │
-    ├── client.on('error', reject)    ← 监听错误
-    ├── client.on('connect', resolve) ← 监听连接就绪
-    │
-    ▼
-Promise pending...
-     │
-     ├── connect 事件触发 → 移除 error 监听 → resolve → 返回客户端
-     │
-     └── error 事件触发  → reject → 抛出异常
+```mermaid
+flowchart TB
+    A["createRedis() 调用"] --> B["new Redis(options)<br/>创建客户端，开始连接"]
+    B --> C["client.on('error', reject)"]
+    B --> D["client.on('connect', resolve)"]
+    C --> E["Promise pending..."]
+    D --> E
+    E -->|"connect 事件触发"| F["移除 error 监听 → resolve → 返回客户端"]
+    E -->|"error 事件触发"| G["reject → 抛出异常"]
 ```
 
 ### 连接成功后 ioredis 的行为

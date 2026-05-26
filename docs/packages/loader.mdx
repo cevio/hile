@@ -29,19 +29,17 @@ pnpm add @hile/loader
 
 ### 扫描流程
 
-```
-directory/
-  ├── users.handler.ts         → /users
-  ├── users/[id].handler.ts    → /users/[id]
-  └── index.handler.ts         → / (defaultSuffix 处理)
-         ↓
-    scanDirectory(directory)
-         ↓
-    [
-      { absolute: '/abs/users.handler.ts',  relative: 'users.handler.ts',  routePath: '/users' },
-      { absolute: '/abs/users/[id].handler.ts', relative: 'users/[id].handler.ts', routePath: '/users/[id]' },
-      { absolute: '/abs/index.handler.ts',   relative: 'index.handler.ts',  routePath: '/' },
-    ]
+```mermaid
+flowchart TB
+    subgraph directory
+        A["users.handler.ts"]
+        B["users/[id].handler.ts"]
+        C["index.handler.ts"]
+    end
+    A -->|"/users"| D["scanDirectory(directory)"]
+    B -->|"/users/[id]"| D
+    C -->|"defaultSuffix 处理 → /"| D
+    D --> E["[{absolute, relative, routePath}, ...]"]
 ```
 
 ---

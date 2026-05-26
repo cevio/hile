@@ -206,14 +206,14 @@ const user = await ops.read({ id: 'u-001' })
 
 内部流程：
 
-```
-read({ id: 'u-001' })
-  → makeKey → 'myapp:user:u-001:info'
-  → EXISTS key?
-    ├─ false → 回源函数 → Cache(user)
-    │          → JSON.stringify → SETEX/SET
-    │          → 返回数据
-    └─ true  → GET key → JSON.parse → 返回
+```mermaid
+flowchart TD
+    A["read({ id: 'u-001' })"] --> B[makeKey → 'myapp:user:u-001:info']
+    B --> C{EXISTS key?}
+    C -->|false| D["回源函数 → Cache(user)"]
+    D --> E[JSON.stringify → SETEX/SET]
+    E --> F[返回数据]
+    C -->|true| G[GET key → JSON.parse → 返回]
 ```
 
 #### write —— 强制回源

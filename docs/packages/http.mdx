@@ -30,26 +30,14 @@ pnpm add koa zod
 
 ### 架构概览
 
-```
-请求到达
-    │
-    ▼
-Koa 中间件链（http.use 注册的全局中间件）
-    │
-    ▼
-find-my-way 路由器（精确匹配请求方法 + 路径）
-    │ 匹配到路由
-    ▼
-Zod 入参校验（如果定义了 schema）
-    │
-    ▼
-控制器函数执行（你的业务逻辑）
-    │
-    ▼
-响应插件链（defineResponsePlugin 注册的插件）
-    │
-    ▼
-ctx.body 赋值 → Koa 响应
+```mermaid
+flowchart TB
+    A[请求到达] --> B["Koa 中间件链<br/>(http.use 注册的全局中间件)"]
+    B --> C["find-my-way 路由器<br/>(精确匹配请求方法 + 路径)"]
+    C --> D["Zod 入参校验<br/>(如果定义了 schema)"]
+    D --> E["控制器函数执行<br/>(业务逻辑)"]
+    E --> F["响应插件链<br/>(defineResponsePlugin 注册的插件)"]
+    F --> G["ctx.body 赋值 → Koa 响应"]
 ```
 
 ### 什么是 Koa 中间件？

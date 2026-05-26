@@ -32,12 +32,14 @@ pnpm add @hile/core @hile/ioredis
 
 读穿透是一种缓存模式：应用程序读取缓存时，如果缓存不存在（miss），缓存层**自动**调用你提供的"回源函数"获取数据，写入缓存，然后返回给调用方。调用方不需要手动处理"缓存不存在 → 查数据库 → 写缓存"的逻辑。
 
-```
-read(params)
-    │
-    ├── 缓存命中 → JSON.parse → 返回数据
-    │
-    └── 缓存未命中 → 调用回源函数 → 写入 Redis → 返回数据
+```mermaid
+flowchart TB
+    A[read params] --> B{缓存命中?}
+    B -->|命中| C[JSON.parse]
+    C --> D[返回数据]
+    B -->|未命中| E[调用回源函数]
+    E --> F[写入 Redis]
+    F --> D
 ```
 
 ### 模板键语法
@@ -316,15 +318,13 @@ async read(params: ExtractParams<T>): Promise<R | undefined>
 
 执行流程：
 
-```
-read({ id: 'u-001' })
-    │
-    ├── EXISTS myapp:user:u-001:info
-    │    ├── false → 调用 write(params) → 回源写入 → 返回结果
-    │    └── true  → GET myapp:user:u-001:info
-    │                 ├── 有值 → JSON.parse → 返回
-    │                 └── 空值 → 调用 write(params) → 回源重写 → 返回结果
-    └──
+```mermaid
+flowchart TB
+    A["read({ id: 'u-001' })"] --> B{"EXISTS myapp:user:u-001:info"}
+    B -->|false| C["调用 write(params) → 回源写入 → 返回结果"]
+    B -->|true| D["GET myapp:user:u-001:info"]
+    D -->|有值| E["JSON.parse → 返回"]
+    D -->|空值| F["调用 write(params) → 回源重写 → 返回结果"]
 ```
 
 **特点**：
@@ -342,15 +342,17 @@ async write(params: ExtractParams<T>): Promise<R | undefined>
 
 执行流程：
 
-```
-write({ id: 'u-001' })
-    │
-    ├── 调用回源函数 → Cache<R>
-    │    ├── data === undefined → EXISTS key? DEL → return undefined
-    │    └── data !== undefined →
-    │         ├── expire > 0 → SETEX(key, expire, JSON.stringify(data))
-    │         └── expire = 0 → SET(key, JSON.stringify(data))
-    └── → return data
+```mermaid
+flowchart TB
+    A["write({ id: 'u-001' })"] --> B[调用回源函数]
+    B --> C{Cache data?}
+    C -->|"data === undefined"| D[EXISTS key? DEL]
+    D --> E[return undefined]
+    C -->|"data !== undefined"| F{expire > 0?}
+    F -->|expire > 0| G["SETEX(key, expire, JSON.stringify(data))"]
+    F -->|"expire = 0"| H["SET(key, JSON.stringify(data))"]
+    G --> I[return data]
+    H --> I
 ```
 
 **特点**：
@@ -368,13 +370,12 @@ async remove(params: ExtractParams<T>): Promise<number>
 
 执行流程：
 
-```
-remove({ id: 'u-001' })
-    │
-    ├── EXISTS myapp:user:u-001:info
-    │    ├── true → DEL → 返回 1
-    │    └── false → 返回 0
-    └──
+```mermaid
+flowchart TB
+    A["remove({ id: 'u-001' })"] --> B{"EXISTS myapp:user:u-001:info"}
+    B -->|true| C[DEL]
+    C --> D[返回 1]
+    B -->|false| E[返回 0]
 ```
 
 ---
@@ -387,12 +388,11 @@ async has(params: ExtractParams<T>): Promise<boolean>
 
 执行流程：
 
-```
-has({ id: 'u-001' })
-    │
-    ├── EXISTS myapp:user:u-001:info → true → 返回 true
-    │                               → false → 返回 false
-    └──
+```mermaid
+flowchart TB
+    A["has({ id: 'u-001' })"] --> B{"EXISTS myapp:user:u-001:info"}
+    B -->|true| C[返回 true]
+    B -->|false| D[返回 false]
 ```
 
 ---

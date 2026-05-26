@@ -374,19 +374,13 @@ client.dispose();
 
 Client 启动后自动开始心跳保活，用于检测连接是否仍然存活。
 
-```
-定时发送心跳 ──► 远端收到后回复
-                    │
-                    ▼
-               更新 lastHeartbeat 时间戳
-                    │
-                    ▼
-              检查：当前时间 - lastHeartbeat > timeout？
-                    │
-           ┌────────┴────────┐
-          是                 否
-           │                  │
-       调用 dispose()     继续等待
+```mermaid
+flowchart TB
+    A["定时发送心跳"] --> B["远端收到后回复"]
+    B --> C["更新 lastHeartbeat 时间戳"]
+    C --> D{"检查: 当前时间 - lastHeartbeat > timeout?"}
+    D -- "是" --> E["调用 dispose()"]
+    D -- "否" --> F["继续等待"]
 ```
 
 心跳参数通过环境变量配置：
@@ -716,18 +710,19 @@ const result = await app.call('payments', '/charge', { amount: 100 }, {
 
 **熔断逻辑**：
 
-```
-call() 被调用
-    │
-    ├── 获取活跃排除列表（30 秒冷却中）
-    ├── app.get(namespace, exclude)
-    │
-    ├── 调用 client.request()
-    │   ├── 成功 → recordSuccess()（从熔断名单移除）
-    │   └── 失败 → recordFailure()（加入熔断名单，30 秒冷却）
-    │              └── retries > 0 → 递归重试（--retries）
-    │              └── retries = 0 → 抛出错误
-    └── 如果所有实例都被排除 → 重置熔断器，重试
+```mermaid
+flowchart TB
+    A["call() 被调用"]
+    A --> B["获取活跃排除列表（30 秒冷却中）"]
+    B --> C["app.get(namespace, exclude)"]
+    C --> D["调用 client.request()"]
+    D -- "成功" --> E["recordSuccess()<br/>从熔断名单移除"]
+    D -- "失败" --> F["recordFailure()<br/>加入熔断名单，30 秒冷却"]
+    F --> G{"retries > 0?"}
+    G -- "是" --> H["递归重试（--retries）"]
+    H --> C
+    G -- "否" --> I["抛出错误"]
+    C -.->|"所有实例都被排除"| J["重置熔断器，重试"]
 ```
 
 <Note>
@@ -855,15 +850,17 @@ Application 与 Registry 断开连接时的行为：
 4. 重连成功后，自动重新订阅所有 topic
 5. 当 `listen()` 返回的 teardown 被调用后，停止重连
 
-```
-Registry 断开
-    │
-    ├── registry = undefined
-    ├── reconnectToRegistry()
-    │   ├── 成功 → 重新订阅 topic
-    │   └── 失败 → scheduleRegistryRetry()
-    │               └── 3 秒后重试
-    └── listen teardown 被调用 → 停止重连
+```mermaid
+flowchart TB
+    A["Registry 断开"]
+    A --> B["registry = undefined"]
+    B --> C["reconnectToRegistry()"]
+    C -- "成功" --> D["重新订阅 topic"]
+    C -- "失败" --> E["scheduleRegistryRetry()"]
+    E --> F["3 秒后重试"]
+    F --> C
+    A --> G["listen teardown 被调用"]
+    G --> H["停止重连"]
 ```
 
 ### 完整示例

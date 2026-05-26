@@ -9,16 +9,15 @@ import { Accordion, AccordionGroup } from '@mintlify/components';
 
 Hile 的消息通信栈从底层到高层：
 
-```
-@hile/message-modem       ← 传输无关的请求/响应协议
-  ├── @hile/message-ws    ← WebSocket 实现
-  ├── @hile/message-ipc   ← 进程间 IPC 实现
-  └── @hile/message-worker-thread ← Worker 线程实现
-
-@hile/message-loader      ← 文件系统消息路由加载
-
-@hile/micro               ← 微服务框架（Server/Client/Registry/Application）
-  └── @hile/micro-dynamic-configs ← 动态配置服务
+```mermaid
+flowchart TD
+    A["@hile/message-modem<br/>传输无关的请求/响应协议"]
+    A --> B["@hile/message-ws<br/>WebSocket 实现"]
+    A --> C["@hile/message-ipc<br/>进程间 IPC 实现"]
+    A --> D["@hile/message-worker-thread<br/>Worker 线程实现"]
+    E["@hile/message-loader<br/>文件系统消息路由加载"]
+    F["@hile/micro<br/>微服务框架<br/>Server/Client/Registry/Application"]
+    F --> G["@hile/micro-dynamic-configs<br/>动态配置服务"]
 ```
 
 ## @hile/message-modem —— 协议抽象层
@@ -218,12 +217,12 @@ class MyWs extends MessageWs {
 
 ### 架构角色
 
-```
-Registry (注册中心，9876 端口)
-  ↑ WebSocket
-  ├── Application A (namespace: "user-service")
-  └── Application B (namespace: "order-service")
-      A 调用 B：app.call("order-service", "/-/createOrder", data)
+```mermaid
+flowchart TD
+    R["Registry<br/>注册中心，9876 端口"]
+    R <-->|WebSocket| A["Application A<br/>namespace: user-service"]
+    R <-->|WebSocket| B["Application B<br/>namespace: order-service"]
+    A -->|"app.call(order-service, ...)"| B
 ```
 
 ### 类层次

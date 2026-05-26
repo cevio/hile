@@ -244,15 +244,15 @@ async function transaction<T>(
 
 #### 执行流程
 
-```
-callback 执行
-    │
-    ├── 成功 → commitTransaction() → 返回结果
-    │
-    └── 抛出异常 → rollbackTransaction()
-                    → 按 LIFO 顺序执行所有 rollback 回调
-                    → release() 释放 QueryRunner
-                    → throw 原始异常
+```mermaid
+flowchart TB
+    A["callback 执行"]
+    A -- "成功" --> B["commitTransaction()"]
+    B --> C["返回结果"]
+    A -- "抛出异常" --> D["rollbackTransaction()"]
+    D --> E["按 LIFO 顺序执行所有<br/>rollback 回调"]
+    E --> F["release() 释放 QueryRunner"]
+    F --> G["throw 原始异常"]
 ```
 
 #### 基本用法

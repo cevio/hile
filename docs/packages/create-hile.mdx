@@ -127,33 +127,14 @@ create-hile -h    # 查看帮助信息
 
 ## 创建流程详解
 
-```
-create-hile create my-app
-    │
-    ├── 1. 检查目标目录
-    │      ├── my-app/ 不存在 → 继续
-    │      └── my-app/ 已存在 → 抛出错误
-    │
-    ├── 2. 交互选择模板
-    │      使用 Enquirer 的 select prompt
-    │
-    ├── 3. 询问是否安装依赖
-    │      ├── --skip-install 跳过
-    │      └── 否则询问 Y/n
-    │
-    ├── 4. 复制模板文件
-    │      ├── ensureDir(targetDir)
-    │      ├── copy(templateDir → targetDir)
-    │      └── promoteUnderscoreDotfiles()
-    │
-    ├── 5. 修改 package.json
-    │      将 name 字段改为项目名
-    │
-    ├── 6. 安装依赖（如果选择安装）
-    │      ├── 检测可用包管理器：pnpm > yarn > npm
-    │      └── 执行 install 命令
-    │
-    └── 7. 输出成功提示
+```mermaid
+flowchart TB
+    A[1. 检查目标目录] --> B[2. 交互选择模板]
+    B --> C[3. 询问是否安装依赖]
+    C --> D[4. 复制模板文件]
+    D --> E[5. 修改 package.json]
+    E --> F[6. 安装依赖]
+    F --> G[7. 输出成功提示]
 ```
 
 ### 步骤 1：目录检查
@@ -290,16 +271,22 @@ const result = await runCommand(command, ['install'], targetDir);
 
 ### 如何选择？
 
-```
-你要做什么？
-├── 纯后端 API → 默认模板
-├── 全栈应用
-│   ├── 单一服务 → Next.js 模板
-│   └── 微服务架构 → Next.js + Micro + HTTP 模板
-├── 微服务
-│   ├── 带 HTTP 网关 → Micro + HTTP 模板
-│   └── 纯消息服务 → Micro 独立服务模板
-└── 大型多包项目 → Monorepo 模板
+```mermaid
+flowchart TB
+    A[你要做什么?] --> B[纯后端 API]
+    A --> C[全栈应用]
+    A --> D[微服务]
+    A --> E[大型多包项目]
+    B --> B1[默认模板]
+    C --> C1[单一服务]
+    C --> C2[微服务架构]
+    C1 --> C1a[Next.js 模板]
+    C2 --> C2a["Next.js + Micro + HTTP 模板"]
+    D --> D1[带 HTTP 网关]
+    D --> D2[纯消息服务]
+    D1 --> D1a["Micro + HTTP 模板"]
+    D2 --> D2a[Micro 独立服务模板]
+    E --> E1[Monorepo 模板]
 ```
 
 ---

@@ -32,23 +32,21 @@ pnpm add @hile/micro-dynamic-configs
 
 ### 工作流程
 
-```
-管理员/程序                      MicroDynamicConfigsServer          @hile/micro 主题              订阅方服务
-    │                                    │                              │                          │
-    │  save({ key: value })              │                              │                          │
-    ├───────────────────────────────────►│                              │                          │
-    │                                    │                              │                          │
-    │                                    ├── Zod schema 校验输入        │                          │
-    │                                    ├── 与当前值深度对比           │                          │
-    │                                    ├── 有变更吗？ ──否──► 返回 0   │                          │
-    │                                    ├── 是                          │                          │
-    │                                    ├── redis.set(全量持久化)       │                          │
-    │                                    ├── 更新内存中的 _value         │                          │
-    │                                    ├── emit('change:key')          │                          │
-    │                                    │                              │                          │
-    │                                    ├── publisher.update(value) ───►──── app.publish() ──────► subscribe 回调
-    │                                    │                              │  topic: {ns}:{key}       │  收到新值
-    │                                    │                              │                          │
+```mermaid
+flowchart TB
+    A["管理员/程序"] --> B["save({ key: value })"]
+    B --> C["MicroDynamicConfigsServer"]
+    C --> D["Zod schema 校验输入"]
+    D --> E["与当前值深度对比"]
+    E --> F{"有变更吗？"}
+    F -- "否" --> G["返回 0"]
+    F -- "是" --> H["redis.set(全量持久化)"]
+    H --> I["更新内存中的 _value"]
+    I --> J["emit('change:key')"]
+    I --> K["publisher.update(value)"]
+    K --> L["@hile/micro 主题"]
+    L --> M["app.publish()"]
+    M --> N["订阅方服务<br/>subscribe 回调收到新值"]
 ```
 
 ### 核心特性
@@ -263,24 +261,30 @@ const changedCount = await configServer.save({
 
 **两阶段处理流程**：
 
-```
-Pass 1: 校验 & 对比
-  │
-  ├── 遍历 value 的每个 key
-  ├── 检查 key 是否在 schema 中定义（未定义则跳过）
-  ├── 用该字段的 Zod schema 校验新值（校验失败抛出错误）
-  ├── 用 isDeepStrictEqual 与新值和旧值对比
-  └── 记录有变更的条目
-  │
-Pass 2: 持久化 & 推送
-  │
-  ├── 构建全量新快照（Object.assign）
-  ├── redis.set(redis_key, JSON.stringify(新快照))
-  ├── 更新内存中的 _value
-  ├── 对每个变更的字段：
-  │   ├── publisher.update(newValue) — 推送到所有订阅者
-  │   └── this.emit('change:' + key, newValue, oldValue) — 本地事件
-  └── 返回变更数
+```mermaid
+flowchart TB
+    subgraph P1["Pass 1: 校验 & 对比"]
+        A["遍历 value 的每个 key"]
+        B["检查 key 是否在 schema 中定义<br/>未定义则跳过"]
+        C["用该字段的 Zod schema 校验新值<br/>校验失败抛出错误"]
+        D["用 isDeepStrictEqual 对比新旧值"]
+        E["记录有变更的条目"]
+    end
+    subgraph P2["Pass 2: 持久化 & 推送"]
+        F["构建全量新快照 (Object.assign)"]
+        G["redis.set(redis_key, JSON.stringify(新快照))"]
+        H["更新内存中的 _value"]
+        I["publisher.update(newValue)<br/>推送到所有订阅者"]
+        J["this.emit('change:' + key, newValue, oldValue)<br/>本地事件"]
+        K["返回变更数"]
+    end
+
+    A --> B --> C --> D --> E
+    E --> F --> G --> H
+    H --> I
+    H --> J
+    I --> K
+    J --> K
 ```
 
 <Note>

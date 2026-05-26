@@ -14,24 +14,19 @@ import { Accordion, AccordionGroup } from '@mintlify/components';
 
 请求管线：
 
-```
-客户端请求
-    │
-    ▼
-┌──────────────────────────────────────┐
-│ Koa 全局中间件链（按 use() 注册顺序）  │
-│  ├─ 中间件 1（请求日志）              │
-│  ├─ 中间件 2（CORS）                 │
-│  └─ ...                             │
-├──────────────────────────────────────┤
-│ router.routes()（listen 时注入）      │
-├──────────────────────────────────────┤
-│ find-my-way 路由匹配                  │
-│  ├─ 匹配 → 路由中间件 → 控制器        │
-│  │         → 响应插件链 → ctx.body    │
-│  └─ 未匹配 → defaultRoute(next())    │
-│              → Koa 默认 404          │
-└──────────────────────────────────────┘
+```mermaid
+flowchart TB
+  client["客户端请求"]
+  mw1["中间件 1（请求日志）"]
+  mw2["中间件 2（CORS）"]
+  mw_more["..."]
+  router["router.routes()（listen 时注入）"]
+  match["find-my-way 路由匹配"]
+  controller["路由中间件 → 控制器<br/>→ 响应插件链 → ctx.body"]
+  notfound["defaultRoute(next())<br/>→ Koa 默认 404"]
+  client --> mw1 --> mw2 --> mw_more --> router --> match
+  match -->|匹配| controller
+  match -->|未匹配| notfound
 ```
 
 ## Http 类

@@ -256,36 +256,15 @@ await start({
 
 #### 启动流程
 
-```
-start() 被调用
-    │
-    ├── 1. 加载 --env-file 中指定的 env 文件
-    │      （process.loadEnvFile，先加载的优先，已有 key 不被覆盖）
-    │
-    ├── 2. 设置 NODE_ENV
-    │      ├── dev = true  → 'development'
-    │      └── dev = false → 'production'
-    │
-    ├── 3. [dev 模式] 订阅容器事件日志（除非 silent=true）
-    │      输出: [hile] service(http) init
-    │            [hile] service(http) ready (45ms)
-    │
-    ├── 4. 读取 package.json 的 hile.auto_load_packages
-    │      按顺序加载指定的模块
-    │
-    ├── 5. 扫描 *.boot.{ts,js} 文件
-    │      ├── dev  → 从 src/ 目录扫描
-    │      └── prod → 从 dist/ 目录扫描
-    │
-    ├── 6. 并发加载所有服务
-    │      ├── .ts 文件 → tsImport() 编译后加载
-    │      └── .js 文件 → import() 加载
-    │      每个文件的 default 导出必须通过 isService() 校验
-    │
-    ├── 7. 注册退出钩子
-    │      registerExitHook(offEvent)
-    │
-    └── 8. 进程保持运行，等待事件
+```mermaid
+flowchart TB
+    A[1. 加载 --env-file 中指定的 env 文件] --> B[2. 设置 NODE_ENV]
+    B --> C[3. dev 模式: 订阅容器事件日志]
+    C --> D[4. 读取 package.json 的 hile.auto_load_packages<br/>按顺序加载指定的模块]
+    D --> E[5. 扫描 *.boot 文件]
+    E --> F[6. 并发加载所有服务]
+    F --> G[7. 注册退出钩子]
+    G --> H[8. 进程保持运行，等待事件]
 ```
 
 #### env 文件加载
@@ -332,17 +311,13 @@ registerExitHook(() => {
 
 **退出流程**：
 
-```
-SIGTERM / SIGINT / process.exit()
-    │
-    ├── exitHook 触发
-    ├── await container.shutdown()
-    │   ├── 按 LIFO 顺序执行所有服务的 shutdown 回调
-    │   └── 每个回调有独立超时
-    │
-    ├── process.stdin.unref()（释放 TTY 输入）
-    ├── offEvent()（取消容器事件监听）
-    └── exit()
+```mermaid
+flowchart TB
+    A["SIGTERM / SIGINT / process.exit()"] --> B[exitHook 触发]
+    B --> C["await container.shutdown()<br/>按 LIFO 顺序执行所有 shutdown 回调"]
+    C --> D[process.stdin.unref 释放 TTY 输入]
+    D --> E["offEvent() 取消容器事件监听"]
+    E --> F["exit()"]
 ```
 
 ### useExit(fn)

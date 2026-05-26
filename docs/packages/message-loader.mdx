@@ -63,15 +63,41 @@ protected async exec(data: any): Promise<any> {
 
 `MessageLoader` 借鉴了主流 HTTP 框架的"文件系统即路由"设计理念：
 
-```
-文件系统                        路由表                       分发
-  messages/                    ┌──────────────────────┐
-  ├── index.msg.ts    ──────►  │ /                    │
-  ├── hello.msg.ts    ──────►  │ /hello               │  ──► dispatch(url, data, extras?)
-  ├── users/                   │                      │       找到路由 → 执行 fn
-  │   ├── index.msg.ts ─────►  │ /users               │       未找到  → 抛出 NotFoundException
-  │   └── [id].msg.ts  ─────►  │ /users/:id           │
-  └── ...                      └──────────────────────┘
+```mermaid
+flowchart LR
+    subgraph FS["文件系统"]
+        direction TB
+        B["index.msg.ts"]
+        C["hello.msg.ts"]
+        D["users/index.msg.ts"]
+        E["users/[id].msg.ts"]
+    end
+    subgraph RT["路由表"]
+        direction TB
+        G["/"]
+        H["/hello"]
+        I["/users"]
+        J["/users/:id"]
+    end
+    subgraph DP["分发"]
+        direction TB
+        K["dispatch(url, data, extras?)"]
+        L["找到路由 → 执行 fn"]
+        M["未找到 → 抛出 NotFoundException"]
+    end
+
+    B --> G
+    C --> H
+    D --> I
+    E --> J
+
+    G --> K
+    H --> K
+    I --> K
+    J --> K
+
+    K --> L
+    K --> M
 ```
 
 **核心能力：**
@@ -1272,21 +1298,27 @@ main().catch(console.error);
 
 `@hile/message-loader` 位于 Hile 消息通信体系的上层：
 
-```
-传输层（如何传数据）          路由层（如何路由请求）       业务逻辑
-┌─────────────────┐        ┌──────────────────┐        ┌─────────────┐
-│ @hile/message-ws│        │                  │        │ msg handler │
-│ @hile/message-ipc│──────►│ @hile/message-   │───────►│ msg handler │
-│ @hile/message-  │        │ loader           │        │ msg handler │
-│ worker-thread   │        │                  │        └─────────────┘
-└─────────────────┘        └──────────────────┘
-      ^                           ^
-      | 基于                       | 基于
-      |                           |
-┌─────────────────┐        ┌──────────────────┐
-│ @hile/message-  │        │ @hile/loader     │
-│ modem           │        │ + rou3           │
-└─────────────────┘        └──────────────────┘
+```mermaid
+flowchart TB
+    subgraph TL["传输层（如何传数据）"]
+        ws["@hile/message-ws<br/>@hile/message-ipc<br/>@hile/message-worker-thread"]
+    end
+    subgraph RL["路由层（如何路由请求）"]
+        loader["@hile/message-loader"]
+    end
+    subgraph BL["业务逻辑"]
+        h1["msg handler"]
+        h2["msg handler"]
+        h3["msg handler"]
+    end
+    subgraph FL["基础层"]
+        modem["@hile/message-modem"]
+        ldr["@hile/loader + rou3"]
+    end
+
+    TL --> RL --> BL
+    modem -.->|基于| TL
+    ldr -.->|基于| RL
 ```
 
 | 包 | 作用 |
