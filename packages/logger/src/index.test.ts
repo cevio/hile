@@ -17,8 +17,14 @@ describe('@hile/logger', () => {
 
   /* ============ createLogger ============ */
 
+  it('返回对象包含 logger 和 teardown', () => {
+    const { logger, teardown } = createLogger({ level: 'info', pretty: false })
+    expect(logger).toBeDefined()
+    expect(typeof teardown).toBe('function')
+  })
+
   it('返回 pino 实例，包含所有日志方法', () => {
-    const logger = createLogger({ level: 'info', pretty: false })
+    const { logger } = createLogger({ level: 'info', pretty: false })
     expect(logger).toBeDefined()
     expect(typeof logger.info).toBe('function')
     expect(typeof logger.error).toBe('function')
@@ -31,72 +37,68 @@ describe('@hile/logger', () => {
   })
 
   it('level 参数正确传递', () => {
-    const logger = createLogger({ level: 'warn', pretty: false })
+    const { logger } = createLogger({ level: 'warn', pretty: false })
     expect(logger.level).toBe('warn')
   })
 
   it('所有 level 值都可正常调用', () => {
-    const logger = createLogger({ level: 'trace', pretty: false })
+    const { logger } = createLogger({ level: 'trace', pretty: false })
     expect(() => logger.trace('test')).not.toThrow()
 
-    const logger2 = createLogger({ level: 'fatal', pretty: false })
+    const { logger: logger2 } = createLogger({ level: 'fatal', pretty: false })
     expect(() => logger2.fatal('test')).not.toThrow()
   })
 
   it('pretty=false 输出 JSON', () => {
-    const logger = createLogger({ level: 'info', pretty: false })
+    const { logger } = createLogger({ level: 'info', pretty: false })
     expect(() => logger.info('test')).not.toThrow()
   })
 
   it('pretty=true 使用 pino-pretty transport', () => {
-    const logger = createLogger({ level: 'info', pretty: true })
+    const { logger } = createLogger({ level: 'info', pretty: true })
     expect(() => logger.info('pretty test')).not.toThrow()
   })
 
   it('redact 过滤敏感字段', () => {
-    const logger = createLogger({ level: 'info', pretty: false, redact: ['password'] })
+    const { logger } = createLogger({ level: 'info', pretty: false, redact: ['password'] })
     expect(() => logger.info({ password: 'secret' }, 'test')).not.toThrow()
   })
 
   it('level 参数优先于环境变量', () => {
     process.env['LOG_LEVEL'] = 'error'
-    const logger = createLogger({ level: 'debug', pretty: false })
+    const { logger } = createLogger({ level: 'debug', pretty: false })
     expect(logger.level).toBe('debug')
   })
 
   it('未传 level 时使用 LOG_LEVEL 环境变量', () => {
     process.env['LOG_LEVEL'] = 'debug'
-    const logger = createLogger({ pretty: false })
+    const { logger } = createLogger({ pretty: false })
     expect(logger.level).toBe('debug')
   })
 
   it('level 和 LOG_LEVEL 均未设置时默认 info', () => {
     delete process.env['LOG_LEVEL']
-    // 确保 NODE_ENV 不干扰
-    const logger = createLogger({ pretty: false })
+    const { logger } = createLogger({ pretty: false })
     expect(logger.level).toBe('info')
   })
 
   it('pretty 参数优先——显式 false 即使 NODE_ENV 非 production', () => {
     process.env['NODE_ENV'] = 'development'
-    const logger = createLogger({ level: 'info', pretty: false })
+    const { logger } = createLogger({ level: 'info', pretty: false })
     expect(() => logger.info('test')).not.toThrow()
   })
 
   it('pretty 未传时根据 NODE_ENV 自动判断', () => {
-    // NODE_ENV=production → pretty=false
     process.env['NODE_ENV'] = 'production'
-    const loggerProd = createLogger({ level: 'info' })
-    // NODE_ENV=development → pretty=true
+    const { logger: loggerProd } = createLogger({ level: 'info' })
     process.env['NODE_ENV'] = 'development'
-    const loggerDev = createLogger({ level: 'info' })
-    // Both should work without throwing
+    const { logger: loggerDev } = createLogger({ level: 'info' })
     expect(() => loggerProd.info('prod')).not.toThrow()
     expect(() => loggerDev.info('dev')).not.toThrow()
   })
 
   it('child 方法返回子 logger', () => {
-    const logger = createLogger({ level: 'info', pretty: false })
+    const { logger } = createLogger({ level: 'info', pretty: false })
     const child = logger.child({ module: 'test' })
     expect(child).toBeDefined()
     expect(typeof child.info).toBe('function')
@@ -104,8 +106,15 @@ describe('@hile/logger', () => {
   })
 
   it('flush 方法可调用', async () => {
-    const logger = createLogger({ level: 'info', pretty: false })
+    const { logger } = createLogger({ level: 'info', pretty: false })
     expect(() => logger.flush()).not.toThrow()
+  })
+
+  it('teardown 调用 flush 和 end stream', () => {
+    const { logger, teardown } = createLogger({ level: 'info', pretty: false })
+    const flushSpy = vi.spyOn(logger, 'flush')
+    expect(() => teardown()).not.toThrow()
+    expect(flushSpy).toHaveBeenCalledOnce()
   })
 
   /* ============ defineService ============ */

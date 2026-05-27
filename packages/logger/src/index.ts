@@ -10,26 +10,34 @@ export type LoggerOptions = {
   redact?: string[]
 }
 
-export function createLogger(options: LoggerOptions = {}): PinoLogger {
+export function createLogger(options: LoggerOptions = {}) {
   const pretty = options.pretty ?? process.env['NODE_ENV'] !== 'production'
   const level = options.level ?? process.env['LOG_LEVEL'] ?? 'info'
 
-  return pino({
+  const logger = pino({
     level,
     ...(options.redact ? { redact: options.redact } : {}),
     ...(pretty ? { transport: { target: 'pino-pretty' } } : {}),
   })
-}
-
-export default defineService(Symbol.for('@hile/logger'), async (shutdown) => {
-  const logger = createLogger()
-  shutdown(() => {
+  const callback = () => {
     // 在 event loop 还活跃时主动 end pino transport stream，
     // 这样 pino 注册的 process.on('exit') handler 会被移除，
     // 避免后续 process.exit() 时 thread-stream 的 Atomics.wait() 阻塞。
     const stream = (logger as any)[pino.symbols.streamSym];
     stream?.end?.();
-    logger.flush()
-  })
+    logger.flush();
+  }
+  return {
+    logger,
+    teardown: callback,
+  }
+}
+
+export default defineService(Symbol.for('@hile/logger'), async (shutdown) => {
+  const { logger, teardown } = createLogger({
+    level: 'info',
+    pretty: process.env['NODE_ENV'] !== 'production',
+  });
+  shutdown(teardown);
   return logger
 })

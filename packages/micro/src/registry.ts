@@ -4,7 +4,6 @@ import { homedir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { existsSync, mkdirSync, readdirSync, readFileSync, watch } from 'node:fs';
 import YAML from 'yaml';
-import { createLogger } from '@hile/logger';
 export interface RegistryFindData {
   namespace: string;
   exclude?: string[];
@@ -74,12 +73,8 @@ export class Registry extends Server {
     if (!existsSync(workspace)) {
       mkdirSync(workspace, { recursive: true });
     }
-    super('registry', {
-      logger: props.logger ?? createLogger({
-        level: 'debug',
-        pretty: process.env.NODE_ENV !== 'production',
-      }), ...props
-    });
+
+    super('registry', props);
     this.workspace = workspace;
     this.events.on('connect', (client: Client, extras: string[]) => {
       const key = client.host + ':' + client.port;

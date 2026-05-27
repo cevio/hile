@@ -127,15 +127,20 @@ registryCmd
   .description('启动注册中心')
   .action(async (options: { port?: number, host?: string, level?: string, pretty?: boolean }) => {
     const port = options.port ? Number(options.port) : 9876;
+    const { logger, teardown } = createLogger({
+      level: options.level as 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal',
+      pretty: !!options.pretty
+    })
     const registry = new Registry({
       advertiseHost: options.host,
-      logger: createLogger({
-        level: options.level as 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal',
-        pretty: !!options.pretty
-      })
+      logger,
     });
-    useExit(await registry.listen(port));
-    registry.logger.info(`+ registry started on port ${port}`);
+    const unListen = await registry.listen(port);
+    useExit(async () => {
+      await unListen();
+      teardown();
+    });
+    logger.info(`+ registry started on port ${port}`);
   });
 
 // Registry configs subcommands
