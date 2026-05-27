@@ -9,10 +9,10 @@ description: "基于 Redis 的类型安全读穿透缓存层：key 模板类型�
 pnpm add @hile/cache
 ```
 
-同时确保安装了 peer 依赖：
+包本身仅依赖 `ioredis`。在 Hile 应用中通常同时安装 `@hile/ioredis`（及 `@hile/core`）以获取 Redis 客户端，再注入到 `RedisCache`：
 
 ```bash
-pnpm add @hile/core @hile/ioredis
+pnpm add @hile/cache @hile/ioredis @hile/core
 ```
 
 ---
@@ -21,7 +21,7 @@ pnpm add @hile/core @hile/ioredis
 
 ### 什么是 @hile/cache？
 
-`@hile/cache` 是在 `@hile/ioredis` 之上构建的**类型安全读穿透缓存层**。它解决了以下问题：
+`@hile/cache` 是基于 `ioredis` 的**类型安全读穿透缓存层**，构造时注入 `Redis` 实例（常与 `@hile/ioredis` 配合）。它解决了以下问题：
 
 1. **类型安全的 key 模板** — 使用 `{name:type}` 占位符语法，TypeScript 在编译期自动推导参数类型
 2. **读穿透（Read-Through）** — 缓存未命中时自动调用回源函数获取数据并写入缓存
@@ -81,7 +81,11 @@ const userCache = defineCache('user:{id:string}:info', async ({ id }) => {
 ### 读写缓存
 
 ```typescript
-const cache = new RedisCache('myapp:')     // 所有 key 的前缀
+import { loadService } from '@hile/core'
+import redisService from '@hile/ioredis'
+
+const redis = await loadService(redisService)
+const cache = new RedisCache('myapp:', redis)  // 前缀 + Redis 实例
 const { read, write, remove, has } = await cache.loadCache(userCache)
 
 // 读穿透 — miss 时自动回源并写入
@@ -261,8 +265,10 @@ type ExtractParams<Template extends string> =
 `RedisCache` 是缓存操作入口，连接到 Redis 执行实际的读写。
 
 ```typescript
+import type { Redis } from 'ioredis'
+
 class RedisCache {
-  constructor(private readonly prefix: string)
+  constructor(prefix: string, redis: Redis)
   public async loadCache<T extends string, R>(
     target: DefineCacheResult<T, R>
   ): Promise<CacheOperations<T, R>>
@@ -272,14 +278,15 @@ class RedisCache {
 #### 构造函数
 
 ```typescript
-constructor(prefix: string): RedisCache
+constructor(prefix: string, redis: Redis): RedisCache
 ```
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
 | `prefix` | `string` | 所有 Redis key 的前缀。建议使用应用名作为前缀，避免不同应用间的 key 冲突 |
+| `redis` | `Redis` | 已连接的 ioredis 实例。可由 `createRedis()`、`loadService(ioredisService)` 或自行 `new Redis(...)` 提供 |
 
-**注意**：`prefix` 不会自动添加分隔符，所以建议写成 `prefix: 'myapp:'`（包含冒号）。
+**注意**：`prefix` 不会自动添加分隔符，所以建议写成 `prefix: 'myapp:'`（包含冒号）。不同 Redis 连接可创建多个 `RedisCache` 实例并传入各自的 `redis`。
 
 #### loadCache(target)
 
@@ -423,6 +430,8 @@ flowchart TB
 ### 用户缓存
 
 ```typescript
+import { loadService } from '@hile/core'
+import redisService from '@hile/ioredis'
 import { defineCache, Cache, RedisCache } from '@hile/cache'
 
 // 定义缓存
@@ -437,7 +446,8 @@ const userCache = defineCache('user:{id:string}:profile', async ({ id }) => {
 })
 
 // 使用
-const cache = new RedisCache('myapp:')
+const redis = await loadService(redisService)
+const cache = new RedisCache('myapp:', redis)
 const { read, write, remove, has } = await cache.loadCache(userCache)
 
 // 读取（自动回源）
@@ -453,8 +463,11 @@ await remove({ id: 'u-001' })
 ### 分页列表缓存
 
 ```typescript
+import { loadService } from '@hile/core'
+import redisService from '@hile/ioredis'
 import { defineCache, Cache, RedisCache } from '@hile/cache'
 
+const redis = await loadService(redisService)
 const postListCache = defineCache(
   'posts:page:{page:number}:limit:{limit:number}',
   async ({ page, limit }) => {
@@ -467,7 +480,7 @@ const postListCache = defineCache(
 )
 
 // params 类型自动推导为: { page: number; limit: number }
-const cache = new RedisCache('blog:')
+const cache = new RedisCache('blog:', redis)
 const { read } = await cache.loadCache(postListCache)
 const posts = await read({ page: 1, limit: 20 })
 ```
@@ -475,8 +488,11 @@ const posts = await read({ page: 1, limit: 20 })
 ### 多条件缓存
 
 ```typescript
+import { loadService } from '@hile/core'
+import redisService from '@hile/ioredis'
 import { defineCache, Cache, RedisCache } from '@hile/cache'
 
+const redis = await loadService(redisService)
 const filterCache = defineCache(
   'search:q:{query:string}:page:{page:number}:{verified:boolean}',
   async ({ query, page, verified }) => {
@@ -488,7 +504,7 @@ const filterCache = defineCache(
   }
 )
 
-const cache = new RedisCache('app:')
+const cache = new RedisCache('app:', redis)
 const { read } = await cache.loadCache(filterCache)
 const results = await read({ query: 'hello', page: 1, verified: true })
 ```
@@ -496,7 +512,11 @@ const results = await read({ query: 'hello', page: 1, verified: true })
 ### 批量加载多条缓存
 
 ```typescript
+import { loadService } from '@hile/core'
+import redisService from '@hile/ioredis'
 import { defineCache, Cache, RedisCache } from '@hile/cache'
+
+const redis = await loadService(redisService)
 
 const userCache = defineCache('user:{id:string}:info', async ({ id }) => {
   const user = await db.query('SELECT * FROM users WHERE id = $1', [id])
@@ -509,7 +529,7 @@ const postCache = defineCache('post:{id:string}:detail', async ({ id }) => {
 })
 
 // 使用统一前缀
-const cache = new RedisCache('myapp:')
+const cache = new RedisCache('myapp:', redis)
 
 // 批量加载
 const [userOps, postOps] = await Promise.all([
@@ -529,10 +549,12 @@ const post = await postOps.read({ id: 'p-001' })
 ### 1. 为不同的业务使用不同的前缀
 
 ```typescript
-// 可以创建多个 RedisCache 实例
-const userCacheLayer = new RedisCache('user:')
-const postCacheLayer = new RedisCache('post:')
-const sessionCacheLayer = new RedisCache('session:')
+// 同一 Redis：不同前缀划分命名空间
+const userCacheLayer = new RedisCache('user:', redis)
+const postCacheLayer = new RedisCache('post:', redis)
+
+// 不同 Redis：传入不同客户端
+const sessionCacheLayer = new RedisCache('session:', sessionRedis)
 ```
 
 这样可以按业务维度管理缓存，方便排查问题时按前缀扫描 Redis。
@@ -585,7 +607,7 @@ const cache = defineCache('user:{id:string}:page:{page:number}', async (params) 
   return new Cache({}).setExpire(60)
 })
 
-const ops = await new RedisCache('').loadCache(cache)
+const ops = await new RedisCache('', redis).loadCache(cache)
 await ops.read({ id: '1', page: 1 })           // 正确
 await ops.read({ id: '1' })                    // 类型错误：缺少 page
 await ops.read({ id: '1', page: 'abc' })       // 类型错误：page 应为 number
@@ -625,7 +647,7 @@ await ops.read({ id: '1', page: 'abc' })       // 类型错误：page 应为 num
   <Accordion title="缓存一直不命中（总是回源）">
     **检查清单**：
     - Redis 连接是否正常：`redis-cli ping`
-    - `@hile/ioredis` 默认服务是否已加载（检查 `auto_load_packages` 配置）
+    - 注入的 `redis` 实例是否已连接（`createRedis` 会等待 connect；`new Redis()` 需自行等待就绪）
     - 确认 key 前缀和模板是否正确
     - 直接检查 Redis：`redis-cli KEYS 'myapp:user:*'`
     - 检查 setExpire 是否设置了合适的值（太短的 TTL 会导致频繁过期）
@@ -641,16 +663,17 @@ await ops.read({ id: '1', page: 'abc' })       // 类型错误：page 应为 num
   </Accordion>
 
   <Accordion title="如何为不同业务使用不同的 Redis 实例？">
-    默认情况下 `@hile/cache` 使用 `@hile/ioredis` 的默认导出。如果需要不同实例，在 `@hile/ioredis` 层面自定义服务。`@hile/cache` 目前不支持切换 Redis 连接。
+    构造 `RedisCache` 时传入不同的 `redis` 客户端即可：
 
-    **曲线解决方案**：
     ```typescript
-    import { loadService } from '@hile/core'
-    import Redis from 'ioredis'
+    import { createRedis } from '@hile/ioredis'
+    import { RedisCache } from '@hile/cache'
 
-    // 手动创建并使用独立的 Redis 连接
-    const myRedis = new Redis({ host: 'cache-specific-host' })
-    // 然后直接使用 ioredis 的 SETEX/GET 等命令
+    const mainRedis = await createRedis()
+    const cacheRedis = await createRedis({ host: 'cache-host', port: 6379 })
+
+    const appCache = new RedisCache('myapp:', mainRedis)
+    const dedicatedCache = new RedisCache('myapp:', cacheRedis)
     ```
   </Accordion>
 

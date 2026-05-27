@@ -171,10 +171,15 @@ return new Cache(undefined)
 
 ### RedisCache 类
 
+构造时传入前缀与已连接的 `Redis` 实例（通常来自 `@hile/ioredis`）：
+
 ```typescript
+import { loadService } from '@hile/core'
+import redisService from '@hile/ioredis'
 import { RedisCache } from '@hile/cache'
 
-const cache = new RedisCache('myapp:')  // 前缀作为命名空间
+const redis = await loadService(redisService)
+const cache = new RedisCache('myapp:', redis)  // 前缀 + Redis 实例
 ```
 
 **前缀**确保不同应用之间的 key 不冲突：
@@ -186,7 +191,7 @@ const cache = new RedisCache('myapp:')  // 前缀作为命名空间
 ### loadCache —— 获取缓存操作
 
 ```typescript
-const cache = new RedisCache('myapp:')
+const cache = new RedisCache('myapp:', redis)
 const ops = await cache.loadCache(userCache)
 
 // ops 包含四个方法：

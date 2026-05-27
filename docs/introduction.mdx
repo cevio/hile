@@ -49,7 +49,7 @@ Hile 用一个**服务容器**（`@hile/core`）统一解决这些问题。你�
     ioredis 客户端服务化封装。提供 <code>createRedis()</code> 手动模式和容器模式。自动连接等待就绪、自动断连、环境变量配置。一行 <code>auto_load_packages</code> 即可在容器中可用。
   </Card>
   <Card title="类型安全缓存" icon="table">
-    基于 <code>@hile/ioredis</code> 的读穿透缓存层。模板字符串键类型推导——<code>defineCache('user:\{id:string\}:profile', fn)</code> 自动推导参数类型。提供 <code>read</code>（读穿透）、<code>write</code>（强制回源）、<code>remove</code>（删除）、<code>has</code>（存在检查）四种操作，支持 TTL 过期。
+    基于 <code>ioredis</code> 的读穿透缓存层，构造时注入 <code>Redis</code> 实例。模板字符串键类型推导——<code>defineCache('user:\{id:string\}:profile', fn)</code> 自动推导参数类型。<code>new RedisCache(prefix, redis)</code> 通过 <code>loadCache</code> 提供 <code>read</code>（读穿透）、<code>write</code>（强制回源）、<code>remove</code>（删除）、<code>has</code>（存在检查）四种操作，支持 TTL 过期。
   </Card>
   <Card title="消息通信体系" icon="message-square">
     三层抽象：协议层（<code>MessageModem</code> 定义 REQUEST / RESPONSE / ABORT）→ 传输层（WebSocket / IPC / Worker Threads 三种实现）→ 路由层（<code>MessageLoader</code> 文件系统消息路由）。统一 <code>_send</code> / <code>_push</code> / <code>_stream</code> API，切换传输只需改继承基类。
@@ -104,7 +104,7 @@ Hile 目前包含 **19 个包**，分为以下几类：
 |------|------|------|----------|
 | `@hile/typeorm` | [![npm](https://img.shields.io/npm/v/@hile/typeorm?style=flat-square)](https://www.npmjs.com/package/@hile/typeorm) | **TypeORM 集成**——`createDataSource()` 手动创建和 default export 容器模式（`Symbol.for('@hile/typeorm')`）。环境变量自动配置（`TYPEORM_*`），开发模式自动开启 SQL 日志。`transaction()` 支持 LIFO 补偿回调。 | `pnpm add @hile/typeorm` |
 | `@hile/ioredis` | [![npm](https://img.shields.io/npm/v/@hile/ioredis?style=flat-square)](https://www.npmjs.com/package/@hile/ioredis) | **Redis 集成**——`createRedis()` 手动创建（等待 connect 事件就绪）和 default export 容器模式。环境变量配置（`REDIS_*`）。返回标准 ioredis 实例，可调用全部 ioredis API。 | `pnpm add @hile/ioredis` |
-| `@hile/cache` | [![npm](https://img.shields.io/npm/v/@hile/cache?style=flat-square)](https://www.npmjs.com/package/@hile/cache) | **类型安全 Redis 缓存**——基于 `@hile/ioredis`。`defineCache` 模板键语法支持 `\{name:string|number|boolean\}` 占位符，自动推导参数类型。`RedisCache` 类通过 `loadCache` 返回 `\{read, write, remove, has\}` 四种操作，内部 `loadService(ioredisService)` 获取 Redis。 | `pnpm add @hile/cache` |
+| `@hile/cache` | [![npm](https://img.shields.io/npm/v/@hile/cache?style=flat-square)](https://www.npmjs.com/package/@hile/cache) | **类型安全 Redis 缓存**——依赖 `ioredis`，`new RedisCache(prefix, redis)` 注入客户端。`defineCache` 模板键语法支持 `\{name:string|number|boolean\}` 占位符，自动推导参数类型。`loadCache` 返回 `\{read, write, remove, has\}` 四种读穿透操作，支持 TTL。常与 `@hile/ioredis` 配合。 | `pnpm add @hile/cache` |
 
 ### 消息通信包
 
@@ -147,7 +147,7 @@ Hile 目前包含 **19 个包**，分为以下几类：
   ├── @hile/typeorm       ← 数据库，依赖 core + typeorm
   ├── @hile/model         ← 业务模型，依赖 core（defineService/loadService）
   └── @hile/ioredis       ← Redis，依赖 core + ioredis
-       └── @hile/cache    ← 缓存，依赖 ioredis + core
+       └── @hile/cache    ← 缓存，依赖 ioredis（构造时注入 Redis 实例）
 ```
 
 ### HTTP 与加载器依赖链

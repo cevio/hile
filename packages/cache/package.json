@@ -10,8 +10,7 @@
   },
   "files": [
     "dist",
-    "README.md",
-    "SKILL.md"
+    "README.md"
   ],
   "license": "MIT",
   "publishConfig": {
@@ -22,7 +21,6 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
-    "@hile/core": "workspace:^",
-    "@hile/ioredis": "workspace:^"
+     "ioredis": "^5.11.0"
   }
 }

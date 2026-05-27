@@ -470,10 +470,14 @@ await redis.disconnect()
 
 ## 7. @hile/cache — Typed Redis Cache
 
-**When to use:** Need read-through caching with typed cache keys. Built on top of `@hile/ioredis`.
+**When to use:** Need read-through caching with typed cache keys. Depends on `ioredis` only — inject a connected `Redis` instance at construction (from `@hile/ioredis`, `createRedis()`, or your own client).
 
 ```typescript
+import { loadService } from '@hile/core'
+import redisService from '@hile/ioredis'
 import { defineCache, Cache, RedisCache } from '@hile/cache'
+
+const redis = await loadService(redisService)  // or: await createRedis()
 
 // Define a cache with typed key template
 // Supported types: string, number, boolean
@@ -483,8 +487,8 @@ const userCache = defineCache('user:{id:string}:profile', async ({ id }) => {
   return new Cache(user).setExpire(300)    // TTL 300 seconds
 })
 
-// Usage
-const cache = new RedisCache('myapp:')  // prefix = namespace
+// Usage — prefix + redis instance
+const cache = new RedisCache('myapp:', redis)
 const ops = await cache.loadCache(userCache)
 
 await ops.read({ id: 'u-001' })     // Read-through: miss → fetch → cache → return
@@ -494,6 +498,9 @@ await ops.has({ id: 'u-001' })      // Exists check (no fetch)
 
 // Cache-Aside pattern:
 // UPDATE: update DB → ops.remove(key)  // next read auto-refreshes
+
+// Multiple Redis instances: pass different clients to separate RedisCache instances
+const sessionCache = new RedisCache('session:', sessionRedis)
 ```
 
 ---

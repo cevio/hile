@@ -1,6 +1,6 @@
 # @hile/cache
 
-基于 Redis 的类型安全读穿透缓存层，构建在 `@hile/core`（DI 容器）与 `@hile/ioredis`（Redis 客户端）之上。
+基于 Redis 的类型安全读穿透缓存层。依赖 `ioredis`，构造时注入已连接的 `Redis` 实例（可与 `@hile/ioredis` 配合使用）。
 
 ## 安装
 
@@ -8,7 +8,7 @@
 pnpm add @hile/cache
 ```
 
-依赖：`@hile/core`、`@hile/ioredis`。
+运行时需提供 `ioredis` 的 `Redis` 实例；在 Hile 应用中通常通过 `@hile/ioredis` 的 `createRedis()` 或 `loadService(ioredisService)` 获取。
 
 ## 快速开始
 
@@ -29,9 +29,12 @@ const userCache = defineCache('user:{id:string}:info', async (params) => {
 ### 2. 使用缓存
 
 ```typescript
+import { loadService } from '@hile/core';
+import redisService from '@hile/ioredis';
 import { RedisCache } from '@hile/cache';
 
-const cache = new RedisCache('myapp:'); // 统一前缀
+const redis = await loadService(redisService);
+const cache = new RedisCache('myapp:', redis); // 前缀 + Redis 实例
 
 const { read, write, remove, has } = await cache.loadCache(userCache);
 
@@ -100,7 +103,7 @@ function defineCache<T extends string = string, R = any>(
 
 ```typescript
 class RedisCache {
-  constructor(prefix: string);
+  constructor(prefix: string, redis: Redis);
 
   loadCache<T extends string, R>(
     target: DefineCacheResult<T, R>
@@ -135,7 +138,7 @@ myapp:user:u-001:info
 
 ## 与 @hile/cli 集成
 
-可在 `package.json` 中配置自动加载 Redis：
+在 `package.json` 中配置自动加载 Redis，在 boot 或服务工厂里注入客户端：
 
 ```json
 {
@@ -145,14 +148,26 @@ myapp:user:u-001:info
 }
 ```
 
-然后任何地方通过 `loadService(ioredisService)` 获取 Redis 客户端，`@hile/cache` 内部已自动处理。
+```typescript
+import { loadService } from '@hile/core';
+import redisService from '@hile/ioredis';
+import { defineCache, Cache, RedisCache } from '@hile/cache';
+
+// 在 defineService 工厂内
+const redis = await loadService(redisService);
+const cache = new RedisCache('myapp:', redis);
+```
 
 ---
 
 ## 完整示例
 
 ```typescript
+import { loadService } from '@hile/core';
+import redisService from '@hile/ioredis';
 import { defineCache, Cache, RedisCache } from '@hile/cache';
+
+const redis = await loadService(redisService);
 
 // 定义多条缓存
 const userCache = defineCache('user:{id:string}:info', async ({ id }) => {
@@ -166,7 +181,7 @@ const postCache = defineCache('post:{id:string}:detail', async ({ id }) => {
   return new Cache(post).setExpire(3600);
 });
 
-const cache = new RedisCache('myapp:');
+const cache = new RedisCache('myapp:', redis);
 
 // 批量加载
 const [userOps, postOps] = await Promise.all([

@@ -20,12 +20,9 @@ importers:
 
   packages/cache:
     dependencies:
-      '@hile/core':
-        specifier: workspace:^
-        version: link:../core
-      '@hile/ioredis':
-        specifier: workspace:^
-        version: link:../ioredis
+      ioredis:
+        specifier: ^5.11.0
+        version: 5.11.0
     devDependencies:
       fix-esm-import-path:
         specifier: ^1.10.3

@@ -1,22 +1,29 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import Redis from 'ioredis'
 import { RedisCache, defineCache, Cache } from './index'
-import { loadService } from '@hile/core'
-import ioredisService from '@hile/ioredis'
 
 describe('@hile/cache', () => {
-  const cache = new RedisCache('test:')
-  let redis: Awaited<ReturnType<typeof loadService<typeof ioredisService>>>
+  let redis: Redis
+  let cache: RedisCache
 
   const testCache = defineCache('key:{id:string}', async ({ id }) => {
     return new Cache({ id, value: `hello-${id}` }).setExpire(60)
   })
 
   beforeAll(async () => {
-    redis = await loadService(ioredisService)
+    redis = new Redis()
+    await new Promise<void>((resolve, reject) => {
+      const onError = (e: Error) => reject(e)
+      redis.once('error', onError)
+      redis.once('connect', () => {
+        redis.off('error', onError)
+        resolve()
+      })
+    })
+    cache = new RedisCache('test:', redis)
   })
 
   afterAll(async () => {
-    // Clean up all test keys
     const { remove } = await cache.loadCache(testCache)
     await remove({ id: '1' })
     await remove({ id: '2' })
@@ -29,6 +36,7 @@ describe('@hile/cache', () => {
       defineCache('perm:{id:string}', async () => new Cache('perm'))
     )
     await removePerm({ id: '1' })
+    redis.disconnect()
   })
 
   /* ============ read ============ */
@@ -69,7 +77,6 @@ describe('@hile/cache', () => {
     const result = await write({ id: '3' })
     expect(result).toEqual({ id: '3', value: 'hello-3' })
 
-    // Verify directly in Redis
     const raw = await redis.get('test:key:3')
     expect(JSON.parse(raw!)).toEqual({ id: '3', value: 'hello-3' })
 
@@ -93,27 +100,24 @@ describe('@hile/cache', () => {
 
   it('write with expire = 0 creates permanent key (no TTL)', async () => {
     const permCache = defineCache('perm:{id:string}', async ({ id }) => {
-      return new Cache(`perm-${id}`) // expire默认为0
+      return new Cache(`perm-${id}`)
     })
     const { write, remove } = await cache.loadCache(permCache)
 
     await write({ id: '1' })
 
     const ttl = await redis.ttl('test:perm:1')
-    // ioredis returns -1 for no TTL, -2 for non-existent
     expect(ttl).toBe(-1)
 
     await remove({ id: '1' })
   })
 
   it('write with undefined data on existing key deletes it', async () => {
-    const { write, remove: removeOld } = await cache.loadCache(testCache)
+    const { write } = await cache.loadCache(testCache)
 
-    // First write valid data
     await write({ id: '1' })
     expect(await redis.exists('test:key:1')).toBe(1)
 
-    // Now write undefined — should delete
     const undefCache = defineCache('key:{id:string}', async () => new Cache(undefined))
     const { write: writeUndef } = await cache.loadCache(undefCache)
     await writeUndef({ id: '1' })
@@ -125,7 +129,6 @@ describe('@hile/cache', () => {
     const undefCache = defineCache('noop:{id:string}', async () => new Cache(undefined))
     const { write } = await cache.loadCache(undefCache)
 
-    // Should not throw
     await expect(write({ id: 'nonexistent' })).resolves.toBeUndefined()
     expect(await redis.exists('test:noop:nonexistent')).toBe(0)
   })
@@ -162,14 +165,12 @@ describe('@hile/cache', () => {
   /* ============ prefix ============ */
 
   it('prefix is applied to all keys', async () => {
-    const prefixed = new RedisCache('custom-prefix:')
+    const prefixed = new RedisCache('custom-prefix:', redis)
     const { write, read, remove } = await prefixed.loadCache(testCache)
 
     await write({ id: '1' })
 
-    // Key exists under prefixed namespace
     expect(await redis.exists('custom-prefix:key:1')).toBe(1)
-    // Key does NOT exist under default namespace
     expect(await redis.exists('test:key:1')).toBe(0)
 
     const result = await read({ id: '1' })
@@ -188,7 +189,6 @@ describe('@hile/cache', () => {
 
     await write({ a: 'x', b: 42 })
 
-    // Verify the actual Redis key
     expect(await redis.exists('test:multi:x:42')).toBe(1)
 
     const result = await read({ a: 'x', b: 42 })
@@ -249,14 +249,10 @@ describe('@hile/cache', () => {
   it('read with expired cache triggers re-write', async () => {
     const { write, read, remove } = await cache.loadCache(testCache)
 
-    // Write the key first
     await write({ id: 'ttlrace1' })
 
-    // Mock redis.get to return null, simulating TTL expiry between exists() and get()
-    const redis = await loadService(ioredisService)
     vi.spyOn(redis, 'get').mockResolvedValueOnce(null as any)
 
-    // read() should fall through to _write() since get returns null
     const result = await read({ id: 'ttlrace1' })
     expect(result).toEqual({ id: 'ttlrace1', value: 'hello-ttlrace1' })
 

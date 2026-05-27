@@ -1,11 +1,13 @@
-import { loadService } from "@hile/core";
-import ioredisService from "@hile/ioredis";
 import { Cache, DefineCacheResult, ExtractParams } from './define';
+import { Redis } from 'ioredis';
 
 export * from './define';
 export class RedisCache {
   private readonly _regexp = /\{([^\:]+):[^\}]+\}/g;
-  constructor(private readonly prefix: string) { }
+  constructor(
+    private readonly prefix: string,
+    private readonly redis: Redis,
+  ) { }
 
   private makeKey<T extends string>(key: T, options: ExtractParams<T>) {
     return this.prefix + key.replace(this._regexp, (_, key) => String(options[key as keyof typeof options]));
@@ -19,7 +21,7 @@ export class RedisCache {
       throw new Error('Cache result must be an instance of Cache');
     }
 
-    const redis = await loadService(ioredisService);
+    const redis = this.redis;
     const exists = await redis.exists(key);
 
     if (cache.data === undefined) {
@@ -41,7 +43,7 @@ export class RedisCache {
 
   private async _read<T extends string, R>(target: DefineCacheResult<T, R>, params: ExtractParams<T>): Promise<R | undefined> {
     const key = this.makeKey(target.key, params);
-    const redis = await loadService(ioredisService);
+    const redis = this.redis;
     const exists = await redis.exists(key);
 
     if (!exists) return await this._write(target, params);
@@ -53,7 +55,7 @@ export class RedisCache {
 
   private async _remove<T extends string, R>(target: DefineCacheResult<T, R>, params: ExtractParams<T>): Promise<number> {
     const key = this.makeKey(target.key, params);
-    const redis = await loadService(ioredisService);
+    const redis = this.redis;
     const exists = await redis.exists(key);
     if (!exists) return 0;
     return await redis.del(key);
@@ -61,7 +63,7 @@ export class RedisCache {
 
   private async _has<T extends string, R>(target: DefineCacheResult<T, R>, params: ExtractParams<T>): Promise<boolean> {
     const key = this.makeKey(target.key, params);
-    const redis = await loadService(ioredisService);
+    const redis = this.redis;
     const exists = await redis.exists(key);
     return !!exists;
   }

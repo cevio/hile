@@ -69,7 +69,7 @@ flowchart TB
 
 **@hile/ioredis**：`createRedis()` 手动模式 + default export 容器模式。环境变量配置。
 
-**@hile/cache**：`defineCache()` 模板键语法定义缓存，`RedisCache` 类提供读穿透（read-through）缓存。内部通过 `loadService(ioredisService)` 获取 Redis 连接。
+**@hile/cache**：`defineCache()` 模板键语法定义缓存，`RedisCache(prefix, redis)` 构造时注入 ioredis 客户端，通过 `loadCache` 提供读穿透（read-through）的 `read` / `write` / `remove` / `has` 操作。
 
 ### 3. 通信层
 
