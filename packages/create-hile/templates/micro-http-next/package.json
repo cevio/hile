@@ -19,15 +19,15 @@
     "fix-esm-import-path": "^1.10.3"
   },
   "dependencies": {
-    "@hile/cli": "^2.0.3",
+    "@hile/cli": "^2.0.9",
     "@hile/core": "^2.0.1",
     "@hile/http": "^2.0.2",
-    "@hile/http-next": "^2.0.3",
+    "@hile/http-next": "^2.0.4",
     "@hile/model": "^2.0.2",
     "next": "^16.2.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "@hile/micro": "^2.0.2",
+    "@hile/micro": "^2.0.6",
     "@hile/message-loader": "^2.0.1",
     "detect-port": "^2.1.0"
   }

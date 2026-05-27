@@ -16,11 +16,11 @@
   "dependencies": {
     "@hile/core": "^2.0.1",
     "@hile/http": "^2.0.2",
-    "@hile/micro": "^2.0.2",
+    "@hile/micro": "^2.0.6",
     "@hile/message-loader": "^2.0.1",
     "detect-port": "^2.1.0"
   },
   "devDependencies": {
-    "@hile/cli": "^2.0.3"
+    "@hile/cli": "^2.0.9"
   }
 }
