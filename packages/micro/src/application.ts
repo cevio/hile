@@ -130,11 +130,11 @@ export class Application extends Server {
     // 这里不清理 topics 由业务方自己清理
     // 这里也不清理 declare 和 undeclare 由业务方自己清理
     return async () => {
+      this.stopped = true;
       for (const fallback of this.fallbacks) {
         fallback();
       }
       this.fallbacks.clear();
-      this.stopped = true;
       if (this.reconnectTimeout) {
         clearTimeout(this.reconnectTimeout);
         this.reconnectTimeout = undefined;
@@ -150,6 +150,7 @@ export class Application extends Server {
     if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
     this.reconnectTimeout = setTimeout(() => {
       this.reconnectTimeout = undefined;
+      this.logger.debug('[reconnecting] %s:%d', this._registry_address.host, this._registry_address.port);
       void this.reconnectToRegistry().catch(() => {
         if (this.stopped) return;
         this.scheduleRegistryRetry();
@@ -160,7 +161,6 @@ export class Application extends Server {
   private async reconnectToRegistry(): Promise<void> {
     if (this.stopped) return;
     if (this.registryReconnectPromise) return this.registryReconnectPromise;
-
     this.registryReconnectPromise = (async () => {
       const registry = await this.connect(this._registry_address.host, this._registry_address.port);
       if (this.stopped) {
@@ -181,6 +181,7 @@ export class Application extends Server {
       for (const [topic, callback] of this.topics) {
         await this.subscribe(topic, callback, true);
       }
+      this.logger.debug('[reconnected] %s:%d', this._registry_address.host, this._registry_address.port);
     })().finally(() => {
       this.registryReconnectPromise = undefined;
     });

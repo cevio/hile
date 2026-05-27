@@ -290,6 +290,9 @@ importers:
 
   packages/micro:
     dependencies:
+      '@hile/logger':
+        specifier: workspace:^
+        version: link:../logger
       '@hile/message-loader':
         specifier: workspace:^
         version: link:../message-loader

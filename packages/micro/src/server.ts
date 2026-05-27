@@ -6,6 +6,7 @@ import { IncomingMessage } from 'http';
 import { getLocalIPv4 } from './utils';
 import { EventEmitter } from 'node:events';
 import type { Duplex } from "node:stream";
+import type { Logger } from '@hile/logger';
 
 const DEFAULT_CONNECT_TIMEOUT = 5000;
 
@@ -16,11 +17,16 @@ export type MicroServerProps = MessageLoaderProps & {
    * 缺省使用 `getLocalIPv4()`；若仍为 `undefined`（无可用 IPv4）则构造 {@link Server} 时抛错。
    */
   advertiseHost?: string;
+  /**
+   * 日志记录器
+   */
+  logger?: Logger;
 };
 
 export class Server extends MessageLoader {
   private wss?: WebSocketServer;
   public port?: number;
+  public readonly logger: Logger | Console;
   public readonly clients = new Map<string, Client>();
   private readonly announceHost: string;
   public readonly events = new EventEmitter();
@@ -30,7 +36,7 @@ export class Server extends MessageLoader {
   }
 
   constructor(public readonly namespace: string, props: MicroServerProps = {}) {
-    const { advertiseHost, ...loaderProps } = props;
+    const { advertiseHost, logger, ...loaderProps } = props;
     super(loaderProps);
     const resolved = advertiseHost?.trim() || getLocalIPv4();
     if (!resolved) {
@@ -39,6 +45,7 @@ export class Server extends MessageLoader {
       );
     }
     this.announceHost = resolved;
+    this.logger = logger ?? console;
     this.events.on('connect', (client: Client, extras: string[]) => {
       client.events.emit('connect', extras);
     });
@@ -149,12 +156,12 @@ export class Server extends MessageLoader {
     }
 
     return async () => {
-      const toDispose = [...this.clients.values()];
-      for (const client of toDispose) {
-        client.dispose();
-      }
-      this.clients.clear();
       if (this.wss) {
+        // terminate 立即销毁 socket，不等待对端 close frame
+        // 避免 graceful close 时对端无响应导致 HTTP server 无法关闭
+        for (const ws of [...this.wss.clients]) {
+          ws.terminate();
+        }
         await new Promise<void>((resolve, reject) => {
           this.wss!.close((err) => {
             if (err) return reject(err);
@@ -162,6 +169,11 @@ export class Server extends MessageLoader {
           });
         })
       }
+      const toDispose = [...this.clients.values()];
+      for (const client of toDispose) {
+        client.dispose();
+      }
+      this.clients.clear();
       this.wss = undefined;
       this.port = undefined;
     }

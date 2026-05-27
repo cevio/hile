@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { resolve, join } from 'node:path';
 import { existsSync, mkdirSync, readdirSync, readFileSync, watch } from 'node:fs';
 import YAML from 'yaml';
-
+import { createLogger } from '@hile/logger';
 export interface RegistryFindData {
   namespace: string;
   exclude?: string[];
@@ -74,7 +74,12 @@ export class Registry extends Server {
     if (!existsSync(workspace)) {
       mkdirSync(workspace, { recursive: true });
     }
-    super('registry', props);
+    super('registry', {
+      logger: props.logger ?? createLogger({
+        level: 'debug',
+        pretty: process.env.NODE_ENV !== 'production',
+      }), ...props
+    });
     this.workspace = workspace;
     this.events.on('connect', (client: Client, extras: string[]) => {
       const key = client.host + ':' + client.port;
@@ -83,13 +88,20 @@ export class Registry extends Server {
         this.namespaces.set(namespace, new Set());
       }
       this.namespaces.get(namespace)!.add(key);
+      this.logger.debug('[connect] %s/%s', key, namespace);
     });
     this.events.on('disconnect', (client: Client, extras: string[]) => {
       const key = client.host + ':' + client.port;
       // 清理 topic 中的关联（不删除 topic，保留 data 供后续 subscriber 使用）
       for (const [, { publishers, subscribers }] of this.topics) {
-        if (publishers.has(key)) publishers.delete(key);
-        if (subscribers.has(key)) subscribers.delete(key);
+        if (publishers.has(key)) {
+          publishers.delete(key);
+          this.logger.debug('[delete publisher] %s', key);
+        }
+        if (subscribers.has(key)) {
+          subscribers.delete(key);
+          this.logger.debug('[delete subscriber] %s', key);
+        }
       }
       // 清理 namespace 中的关联
       const namespace = extras.join('/');
@@ -97,8 +109,10 @@ export class Registry extends Server {
         const keys = this.namespaces.get(namespace)!;
         if (keys.has(key)) {
           keys.delete(key);
+          this.logger.debug('[disconnect] %s/%s', key, namespace);
           if (keys.size === 0) {
             this.namespaces.delete(namespace);
+            this.logger.debug('[delete namespace] %s', namespace);
           }
         }
       }
@@ -201,6 +215,7 @@ export class Registry extends Server {
       entry.data = data.payload;
       publishers.add(key);
       this.publish(data.topic, data.payload);
+      this.logger.debug('[declare] %s/%s', key, data.topic);
       return Date.now();
     }))
   }
@@ -215,8 +230,10 @@ export class Registry extends Server {
       const i = publishers.size;
       if (publishers.has(key)) {
         publishers.delete(key);
+        this.logger.debug('[undeclare] %s/%s', key, data.topic);
         if (publishers.size === 0 && subscribers.size === 0) {
           this.topics.delete(data.topic);
+          this.logger.debug('[delete topic] %s', data.topic);
         }
       }
       return i - publishers.size;
@@ -232,6 +249,7 @@ export class Registry extends Server {
       const entry = this.topics.get(data.topic)!;
       const subscribers = entry.subscribers;
       subscribers.add(key);
+      this.logger.debug('[subscribe] %s/%s', key, data.topic);
       return entry.data;
     }))
   }
@@ -242,14 +260,11 @@ export class Registry extends Server {
       if (!this.topics.has(data.topic)) return 0;
       const entry = this.topics.get(data.topic)!;
       const subscribers = entry.subscribers;
-      const publishers = entry.publishers;
       const i = subscribers.size;
       if (subscribers.has(key)) {
         subscribers.delete(key);
-        if (subscribers.size === 0 && publishers.size === 0) {
-          this.topics.delete(data.topic);
-        }
       }
+      this.logger.debug('[unsubscribe] %s/%s', key, data.topic);
       return i - subscribers.size;
     }))
   }
