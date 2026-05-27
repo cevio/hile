@@ -44,7 +44,15 @@ const { target } = await enquirer.prompt({
 console.log('');
 info(`启动服务: ${target}`);
 const dir = servers.find(s => s.name === target).dir;
-spawn('npm', ['run', 'dev'], {
+
+const child = spawn('npm', ['run', 'dev'], {
   cwd: resolve(PACKAGES_DIR, dir),
   stdio: 'inherit',
 });
+
+// 转发 kill 信号给子进程，不让父进程拦截
+process.on('SIGINT', () => child.kill('SIGINT'));
+process.on('SIGTERM', () => child.kill('SIGTERM'));
+
+// 子进程退出后父进程跟随退出
+child.on('exit', (code) => process.exit(code || 0));
