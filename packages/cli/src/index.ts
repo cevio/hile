@@ -10,6 +10,7 @@ import { createRequire } from 'node:module';
 import { Registry } from '@hile/micro';
 import { useExit } from './exitHook.js';
 import { listConfigs, getConfig, setConfig, delConfig } from './configs.js';
+import { createLogger } from '@hile/logger';
 
 type NodeRequire = ReturnType<typeof createRequire>;
 
@@ -121,12 +122,20 @@ registryCmd
   .allowExcessArguments(true)
   .option('--port <port>', '注册中心端口', '9876')
   .option('--host <host>', '注册中心主机', '127.0.0.1')
+  .option('--level <level>', '日志级别', 'info')
+  .option('--pretty', '美化输出', false)
   .description('启动注册中心')
-  .action(async (options: { port?: number, host?: string }) => {
+  .action(async (options: { port?: number, host?: string, level?: string, pretty?: boolean }) => {
     const port = options.port ? Number(options.port) : 9876;
-    const registry = new Registry({ advertiseHost: options.host });
+    const registry = new Registry({
+      advertiseHost: options.host,
+      logger: createLogger({
+        level: options.level as 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal',
+        pretty: !!options.pretty
+      })
+    });
     useExit(await registry.listen(port));
-    console.log(`+ [registry] started on port ${port}`);
+    registry.logger.info(`+ registry started on port ${port}`);
   });
 
 // Registry configs subcommands

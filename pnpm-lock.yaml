@@ -39,6 +39,9 @@ importers:
       '@hile/core':
         specifier: workspace:^
         version: link:../core
+      '@hile/logger':
+        specifier: workspace:^
+        version: link:../logger
       '@hile/micro':
         specifier: workspace:^
         version: link:../micro
