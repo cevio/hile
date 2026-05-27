@@ -1,6 +1,6 @@
 {
   "name": "@hile/micro",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
@@ -23,9 +23,9 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
+    "@hile/logger": "workspace:^",
     "@hile/message-loader": "workspace:^",
     "@hile/message-ws": "workspace:^",
-    "@hile/logger": "workspace:^",
     "internal-ip": "^9.0.0",
     "ws": "^8.21.0",
     "yaml": "^2.9.0"
