@@ -23,6 +23,13 @@ export function createLogger(options: LoggerOptions = {}): PinoLogger {
 
 export default defineService(Symbol.for('@hile/logger'), async (shutdown) => {
   const logger = createLogger()
-  shutdown(() => { logger.flush() })
+  shutdown(() => {
+    // 在 event loop 还活跃时主动 end pino transport stream，
+    // 这样 pino 注册的 process.on('exit') handler 会被移除，
+    // 避免后续 process.exit() 时 thread-stream 的 Atomics.wait() 阻塞。
+    const stream = (logger as any)[pino.symbols.streamSym];
+    stream?.end?.();
+    logger.flush()
+  })
   return logger
 })
