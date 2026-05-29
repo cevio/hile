@@ -17,7 +17,7 @@ export class RedisCache {
     const key = this.makeKey(target.key, params);
     const cache = await target.fn(params);
 
-    if (!(cache instanceof Cache)) {
+    if (cache.__$flag__ !== 'cache') {
       throw new Error('Cache result must be an instance of Cache');
     }
 

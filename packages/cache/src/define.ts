@@ -1,5 +1,6 @@
 export class Cache<R> {
   private _expire: number = 0; // 0: 永不过期
+  public readonly __$flag__ = 'cache';
   constructor(public readonly data: R) { }
   public setExpire(seconds: number) {
     this._expire = seconds;
