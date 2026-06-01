@@ -1,5 +1,5 @@
 import { Cache, DefineCacheResult, ExtractParams } from './define';
-import { Redis } from 'ioredis';
+import { ChainableCommander, Redis } from 'ioredis';
 
 export * from './define';
 export class RedisCache {
@@ -11,6 +11,20 @@ export class RedisCache {
 
   private makeKey<T extends string>(key: T, options: ExtractParams<T>) {
     return this.prefix + key.replace(this._regexp, (_, key) => String(options[key as keyof typeof options]));
+  }
+
+  private async _multi<T extends string, R>(
+    target: DefineCacheResult<T, R>,
+    params: ExtractParams<T>,
+    callback: (multi: ChainableCommander, key: string) => unknown
+  ) {
+    const key = this.makeKey(target.key, params);
+    const redis = this.redis;
+    const exists = await redis.exists(key);
+    if (!exists) await this._write(target, params);
+    const multi = redis.multi();
+    callback(multi, key);
+    return await multi.exec();
   }
 
   private async _write<T extends string, R>(target: DefineCacheResult<T, R>, params: ExtractParams<T>): Promise<R | undefined> {
@@ -31,6 +45,14 @@ export class RedisCache {
       return;
     }
 
+    if (target.fieldable) {
+      await redis.hset(key, cache.data as object);
+      if (cache.expire > 0) {
+        await redis.expire(key, cache.expire);
+      }
+      return cache.data;
+    }
+
     const payload = JSON.stringify(cache.data);
     if (cache.expire > 0) {
       await redis.setex(key, cache.expire, payload);
@@ -47,6 +69,10 @@ export class RedisCache {
     const exists = await redis.exists(key);
 
     if (!exists) return await this._write(target, params);
+    if (target.fieldable) {
+      const fields = await redis.hgetall(key);
+      return fields as R;
+    }
     const text = await redis.get(key);
     if (!text) return await this._write(target, params);
     return JSON.parse(text) as R;
@@ -81,6 +107,9 @@ export class RedisCache {
       },
       has: async (params: ExtractParams<T>) => {
         return await this._has(target, params);
+      },
+      multi: async (params: ExtractParams<T>, callback: (multi: ChainableCommander, key: string) => unknown) => {
+        return await this._multi(target, params, callback);
       }
     }
   }

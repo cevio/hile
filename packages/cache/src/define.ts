@@ -32,12 +32,14 @@ export type DefineCacheHandler<T extends string = string, R = any> = (opts: Extr
 export type DefineCacheResult<T extends string = string, R = any> = {
   fn: DefineCacheHandler<T, R>;
   key: string;
+  fieldable: boolean;
 }
 
-export function defineCache<T extends string = string, R = any>(key: T, fn: DefineCacheHandler<T, R>): DefineCacheResult<T, R> {
+export function defineCache<T extends string = string, R = any>(key: T, fn: DefineCacheHandler<T, R>, fieldable = false): DefineCacheResult<T, R> {
   return {
     fn,
     key,
+    fieldable,
   };
 }
 
