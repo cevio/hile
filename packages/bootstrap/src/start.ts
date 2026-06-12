@@ -27,46 +27,49 @@ const c = {
 
 const colorize = process.stdout.isTTY;
 
-function logContainerEvent(event: ContainerEvent) {
-  const tag = colorize ? `${c.dim}${c.cyan}${TAG}${c.reset}` : TAG;
-  const target = (s: string) => (colorize ? `${c.cyan}${s}${c.reset}` : s);
-  const ok = (s: string) => (colorize ? `${c.green}${s}${c.reset}` : s);
-  const warn = (s: string) => (colorize ? `${c.yellow}${s}${c.reset}` : s);
-  const err = (s: string) => (colorize ? `${c.red}${s}${c.reset}` : s);
-  const dim = (s: string) => (colorize ? `${c.dim}${s}${c.reset}` : s);
+function createLogContainerEvent(logger?: { info: (msg: string) => void; error: (msg: string) => void }) {
+  const log = logger ?? console;
+  return function logContainerEvent(event: ContainerEvent) {
+    const tag = colorize ? `${c.dim}${c.cyan}${TAG}${c.reset}` : TAG;
+    const target = (s: string) => (colorize ? `${c.cyan}${s}${c.reset}` : s);
+    const ok = (s: string) => (colorize ? `${c.green}${s}${c.reset}` : s);
+    const warn = (s: string) => (colorize ? `${c.yellow}${s}${c.reset}` : s);
+    const err = (s: string) => (colorize ? `${c.red}${s}${c.reset}` : s);
+    const dim = (s: string) => (colorize ? `${c.dim}${s}${c.reset}` : s);
 
-  switch (event.type) {
-    case 'service:init':
-      console.info(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${dim('init')}`);
-      break;
-    case 'service:ready':
-      console.info(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${ok('ready')} ${dim(`(${event.durationMs}ms)`)}`);
-      break;
-    case 'service:error':
-      console.error(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${err('failed')} ${dim(`(${event.durationMs}ms)`)}`);
-      console.error(event.error);
-      break;
-    case 'service:shutdown:start':
-      console.info(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${warn('stopping')}`);
-      break;
-    case 'service:shutdown:done':
-      console.info(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${dim('stopped')} ${dim(`(${event.durationMs}ms)`)}`);
-      break;
-    case 'service:shutdown:error':
-      console.error(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${err('shutdown error')}`);
-      console.error(event.error);
-      break;
-    case 'container:shutdown:start':
-      console.info(`${tag} ${target('container')} ${dim('shutdown start')}`);
-      break;
-    case 'container:shutdown:done':
-      console.info(`${tag} ${target('container')} ${ok('shutdown done')} ${dim(`(${event.durationMs}ms)`)}`);
-      break;
-    case 'container:error':
-      console.error(`${tag} ${target('container')} ${err('error')}`);
-      console.error(event.error);
-      break;
-  }
+    switch (event.type) {
+      case 'service:init':
+        log.info(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${dim('init')}`);
+        break;
+      case 'service:ready':
+        log.info(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${ok('ready')} ${dim(`(${event.durationMs}ms)`)}`);
+        break;
+      case 'service:error':
+        log.error(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${err('failed')} ${dim(`(${event.durationMs}ms)`)}`);
+        log.error(event.error);
+        break;
+      case 'service:shutdown:start':
+        log.info(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${warn('stopping')}`);
+        break;
+      case 'service:shutdown:done':
+        log.info(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${dim('stopped')} ${dim(`(${event.durationMs}ms)`)}`);
+        break;
+      case 'service:shutdown:error':
+        log.error(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${err('shutdown error')}`);
+        log.error(event.error);
+        break;
+      case 'container:shutdown:start':
+        log.info(`${tag} ${target('container')} ${dim('shutdown start')}`);
+        break;
+      case 'container:shutdown:done':
+        log.info(`${tag} ${target('container')} ${ok('shutdown done')} ${dim(`(${event.durationMs}ms)`)}`);
+        break;
+      case 'container:error':
+        log.error(`${tag} ${target('container')} ${err('error')}`);
+        log.error(event.error);
+        break;
+    }
+  };
 }
 
 interface HilePackageJson {
@@ -80,7 +83,8 @@ export async function start(options: {
   cwd?: string,
   envFile?: string[],
   silent?: boolean,
-  autoLoadPackages?: string[]
+  autoLoadPackages?: string[],
+  logger?: any,
 }) {
   // 先加载 --env-file（与 Node --env-file 行为一致：先加载的优先，已存在的 key 不被覆盖）
   const envFiles = options.envFile ?? [];
@@ -97,7 +101,7 @@ export async function start(options: {
   }
 
   const offEvent = !options.silent && process.env.NODE_ENV === 'development'
-    ? container.on(logContainerEvent)
+    ? container.on(createLogContainerEvent(options.logger))
     : () => { };
 
   const cwd = options.cwd ?? process.cwd();

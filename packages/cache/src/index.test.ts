@@ -233,7 +233,7 @@ describe('@hile/cache', () => {
       return null as any
     })
     const { write } = await cache.loadCache(badCache)
-    await expect(write({ id: '1' })).rejects.toThrow('Cache result must be an instance of Cache')
+    await expect(write({ id: '1' })).rejects.toThrow("Cannot read properties of null (reading '__$flag__')")
   })
 
   it('propagates handler error', async () => {

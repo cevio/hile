@@ -2,13 +2,13 @@
 
 import pkg from '../package.json' with { type: 'json' };
 import { program } from 'commander';
-import { start } from './start.js';
+import { start } from '@hile/bootstrap';
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { Registry } from '@hile/micro';
-import { useExit } from './exitHook.js';
+import { useExit } from '@hile/bootstrap';
 import { listConfigs, getConfig, setConfig, delConfig } from './configs.js';
 import { createLogger } from '@hile/logger';
 
@@ -173,4 +173,4 @@ configs.command('del <namespace> [key]')
 
 program.parseAsync(process.argv);
 
-export * from './start.js';
+export { start, registerExitHook, useExit } from '@hile/bootstrap';
