@@ -23,12 +23,18 @@ importers:
       '@hile/core':
         specifier: workspace:^
         version: link:../core
+      '@hile/logger':
+        specifier: workspace:^
+        version: link:../logger
       async-exit-hook:
         specifier: ^2.0.1
         version: 2.0.1
       glob:
         specifier: ^13.0.6
         version: 13.0.6
+      pino-pretty:
+        specifier: ^13.1.0
+        version: 13.1.3
       tsx:
         specifier: ^4.21.0
         version: 4.21.0

@@ -1,10 +1,11 @@
 import { registerExitHook } from './exitHook.js';
 import { glob } from 'glob';
 import { resolve } from 'node:path';
-import { container, formatServiceKey, isService, loadService, ServiceRegisterProps, ContainerEvent } from '@hile/core';
+import { container, formatServiceKey, isService, loadService, ContainerEvent, type ServiceKey } from '@hile/core';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { existsSync } from 'node:fs';
+import { createLogger, type Logger } from '@hile/logger';
 
 const require = createRequire(import.meta.url);
 
@@ -16,57 +17,37 @@ function loadEnvFile(filePath: string): void {
 const TAG = '[hile]';
 const AUTO_TAG = '[auto]:';
 
-const c = {
-  reset: '\x1b[0m',
-  dim: '\x1b[2m',
-  red: '\x1b[31m',
-  green: '\x1b[32m',
-  yellow: '\x1b[33m',
-  cyan: '\x1b[36m',
-};
+function createLogContainerEvent(logger: Logger) {
+  const service = (key: ServiceKey) => `service(${formatServiceKey(key)})`;
 
-const colorize = process.stdout.isTTY;
-
-function createLogContainerEvent(logger?: { info: (msg: string) => void; error: (msg: string) => void }) {
-  const log = logger ?? console;
   return function logContainerEvent(event: ContainerEvent) {
-    const tag = colorize ? `${c.dim}${c.cyan}${TAG}${c.reset}` : TAG;
-    const target = (s: string) => (colorize ? `${c.cyan}${s}${c.reset}` : s);
-    const ok = (s: string) => (colorize ? `${c.green}${s}${c.reset}` : s);
-    const warn = (s: string) => (colorize ? `${c.yellow}${s}${c.reset}` : s);
-    const err = (s: string) => (colorize ? `${c.red}${s}${c.reset}` : s);
-    const dim = (s: string) => (colorize ? `${c.dim}${s}${c.reset}` : s);
-
     switch (event.type) {
       case 'service:init':
-        log.info(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${dim('init')}`);
+        logger.info(`${TAG} ${service(event.key)} init`);
         break;
       case 'service:ready':
-        log.info(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${ok('ready')} ${dim(`(${event.durationMs}ms)`)}`);
+        logger.info(`${TAG} ${service(event.key)} ready (${event.durationMs}ms)`);
         break;
       case 'service:error':
-        log.error(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${err('failed')} ${dim(`(${event.durationMs}ms)`)}`);
-        log.error(event.error);
+        logger.error({ err: event.error }, `${TAG} ${service(event.key)} failed (${event.durationMs}ms)`);
         break;
       case 'service:shutdown:start':
-        log.info(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${warn('stopping')}`);
+        logger.info(`${TAG} ${service(event.key)} stopping`);
         break;
       case 'service:shutdown:done':
-        log.info(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${dim('stopped')} ${dim(`(${event.durationMs}ms)`)}`);
+        logger.info(`${TAG} ${service(event.key)} stopped (${event.durationMs}ms)`);
         break;
       case 'service:shutdown:error':
-        log.error(`${tag} ${target(`service(${formatServiceKey(event.key)})`)} ${err('shutdown error')}`);
-        log.error(event.error);
+        logger.error({ err: event.error }, `${TAG} ${service(event.key)} shutdown error`);
         break;
       case 'container:shutdown:start':
-        log.info(`${tag} ${target('container')} ${dim('shutdown start')}`);
+        logger.info(`${TAG} container shutdown start`);
         break;
       case 'container:shutdown:done':
-        log.info(`${tag} ${target('container')} ${ok('shutdown done')} ${dim(`(${event.durationMs}ms)`)}`);
+        logger.info(`${TAG} container shutdown done (${event.durationMs}ms)`);
         break;
       case 'container:error':
-        log.error(`${tag} ${target('container')} ${err('error')}`);
-        log.error(event.error);
+        logger.error({ err: event.error }, `${TAG} container error`);
         break;
     }
   };
@@ -84,7 +65,6 @@ export async function start(options: {
   envFile?: string[],
   silent?: boolean,
   autoLoadPackages?: string[],
-  logger?: any,
 }) {
   // 先加载 --env-file（与 Node --env-file 行为一致：先加载的优先，已存在的 key 不被覆盖）
   const envFiles = options.envFile ?? [];
@@ -100,8 +80,13 @@ export async function start(options: {
     process.env.NODE_ENV = 'production';
   }
 
+  const { logger, teardown } = createLogger({
+    pretty: options.dev,
+    level: options.dev ? 'debug' : 'info',
+  })
+
   const offEvent = !options.silent && process.env.NODE_ENV === 'development'
-    ? container.on(createLogContainerEvent(options.logger))
+    ? container.on(createLogContainerEvent(logger))
     : () => { };
 
   const cwd = options.cwd ?? process.cwd();
@@ -151,6 +136,9 @@ export async function start(options: {
     return;
   }
 
-  // 注册退出钩子，在进程退出时销毁所有服务
-  registerExitHook(offEvent);
+  // 注册退出钩子：先 shutdown 服务，再取消事件监听并关闭 logger stream，最后 exit
+  registerExitHook(() => {
+    offEvent();
+    teardown();
+  });
 }
