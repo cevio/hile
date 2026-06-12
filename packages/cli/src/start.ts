@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { container, formatServiceKey, isService, loadService, ServiceRegisterProps, ContainerEvent } from '@hile/core';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
+import { existsSync } from 'node:fs';
 
 const require = createRequire(import.meta.url);
 
@@ -110,10 +111,13 @@ export async function start(options: {
       files.push(AUTO_TAG + p);
     }
   } else {
-    const packageJson: HilePackageJson = require(resolve(cwd, 'package.json'));
-    if (packageJson.hile?.auto_load_packages && Array.isArray(packageJson.hile.auto_load_packages)) {
-      for (let i = 0; i < packageJson.hile.auto_load_packages.length; i++) {
-        files.push(AUTO_TAG + packageJson.hile.auto_load_packages[i]);
+    const pkg_path = resolve(cwd, 'package.json');
+    if (existsSync(pkg_path)) {
+      const packageJson: HilePackageJson = require(pkg_path);
+      if (packageJson.hile?.auto_load_packages && Array.isArray(packageJson.hile.auto_load_packages)) {
+        for (let i = 0; i < packageJson.hile.auto_load_packages.length; i++) {
+          files.push(AUTO_TAG + packageJson.hile.auto_load_packages[i]);
+        }
       }
     }
   }
