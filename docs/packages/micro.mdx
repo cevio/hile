@@ -547,7 +547,7 @@ IDLE ──首次 get()──→ PENDING ──Registry /-/find──→
 
 ---
 
-#### call<T>(namespace, url, data, options?)
+#### `call<T>(namespace, url, data, options?)`
 
 一站式远程调用。**最常用的 consumer 方法**。封装了：服务发现 → 请求 → 熔断排除 → 失败重试。
 
@@ -716,7 +716,7 @@ Consumer                     Provider
 
 ---
 
-#### publish<T>(topic, data)
+#### `publish<T>(topic, data)`
 
 发布一个 topic，返回 `{ update, unpublish }` 引用对象。
 
@@ -738,7 +738,7 @@ await ref.unpublish();                  // 取消发布
 
 ---
 
-#### subscribe<T>(topic, callback, isReconnect?)
+#### `subscribe<T>(topic, callback, isReconnect?)`
 
 订阅一个 topic，数据变更时自动收到回调。
 
