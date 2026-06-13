@@ -170,7 +170,22 @@ type MessageFunction<T = any, E extends Record<string, any> = {}> = (data: {
   params?: Record<string, string>;
   data: T;
   url: string;
-} & E) => any;
+} & E) => any | AsyncIterable<any>;
+```
+
+处理器可以返回普通值（→ `Promise<T>`）或 **async generator**（→ `Readable` stream）。搭配 `@hile/micro` 时，consumer 可通过 `app.stream()` 获取流式响应。
+
+```typescript
+// 普通 handler
+export default defineMessage(async ({ data }) => ({ greeting: `Hello ${data.name}` }))
+
+// 流式 handler
+export default defineMessage(async function* ({ data }) {
+  for (let i = 0; i < 10; i++) {
+    yield { seq: i }
+    await new Promise(r => setTimeout(r, 500))
+  }
+})
 ```
 
 ## 注意事项
@@ -180,6 +195,7 @@ type MessageFunction<T = any, E extends Record<string, any> = {}> = (data: {
 - `dispatch` 返回 Promise，即使处理器是同步函数
 - `load()` 返回的注销函数调用后，仅移除**该次 load** 注册的路由；`register()` 注册的路由须用其返回的函数单独注销
 - 第三参 `extras` 会与 `{ params, data, url }` 合并传入 `fn`，命名勿与内置键冲突
+- **流式处理**：处理器返回 async generator 时，底层 `MessageModem` 自动切换到分块传输模式（需配合 `@hile/micro` 的 `app.stream()` 调用方触发）
 
 ## License
 

@@ -1,6 +1,6 @@
 ---
 title: "@hile/micro"
-description: "基于 WebSocket 的服务注册发现与通信框架：Server、Client、Registry、Application、心跳、熔断、重试、发布订阅"
+description: "基于 WebSocket 的服务注册发现与通信框架"
 ---
 
 ## 安装
@@ -11,48 +11,53 @@ pnpm add @hile/micro
 
 `@hile/micro` 自动引入以下依赖：
 
-- `@hile/message-loader` - 路由注册与分发引擎
+- `@hile/message-loader` - 路由注册与分发引擎（`register` / `dispatch` / `load`）
 - `@hile/message-ws` - WebSocket 请求/响应传输层
-- `@hile/message-modem` - 请求/响应协议抽象
+- `@hile/message-modem` - 底层请求/响应/流式协议抽象
 - `ws` - Node.js WebSocket 实现
 
 ---
 
 ## 核心概念
 
-### 什么是 @hile/micro？
-
-`@hile/micro` 是一个**基于 WebSocket 的微服务通信框架**。它让不同的 Node.js 进程（可以运行在同一台机器或不同机器上）能够通过 WebSocket 互相发现、通信和协作。
-
-想象你有一组微服务：`payments`（支付服务）、`orders`（订单服务）、`users`（用户服务）。它们运行在不同的端口甚至不同的服务器上。`@hile/micro` 提供了：
-
-1. **服务注册与发现** - 服务可以自动发现彼此，而不需要硬编码 IP 地址和端口
-2. **远程调用** - 像调用本地函数一样调用远程服务的方法
-3. **发布订阅** - 一个服务发布消息，其他所有订阅的服务都能收到
-4. **心跳保活** - 自动检测连接是否存活
-5. **熔断重试** - 当某个服务不可用时自动切换到其他实例
-
 ### 类层次结构
 
 ```
-MessageModem                      请求/响应协议抽象（发送、接收、超时、取消）
-  └── MessageWs                   WebSocket 传输层实现
+MessageModem                      请求/响应/流式协议抽象
+  └── MessageWs                   WebSocket 传输层
         └── Client                远端连接代理（心跳 + request/push/stream）
 
-MessageLoader                     路由注册与分发（文件扫描 + 编程式注册）
-  └── Server                      WebSocket 服务端（监听端口 + 管理连接）
-        ├── Registry              注册中心（维护全局服务拓扑 + 发布订阅）
-        └── Application           应用服务（服务发现 + 熔断重试 + 发布订阅）
+Loader                            文件扫描抽象
+  └── MessageLoader               消息路由注册与分发
+        └── Server                WebSocket 服务端基类
+              ├── Registry        注册中心（服务发现 + 发布订阅）
+              └── Application     应用服务（服务发现 + 熔断 + 重试）
 ```
+
+因此 `Application` 拥有以下**所有父类方法**：
+
+| 来源 | 方法 | 用途 |
+|------|------|------|
+| `MessageLoader` | `register(url, fn)` | 编程式注册路由 |
+| `MessageLoader` | `dispatch(url, data, extras?)` | 同进程内分发消息 |
+| `MessageLoader` | `load(directory)` | 从目录加载 `.msg.ts` 文件作为路由表 |
+| `Server` | `listen(port)` | 启动 WebSocket 监听 |
+| `Server` | `connect(host, port)` | 出站连接其他节点 |
+| `Server` | `handleUpgrade(req, socket, head)` | 挂载到已有 HTTP 服务器 |
+| `Application` | `get(ns)` | 服务发现（从 Registry 查找并缓存） |
+| `Application` | `call(ns, url, data)` | 一站式远程调用（发现+请求+熔断+重试） |
+| `Application` | `stream(ns, url, data)` | 流式远程调用（返回 Readable stream） |
+| `Application` | `publish(topic, data)` | 发布 topic |
+| `Application` | `subscribe(topic, cb)` | 订阅 topic |
 
 ### 四大角色
 
-| 类 | 职责 | 你可以用它做什么？ |
-|-----|-------|-----------------|
-| **Server** | WebSocket 服务端的基类。监听端口、管理入站/出站连接 | 创建一个接受 WebSocket 连接的节点，作为自定义服务的基础 |
-| **Client** | 远端连接的代理类。封装消息收发 | 通过 `request()` 发送请求并等待响应，通过 `push()` 发送单向消息 |
-| **Registry** | 注册中心，维护所有服务的地址映射 | 充当「电话总机」：每个服务启动时连接 Registry，其他服务通过 Registry 发现它们 |
-| **Application** | 应用服务，连接 Registry 实现完整微服务功能 | 日常开发中主要使用的类，自动处理服务发现、熔断、重试 |
+| 类 | 职责 | 典型用法 |
+|-----|-------|---------|
+| **Server** | WebSocket 监听、连接管理 | 创建自定义协议的服务器节点 |
+| **Client** | 远端连接代理 | 通过 `request()` / `push()` / `stream()` 通信 |
+| **Registry** | 注册中心，维护全局服务拓扑 | 充当「电话总机」：所有服务在此注册和发现 |
+| **Application** | 完整微服务节点 | **日常开发主要使用的类** |
 
 ---
 
@@ -60,28 +65,34 @@ MessageLoader                     路由注册与分发（文件扫描 + 编程�
 
 `Server` 是所有服务节点的基类，继承自 `MessageLoader`。它负责：
 
-- 启动一个 WebSocket 服务器监听端口
-- 接受来自其他节点的入站连接
+- 启动 WebSocket 服务器监听端口
+- 接受来自其他节点的入站连接并创建 `Client` 实例
 - 向其他节点发起出站连接
-- 管理所有连接的 `Client` 实例
+- 管理所有连接的生命周期
 
 ### 构造函数
 
 ```typescript
 const server = new Server('my-service', {
-  advertiseHost: '127.0.0.1',
+  advertiseHost: '127.0.0.1',   // 宣告地址，缺省自动获取
+  logger: myLogger,              // 可选，日志记录器（缺省 console）
+  suffix: 'msg',                 // 可选，传给 MessageLoader 的配置
+  prefix: '-',                   // 可选
+  defaultSuffix: '/index',       // 可选
 });
 ```
 
-#### 参数
-
-| 参数 | 类型 | 必填 | 说明 |
-|---------|------|------|------|
-| `namespace` | `string` | 是 | 本服务的唯一标识。出站连接时会附加到 WebSocket URL 路径中，Registry 用它来区分不同服务 |
-| `props.advertiseHost` | `string` | 否 | 向其他节点宣告的本机地址。缺省时自动调用 `getLocalIPv4()` 获取；若仍获取不到（如无可用 IPv4），构造函数抛出错误 |
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|---------|------|------|------|------|
+| `namespace` | `string` | 是 | - | 服务标识。出站连接时附加到 WebSocket URL 路径，Registry 用它区分不同服务 |
+| `props.advertiseHost` | `string` | 否 | `getLocalIPv4()` | 向其他节点宣告的本机地址。若获取不到且未显式传入，构造函数抛错 |
+| `props.logger` | `Logger` | 否 | `console` | 日志记录器，需支持 `debug` / `info` / `warn` / `error` |
+| `props.suffix` | `string` | 否 | `'msg'` | `load()` 扫描文件的后缀标记 |
+| `props.prefix` | `string` | 否 | `''` | 路由前缀 |
+| `props.defaultSuffix` | `string` | 否 | `'/index'` | index 文件的折叠后缀 |
 
 <Note>
-`advertiseHost` 为什么重要？当 Server A 连接 Server B 时，B 需要知道 A 的地址才能回连。这个地址就是 `advertiseHost`。在生产环境中应设为其他节点能访问到的 IP（如内网 IP `10.0.0.1`），而不是 `127.0.0.1`（除非所有服务在同一台机器上）。
+ `advertiseHost` 在生产环境中应设为其他节点能访问到的 IP（如内网 IP `10.0.0.1`），而不是 `127.0.0.1`（除非所有服务在同一台机器上）。
 </Note>
 
 ### 实例属性
@@ -89,204 +100,163 @@ const server = new Server('my-service', {
 | 属性 | 类型 | 说明 |
 |----------|------|------|
 | `namespace` | `string` | 构造时传入的服务标识（只读） |
-| `port` | `number \| undefined` | 当前监听的端口号。调用 `listen()` 后可用 |
-| `clients` | `Map<string, Client>` | 已连接的客户端映射表，key 为 `"host:port"` 格式 |
-| `events` | `EventEmitter` | 连接/断开事件发射器 |
-| `host` | `string`（getter） | 宣告地址（`advertiseHost` 的解析结果） |
+| `port` | `number \| undefined` | 当前监听的端口号，`listen()` 调用后可用 |
+| `host` | `string`（getter） | 宣告地址的解析结果 |
+| `clients` | `Map<string, Client>` | 已连接的客户端映射表，key 为 `"host:port"` |
+| `events` | `EventEmitter` | 连接/断开事件。发射 `connect` 和 `disconnect`，回调参数 `(client, extras)` |
 
-### 方法
+### listen(port?)
 
-#### listen(port?)
-
-启动 WebSocket 服务器开始监听。
+启动 WebSocket 服务器。
 
 ```typescript
 const teardown = await server.listen(9100);
 console.log(`Server listening on port ${server.port}`);
 ```
 
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|--------|------|------|---------|------|
-| `port` | `number` | 否 | `0` | 监听端口。传 `0` 时系统分配随机可用端口 |
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|--------|------|------|------|------|
+| `port` | `number` | 否 | `0` | 监听端口。传 `0` 时创建 `noServer` 模式的 WebSocketServer，适用于挂载到已有 HTTP 服务器 |
 
-<Note>
-`port` 传 `0` 时不会立即分配端口，而是创建 `noServer` 模式的 WebSocketServer。这适用于你需要将 WebSocket 挂载到已有 HTTP 服务器的场景（见 `handleUpgrade` 方法）。
-</Note>
+**返回值**：`() => Promise<void>` teardown 函数。调用后依次：关闭所有 Client → 清空 clients 映射 → 关闭 WebSocketServer → 重置 port/wss。
 
-**返回值**：`() => Promise<void>` 类型的 teardown 函数。调用后：
-
-1. 关闭所有 Client 连接（逐个调用 `client.dispose()`）
-2. 清空 `clients` 映射表
-3. 关闭 WebSocket 服务器
-4. 将 `port` 和 `wss` 置为 `undefined`
-
-```typescript
-// 关闭服务器
-await teardown();
-```
-
-#### connect(host, port, timeout?)
+### connect(host, port, timeout?)
 
 向其他节点发起 WebSocket 出站连接。
 
 ```typescript
-const client = await server.connect('10.0.0.2', 9000);
-```
-
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|--------|------|------|---------|------|
-| `host` | `string` | 是 | - | 目标节点的主机地址 |
-| `port` | `number` | 是 | - | 目标节点的端口（1-65535） |
-| `timeout` | `number` | 否 | `5000` | 连接超时时间（毫秒） |
-
-**连接 URL 格式**：
-
-```
-ws://{host}:{port}/{本机advertiseHost}/{本机port}/{本机namespace}
-```
-
-例如：`ws://10.0.0.2:9000/10.0.0.1/9100/my-service`
-
-**关键行为**：
-
-- **客户端去重**：如果已经存在到同一 `host:port` 的连接，旧连接会被关闭并替换
-- 必须先调用 `setPort()` 设置本地端口，否则抛出错误
-- 超时未连接成功时抛出 `Connection timeout` 错误
-
-```typescript
-// 先设置本地端口
 server.setPort(9100);
-
-// 连接到对端
 const client = await server.connect('10.0.0.2', 9000, 3000);
-
-// 连接成功后自动注册到 server.clients
-console.log(server.clients.get('10.0.0.2:9000') === client); // true
 ```
 
-#### setPort(port)
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|--------|------|------|------|------|
+| `host` | `string` | 是 | - | 目标主机地址 |
+| `port` | `number` | 是 | - | 目标端口（1-65535） |
+| `timeout` | `number` | 否 | `5000` | 连接超时（毫秒） |
 
-设置本地端口号。必须在调用 `connect()` 之前调用。
+连接 URL 格式：`ws://{targetHost}:{targetPort}/{本机host}/{本机port}/{本机namespace}`
 
-```typescript
-server.setPort(9100);
-```
+- 如果已存在到同一 `host:port` 的连接，旧连接会被关闭并替换（客户端去重）
+- 必须先调用 `setPort()` 设置本地端口，否则抛错
+- 超时未连接成功时抛出 `Connection timeout`
 
-| 参数 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `port` | `number` | 是 | 本地端口号 |
+### setPort(port)
 
-**返回值**：`this`（支持链式调用）。
+设置本地端口号，返回 `this`（链式调用）。必须在 `connect()` 之前调用。
 
-#### handleUpgrade(req, socket, head)
+### handleUpgrade(req, socket, head)
 
-将 WebSocket 升级逻辑挂载到已有的 HTTP 服务器。当你不使用 `listen(port)` 独立启动 WebSocket 服务器，而是想复用已有的 HTTP 服务器时使用。
+将 WebSocket 升级逻辑挂载到已有 HTTP 服务器。
 
 ```typescript
 import { createServer } from 'node:http';
 
-const httpServer = createServer((req, res) => {
-  res.end('Hello');
-});
-
+const httpServer = createServer((req, res) => { res.end('Hello'); });
 httpServer.on('upgrade', (req, socket, head) => {
   server.handleUpgrade(req, socket, head);
 });
-
 httpServer.listen(3000);
 ```
 
-| 参数 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `req` | `IncomingMessage` | 是 | HTTP 升级请求对象 |
-| `socket` | `Duplex` | 是 | 底层 TCP socket |
-| `head` | `Buffer` | 是 | 收到的第一个数据包 |
-
 <Warning>
-调用 `handleUpgrade` 之前必须先调用 `listen(0)`（带 `noServer` 模式）初始化 WebSocketServer 实例。
+ 调用 `handleUpgrade` 之前必须先调用 `listen(0)` 初始化 WebSocketServer。
 </Warning>
 
 ### 事件
 
-`events` 属性是一个 `EventEmitter`，发射以下事件：
-
 ```typescript
-server.events.on('connect', (client: Client, extras: string[]) => {
+server.events.on('connect', (client, extras) => {
   console.log(`新连接: ${client.host}:${client.port}`, extras);
 });
-
-server.events.on('disconnect', (client: Client, extras: string[]) => {
+server.events.on('disconnect', (client, extras) => {
   console.log(`连接断开: ${client.host}:${client.port}`, extras);
 });
 ```
 
-| 事件 | 回调参数 | 说明 |
-|-------|-----------|------|
-| `connect` | `(client, extras)` | 有新的对端连接建立。`extras` 是 URL 路径中 namespace 之后额外部分的数组 |
-| `disconnect` | `(client, extras)` | 对端连接断开 |
+`extras` 是 URL 路径中 namespace 之后额外部分的数组（ `/` 分割）。同时事件也会转发到 `Client.events`。
 
-同时，这些事件也会自动转发到对应的 `Client.events` 上，方便在 Client 层面监听。
+### 从 MessageLoader 继承的方法
+
+Server 继承自 `MessageLoader`，因此也拥有：
+
+#### register(url, fn)
+
+编程式注册消息处理器。
+
+```typescript
+const unregister = server.register('/charge', async ({ data, params, url, client }) => {
+  // data: 请求体
+  // params: 动态路由参数（如 /users/:id 中的 id）
+  // url: 请求路径
+  // client: 发起请求的 Client（由 Server/Application 通过 dispatch extras 注入）
+  return { charged: true, amount: data.amount };
+});
+
+// 不需要时注销该路由
+unregister();
+```
+
+**关键点**：注册的 handler 既可以返回普通值（ `call()` 消费），也可以返回 `async generator`（ `stream()` 消费）。
+
+#### load(directory)
+
+从目录批量加载 `.msg.ts` / `.msg.js` 文件。这是**推荐的消息定义方式**。
+
+```typescript
+const unload = await server.load(resolve(__dirname, 'messages'));
+// 注销：unload()
+```
+
+文件示例：
+
+```typescript
+// src/messages/charge.msg.ts
+import { defineMessage } from '@hile/message-loader';
+export default defineMessage(async ({ data }) => {
+  return { charged: true, amount: data.amount };
+});
+```
+
+#### dispatch(url, data, extras?)
+
+同进程内分发消息。`extras` 会合并进 handler 的入参。
+
+```typescript
+const result = await server.dispatch('/charge', { amount: 100 });
+// 也可以传入 extras 给 handler
+const result = await server.dispatch('/charge', { amount: 100 }, { client: myClient });
+```
 
 ### 完整示例
 
 ```typescript
 import { Server } from '@hile/micro';
 
-// 节点 A
 const serverA = new Server('service-a', { advertiseHost: '127.0.0.1' });
 const closeA = await serverA.listen(9100);
 
-// 节点 B
 const serverB = new Server('service-b', { advertiseHost: '127.0.0.1' });
 const closeB = await serverB.listen(9200);
 
-// B 连接到 A
 serverB.setPort(9200);
-const client = await serverB.connect('127.0.0.1', 9100);
+const client = await serverB.connect('127.0.0.1', 9100);  // B → A
 
-// 注册路由（通过继承自 MessageLoader 的 register 方法）
 serverA.register('/hello', async ({ data }) => {
   return { message: `Hello, ${data.name}!` };
 });
 
-// 通过 client 调用
 const result = await client.request('/hello', { name: 'World' });
-console.log(result); // { message: 'Hello, World!' }
+console.log(result);  // { message: 'Hello, World!' }
 
-// 清理
-await closeB();
-await closeA();
+await closeB(); await closeA();
 ```
 
 ---
 
 ## Client 类
 
-`Client` 是远端连接的代理类，继承自 `@hile/message-ws` 的 `MessageWs`。每个 `Client` 实例对应一个从本节点到某个远端节点的 WebSocket 连接。
-
-### 构造函数
-
-通常你不会直接创建 `Client`，而是通过 `Server.connect()` 或 Server 内部自动创建。但如果你需要手动创建，可以：
-
-```typescript
-import { Client } from '@hile/micro';
-
-const client = new Client({
-  host: '10.0.0.2',
-  port: 9000,
-  server: myServer,
-  ws: webSocketInstance,
-});
-```
-
-#### ClientProps
-
-| 属性 | 类型 | 必填 | 说明 |
-|----------|------|------|------|
-| `host` | `string` | 是 | 远端节点的主机地址 |
-| `port` | `number` | 是 | 远端节点的端口 |
-| `server` | `Server` | 是 | 所属的 Server 实例 |
-| `ws` | `WebSocket` | 是 | 已建立的 WebSocket 连接 |
+`Client` 是远端连接的代理，继承自 `MessageWs`。**通常不直接创建**，由 `Server.connect()` 或内部自动实例化。
 
 ### 实例属性
 
@@ -294,13 +264,11 @@ const client = new Client({
 |----------|------|------|
 | `host` | `string` | 远端主机地址（只读） |
 | `port` | `number` | 远端端口（只读） |
-| `events` | `EventEmitter` | 连接状态事件发射器，发射 `connect` 和 `disconnect` 事件 |
+| `events` | `EventEmitter` | 连接状态事件（`connect` / `disconnect`） |
 
-### 方法
+### request<T>(url, data, options?)
 
-#### request<T>(url, data, options?)
-
-发送一个请求并等待远端响应。类似 HTTP 的请求-响应模式，客户端会阻塞直到收到响应或超时。
+发送请求并等待远端响应。类似 HTTP 请求-响应模式。
 
 ```typescript
 const result = await client.request<{ balance: number }>(
@@ -308,172 +276,129 @@ const result = await client.request<{ balance: number }>(
   { userId: '123' },
   { timeout: 5000 }
 );
-console.log(result.balance); // 1000
-```
-
-| 参数 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `url` | `string` | 是 | 请求路径（如 `/charge`、`/users/123`） |
-| `data` | `any` | 是 | 请求体数据，可以是任意 JSON 可序列化的值 |
-| `options.timeout` | `number` | 否 | 超时时间（毫秒），超过未收到响应则抛出错误 |
-| `options.signal` | `AbortSignal` | 否 | `AbortController` 的 signal，用于手动取消请求 |
-
-**返回值**：`Promise<T>` - 远端处理器的返回值。
-
-**可能抛出的错误**：
-- Client 不在线时抛出 `Client is not online`
-- 超时时抛出超时错误
-- 远端处理器抛出异常时传播该异常
-
-#### push(url, data, options?)
-
-发送一个单向消息，不等待响应。适用于日志、事件通知等不需要回复的场景。
-
-```typescript
-client.push('/log', { event: 'page_view', page: '/home' });
 ```
 
 | 参数 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
 | `url` | `string` | 是 | 请求路径 |
-| `data` | `any` | 是 | 请求体数据 |
-| `options.timeout` | `number` | 否 | 超时时间 |
-| `options.signal` | `AbortSignal` | 否 | 取消信号 |
+| `data` | `any` | 是 | 请求数据（JSON 可序列化） |
+| `options.timeout` | `number` | 否 | 超时时间（毫秒），超时后抛出错误 |
+| `options.signal` | `AbortSignal` | 否 | 手动取消 |
 
-**返回值**：`Promise<void>` - 数据发送完成后立即 resolve，不等待远端处理结果。
+**返回值**：`Promise<T>` - 远端 handler 的返回值。
 
-#### stream(url, data, options?)
+**可能抛出的错误**：`Client is not online`（断开状态调用）、超时错误、远端异常透传。
 
-发送一个流式请求，返回一个 `Readable` 流。适用于需要逐步接收大量数据的场景。
+### push(url, data, options?)
+
+发送单向消息，不等待响应。适用于日志、事件通知等不需要回复的场景。
 
 ```typescript
-const stream = await client.stream('/large-data', { query: 'SELECT * FROM logs' });
-for await (const chunk of stream) {
-  console.log('收到数据块:', chunk);
+client.push('/log', { event: 'page_view' });
+```
+
+返回值 `Promise<void>` - 数据发送完成即 resolve，不等待远端处理结果。
+
+### stream(url, data, options?)
+
+发送流式请求，返回 `Readable` stream。适用于大数据集、实时事件、LLM token 流等场景。
+
+```typescript
+const readable = client.stream('/events', { query: 'recent' }, { signal: abortController.signal });
+for await (const chunk of readable) {
+  console.log(chunk);
 }
 ```
 
 | 参数 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
 | `url` | `string` | 是 | 请求路径 |
-| `data` | `any` | 是 | 请求体数据 |
+| `data` | `any` | 是 | 请求数据 |
 | `options.signal` | `AbortSignal` | 否 | 取消信号 |
 
-**返回值**：`Promise<Readable>` - Node.js 可读流，可以 `for await...of` 逐块读取。
+**返回值**：`Readable` - Node.js 可读流（`objectMode: true`），可用 `for await` 逐块消费。
 
-#### dispose()
+**原理**：底层 `_stream()` 标记 `stream: true`，远端收到后检测 handler 返回的是否 `AsyncIterable`，若是则逐 chunk 回传 `MessageStreamChunk`（含 `seq` 序号和 `final` 结束标记）。
+
+<Note>
+ 如果远端 handler 返回普通值而不是 async generator，`stream()` 会收到 `"Invalid async iterable"` 错误。
+</Note>
+
+### dispose()
 
 清理资源：停止心跳定时器、关闭 WebSocket 连接。
 
-```typescript
-client.dispose();
-// client 不再可用
-```
-
 ### 心跳机制
 
-Client 启动后自动开始心跳保活，用于检测连接是否仍然存活。
-
-```mermaid
-flowchart TB
-    A["定时发送心跳"] --> B["远端收到后回复"]
-    B --> C["更新 lastHeartbeat 时间戳"]
-    C --> D{"检查: 当前时间 - lastHeartbeat > timeout?"}
-    D -- "是" --> E["调用 dispose()"]
-    D -- "否" --> F["继续等待"]
-```
-
-心跳参数通过环境变量配置：
+Client 启动后自动心跳保活，通过环境变量配置：
 
 | 环境变量 | 默认值 | 说明 |
 |-------------------|---------|------|
-| `MICRO_HEARTBEAT_INTERVAL` | `10000` (10秒) | 每隔多久发送一次心跳 |
-| `MICRO_HEARTBEAT_TIMEOUT` | `20000` (20秒) | 超过此时间未收到心跳回复，判定连接超时 |
-| `MICRO_HEARTBEAT_CHECK_INTERVAL` | `5000` (5秒) | 每隔多久检查一次是否超时 |
+| `MICRO_HEARTBEAT_INTERVAL` | `10000` (10s) | 心跳发送间隔 |
+| `MICRO_HEARTBEAT_TIMEOUT` | `20000` (20s) | 心跳超时判死阈值 |
+| `MICRO_HEARTBEAT_CHECK_INTERVAL` | `5000` (5s) | 超时检查间隔 |
 
-<Note>
-心跳是双向的：Client 向远端发送 `/-/heartbeat` 消息，远端收到后自动更新 `lastHeartbeat`。如果在 `timeout` 时间内没有收到任何心跳回复，Client 认为连接已断开并自动调用 `dispose()` 清理资源。
-</Note>
+Client 定期发送 `/-/heartbeat` 消息，远端 `exec()` 更新 `lastHeartbeat` 时间戳。超时未收到回复则自动 `dispose()`。
 
-### exec 方法（内部实现）
+### 消息处理（exec）
 
-`Client.exec()` 是 `MessageWs` 要求子类实现的抽象方法。当 Client 收到远端发来的消息时，`exec` 被调用来处理消息：
+当 Client 收到远端发来的消息时，`exec` 被调用：
 
 ```typescript
 protected async exec(data: { url: string; data: any }): Promise<any> {
-  // 心跳消息直接更新 lastHeartbeat
   if (data.url === '/-/heartbeat') {
     this.lastHeartbeat = Date.now();
     return;
   }
-  // 其他消息交给 Server.dispatch() 处理
-  return this.server.dispatch(data.url, data.data, {
-    client: this,
-  });
+  return this.server.dispatch(data.url, data.data, { client: this });
 }
 ```
 
-这意味着，当远端通过本 Client 发来请求时，本端的 Server 路由表会处理这个请求。这个设计使得通信是**双向对称的**：两端都可以给对方发请求，也都可以处理对方发来的请求。
+通信是**双向对称的**：两端都能给对方发请求，也都能处理对方发来的请求。
 
 ---
 
 ## Registry 类
 
-`Registry` 是注册中心，继承自 `Server`。它是整个微服务系统的「电话总机」：
-
-- 所有服务启动时连接到 Registry
-- 当服务 A 想调用服务 B 时，先问 Registry「服务 B 在哪里」
-- Registry 返回服务 B 的地址，然后服务 A 直接连接服务 B
+`Registry` 是注册中心，继承自 `Server`。它的 `namespace` 固定为 `'registry'`。
 
 ### 为什么需要 Registry？
 
-没有 Registry 时，每个服务都需要知道其他所有服务的地址：
+Registry 相当于微服务的「电话总机」：
 
 ```
-service A ──► 需要知道 B、C、D 的地址（硬编码 → 维护噩梦）
-```
+服务启动 → 连接 Registry → Registry 记录: payments = {10.0.0.1:9100, 10.0.0.2:9100}
 
-有了 Registry，每个服务只需要知道 Registry 的地址：
-
-```
-service A ──► Registry: "B 在哪里？"
-Registry   ──► A: "B 在 10.0.0.2:9100"
-service A ──► B: "你好，我是 A"
+消费者: Registry，payments 在哪里？
+Registry: 随机返回一个可用实例（如 10.0.0.2:9100）
+消费者: 直连 10.0.0.2:9100 → 调用 /charge
 ```
 
 ### 构造函数
 
 ```typescript
-const registry = new Registry({
-  advertiseHost: '127.0.0.1',
-});
+const registry = new Registry({ advertiseHost: '127.0.0.1' });
 ```
 
-`namespace` 被固定为 `'registry'`。
-
-构造函数中会创建 `~/.registry/` 工作目录（如果不存在的话）。
-
-| 参数 | 类型 | 必填 | 说明 |
-|---------|------|------|------|
-| `props.advertiseHost` | `string` | 否 | 宣告地址，缺省自动获取 |
+构造函数中会创建 `~/.registry/` 工作目录。
 
 ### listen(port)
 
 ```typescript
-const teardown = await registry.listen(9000);
+const teardown = await registry.listen(9876);
 ```
 
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|--------|------|------|---------|------|
-| `port` | `number` | 否 | 环境变量 `REGISTRY_PORT` 或 0 | 监听端口 |
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|--------|------|------|------|------|
+| `port` | `number` | 否 | `REGISTRY_PORT` 环境变量或 0 | 监听端口 |
 
-如果 `port` 和 `REGISTRY_PORT` 都未设置或 <= 0，抛出错误。
+如果 port 和 `REGISTRY_PORT` 都未设置或 ≤ 0，抛出错误。
 
 启动后自动调用 `watchEnvFile()` 开始监听配置文件变更。
 
 ### watchEnvFile()
 
-监听 `~/.registry/configs/` 目录下的 `*.config.yaml` 文件。这些文件定义了服务所需的动态配置。
+监听 `~/.registry/configs/` 目录下的 `*.config.yaml` 文件，文件变更时自动加载并发布 topic。
 
 ```yaml
 # ~/.registry/configs/my-service.config.yaml
@@ -483,124 +408,51 @@ database:
 debug: true
 ```
 
-**行为**：
-
-1. 启动时批量加载已有配置文件
-2. 使用 `fs.watch` 监听文件变化
-3. 每次配置变更时，自动将每个配置项作为 topic 发布（topic 名称为 `registry:{namespace}/{key}`）
-4. 配置文件的增删改都会自动同步
+配置项会自动作为 topic `registry:{namespace}/{key}` 发布。
 
 ### 内置处理程序
 
-Registry 内置了以下路由处理程序，Application 会自动调用它们：
-
-| 路径 | 方向 | 说明 |
+| 路径 | 调用方向 | 说明 |
 |------|----------|------|
-| `/-/find` | Application → Registry | 查询某个 namespace 的可用实例，随机返回一个地址 |
-| `/-/declare` | Publisher → Registry | 声明一个 topic 并发布初始数据 |
+| `/-/find` | Application → Registry | 按 namespace 查找可用实例，随机返回一个地址 |
+| `/-/declare` | Publisher → Registry | 声明 topic 并发布初始数据 |
 | `/-/undeclare` | Publisher → Registry | 取消声明 topic |
-| `/-/subscribe` | Subscriber → Registry | 订阅 topic，返回当前数据 |
+| `/-/subscribe` | Subscriber → Registry | 订阅 topic，立即返回当前数据 |
 | `/-/unsubscribe` | Subscriber → Registry | 取消订阅 |
-| `/-/topic/update` | 任意 → Registry | 推送 topic 更新，Registry 转发给所有订阅者 |
+| `/-/topic/update` | 任意 → Registry | 推送 topic 更新，Registry 转发给该 topic 的所有订阅者 |
 
 #### /-/find
 
 ```typescript
-// 请求体
+// 请求
 { namespace: 'payments', exclude?: ['10.0.0.1:9100'] }
-
 // 响应（随机负载均衡）
 { host: '10.0.0.2', port: 9100 }
 ```
 
-- `namespace` - 要查找的服务名称
-- `exclude` - 可选，排除某些地址（用于熔断场景）
-- 使用 `selectRandomRegistryAddress` 从可用地址中随机选择一个
-
-#### /-/declare 和 /-/undeclare
-
-Publisher 用这两个接口声明和取消声明 topic：
-
-```typescript
-// 声明 topic "config/feature-flag"，初始数据为 { enabled: true }
-registry.push('/-/declare', { topic: 'config/feature-flag', payload: { enabled: true } });
-
-// 取消声明
-registry.push('/-/undeclare', { topic: 'config/feature-flag' });
-```
-
-#### /-/subscribe 和 /-/unsubscribe
-
-Subscriber 用这两个接口订阅和取消订阅 topic：
-
-```typescript
-// 订阅 topic，返回当前数据
-const currentData = await client.request('/-/subscribe', { topic: 'config/feature-flag' });
-
-// 取消订阅
-await client.request('/-/unsubscribe', { topic: 'config/feature-flag' });
-```
-
-#### /-/topic/update
-
-推送 topic 更新。Registry 会将更新转发给所有订阅者：
-
-```typescript
-// 推送更新
-await client.request('/-/topic/update', { topic: 'config/feature-flag', payload: { enabled: false } });
-```
-
 ### 连接自动注册与清理
 
-当 Application 连接 Registry 时，URL 路径中的 namespace 会被自动提取：
+Application 连接 Registry 时，URL 路径被解析为：
 
 ```
-ws://registry:9876/10.0.0.1/9100/payments
-                       ↑        ↑     ↑
-                    advertiseHost port namespace
+ws://registry:9876/{advertiseHost}/{port}/{namespace}
 ```
 
-Registry 将此连接的 `host:port` 加入 `namespaces['payments']` 集合。
-
-当连接断开时，Registry 自动：
-1. 从所有 topic 的 publishers/subscribers 集合中移除该地址
-2. 从对应的 namespace 集合中移除该地址
-3. 如果 namespace 或 topic 变空，则删除该条目
-
-### 完整示例
-
-```typescript
-import { Registry } from '@hile/micro';
-
-const registry = new Registry({ advertiseHost: '127.0.0.1' });
-const close = await registry.listen(9876);
-
-console.log('Registry 已启动，端口:', registry.port);
-
-// 创建一些 YAML 配置文件在 ~/.registry/configs/ 下
-// 它们会被自动加载和监听
-
-// 当有服务连接时：
-registry.events.on('connect', (client, extras) => {
-  console.log(`服务 ${extras.join('/')} 已连接 (${client.host}:${client.port})`);
-});
-
-// 程序退出时清理
-await close();
-```
+Registry 自动将 `host:port` 加入 `namespaces[namespace]` 集合。连接断开时自动清理。
 
 ---
 
 ## Application 类
 
-`Application` 是你在实际开发中最常使用的类。它继承自 `Server`，并集成了：
+`Application` 是日常开发主要使用的类，继承自 `Server`，集成了：
 
-- **自动连接 Registry** - 启动时连接注册中心
-- **服务发现** - 通过 Registry 查找其他服务
-- **熔断器** - 当某个实例连续失败时临时排除
-- **自动重试** - 调用失败后自动重试
-- **发布订阅** - 完整的 topic publish/subscribe 支持
-- **自动重连** - Registry 断开后自动重连
+- **自动连接 Registry** - `listen()` 时自动连接，失败则整个 listen 抛错
+- **服务发现** - `get()` 从 Registry 查找服务地址并缓存
+- **熔断器** - 失败的 peer 被临时排除 30 秒
+- **自动重试** - `call()` 和 `stream()` 失败后自动换 peer 重试
+- **缓存降级** - Registry 不可用时使用最后一次成功的地址
+- **自动重连** - Registry 断连后 3 秒间隔重试，重连后自动重新订阅所有 topic
+- **发布订阅** - `publish()` / `subscribe()` 通过 Registry 实现
 
 ### 构造函数
 
@@ -609,162 +461,269 @@ const app = new Application({
   namespace: 'my-service',
   registry: { host: '127.0.0.1', port: 9876 },
   advertiseHost: '127.0.0.1',
-  registryLookupTimeoutMs: 10_000,
-  requestTimeoutMs: 30_000,
+  registryLookupTimeoutMs: 10_000,   // 默认
+  requestTimeoutMs: 30_000,           // 默认
 });
 ```
 
 #### ApplicationProps
 
-| 属性 | 类型 | 必填 | 默认值 | 说明 |
-|----------|------|------|---------|------|
+| 属性 | 类型 | 必填 | 默认 | 说明 |
+|----------|------|------|------|------|
 | `namespace` | `string` | 是 | - | 本服务的唯一标识 |
-| `registry` | `RegistryAddress` | 是 | - | Registry 的地址（`{ host: string, port: number }`） |
+| `registry` | `{ host, port }` | 是 | - | Registry 地址（严格校验） |
 | `advertiseHost` | `string` | 否 | `getLocalIPv4()` | 宣告地址 |
-| `registryLookupTimeoutMs` | `number` | 否 | `10000` | 查询 Registry 的超时时间（毫秒） |
-| `requestTimeoutMs` | `number` | 否 | `30000` | 远程调用的超时时间（毫秒） |
+| `registryLookupTimeoutMs` | `number` | 否 | `10000` | `/-/find` 查询超时 |
+| `requestTimeoutMs` | `number` | 否 | `30000` | 远程调用默认超时 |
 
 <Warning>
-`registry.host` 和 `registry.port` 会经过严格校验（host 不能为空/含空白符/IPv6 必须加方括号/端口必须在 1-65535 之间），校验不通过时构造函数抛出错误。
+ `registry.host` 和 `registry.port` 经过严格校验（host 不能为空/含空白符/IPv6 须加方括号/端口 1-65535）。通不过时构造函数抛错。
 </Warning>
 
-### 方法
+---
 
-#### listen(port)
+### 方法详解
 
-启动服务并连接 Registry。
+#### listen(port?)
+
+启动 WebSocket 监听并连接 Registry。
 
 ```typescript
 const teardown = await app.listen(9100);
 ```
 
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|--------|------|------|---------|------|
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|--------|------|------|------|------|
 | `port` | `number` | 否 | `0` | 监听端口 |
 
 **启动流程**：
-
-1. 调用父类 `Server.listen()` 启动 WebSocket 监听
+1. 调用父类 `Server.listen()` 启动 WebSocketServer
 2. 调用 `reconnectToRegistry()` 连接 Registry
-3. 如果连接 Registry 失败，**整个 listen 抛出错误**（防止服务在无法被发现的状态下运行）
+3. 连接 Registry 失败则整个 listen 抛出错误
 
-**返回值**：teardown 函数，调用后：
-1. 清理所有 fallback 路由
-2. 停止 Registry 重连
-3. 断开 Registry 连接
-4. 调用父类的 teardown
+**返回值**：teardown 函数。调用后：清理 fallback 路由 → 停止重连 → 断开 Registry → 调用父类 teardown。
+
+**何时调用**：服务启动时调用一次，返回的 teardown 在 SIGTERM/SIGINT 时调用。
+
+---
 
 #### get(namespace, exclude?)
 
-获取指定 namespace 的一个客户端连接。
+从 Registry 获取指定 namespace 的一个 Client 连接，结果会被**缓存**。
 
 ```typescript
-const paymentsClient = await app.get('payments');
-const result = await paymentsClient.request('/charge', { amount: 100 });
+const client = await app.get('payments');
+const result = await client.request('/charge', { amount: 100 });
 ```
 
 | 参数 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| `namespace` | `string` | 是 | 要查找的服务名称 |
-| `exclude` | `string[]` | 否 | 要排除的地址列表（熔断器使用） |
+| `namespace` | `string` | 是 | 目标服务名称 |
+| `exclude` | `string[]` | 否 | 排除的地址列表（熔断器使用） |
 
-**发现流程**：
+**发现流程**（完整状态机）：
 
-1. 检查本地缓存（namespace → Client），有则直接返回
-2. 首次发现时，通过 Registry 的 `/-/find` 查询可用实例
-3. 连接目标实例并缓存结果
-4. 注册 disconnect 监听，连接断开时自动清理缓存
+```
+IDLE ──首次 get()──→ PENDING ──Registry /-/find──→
+  ↑                                                    │
+  │                    成功                            │
+  │                    ↓                               │
+  │                  READY（缓存到 namespaces map）      │
+  │                    │                               │
+  └──client disconnect──                               │
+                              Registry 不可用          │
+                              ↓                        │
+                              缓存降级：若之前有缓存的 Client 且仍在连接，返回缓存
+                              若无缓存 → 抛出错误
+```
 
-**缓存降级**：如果 Registry 不可用但本地缓存中有一个仍在线的连接，自动降级使用缓存，不抛出错误。
+**缓存降级**：若 Registry 宕机但内存中仍有先前已连接的 Client，`get()` 自动返回该 Client，不报错。这确保即使 Registry 短时不可用，已经连上的 peer 仍可通信。
+
+**合并请求**：当多个 `get()` 同时请求同一个 namespace 时，只发一次 Registry 查询，所有调用者共享结果。
+
+**何时用**：当你需要拿到 Client 对象做多次调用（如 `request()` + `push()` + `stream()` 混合使用），或者需要手动控制 abort 时。
+
+**何时不用**：大多数场景直接用 `call()` 或 `stream()` 更方便，它们内部调用了 `get()`。
+
+---
 
 #### call<T>(namespace, url, data, options?)
 
-一站式远程调用。封装了服务发现、请求、熔断、重试的完整流程。
+一站式远程调用。**最常用的 consumer 方法**。封装了：服务发现 → 请求 → 熔断排除 → 失败重试。
 
 ```typescript
-// 基本用法
+// 最简用法
 const result = await app.call('payments', '/charge', { amount: 100 });
 
 // 自定义超时和重试
 const result = await app.call('payments', '/charge', { amount: 100 }, {
-  timeout: 5000,   // 超时 5 秒
-  retries: 3,       // 失败后重试 3 次
+  timeout: 5000,       // 5 秒超时
+  retries: 3,          // 失败后重试 3 次
 });
 
 // 使用 AbortController 取消
-const controller = new AbortController();
-setTimeout(() => controller.abort(), 2000);
+const ac = new AbortController();
+setTimeout(() => ac.abort(), 2000);
 const result = await app.call('payments', '/charge', { amount: 100 }, {
-  signal: controller.signal,
+  signal: ac.signal,
 });
 ```
 
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|--------|------|------|---------|------|
-| `namespace` | `string` | 是 | - | 目标服务名称 |
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|--------|------|------|------|------|
+| `namespace` | `string` | 是 | - | 目标服务名 |
 | `url` | `string` | 是 | - | 请求路径 |
 | `data` | `any` | 是 | - | 请求数据 |
-| `options.timeout` | `number` | 否 | `requestTimeoutMs` (默认30000) | 单次请求超时 |
+| `options.timeout` | `number` | 否 | `requestTimeoutMs`（默认 30000） | 单次请求超时 |
 | `options.retries` | `number` | 否 | `1` | 失败重试次数 |
 | `options.signal` | `AbortSignal` | 否 | - | 取消信号 |
 
-**熔断逻辑**：
+**完整执行流程**：
 
-```mermaid
-flowchart TB
-    A["call() 被调用"]
-    A --> B["获取活跃排除列表（30 秒冷却中）"]
-    B --> C["app.get(namespace, exclude)"]
-    C --> D["调用 client.request()"]
-    D -- "成功" --> E["recordSuccess()<br/>从熔断名单移除"]
-    D -- "失败" --> F["recordFailure()<br/>加入熔断名单，30 秒冷却"]
-    F --> G{"retries > 0?"}
-    G -- "是" --> H["递归重试（--retries）"]
-    H --> C
-    G -- "否" --> I["抛出错误"]
-    C -.->|"所有实例都被排除"| J["重置熔断器，重试"]
+```
+call(namespace, url, data)
+  │
+  ├─→ getActiveExcludes(namespace)     // 获取仍在冷却期的 peer 列表
+  ├─→ get(namespace, exclude)          // 向 Registry 查找（排除已熔断的）
+  │     └─→ 异常 → 重置断路器 → get(namespace) 重试
+  │
+  ├─→ client.request(url, data, {timeout, signal})
+  │     ├─ 成功 → recordSuccess → 从熔断名单中移除该 peer → return
+  │     └─ 失败 → recordFailure → 加入熔断名单（30s 冷却）
+  │               └─→ retries > 0 → 递归 call(retries-1)
+  │               └─→ retries = 0 → 抛出错误
 ```
 
-<Note>
-熔断冷却时间被硬编码为 **30 秒** (`CB_COOLDOWN_MS = 30000`)。这意味着一个实例被标记为故障后，30 秒内不会被再次选中。
-</Note>
+**何时用**：绝大多数请求/响应场景。如查询用户信息、创建订单、验证支付等。
+
+**何时不用**：需要流式返回时用 `stream()`；需要复用同一个 Client 多次调用时先用 `get()`。
+
+**retries = 0 时不会重试**，失败直接抛出。适合幂等敏感的写操作。
+
+---
 
 #### stream(namespace, url, data, options?)
 
-流式远程调用，返回 `Readable` 流。
+流式远程调用。与 `call()` 共享相同的发现/熔断/重试机制，但返回 `Readable` stream 而不是单次 Promise。
 
 ```typescript
-const stream = await app.stream('data-svc', '/stream-logs', {
-  startDate: '2024-01-01',
-});
-for await (const log of stream) {
-  console.log('日志:', log);
+const readable = await app.stream('data-svc', '/stream-logs', { startDate: '2024-01-01' });
+for await (const chunk of readable) {
+  console.log('收到 chunk:', chunk);
 }
 ```
 
-| 参数 | 类型 | 必填 | 默认值 | 说明 |
-|--------|------|------|---------|------|
-| `namespace` | `string` | 是 | - | 目标服务名称 |
+| 参数 | 类型 | 必填 | 默认 | 说明 |
+|--------|------|------|------|------|
+| `namespace` | `string` | 是 | - | 目标服务名 |
 | `url` | `string` | 是 | - | 请求路径 |
 | `data` | `any` | 是 | - | 请求数据 |
 | `options.signal` | `AbortSignal` | 否 | - | 取消信号 |
 | `options.retries` | `number` | 否 | `1` | 失败重试次数 |
 
-支持熔断和重试（与 `call()` 相同）。
+**Provider 侧要求**：handler 必须返回 async generator（`async function*`）。两种注册方式均可：
+
+```typescript
+// 方式一：register() 注册
+app.register('/events', async function* () {
+  for (let i = 0; i < 100; i++) {
+    yield { seq: i, time: Date.now() };
+    await new Promise(r => setTimeout(r, 100));
+  }
+});
+
+// 方式二：.msg 文件定义（推荐）
+// src/messages/events.msg.ts
+import { defineMessage } from '@hile/message-loader';
+export default defineMessage(async function* ({ data }) {
+  for (const item of await fetchItems(data.query)) {
+    yield item;
+  }
+});
+```
+
+**Consumer 侧**：`stream()` 返回 Node.js `Readable`（`objectMode: true`），可用 `for await` 逐 chunk 消费或 pipe 到其他流。
+
+```typescript
+const readable = await app.stream('data-svc', '/events', { query: 'recent' });
+try {
+  for await (const chunk of readable) {
+    console.log(chunk);
+  }
+} catch (err) {
+  console.error('Stream error:', err);
+}
+```
+
+**SSE（Server-Sent Events）集成**：将 `stream()` 的结果 pipe 到 HTTP SSE 响应，浏览器端用 `EventSource` 实时消费：
+
+```typescript
+// Koa 中间件示例（配合 @hile/http）
+http.get('/api/events', async (ctx) => {
+  ctx.respond = false;
+  ctx.res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+  });
+
+  const readable = await app.stream('data-svc', '/events', {});
+  try {
+    for await (const chunk of readable) {
+      ctx.res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+    }
+    ctx.res.write('data: [DONE]\n\n');
+  } catch (err: any) {
+    ctx.res.write(`event: error\ndata: ${JSON.stringify({ message: err.message })}\n\n`);
+  } finally {
+    ctx.res.end();
+  }
+});
+```
+
+浏览器端：
+```javascript
+const es = new EventSource('/api/events');
+es.onmessage = (e) => { console.log(JSON.parse(e.data)); };
+```
+
+**完整协议链路**：
+
+```
+Consumer                     Provider
+  │                           │
+  │ stream()                  │
+  │ ──REQUEST(stream=true)──→ │ exec() → MessageLoader.dispatch()
+  │                           │ handler 返回 async generator
+  │ ←──RESPONSE(seq:0)─────── │ for await (chunk of gen)
+  │ ←──RESPONSE(seq:1)─────── │
+  │ ←──RESPONSE(seq:2)─────── │
+  │        ...                │
+  │ ←──RESPONSE(final=true)── │ 迭代结束
+  │                           │
+  │ abort()                   │
+  │ ──ABORT──────────────────→ │ generator.return()
+```
+
+**何时用**：大数据集分页、实时事件流、LLM token 输出、文件传输进度、日志流推送。
+
+**何时不用**：单次请求/响应用 `call()`；偶发性的一次性数据也无需 streaming，`call()` 足够。
+
+**常见错误**：
+- handler 返回普通值而非 async generator → 报错 `"Invalid async iterable"`
+- 处理 async generator 的执行函数是同步的 → `isAsyncIterable` 检查会失败
+- 不需要流式传输时用 `stream()` 取单次返回值 → 浪费资源，应用 `call()`
+
+---
 
 #### publish<T>(topic, data)
 
-发布一个 topic，返回包含 `update` 和 `unpublish` 方法的引用。
+发布一个 topic，返回 `{ update, unpublish }` 引用对象。
 
 ```typescript
-// 发布 topic
 const ref = await app.publish('config/feature-flag', { enabled: true });
-
-// 更新数据（所有订阅者会立即收到新值）
-await ref.update({ enabled: false });
-
-// 取消发布
-await ref.unpublish();
+await ref.update({ enabled: false });  // 所有订阅者立即收到推送
+await ref.unpublish();                  // 取消发布
 ```
 
 | 参数 | 类型 | 必填 | 说明 |
@@ -772,101 +731,212 @@ await ref.unpublish();
 | `topic` | `string` | 是 | topic 名称 |
 | `data` | `T` | 是 | 初始数据 |
 
-**返回值**：
+**内部流程**：向 Registry 发送 `/-/declare` → Registry 存储 topic 和 publisher → 订阅者连接时自动推送 → `update()` 发送 `/-/topic/update` 实现广播。
 
-```typescript
-{
-  update: (payload: T) => Promise<ref>,   // 更新 topic 数据
-  unpublish: () => Promise<ref>,           // 取消发布
-}
-```
+**何时用**：配置下发、事件广播、状态同步。
+**何时不用**：需要点对点通信时用 `call()` 或 `push()`。
 
-**内部流程**：
-
-1. 向 Registry 发送 `/-/declare` 消息声明 topic
-2. Registry 存储 topic 数据并记录 publisher 地址
-3. 当有订阅者时，Registry 自动推送数据
-4. 调用 `update()` → 发送 `/-/topic/update` → Registry 转发给所有订阅者
-5. 调用 `unpublish()` → 发送 `/-/undeclare` → Registry 清理 topic
+---
 
 #### subscribe<T>(topic, callback, isReconnect?)
 
-订阅一个 topic，当数据发生变化时自动收到通知。
+订阅一个 topic，数据变更时自动收到回调。
 
 ```typescript
-// 订阅 topic
-const unsubscribe = await app.subscribe('config/feature-flag', (data) => {
+const unsubscribe = await app.subscribe<{ enabled: boolean }>('config/feature-flag', (data) => {
   console.log('feature flag 更新:', data);
 });
-
-// 不需要时取消订阅
 await unsubscribe();
 ```
 
 | 参数 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
 | `topic` | `string` | 是 | topic 名称 |
-| `callback` | `(data: T) => any` | 是 | 数据更新时的回调函数 |
-| `isReconnect` | `boolean` | 否 | 是否为重连后的重新订阅（内部使用） |
+| `callback` | `(data: T) => any` | 是 | 数据更新回调 |
+| `isReconnect` | `boolean` | 否 | 内部参数，Registry 重连后重新订阅用 |
 
 **行为**：
-
-1. 向 Registry 发送 `/-/subscribe` 消息
-2. Registry 返回 topic 的当前数据
-3. **立即调用一次 callback**（传入当前数据）
+1. 向 Registry 发送 `/-/subscribe`
+2. Registry 返回当前 topic 数据
+3. **立即调用一次 callback**（传入当前值）
 4. 注册 `topic:{topic}` 事件监听
-5. 后续有人发布更新时，自动收到推送
+5. 后续有 publish/update 时自动触发 callback
 
-**幂等性**：对同一个 topic 重复调用 `subscribe()` 是安全的。第二次调用只返回 unsubscribe 函数，不会注册第二个回调。
+**幂等性**：对同一 topic 重复 `subscribe()` 是安全的，第二次只返回 `unsubscribe` 函数，不重复注册。
 
-**自动重订阅**：当 Registry 连接断开后重连时，Application 会自动重新订阅所有之前订阅过的 topic（`isReconnect = true`）。
+**自动重订阅**：Registry 重连后自动重新订阅所有之前订阅过的 topic（`isReconnect = true`）。
 
-### 内置路由
+**何时用**：监听配置变更、接收业务事件推送。
 
-Application 自动注册以下路由：
+---
 
-#### /-/health
+#### register(url, handler)（继承自 MessageLoader）
 
-健康检查端点：
+编程式注册消息处理器。
+
+```typescript
+const unregister = app.register<{ amount: number }>('/charge', async ({ data }) => {
+  return { charged: true, amount: data.amount };
+});
+// 不需要时：unregister()
+```
+
+handler 入参包含：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `params` | `Record<string, string>` | 动态路由参数 |
+| `data` | `T` | 请求体数据 |
+| `url` | `string` | 当前请求路径 |
+| `client` | `Client`（由 Server dispatch extend 注入） | 发起请求的 Client |
+
+**handler 可以返回**：
+- 普通值 → consumer 用 `call()` 获取 `Promise<T>`
+- async generator → consumer 用 `stream()` 获取 `Readable`
+
+---
+
+#### load(directory)（继承自 MessageLoader）
+
+从目录批量加载 `.msg.{ts,js}` 文件作为路由。**推荐用于定义消息处理器**。
+
+```typescript
+const unload = await app.load(resolve(__dirname, 'messages'));
+// 文件示例：messages/charge.msg.ts
+// import { defineMessage } from '@hile/message-loader'
+// export default defineMessage(async ({ data }) => ({ charged: true }))
+```
+
+文件路径自动映射为路由路径：`hello.msg.ts` → `/hello`，`users/[id].msg.ts` → `/users/:id`，`users/index.msg.ts` → `/users`。
+
+**何时用**：项目中有多个消息处理器，希望用文件组织而非 `register()` 集中注册。
+**何时用 `register()`**：少数几个 handler，或需要动态注册/注销的场景。
+
+---
+
+#### dispatch(url, data, extras?)（继承自 MessageLoader）
+
+同进程内分发消息。通常用于 `/-/health` 等内置端点。
 
 ```typescript
 const health = await app.dispatch('/-/health', {});
-// 返回值：
-// {
-//   status: 'ok',
-//   registry: true,          // Registry 连接是否正常
-//   uptime: 123.45,          // 进程运行时间（秒）
-//   namespaces: ['payments'] // 本地缓存的 namespace
-// }
+// { status: 'ok', registry: true, uptime: 123, namespaces: ['payments'] }
 ```
 
-### 注册中心自动重连
+---
 
-Application 与 Registry 断开连接时的行为：
+### 内置路由
 
-1. Registry 的 `disconnect` 事件触发
-2. 立即尝试重新连接（`reconnectToRegistry()`）
-3. 如果连接失败，3 秒后再次重试（`scheduleRegistryRetry()`）
-4. 重连成功后，自动重新订阅所有 topic
-5. 当 `listen()` 返回的 teardown 被调用后，停止重连
+#### /-/health
 
-```mermaid
-flowchart TB
-    A["Registry 断开"]
-    A --> B["registry = undefined"]
-    B --> C["reconnectToRegistry()"]
-    C -- "成功" --> D["重新订阅 topic"]
-    C -- "失败" --> E["scheduleRegistryRetry()"]
-    E --> F["3 秒后重试"]
-    F --> C
-    A --> G["listen teardown 被调用"]
-    G --> H["停止重连"]
+每个 Application 自动注册的健康检查端点：
+
+```typescript
+const health = await app.dispatch('/-/health', {});
+// { status: 'ok', registry: true, uptime: 123.45, namespaces: [...] }
 ```
 
-### 完整示例
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `status` | `'ok'` | 固定值 |
+| `registry` | `boolean` | 是否已连接 Registry |
+| `uptime` | `number` | 进程启动时长（秒） |
+| `namespaces` | `string[]` | 本地已缓存的 namespace 列表 |
+
+#### /-/topic/update
+
+`publish().update()` 依赖的内部路由，自动注册。将 topic 更新通过 EventEmitter 转发给本进程的订阅回调。
+
+---
+
+### 熔断器详解
+
+熔断器在每次 `call()` 和 `stream()` 调用中自动工作：
+
+```
+1. getActiveExcludes(ns) → 遍历 circuitBreakers map，过滤出仍在 30s 冷却期内的 peer
+2. get(ns, exclude) → 向 Registry 查询时排除这些 peer
+3. 调用成功 → recordSuccess(ns, host, port) → 从熔断名单移除该 peer
+4. 调用失败 → recordFailure(ns, host, port) → 加入熔断名单（值 = Date.now()）
+5. 所有 peer 都被排除 → 重置断路器，重新从所有 peer 中选择
+```
+
+冷却时间：**30 秒** (`CB_COOLDOWN_MS`)，硬编码，不可配置。
+
+---
+
+### 缓存降级详解
+
+当 Registry 不可用时，`get()` 的降级行为：
+
+| 场景 | 行为 |
+|------|------|
+| Registry 可用 + 有缓存 | 验证缓存有效性，无效则重新查询 |
+| Registry 可用 + 无缓存 | 查询并连接 |
+| Registry 不可用 + 缓存有效（Client 仍在连接） | 返回缓存 Client |
+| Registry 不可用 + 缓存无效（Client 已断开） | 抛出错误 |
+| Registry 恢复 | 下次 `get()` 恢复查询 |
+
+---
+
+### Registry 重连详解
+
+Application 与 Registry 断连后的重连机制：
+
+```
+disconnect 事件触发
+  → this.registry = undefined
+  → reconnectToRegistry()
+      ├─ 成功 → this.registry = 新连接 → 重新订阅所有 topic → 注册下一次 disconnect 监听
+      └─ 失败 → scheduleRegistryRetry()
+                └─ 3 秒后再次尝试
+```
+
+- `listen()` teardown 被调用后（`stopped = true`），停止所有重连
+- 重连成功后自动重新订阅所有之前订阅的 topic
+
+---
+
+## 工具函数
+
+### getLocalIPv4()
+
+获取本机用于宣告的 IPv4 地址。使用 `internal-ip` 包的 `internalIpV4Sync()`。
+
+```typescript
+import { getLocalIPv4 } from '@hile/micro';
+const ip = getLocalIPv4();  // 如 '192.168.1.100' 或 undefined
+```
+
+### parseAddressKey(key)
+
+将 `"host:port"` 格式的字符串解析为 `{ host, port }`。解析失败返回 `undefined`。
+
+```typescript
+parseAddressKey('10.0.0.1:9100');    // { host: '10.0.0.1', port: 9100 }
+parseAddressKey('[::1]:9100');       // { host: '[::1]', port: 9100 }
+parseAddressKey('bogus');            // undefined
+```
+
+### selectRandomRegistryAddress(keys)
+
+从一组地址中随机选一个（简单负载均衡）。
+
+```typescript
+const selected = selectRandomRegistryAddress(['10.0.0.1:9100', '10.0.0.2:9100']);
+// 随机返回 { host: '10.0.0.1', port: 9100 } 或 { host: '10.0.0.2', port: 9100 }
+```
+
+---
+
+## 完整场景示例
 
 ```typescript
 import { Application, Registry } from '@hile/micro';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // ====== 启动 Registry ======
 const registry = new Registry({ advertiseHost: '127.0.0.1' });
@@ -878,25 +948,28 @@ const provider = new Application({
   registry: { host: '127.0.0.1', port: 9876 },
   advertiseHost: '127.0.0.1',
 });
-const closeProvider = await provider.listen(9100);
+const closeProvider = await provider.listen(0);
 
-// 注册远程方法
+// 方式一：register() 注册 handler
 provider.register('/charge', async ({ data }) => {
-  console.log('收到支付请求:', data);
-  return { success: true, transactionId: 'txn_001', amount: data.amount };
+  return { transactionId: 'txn_001', amount: data.amount };
 });
 
-provider.register('/stream-data', async function* ({ data }) {
+// 方式二：load() 从目录加载（推荐）
+// 目录下放置 *.msg.ts 文件，export default defineMessage(...)
+await provider.load(resolve(__dirname, 'messages'));
+
+// 流式 handler
+provider.register('/stream-data', async function* () {
   for (let i = 0; i < 10; i++) {
-    yield { chunk: i, total: 10 };
+    yield { chunk: i };
     await new Promise(r => setTimeout(r, 100));
   }
 });
 
-// 发布配置 topic
+// 发布配置
 const configRef = await provider.publish('payments/config', {
-  maxAmount: 10000,
-  currency: 'CNY',
+  maxAmount: 10000, currency: 'CNY'
 });
 
 // ====== 启动 Consumer（订单服务） ======
@@ -905,31 +978,27 @@ const consumer = new Application({
   registry: { host: '127.0.0.1', port: 9876 },
   advertiseHost: '127.0.0.1',
 });
-const closeConsumer = await consumer.listen(9200);
+const closeConsumer = await consumer.listen(0);
 
-// 远程调用（服务发现 + 请求 + 熔断 + 重试）
+// 请求/响应
 const result = await consumer.call('payments', '/charge', { amount: 500 });
-console.log('支付结果:', result);
+console.log(result);  // { transactionId: 'txn_001', amount: 500 }
 
 // 流式调用
 const stream = await consumer.stream('payments', '/stream-data', {});
-for await (const chunk of stream) {
-  console.log('收到流数据:', chunk);
-}
+for await (const chunk of stream) { console.log('stream chunk:', chunk); }
 
-// 订阅配置变更
+// 订阅配置
 const unsubscribe = await consumer.subscribe('payments/config', (config) => {
-  console.log('配置已更新:', config);
+  console.log('配置更新:', config);
 });
 
-// 更新配置（所有订阅者都会收到通知）
+// 更新配置（广播给所有订阅者）
 await configRef.update({ maxAmount: 20000, currency: 'CNY' });
 
-// 一段时间后...
+// 清理
 await unsubscribe();
 await configRef.unpublish();
-
-// 清理
 await closeConsumer();
 await closeProvider();
 await closeRegistry();
@@ -937,387 +1006,57 @@ await closeRegistry();
 
 ---
 
-## 工具函数
-
-### getLocalIPv4()
-
-获取本机用于宣告给其他节点的 IPv4 地址。
-
-```typescript
-import { getLocalIPv4 } from '@hile/micro';
-
-const ip = getLocalIPv4();
-console.log(ip); // 例如: '192.168.1.100'
-```
-
-**返回值**：`string | undefined`
-
-- 使用 `internal-ip` 包的 `internalIpV4Sync()` 获取
-- 多网卡环境下可能不确定返回哪个地址，甚至返回 `undefined`
-
-### parseAddressKey(key)
-
-将 `"host:port"` 格式的字符串解析为地址对象。
-
-```typescript
-import { parseAddressKey } from '@hile/micro';
-
-const addr = parseAddressKey('10.0.0.1:9100');
-// { host: '10.0.0.1', port: 9100 }
-
-const invalid = parseAddressKey('invalid');
-// undefined
-
-// 支持 IPv6
-const v6 = parseAddressKey('[::1]:9100');
-// { host: '[::1]', port: 9100 }
-```
-
-| 参数 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `key` | `string` | 是 | `"host:port"` 格式的字符串 |
-
-**返回值**：`RegistryAddress | undefined` - 解析失败时返回 `undefined`。
-
-**解析规则**：
-- 取最后一个 `:` 后的部分作为端口
-- 端口必须是 1-65535 的整数
-- host 不能为空
-
-### selectRandomRegistryAddress(keys)
-
-从一组地址 key 中随机选择一个可用地址。实现随机负载均衡。
-
-```typescript
-import { selectRandomRegistryAddress } from '@hile/micro';
-
-const keys = new Set(['10.0.0.1:9100', '10.0.0.2:9100', '10.0.0.3:9100']);
-const selected = selectRandomRegistryAddress(keys);
-// 随机返回其中一个，如 { host: '10.0.0.2', port: 9100 }
-```
-
-| 参数 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `keys` | `Iterable<string>` | 是 | `"host:port"` 格式字符串的可迭代集合 |
-
-**返回值**：`RegistryAddress | undefined` - 没有可用地址时返回 `undefined`。
-
-### getRegistryConfigsDir()
-
-获取 Registry 配置文件目录。
-
-```typescript
-import { getRegistryConfigsDir } from '@hile/micro';
-
-const dir = getRegistryConfigsDir();
-// 例如: '/Users/username/.registry/configs'
-```
-
-**返回值**：`string` - 固定为 `~/.registry/configs`。
-
-### namespaceToConfigFile(ns)
-
-将 namespace 转换为对应的配置文件路径。
-
-```typescript
-import { namespaceToConfigFile } from '@hile/micro';
-
-const file = namespaceToConfigFile('my-service');
-// 例如: '/Users/username/.registry/configs/my-service.config.yaml'
-```
-
-| 参数 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `ns` | `string` | 是 | namespace 名称 |
-
-### parseConfigFilename(filename)
-
-从配置文件名中解析出 namespace。
-
-```typescript
-import { parseConfigFilename } from '@hile/micro';
-
-const ns = parseConfigFilename('my-service.config.yaml');
-// 'my-service'
-
-const notConfig = parseConfigFilename('readme.txt');
-// null
-```
-
-| 参数 | 类型 | 必填 | 说明 |
-|--------|------|------|------|
-| `filename` | `string` | 是 | 文件名 |
-
-**返回值**：`string | null`
-
----
-
-## 完整场景示例
-
-以下是一个三服务微服务架构的完整示例：
-
-```typescript
-// ====== registry.ts ======
-import { Registry } from '@hile/micro';
-
-const registry = new Registry({ advertiseHost: '127.0.0.1' });
-const closeRegistry = await registry.listen(9876);
-console.log(`Registry running on port ${registry.port}`);
-
-// ====== payment-service.ts ======
-import { Application } from '@hile/micro';
-
-const paymentApp = new Application({
-  namespace: 'payments',
-  registry: { host: '127.0.0.1', port: 9876 },
-  advertiseHost: '127.0.0.1',
-});
-const closePayment = await paymentApp.listen(9100);
-
-paymentApp.register('/charge', async ({ data }) => {
-  // 模拟支付处理
-  if (data.amount > 10000) {
-    throw new Error('Amount exceeds limit');
-  }
-  return { transactionId: `txn_${Date.now()}`, amount: data.amount };
-});
-
-paymentApp.register('/refund', async ({ data }) => {
-  return { refundId: `ref_${Date.now()}`, amount: data.amount };
-});
-
-// ====== order-service.ts ======
-import { Application } from '@hile/micro';
-
-const orderApp = new Application({
-  namespace: 'orders',
-  registry: { host: '127.0.0.1', port: 9876 },
-  advertiseHost: '127.0.0.1',
-});
-const closeOrder = await orderApp.listen(9200);
-
-orderApp.register('/create', async ({ data }) => {
-  // 调用支付服务
-  const payment = await orderApp.call('payments', '/charge', {
-    amount: data.total,
-  }, { timeout: 5000, retries: 2 });
-
-  return {
-    orderId: `ord_${Date.now()}`,
-    total: data.total,
-    payment,
-  };
-});
-
-// 订阅支付配置
-await orderApp.subscribe('payments/config', (config) => {
-  console.log('支付配置已更新:', config);
-});
-
-// ====== client.ts（外部消费者） ======
-// 在另一个进程中
-const clientApp = new Application({
-  namespace: 'checkout',
-  registry: { host: '127.0.0.1', port: 9876 },
-  advertiseHost: '127.0.0.1',
-});
-const closeClient = await clientApp.listen(9300);
-
-// 创建订单（背后自动发现 order-service 并调用）
-const order = await clientApp.call('orders', '/create', {
-  items: [{ productId: 'p1', price: 500 }],
-  total: 500,
-});
-console.log('订单创建结果:', order);
-// { orderId: 'ord_...', total: 500, payment: { transactionId: 'txn_...', amount: 500 } }
-```
-
----
-
-## 最佳实践
-
-### 1. 选择合适的 advertiseHost
-
-| 场景 | 建议值 |
-|--------|---------|
-| 所有服务在同一台机器 | `'127.0.0.1'` |
-| 服务在不同机器，内网互通 | 内网 IP（如 `'10.0.0.1'`） |
-| 不确定网络环境 | 让框架自动获取 `getLocalIPv4()` |
-
-### 2. 超时配置
-
-```typescript
-const app = new Application({
-  // ...
-  registryLookupTimeoutMs: 5_000,  // 服务发现超时 5 秒
-  requestTimeoutMs: 10_000,        // 远程调用超时 10 秒
-});
-```
-
-- `registryLookupTimeoutMs` 通常可以设短一些（5 秒内），因为 Registry 查询是内存操作
-- `requestTimeoutMs` 根据业务需要调整，慢业务可以设长一些
-
-### 3. 重试策略
-
-```typescript
-// 重要操作，多试几次
-await app.call('payments', '/charge', data, {
-  retries: 3,
-  timeout: 5000,
-});
-
-// 查询类操作，不重试或只重试一次
-await app.call('users', '/get-user', data, {
-  retries: 0,
-  timeout: 2000,
-});
-```
-
-### 4. 优雅关闭
-
-始终调用 `listen()` 返回的 teardown 函数：
-
-```typescript
-const teardown = await app.listen(9100);
-
-// 在进程退出时
-process.on('SIGTERM', async () => {
-  await teardown();
-  process.exit(0);
-});
-```
-
-### 5. Topic 命名规范
-
-```
-# 推荐格式
-{service-name}/{config-category}/{specific-key}
-
-# 示例
-payments/config/max-amount
-orders/config/timeout
-system/feature-flags/new-checkout
-```
-
----
+## 决策指南：何时用什么
+
+| 场景 | 方法 | 原因 |
+|------|------|------|
+| 单次请求/响应 | `app.call()` | 一站式：发现+请求+熔断+重试 |
+| 需要复用同一个 Client | `app.get()` | 返回 Client 可多次 request/push/stream |
+| 大数据流 / 实时事件 | `app.stream()` | 返回 Readable，逐 chunk 消费 |
+| 单向通知（不关心响应） | `client.push()` | 无返回值，不等待 |
+| 定义消息处理器（文件） | `app.load()` | 自动扫描 .msg 文件，推荐 |
+| 动态注册/注销路由 | `app.register()` | 如运行时改变路由表 |
+| 同进程内自调用 | `app.dispatch()` | 如调用 /-/health |
+| 广播配置 / 事件 | `app.publish()` + `app.subscribe()` | Registry 中转的 pub/sub |
 
 ## 常见错误排查
 
 ### "Unable to resolve advertise host"
 
-**错误信息**：
-```
-Error: Unable to resolve advertise host for @hile/micro Server: pass `advertiseHost`
-```
-
-**原因**：`getLocalIPv4()` 返回了 `undefined`（可能没有可用 IPv4 地址），且没有显式传入 `advertiseHost`。
-
-**解决**：
-```typescript
-// 明确指定地址
-const server = new Server('my-service', {
-  advertiseHost: '127.0.0.1',
-});
-```
+`getLocalIPv4()` 返回了 `undefined`。解决：显式传入 `advertiseHost: '127.0.0.1'`。
 
 ### "You can not connect to a server without a local port"
 
-**错误信息**：
-```
-Error: You can not connect to a server without a local port, please use `.setPort(port)` for local port.
-```
-
-**原因**：调用 `connect()` 之前没有调用 `setPort()` 设置本地端口。
-
-**解决**：
-```typescript
-server.setPort(9100);
-await server.connect('10.0.0.2', 9000);
-```
+调用 `connect()` 或 `listen(0)` 前未调用 `setPort()`。解决：使用 `Application` 而非裸 `Server`，或先 `listen(port > 0)`。
 
 ### "Client is not online"
 
-**错误信息**：
-```
-Error: Client is not online
-```
-
-**原因**：Client 已断开（收到 disconnect 事件），但代码仍然尝试发送请求。
-
-**解决**：
-```typescript
-// 监听 disconnect 事件，及时清理引用
-client.events.on('disconnect', () => {
-  console.log('连接已断开，不再使用此 client');
-  // 通知 Application 重新发现
-});
-```
-
-### "Connection timeout"
-
-**错误信息**：
-```
-Error: Connection timeout
-```
-
-**原因**：`connect()` 在超时时间（默认 5 秒）内未能建立 WebSocket 连接。
-
-**解决**：
-```typescript
-// 增加超时时间
-await server.connect('10.0.0.2', 9000, 10000);
-// 或检查网络连通性
-```
-
-### "Registry not found"
-
-**错误信息**：
-```
-Error: Registry not found
-```
-
-**原因**：Application 尚未成功连接到 Registry 就尝试调用 `call()`、`publish()` 或 `subscribe()`。
-
-**解决**：
-```typescript
-// 确保 listen() 已成功完成
-const teardown = await app.listen(9100);
-// 只有 listen 成功后，才能使用 call/publish/subscribe
-
-// 检查 Registry 是否在运行且地址正确
-```
+Client 已断开，但仍尝试发送请求。解决：监听 disconnect 事件及时清理引用，或重新调用 `app.get()`。
 
 ### "Namespace not found"
 
-**错误信息**：
-```
-Error: Namespace not found
-```
+目标服务未启动或未连接到 Registry。检查 namespace 拼写和目标服务状态。
 
-**原因**：Registry 中找不到指定的 namespace。目标服务可能未启动或未连接到 Registry。
+### "Invalid async iterable"（stream 调用）
 
-**解决**：
-```typescript
-// 1. 确认目标服务已启动并连接到 Registry
-// 2. 检查 namespace 名称是否拼写正确
-// 3. 在 Registry 端检查连接状态
-registry.events.on('connect', (client, extras) => {
-  console.log(`已注册 namespace: ${extras.join('/')}`);
-});
-```
+Provider handler 返回了普通值而非 async generator。解决：handler 改为 `async function*` 并 `yield` 每个 chunk。
+
+### "Registry not found"
+
+1. 确保 `listen()` 已成功完成（`await app.listen(...)`)
+2. 确保 Registry 正在运行且地址正确
+3. 确保网络可达
 
 ---
 
 ## 与 @hile/core 的关系
 
-`@hile/micro` **不依赖** `@hile/core`，可以与任意 Node.js 进程独立使用。但推荐与 `@hile/core` 的 `loadService` 和 `defineService` 配合，使用 `@hile/cli` 启动，以获得完整的服务生命周期管理能力。
-
----
+`@hile/micro` **不依赖** `@hile/core`，可独立使用。推荐配合 `@hile/core` 的 `defineService` + `@hile/cli` 实现完整的服务生命周期管理。
 
 ## 相关包
 
-- `@hile/message-loader` - 路由注册与分发引擎（rou3 router）
-- `@hile/message-ws` - WebSocket 请求/响应传输层
-- `@hile/message-modem` - 请求/响应协议抽象
+- `@hile/message-loader` - 路由注册与分发
+- `@hile/message-ws` - WebSocket 传输层
+- `@hile/message-modem` - 请求/响应/流式协议抽象
+- `@hile/micro-dynamic-configs` - 运行时动态配置
 - `@hile/cli` - Hile 命令行启动器
-- `ws` - 底层 WebSocket 实现

@@ -13,6 +13,7 @@ pnpm add @hile/message-modem
 - **传输无关** — 子类只需实现 `post`（如何发送）和 `exec`（如何处理），即可运行于任何通信通道
 - **双向请求/响应** — `_send` 发送请求并等待对端响应（`twoway: true`）
 - **单向推送** — `_push` 发送消息无需对端响应（`twoway: false`）
+- **流式传输** — `_stream` 发送流式请求，对端返回 async generator 时分块回传，发送方获得 `Readable` stream
 - **请求/响应配对** — 自增 ID + Promise 栈，自动配对请求与响应
 - **超时控制** — 默认 30 秒，可按请求自定义
 - **主动中止** — 发送方可 abort 等待，接收方可取消正在执行的任务
@@ -91,8 +92,9 @@ try {
 |------|--------|------|
 | `post(data)` | `protected abstract` | 子类实现：如何将消息发送到远端 |
 | `exec(data)` | `protected abstract` | 子类实现：如何处理收到的请求，返回 Promise |
-| `_send(data, timeout?)` | `protected` | 发送双向请求（`twoway: true`），返回 `{ abort, response }` |
-| `_push(data, timeout?)` | `protected` | 发送单向推送（`twoway: false`），无返回值，接收方不回复 RESPONSE |
+| `_send(data, opts?)` | `protected` | 发送双向请求（`twoway: true`），返回 `{ abort, response }` |
+| `_push(data, opts?)` | `protected` | 发送单向推送（`twoway: false`），无返回值，接收方不回复 RESPONSE |
+| `_stream(data, opts?)` | `protected` | 发送流式请求，返回 `Readable` stream。对端 `exec()` 须返回 async generator |
 | `receive(msg)` | `public` | 接收消息入口，根据 mode 分发处理 |
 
 ### `_send` 返回值
@@ -126,6 +128,7 @@ interface MessageTransferFormat<T = any> {
   id: number;
   mode: MESSAGE_MODEM_TYPE;
   twoway: boolean;
+  stream?: boolean;      // true → 流式模式
   data?: T;
 }
 
@@ -134,6 +137,14 @@ interface MessageReturnFormat<T = any> {
   status: string | number;
   data: T;
   message: string;
+}
+
+// 流式分块格式（stream=true 时 RESPONSE 携带）
+interface MessageStreamChunk<T = any> {
+  status: string | number;
+  seq: number;           // 块序号，从 0 递增
+  payload: T;            // 块数据
+  final: boolean;        // true → 最后一块
 }
 ```
 
@@ -166,6 +177,30 @@ interface MessageReturnFormat<T = any> {
   │                             │ exec(data)
   │                             │ （不回复 RESPONSE）
 ```
+
+### 流式模式（`_stream`）
+
+```
+发送方                        接收方
+  │                             │
+  │  _stream(data)              │
+  │──── REQUEST (stream) ──────►│
+  │                             │ exec(data) → async generator
+  │                             │
+  │◄─── RESPONSE (seq:0) ───────│ for await (chunk of gen)
+  │◄─── RESPONSE (seq:1) ───────│
+  │◄─── RESPONSE (seq:2) ───────│
+  │  ...                        │
+  │◄─── RESPONSE (final) ───────│ 迭代结束
+  │                             │
+  │  abort()                    │
+  │──── ABORT ─────────────────►│ 取消迭代
+```
+
+对端 `exec()` 返回 `AsyncIterable` 时，`MessageModem` 自动检测并进入分块传输模式。发送方通过 `for await` 消费 `Readable` stream。
+
+**何时用**：大数据集、实时事件流、LLM token 输出、进度上报等需要持续推送的场景。
+**何时不用**：单次请求/响应 —— 用 `_send()` 即可，无需 `_stream()`。
 
 ## 适用场景
 

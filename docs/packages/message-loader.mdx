@@ -159,7 +159,7 @@ type MessageFunction<T = any, E extends Record<string, any> = {}> = (data: {
   params?: Record<string, string>;  // 从路由 URL 中提取的动态参数
   data: T;                           // 调用 dispatch 时传入的数据
   url: string;                       // 请求的完整路径
-} & E) => any;                        // E 来自 dispatch 的 extras 参数
+} & E) => any | AsyncIterable<any>;   // E 来自 dispatch 的 extras 参数
 ```
 
 **参数详解：**
@@ -170,6 +170,11 @@ type MessageFunction<T = any, E extends Record<string, any> = {}> = (data: {
 | `data` | `T` | `dispatch(path, data, extras)` 中的 `data` 参数传入的数据 |
 | `url` | `string` | 完整的请求路径（包含 prefix） |
 | 其他属性 | 来自 `E` | `dispatch` 的 `extras` 参数合并进来的额外字段 |
+
+**返回值类型**：处理器可以返回两种值：
+
+- **普通值**（`any`）→ `dispatch()` 返回 `Promise<T>`，配合 `@hile/micro` 的 `call()` 使用
+- **AsyncIterable**（`async function*` / async generator）→ 配合 `@hile/micro` 的 `stream()` 使用，底层 `MessageModem` 自动切换为分块传输模式，逐 chunk 回传给 consumer
 
 ### MessageRegisterProps——处理器注册信息
 
@@ -615,6 +620,50 @@ try {
 }
 ```
 
+### 流式消息处理器（Stream Handler）
+
+消息处理器不仅可以返回普通值，还可以返回 **async generator** 实现流式响应——每个 `yield` 的值作为一个独立的数据块发送给 consumer。
+
+**定义流式处理器**：
+
+```typescript
+// messages/events.msg.ts
+import { defineMessage } from '@hile/message-loader';
+
+// async function* 返回 AsyncIterable
+export default defineMessage(async function* ({ data }) {
+  for (let i = 0; i < 100; i++) {
+    yield { seq: i, time: Date.now(), msg: `第 ${i + 1} 条消息` };
+    await new Promise(r => setTimeout(r, 100)); // 模拟间隔
+  }
+});
+```
+
+**工作原理**：
+
+```
+Consumer 调用 stream() → REQUEST(stream=true) → Provider 收到消息
+  → MessageLoader.dispatch() 调用 handler
+  → handler 返回 async generator
+  → MessageModem.onStreamRequest 检测到 AsyncIterable
+  → for await (chunk of generator) 逐块发送 RESPONSE(seq, payload, final)
+  → Consumer 的 Readable stream 逐个 yield chunk
+```
+
+**何时用流式处理器**：
+
+| 场景 | 推荐方式 |
+|------|------|
+| 大数据集分页/导出 | 流式——逐 chunk 返回，避免内存溢出 |
+| 实时事件推送（LLM token、日志） | 流式——每个 token/事件作为一个 chunk |
+| 进度上报 | 流式——定期 yield 进度信息 |
+| 单次查询/单值返回 | 普通 handler——`async ({ data }) => ({ result })` |
+
+**约束**：
+- 返回 async generator 的 handler 只能通过 `stream()` 调用，如果用 `call()` 调用会报 `"Async iterable is not supported"` 错误
+- 同理，普通 handler 被 `stream()` 调用时会报 `"Invalid async iterable"` 错误
+- 在 `@hile/micro` 中，consumer 侧用 `app.stream()` 来消费流式 handler，内部自动处理分块传输
+
 ### 搭配 MessageWs 使用
 
 ```typescript
@@ -807,8 +856,10 @@ type MessageFunction<T = any, E extends Record<string, any> = {}> = (data: {
   params?: Record<string, string>;
   data: T;
   url: string;
-} & E) => any;
+} & E) => any | AsyncIterable<any>;
 ```
+
+处理器可返回普通值（→ `Promise`）或 async generator（→ `Readable` stream）。配合 `@hile/micro` 时，consumer 用 `app.stream()` 消费流式 handler。
 
 ### MessageRegisterProps
 
@@ -924,7 +975,37 @@ await manager.load();
 await manager.watch(); // 文件变更时自动重新加载
 ```
 
-### 5. 多目录加载
+### 5. 选择合适的返回类型
+
+根据场景选择普通 handler 还是流式 handler：
+
+```typescript
+// 场景一：查询用户信息 → 普通 async handler
+export default defineMessage(async ({ data }) => {
+  const user = await db.findUser(data.id);
+  return user;
+});
+
+// 场景二：导出大量日志 → 流式 async generator
+export default defineMessage(async function* ({ data }) {
+  const cursor = await db.streamLogs(data.query);
+  for await (const row of cursor) {
+    yield row;
+  }
+});
+
+// 场景三：LLM token 流 → 流式
+export default defineMessage(async function* ({ data }) {
+  const stream = await llm.chat(data.messages);
+  for await (const token of stream) {
+    yield { token };
+  }
+});
+```
+
+**决策原则**：如果结果是一次性的、可以在几秒内计算完成的，用普通 handler；如果结果需要持续推送（大数据、实时事件、AI 输出），用 async generator。
+
+### 6. 多目录加载
 
 ```typescript
 const loader = new MessageLoader({ prefix: '/-' });
@@ -1069,6 +1150,30 @@ unloadCore();  // 只注销 core-messages
     unload1(); // 只移除 dir1 中的路由
     // dir2 中的路由仍然可用
     ```
+  </Accordion>
+
+  <Accordion title="async function* 返回 async generator，如何测试？">
+    可以逐 chunk 消费 async generator：
+
+    ```typescript
+    // 定义一个流式 handler
+    const handler = loader.register('/stream', async function* () {
+      yield { seq: 0 };
+      yield { seq: 1 };
+    });
+
+    const result = await loader.dispatch('/stream', {});
+    // result 是 async generator，不是普通值
+    console.log(typeof result[Symbol.asyncIterator]); // 'function'
+
+    for await (const chunk of result) {
+      console.log(chunk); // { seq: 0 }, { seq: 1 }
+    }
+
+    handler();
+    ```
+
+    在 `@hile/micro` 中使用 `app.stream()` 会自动处理分块传输。
   </Accordion>
 </AccordionGroup>
 

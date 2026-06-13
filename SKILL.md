@@ -625,6 +625,26 @@ loader.register('/custom', async ({ data }) => ({ done: true }))
 
 Route mapping: `users/[id].msg.ts` → `/users/:id`, `users/index.msg.ts` → `/users`
 
+### Streaming from message handlers
+
+A message handler can return an **async generator** for streaming responses. The underlying `MessageModem` detects the async iterable and switches to chunked transfer mode with abort support.
+
+```typescript
+// src/messages/events.msg.ts
+import { defineMessage } from '@hile/message-loader'
+
+export default defineMessage(async function* ({ data }) {
+  for (let i = 0; i < 100; i++) {
+    yield { seq: i, time: Date.now() }
+    await new Promise(r => setTimeout(r, 100))
+  }
+})
+```
+
+**When to use:** large datasets, real-time events, LLM token streams, progress reporting.
+**When NOT to use:** small/single-value responses — use a regular `async` handler returning a value.
+**Consumer side** (`@hile/micro`): `const stream = await app.stream('svc', '/events', {}); for await (const chunk of stream) { ... }`
+
 ### Combining transport + loader
 
 ```typescript
@@ -703,9 +723,12 @@ const result = await app.call('other-svc', '/slow', data, {
   signal: abortSig,
 })
 
-// Streaming RPC
+// Streaming RPC — handler returns async generator, consumer gets Readable stream
+// When to use: large datasets, real-time events, LLM token streams, progress reports
+// NOT for: small/single-value responses (use call() instead)
 const stream = await app.stream('data-svc', '/events', { query: '...' })
-for await (const chunk of stream) { /* ... */ }
+for await (const chunk of stream) { /* chunk arrives as each yield() is sent */ }
+// Provider handler: defineMessage(async function* () { yield ... })
 
 // Pub/Sub (async, requires connected Registry)
 const ref = await app.publish('order.created', { orderId: 1 })
@@ -931,7 +954,17 @@ defineService('db', async (shutdown) => {
 
 // ❌ Not awaiting loadService
 const val = loadService(svc)  // val is Promise, not the actual value
+
+// ❌ Using stream() for single-value responses
+const s = await app.stream('svc', '/get-one', {})  // waste: use call() instead
+// stream() opens a chunked transfer channel; use call() for request/response
+
+// ❌ Returning a plain value from a handler called via stream()
+export default defineMessage(async ({ data }) => {
+  return { ok: true }  // consumer called app.stream() → 'Invalid async iterable' error
+})                      // When called via stream, handler must return async generator
 ```
+
 
 ---
 

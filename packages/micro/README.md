@@ -136,8 +136,8 @@ const app = new Application({
 });
 
 // 单次调用覆盖
-await app.call('svc', '/api', data, 5_000);   // 5s 超时
-await app.call('svc', '/api', data, 1_000, 0); // 1s 超时, 不重试
+await app.call('svc', '/api', data, { timeout: 5_000 });          // 5s 超时, 默认重试 1 次
+await app.call('svc', '/api', data, { timeout: 1_000, retries: 0 }); // 1s 超时, 不重试
 ```
 
 超时触发时，底层 MessageModem 会向对端发送 **ABORT** 消息取消远程执行。
@@ -169,12 +169,51 @@ try {
 `call()` 默认 retries=1，失败后自动换 peer 重试：
 
 ```typescript
-await app.call('svc', '/api', data);        // 默认重试 1 次
-await app.call('svc', '/api', data, 5000, 3); // 超时 5s, 重试 3 次
-await app.call('svc', '/api', data, 5000, 0); // 超时 5s, 不重试
+await app.call('svc', '/api', data);                          // 默认重试 1 次
+await app.call('svc', '/api', data, { timeout: 5000, retries: 3 }); // 超时 5s, 重试 3 次
+await app.call('svc', '/api', data, { timeout: 5000, retries: 0 }); // 超时 5s, 不重试
 ```
 
 重试策略：失败 → `recordFailure`（peer 被排除）→ 递归 `call(retries-1)` → `getActiveExcludes` 排除已失败的 peer → Registry `/‑/find` 返回其他 peer。
+
+### 流式调用 (Stream)
+
+`stream()` 用于**需要持续推送数据**的场景：大数据集、实时事件、LLM token 流、进度上报等。不需要流式传输时优先用 `call()`。
+
+**Provider 侧**：消息处理器必须返回 async generator（`async function*`）。
+
+```typescript
+// 通过 register() 注册
+app.register('/events', async function* () {
+  for (let i = 0; i < 100; i++) {
+    yield { seq: i, time: Date.now() }
+    await new Promise(r => setTimeout(r, 100))
+  }
+})
+
+// 或通过 .msg 文件定义（推荐）
+// src/messages/events.msg.ts
+import { defineMessage } from '@hile/message-loader'
+export default defineMessage(async function* ({ data }) {
+  for (const item of await fetchItems(data.query)) {
+    yield item
+  }
+})
+```
+
+**Consumer 侧**：`app.stream()` 返回 `Readable` stream，可用 `for await` 逐 chunk 消费。
+
+```typescript
+const stream = await app.stream('data-svc', '/events', { query: 'recent' })
+for await (const chunk of stream) {
+  console.log(chunk)  // { seq: 0, time: 1718000000000 }
+}
+```
+
+**注意事项**：
+- 普通 handler（返回非 async iterable）被 `stream()` 调用时会报错 `"Invalid async iterable"`
+- 不需要流式传输时用 `call()`，不要用 `stream()` 取单次返回值
+- `stream()` 享有与 `call()` 相同的熔断、重试、超时机制
 
 ### 健康检查
 
@@ -363,9 +402,24 @@ class Application extends Server {
     namespace: string,
     url: string,
     data: any,
-    timeout?: number,     // 请求超时（ms），默认 requestTimeoutMs
-    retries?: number,     // 失败重试次数，默认 1
+    options?: {
+      timeout?: number,     // 请求超时（ms），默认 requestTimeoutMs
+      retries?: number,     // 失败重试次数，默认 1
+      signal?: AbortSignal, // 手动取消
+    },
   ): Promise<T>;
+
+  // 流式调用：get + stream + 熔断 + 重试
+  // provider handler 必须返回 async generator，consumer 获得 Readable stream
+  stream(
+    namespace: string,
+    url: string,
+    data: any,
+    options?: {
+      signal?: AbortSignal,
+      retries?: number,     // 失败重试次数，默认 1
+    },
+  ): Promise<import('stream').Readable>;
 
   // 注册路由（provider 侧）
   register<T = any>(url: string, handler: (ctx) => Promise<T>): () => void;
@@ -410,6 +464,7 @@ class Server extends MessageLoader {
 class Client extends MessageWs {
   request(url: string, data: any, timeout?: number): { abort(): void; response<T>(): Promise<T> };
   push(url: string, data: any, timeout?: number): void;
+  stream(url: string, data: any, options?: { signal?: AbortSignal }): Readable;
   dispose(): void;
 }
 ```
