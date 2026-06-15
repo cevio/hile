@@ -66,15 +66,15 @@ export class RedisCache {
   private async _read<T extends string, R>(target: DefineCacheResult<T, R>, params: ExtractParams<T>): Promise<R | undefined> {
     const key = this.makeKey(target.key, params);
     const redis = this.redis;
-    const exists = await redis.exists(key);
 
-    if (!exists) return await this._write(target, params);
     if (target.fieldable) {
       const fields = await redis.hgetall(key);
+      if (!fields) return await this._write<T, R>(target, params);
+      if (Object.keys(fields).length === 0) return await this._write<T, R>(target, params);
       return fields as R;
     }
     const text = await redis.get(key);
-    if (!text) return await this._write(target, params);
+    if (!text) return await this._write<T, R>(target, params);
     return JSON.parse(text) as R;
   }
 
