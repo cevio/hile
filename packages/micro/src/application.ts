@@ -93,7 +93,7 @@ export class Application extends Server {
   private static readonly CB_COOLDOWN_MS = 30_000;
   private readonly circuitBreakers = new Map<string, Map<string, number>>();
   private readonly fallbacks = new Set<() => void>();
-  private readonly topics = new Map<string, (data: any) => any>();
+  private readonly topics = new Map<string, Set<(data: any) => any>>();
 
   constructor(props: ApplicationProps) {
     const { namespace, registry, registryLookupTimeoutMs = 10_000, requestTimeoutMs = 30_000, ...microAndLoader } = props;
@@ -178,8 +178,10 @@ export class Application extends Server {
       });
       this.registry = registry;
       // 重新订阅所有 topic
-      for (const [topic, callback] of this.topics) {
-        await this.subscribe(topic, callback, true);
+      for (const [topic, callbacks] of this.topics) {
+        for (const callback of callbacks) {
+          await this.subscribe(topic, callback, true);
+        }
       }
       this.logger.debug('[reconnected] %s:%d', this._registry_address.host, this._registry_address.port);
     })().finally(() => {
@@ -383,23 +385,36 @@ export class Application extends Server {
     return ref;
   }
 
-  /** 对同一 topic 重复 subscribe 是幂等的：第二次调用只返回 unsubscribe 函数，不会注册第二个 callback */
+  /**
+   * 对同一 topic 可多次 subscribe，各自独立回调。
+   * 传入同一个 callback 引用第二次调用时幂等返回 unsubscribe，不重复注册。
+   */
   public async subscribe<T = any>(topic: string, callback: (data: T) => any, isReconnect = false) {
     if (!this.registry) throw new Error('Registry not found');
     const fallback = async () => {
       if (!this.registry) throw new Error('Registry not found');
-      await this.registry.request<number>('/-/unsubscribe', { topic });
       if (this.topics.has(topic)) {
-        const _callback = this.topics.get(topic)!;
-        this.events.off('topic:' + topic, _callback);
-        this.topics.delete(topic);
+        const callbacks = this.topics.get(topic)!;
+        callbacks.delete(callback);
+        this.events.off('topic:' + topic, callback);
+        if (callbacks.size === 0) {
+          this.topics.delete(topic);
+          await this.registry.request<number>('/-/unsubscribe', { topic });
+        }
       }
     }
-    if (this.topics.has(topic) && !isReconnect) return fallback;
+    if (!isReconnect) {
+      // 预分配 Set 必须在 await 之前；空 Set 残留无害，会在 unsubscribe / shutdown 时清理
+      if (!this.topics.has(topic)) {
+        this.topics.set(topic, new Set());
+      }
+      // 同一个 callback 引用已注册，幂等返回 unsubscribe，不重复发起订阅
+      if (this.topics.get(topic)!.has(callback)) return fallback;
+    }
     const payload = await this.registry.request<T>('/-/subscribe', { topic });
     if (!isReconnect) {
+      this.topics.get(topic)!.add(callback);
       this.events.on('topic:' + topic, callback);
-      this.topics.set(topic, callback);
       callback(payload);
     }
     return fallback;
