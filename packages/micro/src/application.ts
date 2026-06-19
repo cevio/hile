@@ -415,7 +415,7 @@ export class Application extends Server {
     if (!isReconnect) {
       this.topics.get(topic)!.add(callback);
       this.events.on('topic:' + topic, callback);
-      callback(payload);
+      await Promise.resolve(callback(payload))
     }
     return fallback;
   }
