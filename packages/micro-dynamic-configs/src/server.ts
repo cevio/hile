@@ -29,6 +29,7 @@ export class MicroDynamicConfigsServer<T extends Application, Z extends ZodObjec
     this.redis = options.redis;
     this.redis_key = options.redis_key;
     this._value = this.schema.parse({});
+    this.setMaxListeners(+Infinity);
   }
 
   get value() {

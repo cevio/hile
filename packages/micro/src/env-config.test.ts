@@ -2,6 +2,7 @@ import { vi, describe, it, expect, beforeAll, afterAll, beforeEach } from 'vites
 import { writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createServer } from 'node:net';
+import { Application } from './application';
 
 const testDir = `/tmp/registry-env-test-${process.pid}-${Date.now()}`;
 
@@ -87,6 +88,63 @@ describe('@hile/micro config file loading', () => {
     const registry = new Registry(testAdvertise);
     const watcher = registry.watchEnvFile();
     expect(watcher).toBeUndefined();
+  });
+
+  it('keeps config topics after unrelated clients disconnect', async () => {
+    writeFileSync(join(configsDir, 'svc-c.config.yaml'), 'value: 42');
+    const registryPort = await getAvailablePort();
+    const appPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const app = new Application({
+      namespace: 'config-consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeApp = await app.listen(appPort);
+
+    try {
+      expect((registry as any).topics.get('registry:svc-c/value')?.data).toBe(42);
+      await disposeApp();
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect((registry as any).topics.get('registry:svc-c/value')?.data).toBe(42);
+    } finally {
+      await disposeRegistry();
+    }
+  });
+
+  it('retains config topic when config appears after a subscription', async () => {
+    const registryPort = await getAvailablePort();
+    const appPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const app = new Application({
+      namespace: 'late-config-consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeApp = await app.listen(appPort);
+
+    try {
+      await app.subscribe('registry:svc-d/value', vi.fn());
+      expect((registry as any).topics.get('registry:svc-d/value')?.retained).toBe(false);
+
+      writeFileSync(join(configsDir, 'svc-d.config.yaml'), 'value: 100');
+      await vi.waitFor(() => {
+        expect((registry as any).topics.get('registry:svc-d/value')?.data).toBe(100);
+      }, { timeout: 3000, interval: 100 });
+      expect((registry as any).topics.get('registry:svc-d/value')?.retained).toBe(true);
+
+      await disposeApp();
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect((registry as any).topics.get('registry:svc-d/value')?.data).toBe(100);
+    } finally {
+      await disposeRegistry();
+    }
   });
 });
 

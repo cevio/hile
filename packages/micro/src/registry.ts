@@ -56,17 +56,63 @@ export function parseConfigFilename(filename: string): string | null {
   return filename.slice(0, -'.config.yaml'.length);
 }
 
+type TopicEntry = {
+  publishers: Set<string>;
+  publisherPayloads: Map<string, {
+    data: any;
+    signature: string;
+    revision: number;
+  }>;
+  subscribers: Set<string>;
+  data: any;
+  hasData: boolean;
+  signature?: string;
+  retained: boolean;
+};
+
+type TopicSnapshot = {
+  hasData: boolean;
+  payload: any;
+};
+
+function createTopicEntry(data?: any, hasData = false, retained = false): TopicEntry {
+  return {
+    publishers: new Set(),
+    publisherPayloads: new Map(),
+    subscribers: new Set(),
+    data,
+    hasData,
+    signature: hasData ? stableSignature(data) : undefined,
+    retained,
+  };
+}
+
+function stableSignature(value: any): string {
+  if (value === undefined) return 'undefined';
+  if (value === null) return 'null';
+  const type = typeof value;
+  if (type === 'string') return `string:${JSON.stringify(value)}`;
+  if (type === 'number') return `number:${String(value)}`;
+  if (type === 'boolean') return `boolean:${String(value)}`;
+  if (type === 'bigint') return `bigint:${String(value)}`;
+  if (Array.isArray(value)) {
+    return `array:[${value.map(stableSignature).join(',')}]`;
+  }
+  if (type === 'object') {
+    const keys = Object.keys(value).sort();
+    return `object:{${keys.map(key => `${JSON.stringify(key)}:${stableSignature(value[key])}`).join(',')}}`;
+  }
+  return `${type}:${String(value)}`;
+}
+
 export class Registry extends Server {
   private readonly namespaces = new Map<string, Set<string>>();
   private readonly workspace: string;
   private readonly configFileSuffix = '.config.yaml';
   private readonly configs = new Map<string, any>();
   private readonly fallbacks = new Set<() => void>();
-  private readonly topics = new Map<string, {
-    publishers: Set<string>;
-    subscribers: Set<string>;
-    data: any;
-  }>();
+  private readonly topics = new Map<string, TopicEntry>();
+  private topicRevision = 0;
 
   constructor(props: MicroServerProps = {}) {
     const workspace = resolve(homedir(), '.registry');
@@ -87,16 +133,19 @@ export class Registry extends Server {
     });
     this.events.on('disconnect', (client: Client, extras: string[]) => {
       const key = client.host + ':' + client.port;
-      // 清理 topic 中的关联（不删除 topic，保留 data 供后续 subscriber 使用）
-      for (const [, { publishers, subscribers }] of this.topics) {
-        if (publishers.has(key)) {
-          publishers.delete(key);
+      // 清理 topic 中的关联
+      for (const [topic, entry] of [...this.topics]) {
+        if (entry.publishers.has(key)) {
+          entry.publishers.delete(key);
+          entry.publisherPayloads.delete(key);
+          this.restoreTopicDataFromRemainingPublishers(topic, entry);
           this.logger.debug('[delete publisher] %s', key);
         }
-        if (subscribers.has(key)) {
-          subscribers.delete(key);
+        if (entry.subscribers.has(key)) {
+          entry.subscribers.delete(key);
           this.logger.debug('[delete subscriber] %s', key);
         }
+        this.cleanupTopicIfUnused(topic, entry);
       }
       // 清理 namespace 中的关联
       const namespace = extras.join('/');
@@ -120,6 +169,63 @@ export class Registry extends Server {
     this.registerReceiveTopicUpdate();
   }
 
+  private cleanupTopicIfUnused(topic: string, entry = this.topics.get(topic)) {
+    if (!entry) return;
+    if (entry.retained) return;
+    if (entry.publishers.size === 0 && entry.subscribers.size === 0) {
+      this.topics.delete(topic);
+      this.logger.debug('[delete topic] %s', topic);
+    }
+  }
+
+  private clearTopicData(entry: TopicEntry) {
+    if (entry.retained) return;
+    entry.data = undefined;
+    entry.hasData = false;
+    entry.signature = undefined;
+  }
+
+  private rememberPublisherPayload(entry: TopicEntry, key: string, payload: any, revision?: number) {
+    const nextRevision = Number.isFinite(revision) && revision! > 0 ? revision! : ++this.topicRevision;
+    this.topicRevision = Math.max(this.topicRevision, nextRevision);
+    entry.publisherPayloads.set(key, {
+      data: payload,
+      signature: stableSignature(payload),
+      revision: nextRevision,
+    });
+    return nextRevision;
+  }
+
+  private setTopicData(entry: TopicEntry, payload: any) {
+    const signature = stableSignature(payload);
+    const changed = !entry.hasData || entry.signature !== signature;
+    entry.data = payload;
+    entry.hasData = true;
+    entry.signature = signature;
+    return changed;
+  }
+
+  private restoreTopicDataFromRemainingPublishers(topic: string, entry: TopicEntry) {
+    if (entry.retained) return;
+    let latest: { data: any; signature: string; revision: number } | undefined;
+    for (const payload of entry.publisherPayloads.values()) {
+      if (!latest || payload.revision > latest.revision) {
+        latest = payload;
+      }
+    }
+    if (!latest) {
+      this.clearTopicData(entry);
+      return;
+    }
+    const changed = !entry.hasData || entry.signature !== latest.signature;
+    entry.data = latest.data;
+    entry.hasData = true;
+    entry.signature = latest.signature;
+    if (changed) {
+      this.notifySubscribers(topic, latest.data, entry);
+    }
+  }
+
   public watchEnvFile() {
     const configFile = resolve(this.workspace, 'configs');
     if (!existsSync(configFile)) return;
@@ -134,7 +240,9 @@ export class Registry extends Server {
         for (const key of keys) {
           const _key = `registry:${namespace}/${key}`;
           if (!this.topics.has(_key)) {
-            this.topics.set(_key, { publishers: new Set(), subscribers: new Set(), data: config[key] });
+            this.topics.set(_key, createTopicEntry(config[key], true, true));
+          } else {
+            this.topics.get(_key)!.retained = true;
           }
         }
       } catch { }
@@ -157,7 +265,9 @@ export class Registry extends Server {
         for (const key of keys) {
           const _key = `registry:${namespace}/${key}`;
           if (!this.topics.has(_key)) {
-            this.topics.set(_key, { publishers: new Set(), subscribers: new Set(), data: config[key] });
+            this.topics.set(_key, createTopicEntry(config[key], true, true));
+          } else {
+            this.topics.get(_key)!.retained = true;
           }
           this.publish(_key, config[key]);
         }
@@ -200,18 +310,17 @@ export class Registry extends Server {
   }
 
   private registerDeclare() {
-    this.fallbacks.add(this.register<{ topic: string, payload: any }, { client: Client }>('/-/declare', async ({ data, client }) => {
+    this.fallbacks.add(this.register<{ topic: string, payload: any, revision?: number }, { client: Client }>('/-/declare', async ({ data, client }) => {
       const key = `${client.host}:${client.port}`;
       if (!this.topics.has(data.topic)) {
-        this.topics.set(data.topic, { publishers: new Set(), subscribers: new Set(), data: data.payload });
+        this.topics.set(data.topic, createTopicEntry());
       }
       const entry = this.topics.get(data.topic)!;
       const publishers = entry.publishers;
-      entry.data = data.payload;
       publishers.add(key);
-      this.publish(data.topic, data.payload);
+      const revision = this.publish(data.topic, data.payload, key, data.revision);
       this.logger.debug('[declare] %s/%s', key, data.topic);
-      return Date.now();
+      return revision;
     }))
   }
 
@@ -221,31 +330,29 @@ export class Registry extends Server {
       if (!this.topics.has(data.topic)) return 0;
       const entry = this.topics.get(data.topic)!;
       const publishers = entry.publishers;
-      const subscribers = entry.subscribers;
       const i = publishers.size;
       if (publishers.has(key)) {
         publishers.delete(key);
+        entry.publisherPayloads.delete(key);
+        this.restoreTopicDataFromRemainingPublishers(data.topic, entry);
         this.logger.debug('[undeclare] %s/%s', key, data.topic);
-        if (publishers.size === 0 && subscribers.size === 0) {
-          this.topics.delete(data.topic);
-          this.logger.debug('[delete topic] %s', data.topic);
-        }
+        this.cleanupTopicIfUnused(data.topic, entry);
       }
       return i - publishers.size;
     }))
   }
 
   private registerSubscribe() {
-    this.fallbacks.add(this.register<{ topic: string }, { client: Client }>('/-/subscribe', async ({ data, client }) => {
+    this.fallbacks.add(this.register<{ topic: string }, { client: Client }>('/-/subscribe', async ({ data, client }): Promise<TopicSnapshot> => {
       const key = `${client.host}:${client.port}`;
       if (!this.topics.has(data.topic)) {
-        this.topics.set(data.topic, { publishers: new Set(), subscribers: new Set(), data: undefined });
+        this.topics.set(data.topic, createTopicEntry());
       }
       const entry = this.topics.get(data.topic)!;
       const subscribers = entry.subscribers;
       subscribers.add(key);
       this.logger.debug('[subscribe] %s/%s', key, data.topic);
-      return entry.data;
+      return { hasData: entry.hasData, payload: entry.data };
     }))
   }
 
@@ -260,6 +367,7 @@ export class Registry extends Server {
         subscribers.delete(key);
       }
       this.logger.debug('[unsubscribe] %s/%s', key, data.topic);
+      this.cleanupTopicIfUnused(data.topic, entry);
       return i - subscribers.size;
     }))
   }
@@ -272,19 +380,29 @@ export class Registry extends Server {
     }))
   }
 
-  private publish(topic: string, payload: any) {
-    if (!this.topics.has(topic)) return;
-    const entry = this.topics.get(topic)!;
-    const subscribers = entry.subscribers;
-    entry.data = payload;
-    for (const key of subscribers.values()) {
+  private notifySubscribers(topic: string, payload: any, entry: TopicEntry) {
+    for (const key of entry.subscribers.values()) {
       try {
         if (this.clients.has(key)) {
           this.clients.get(key)!.push(`/-/topic/update`, { topic, payload });
         }
       } catch {
-        // 推送失败，disconnect 事件中会清理                                                             
+        // 推送失败，disconnect 事件中会清理
       }
     }
+  }
+
+  private publish(topic: string, payload: any, publisherKey?: string, revision?: number) {
+    if (!this.topics.has(topic)) return;
+    const entry = this.topics.get(topic)!;
+    if (publisherKey) {
+      const nextRevision = this.rememberPublisherPayload(entry, publisherKey, payload, revision);
+      this.restoreTopicDataFromRemainingPublishers(topic, entry);
+      return nextRevision;
+    }
+    const changed = this.setTopicData(entry, payload);
+    if (!changed) return;
+    this.notifySubscribers(topic, payload, entry);
+    return ++this.topicRevision;
   }
 }

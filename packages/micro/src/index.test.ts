@@ -37,6 +37,29 @@ async function getAvailablePort(): Promise<number> {
   throw new Error('Unable to allocate test port after 20 attempts');
 }
 
+async function waitForCondition(
+  predicate: () => boolean,
+  message: string,
+  timeout = 1000,
+): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  throw new Error(message);
+}
+
+function createDeferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: any) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 async function startHangingServer() {
   const sockets = new Set<Socket>();
   const server = createServer((socket) => {
@@ -80,6 +103,63 @@ class ServerWithoutAnnounce extends Server {
 
   public attemptConnect(host: string, port: number, timeout: number) {
     return this.connect(host, port, timeout);
+  }
+}
+
+class DelayingDeclareRegistry extends Registry {
+  public readonly declareStarted = createDeferred<void>();
+  public readonly releaseDeclare = createDeferred<void>();
+
+  constructor(private readonly delayedTopic: string) {
+    super(testAdvertise);
+  }
+
+  public override async dispatch(path: string, data: any, extras: Record<string, any> = {}) {
+    if (path === '/-/declare' && data?.topic === this.delayedTopic) {
+      this.declareStarted.resolve();
+      await this.releaseDeclare.promise;
+    }
+    return super.dispatch(path, data, extras);
+  }
+}
+
+class DelayingNthDeclareRegistry extends Registry {
+  public readonly declareStarted = createDeferred<void>();
+  public readonly releaseDeclare = createDeferred<void>();
+  public readonly declarations: Array<{ payload: any; revision?: number }> = [];
+  private declareCount = 0;
+
+  constructor(private readonly delayedTopic: string, private readonly delayOn: number) {
+    super(testAdvertise);
+  }
+
+  public override async dispatch(path: string, data: any, extras: Record<string, any> = {}) {
+    if (path === '/-/declare' && data?.topic === this.delayedTopic) {
+      this.declareCount++;
+      this.declarations.push({ payload: data.payload, revision: data.revision });
+      if (this.declareCount === this.delayOn) {
+        this.declareStarted.resolve();
+        await this.releaseDeclare.promise;
+      }
+    }
+    return super.dispatch(path, data, extras);
+  }
+}
+
+class DelayingSubscribeRegistry extends Registry {
+  public readonly subscribeStarted = createDeferred<void>();
+  public readonly releaseSubscribe = createDeferred<void>();
+
+  constructor(private readonly delayedTopic: string) {
+    super(testAdvertise);
+  }
+
+  public override async dispatch(path: string, data: any, extras: Record<string, any> = {}) {
+    if (path === '/-/subscribe' && data?.topic === this.delayedTopic) {
+      this.subscribeStarted.resolve();
+      await this.releaseSubscribe.promise;
+    }
+    return super.dispatch(path, data, extras);
   }
 }
 
@@ -1208,6 +1288,124 @@ describe('@hile/micro publish/subscribe edge cases', () => {
     }
   });
 
+  it('delivers publish and update payloads to subscribers', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub-delivery',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const subscriber = new Application({
+      namespace: 'sub-delivery',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+
+    try {
+      const received: unknown[] = [];
+      await subscriber.subscribe('delivery-topic', value => received.push(value));
+
+      const ref = await publisher.publish('delivery-topic', { value: 1 });
+      await waitForCondition(() => received.length === 1, 'subscriber did not receive initial publish');
+      expect(received).toEqual([{ value: 1 }]);
+
+      await ref.update({ value: 2 });
+      await waitForCondition(() => received.length === 2, 'subscriber did not receive update');
+      expect(received).toEqual([{ value: 1 }, { value: 2 }]);
+    } finally {
+      await disposeSubscriber();
+      await disposePublisher();
+      await disposeRegistry();
+    }
+  });
+
+  it('does not notify subscribers when payload signature is unchanged', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub-signature',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const subscriber = new Application({
+      namespace: 'sub-signature',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+
+    try {
+      const received: unknown[] = [];
+      await subscriber.subscribe('signature-topic', value => received.push(value));
+
+      const ref = await publisher.publish('signature-topic', { a: 1, b: 2 });
+      await waitForCondition(() => received.length === 1, 'subscriber did not receive initial signed payload');
+
+      await publisher.publish('signature-topic', { b: 2, a: 1 });
+      await ref.update({ b: 2, a: 1 });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(received).toEqual([{ a: 1, b: 2 }]);
+
+      await ref.update({ a: 1, b: 3 });
+      await waitForCondition(() => received.length === 2, 'subscriber did not receive changed signed payload');
+      expect(received).toEqual([{ a: 1, b: 2 }, { a: 1, b: 3 }]);
+    } finally {
+      await disposeSubscriber();
+      await disposePublisher();
+      await disposeRegistry();
+    }
+  });
+
+  it('does not invoke subscriber for empty topics but preserves published undefined', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub-undefined',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const subscriber = new Application({
+      namespace: 'sub-undefined',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+
+    try {
+      const cb = vi.fn();
+      await subscriber.subscribe('undefined-topic', cb);
+      expect(cb).not.toHaveBeenCalled();
+
+      await publisher.publish('undefined-topic', undefined);
+      await waitForCondition(() => cb.mock.calls.length === 1, 'subscriber did not receive published undefined');
+      expect(cb).toHaveBeenCalledWith(undefined);
+    } finally {
+      await disposeSubscriber();
+      await disposePublisher();
+      await disposeRegistry();
+    }
+  });
+
   it('subscribe and then call fallback to unsubscribe', async () => {
     const registryPort = await getAvailablePort();
     const consumerPort = await getAvailablePort();
@@ -1229,6 +1427,980 @@ describe('@hile/micro publish/subscribe edge cases', () => {
       await fallback();
     } finally {
       await disposeConsumer();
+      await disposeRegistry();
+    }
+  });
+
+  it('keeps built-in routes and subscriptions working after listen teardown and re-listen', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const subscriberPort1 = await getAvailablePort();
+    const subscriberPort2 = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub-relisten',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const subscriber = new Application({
+      namespace: 'sub-relisten',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+    const disposeSubscriber1 = await subscriber.listen(subscriberPort1);
+
+    try {
+      const received: unknown[] = [];
+      await subscriber.subscribe('relisten-topic', value => received.push(value));
+      await disposeSubscriber1();
+
+      const disposeSubscriber2 = await subscriber.listen(subscriberPort2);
+      try {
+        await expect(subscriber.dispatch('/-/health', {})).resolves.toMatchObject({ status: 'ok' });
+        const ref = await publisher.publish('relisten-topic', { value: 'after-relisten' });
+        await waitForCondition(() => received.length === 1, 'subscriber did not receive after re-listen');
+        expect(received).toEqual([{ value: 'after-relisten' }]);
+
+        await ref.update({ value: 'updated-after-relisten' });
+        await waitForCondition(() => received.length === 2, 'subscriber did not receive update after re-listen');
+        expect(received).toEqual([
+          { value: 'after-relisten' },
+          { value: 'updated-after-relisten' },
+        ]);
+      } finally {
+        await disposeSubscriber2();
+      }
+    } finally {
+      await disposePublisher();
+      await disposeRegistry();
+    }
+  });
+
+  it('re-declares published topics after reconnecting to the registry', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub-redeclare',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+
+    try {
+      await publisher.publish('redeclare-topic', { value: 'latest' });
+      const publisherKey = `127.0.0.1:${publisherPort}`;
+      expect((registry as any).topics.get('redeclare-topic').publishers.has(publisherKey)).toBe(true);
+
+      const previousRegistryClient = (publisher as any).registry;
+      (publisher as any).registry.dispose();
+      await waitForCondition(
+        () => (publisher as any).registry && (publisher as any).registry !== previousRegistryClient,
+        'publisher did not reconnect to registry',
+      );
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect((registry as any).topics.get('redeclare-topic')?.publishers.has(publisherKey)).toBe(true);
+    } finally {
+      await disposePublisher();
+      await disposeRegistry();
+    }
+  });
+
+  it('restores subscriptions and latest published payload after registry restart', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub-offline-restore',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const subscriber = new Application({
+      namespace: 'sub-offline-restore',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+
+    let disposeRestartedRegistry: (() => Promise<void>) | undefined;
+
+    try {
+      await disposeRegistry();
+      await waitForCondition(
+        () => !(publisher as any).registry && !(subscriber as any).registry,
+        'applications did not observe registry disconnect',
+      );
+
+      const received: unknown[] = [];
+      await subscriber.subscribe('offline-restore-topic', value => received.push(value));
+      const ref = await publisher.publish('offline-restore-topic', { value: 'while-down' });
+      await ref.update({ value: 'latest-while-down' });
+
+      const restartedRegistry = new Registry(testAdvertise);
+      disposeRestartedRegistry = await restartedRegistry.listen(registryPort);
+
+      await waitForCondition(
+        () => received.some(value => (value as any).value === 'latest-while-down'),
+        'subscriber did not receive restored latest payload after registry restart',
+        5000,
+      );
+      expect((restartedRegistry as any).topics.get('offline-restore-topic')?.publishers.has(`127.0.0.1:${publisherPort}`)).toBe(true);
+      expect((restartedRegistry as any).topics.get('offline-restore-topic')?.subscribers.has(`127.0.0.1:${subscriberPort}`)).toBe(true);
+    } finally {
+      await disposeSubscriber();
+      await disposePublisher();
+      if (disposeRestartedRegistry) await disposeRestartedRegistry();
+    }
+  });
+
+  it('does not re-declare a topic that was unpublished while registry was down', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub-offline-unpublish',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+
+    let disposeRestartedRegistry: (() => Promise<void>) | undefined;
+
+    try {
+      const ref = await publisher.publish('offline-unpublish-topic', { value: 'active' });
+      await waitForCondition(
+        () => (registry as any).topics.get('offline-unpublish-topic')?.publishers.has(`127.0.0.1:${publisherPort}`),
+        'publisher did not declare initial topic',
+      );
+
+      await disposeRegistry();
+      await waitForCondition(
+        () => !(publisher as any).registry,
+        'publisher did not observe registry disconnect',
+      );
+
+      await ref.unpublish();
+
+      const restartedRegistry = new Registry(testAdvertise);
+      disposeRestartedRegistry = await restartedRegistry.listen(registryPort);
+      await waitForCondition(
+        () => !!(publisher as any).registry,
+        'publisher did not reconnect to restarted registry',
+        5000,
+      );
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      expect((restartedRegistry as any).topics.has('offline-unpublish-topic')).toBe(false);
+    } finally {
+      await disposePublisher();
+      if (disposeRestartedRegistry) await disposeRestartedRegistry();
+    }
+  });
+
+  it('does not let reconnect declare resurrect a topic unpublished during reconnect', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const topic = 'offline-race-unpublish-topic';
+
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub-offline-race-unpublish',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+
+    let disposeRestartedRegistry: (() => Promise<void>) | undefined;
+
+    try {
+      const ref = await publisher.publish(topic, { value: 'active' });
+      await waitForCondition(
+        () => (registry as any).topics.get(topic)?.publishers.has(`127.0.0.1:${publisherPort}`),
+        'publisher did not declare initial topic',
+      );
+
+      await disposeRegistry();
+      await waitForCondition(
+        () => !(publisher as any).registry,
+        'publisher did not observe registry disconnect',
+      );
+
+      const restartedRegistry = new DelayingDeclareRegistry(topic);
+      disposeRestartedRegistry = await restartedRegistry.listen(registryPort);
+
+      const reconnect = (publisher as any).reconnectToRegistry() as Promise<void>;
+      reconnect.catch(() => undefined);
+      await restartedRegistry.declareStarted.promise;
+
+      const unpublish = ref.unpublish();
+      await waitForCondition(
+        () => !(publisher as any).publishedTopics.has(topic),
+        'publisher did not clear local published topic',
+      );
+      expect((publisher as any).publishedTopics.has(topic)).toBe(false);
+
+      restartedRegistry.releaseDeclare.resolve();
+      await unpublish;
+      await reconnect;
+
+      expect((restartedRegistry as any).topics.has(topic)).toBe(false);
+    } finally {
+      await disposePublisher();
+      if (disposeRestartedRegistry) await disposeRestartedRegistry();
+    }
+  });
+
+  it('does not leave a stale subscriber when unsubscribed during reconnect restore', async () => {
+    const registryPort = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+    const topic = 'offline-race-unsubscribe-topic';
+
+    const registry = new Registry(testAdvertise);
+    const subscriber = new Application({
+      namespace: 'sub-offline-race-unsubscribe',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+
+    let disposeRestartedRegistry: (() => Promise<void>) | undefined;
+
+    try {
+      const fallback = await subscriber.subscribe(topic, vi.fn());
+      await waitForCondition(
+        () => (registry as any).topics.get(topic)?.subscribers.has(`127.0.0.1:${subscriberPort}`),
+        'subscriber did not register initial topic',
+      );
+
+      await disposeRegistry();
+      await waitForCondition(
+        () => !(subscriber as any).registry,
+        'subscriber did not observe registry disconnect',
+      );
+
+      const restartedRegistry = new DelayingSubscribeRegistry(topic);
+      disposeRestartedRegistry = await restartedRegistry.listen(registryPort);
+
+      const reconnect = (subscriber as any).reconnectToRegistry() as Promise<void>;
+      reconnect.catch(() => undefined);
+      await restartedRegistry.subscribeStarted.promise;
+
+      const unsubscribe = fallback();
+      await waitForCondition(
+        () => !(subscriber as any).topics.has(topic),
+        'subscriber did not clear local topic',
+      );
+
+      restartedRegistry.releaseSubscribe.resolve();
+      await unsubscribe;
+      await reconnect;
+
+      expect((restartedRegistry as any).topics.has(topic)).toBe(false);
+    } finally {
+      await disposeSubscriber();
+      if (disposeRestartedRegistry) await disposeRestartedRegistry();
+    }
+  });
+
+  it('uses registry lookup timeout when initial subscribe snapshot hangs', async () => {
+    const registryPort = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+    const topic = 'subscribe-timeout-topic';
+
+    const registry = new DelayingSubscribeRegistry(topic);
+    const subscriber = new Application({
+      namespace: 'sub-timeout',
+      registry: { host: '127.0.0.1', port: registryPort },
+      registryLookupTimeoutMs: 50,
+      ...testAdvertise,
+      logger: {
+        debug: vi.fn(),
+        error: vi.fn(),
+      } as any,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+
+    try {
+      const fallback = await Promise.race([
+        subscriber.subscribe(topic, vi.fn()),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('subscribe did not respect registry lookup timeout')), 250)),
+      ]);
+      expect(typeof fallback).toBe('function');
+    } finally {
+      registry.releaseSubscribe.resolve();
+      await disposeSubscriber();
+      await disposeRegistry();
+    }
+  });
+
+  it('does not treat disabled registry lookup timeout as an immediate publish timeout', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const topic = 'publish-timeout-disabled-topic';
+
+    const registry = new DelayingDeclareRegistry(topic);
+    const publisher = new Application({
+      namespace: 'pub-timeout-disabled',
+      registry: { host: '127.0.0.1', port: registryPort },
+      registryLookupTimeoutMs: 0,
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+
+    try {
+      const publish = publisher.publish(topic, { value: 'waits' });
+      await registry.declareStarted.promise;
+
+      const early = await Promise.race([
+        publish.then(() => 'resolved' as const),
+        new Promise<'pending'>(resolve => setTimeout(() => resolve('pending'), 50)),
+      ]);
+      expect(early).toBe('pending');
+
+      registry.releaseDeclare.resolve();
+      await publish;
+    } finally {
+      registry.releaseDeclare.resolve();
+      await disposePublisher();
+      await disposeRegistry();
+    }
+  });
+
+  it('does not treat disabled registry lookup timeout as an immediate subscribe timeout', async () => {
+    const registryPort = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+    const topic = 'subscribe-timeout-disabled-topic';
+
+    const registry = new DelayingSubscribeRegistry(topic);
+    const subscriber = new Application({
+      namespace: 'sub-timeout-disabled',
+      registry: { host: '127.0.0.1', port: registryPort },
+      registryLookupTimeoutMs: 0,
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+
+    try {
+      const subscribe = subscriber.subscribe(topic, vi.fn());
+      await registry.subscribeStarted.promise;
+
+      const early = await Promise.race([
+        subscribe.then(() => 'resolved' as const),
+        new Promise<'pending'>(resolve => setTimeout(() => resolve('pending'), 50)),
+      ]);
+      expect(early).toBe('pending');
+
+      registry.releaseSubscribe.resolve();
+      await subscribe;
+    } finally {
+      registry.releaseSubscribe.resolve();
+      await disposeSubscriber();
+      await disposeRegistry();
+    }
+  });
+
+  it('rejects non-serializable publish payloads without retaining publish intent', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const topic = 'non-serializable-publish-topic';
+
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub-non-serializable',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+
+    try {
+      await expect(publisher.publish(topic, { value: 1n })).rejects.toThrow();
+      expect((publisher as any).publishedTopics.has(topic)).toBe(false);
+    } finally {
+      await disposePublisher();
+      await disposeRegistry();
+    }
+  });
+
+  it('rejects non-serializable update payloads without replacing the last valid publish intent', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const topic = 'non-serializable-update-topic';
+
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub-update-non-serializable',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+
+    try {
+      const ref = await publisher.publish(topic, { value: 'valid' });
+      await expect(ref.update({ value: 1n } as any)).rejects.toThrow();
+      expect((publisher as any).publishedTopics.get(topic)).toEqual({ value: 'valid' });
+    } finally {
+      await disposePublisher();
+      await disposeRegistry();
+    }
+  });
+
+  it('delivers topic updates to later callbacks when an earlier callback throws', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub-callback-isolation',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const subscriber = new Application({
+      namespace: 'sub-callback-isolation',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+      logger: {
+        debug: vi.fn(),
+        error: vi.fn(),
+      } as any,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+
+    try {
+      const received: unknown[] = [];
+      await subscriber.subscribe('callback-isolation-topic', () => {
+        throw new Error('first callback failed');
+      });
+      await subscriber.subscribe('callback-isolation-topic', value => received.push(value));
+
+      await publisher.publish('callback-isolation-topic', { value: 'delivered' });
+      await waitForCondition(
+        () => received.length === 1,
+        'later subscriber callback did not receive update after earlier callback threw',
+      );
+      expect(received).toEqual([{ value: 'delivered' }]);
+    } finally {
+      await disposeSubscriber();
+      await disposePublisher();
+      await disposeRegistry();
+    }
+  });
+
+  it('does not leave a stale subscriber when duplicate unsubscribe happens during initial subscribe', async () => {
+    const registryPort = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+    const topic = 'initial-subscribe-race-topic';
+
+    const registry = new DelayingSubscribeRegistry(topic);
+    const subscriber = new Application({
+      namespace: 'sub-initial-race',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+
+    try {
+      const callback = vi.fn();
+      const firstSubscribe = subscriber.subscribe(topic, callback);
+      await registry.subscribeStarted.promise;
+
+      const duplicateUnsubscribe = await subscriber.subscribe(topic, callback);
+      const unsubscribe = duplicateUnsubscribe();
+      await waitForCondition(
+        () => !(subscriber as any).topics.has(topic),
+        'subscriber did not clear local topic during initial subscribe race',
+      );
+
+      registry.releaseSubscribe.resolve();
+      await firstSubscribe;
+      await unsubscribe;
+
+      expect((registry as any).topics.has(topic)).toBe(false);
+    } finally {
+      registry.releaseSubscribe.resolve();
+      await disposeSubscriber();
+      await disposeRegistry();
+    }
+  });
+
+  it('does not replay unpublished data to later subscribers while earlier subscribers remain', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+    const lateSubscriberPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub-retired-topic',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const subscriber = new Application({
+      namespace: 'sub-retired-topic',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const lateSubscriber = new Application({
+      namespace: 'late-sub-retired-topic',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+    const disposeLateSubscriber = await lateSubscriber.listen(lateSubscriberPort);
+
+    try {
+      const firstReceived: unknown[] = [];
+      await subscriber.subscribe('retired-topic', value => firstReceived.push(value));
+
+      const ref = await publisher.publish('retired-topic', { value: 'active' });
+      await waitForCondition(() => firstReceived.length === 1, 'first subscriber did not receive active payload');
+
+      await ref.unpublish();
+
+      const lateReceived: unknown[] = [];
+      await lateSubscriber.subscribe('retired-topic', value => lateReceived.push(value));
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      expect(lateReceived).toEqual([]);
+    } finally {
+      await disposeLateSubscriber();
+      await disposeSubscriber();
+      await disposePublisher();
+      await disposeRegistry();
+    }
+  });
+
+  it('replays the remaining publisher payload after the latest publisher unpublishes', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPortA = await getAvailablePort();
+    const publisherPortB = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const publisherA = new Application({
+      namespace: 'pub-topic-a',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const publisherB = new Application({
+      namespace: 'pub-topic-b',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const subscriber = new Application({
+      namespace: 'sub-topic-after-unpublish',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisherA = await publisherA.listen(publisherPortA);
+    const disposePublisherB = await publisherB.listen(publisherPortB);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+
+    try {
+      await publisherB.publish('multi-publisher-topic', { value: 'from-b' });
+      const refA = await publisherA.publish('multi-publisher-topic', { value: 'from-a' });
+      await refA.unpublish();
+
+      const received: unknown[] = [];
+      await subscriber.subscribe('multi-publisher-topic', value => received.push(value));
+
+      expect(received).toEqual([{ value: 'from-b' }]);
+    } finally {
+      await disposeSubscriber();
+      await disposePublisherB();
+      await disposePublisherA();
+      await disposeRegistry();
+    }
+  });
+
+  it('does not reuse an older declare revision for a newer queued update', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const topic = 'queued-update-revision-topic';
+
+    const registry = new DelayingNthDeclareRegistry(topic, 2);
+    const publisher = new Application({
+      namespace: 'pub-queued-update-revision',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+
+    try {
+      const ref = await publisher.publish(topic, { value: 'base' });
+      const firstUpdate = ref.update({ value: 'first' });
+      await registry.declareStarted.promise;
+
+      const secondUpdate = ref.update({ value: 'second' });
+      registry.releaseDeclare.resolve();
+
+      await firstUpdate;
+      await secondUpdate;
+
+      expect(registry.declarations.map(({ payload }) => payload)).toEqual([
+        { value: 'base' },
+        { value: 'first' },
+        { value: 'second' },
+      ]);
+      expect(registry.declarations[2]?.revision).toBeUndefined();
+      expect((publisher as any).publishedTopicRevisions.get(topic)).toBeGreaterThan(
+        (registry.declarations[1]?.revision ?? 0),
+      );
+    } finally {
+      registry.releaseDeclare.resolve();
+      await disposePublisher();
+      await disposeRegistry();
+    }
+  });
+
+  it('restores the latest publisher payload by revision when redeclarations arrive out of order', async () => {
+    const topic = 'revision-restored-topic';
+    const registry = new Registry(testAdvertise);
+
+    await registry.dispatch(
+      '/-/declare',
+      { topic, payload: { value: 'newer' }, revision: 200 },
+      { client: { host: '127.0.0.1', port: 1 } as any },
+    );
+    await registry.dispatch(
+      '/-/declare',
+      { topic, payload: { value: 'older' }, revision: 100 },
+      { client: { host: '127.0.0.1', port: 2 } as any },
+    );
+
+    const snapshot = await registry.dispatch(
+      '/-/subscribe',
+      { topic },
+      { client: { host: '127.0.0.1', port: 3 } as any },
+    );
+
+    expect(snapshot).toEqual({ hasData: true, payload: { value: 'newer' } });
+  });
+
+  it('restores publisher and subscriber roles with correct data after service and registry restarts', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPortA = await getAvailablePort();
+    const publisherPortB = await getAvailablePort();
+    const subscriberPortA = await getAvailablePort();
+    const subscriberPortB = await getAvailablePort();
+    const topic = 'role-restore-topic';
+    const olderPayload = { owner: 'B', revision: 1 };
+    const newerPayload = { owner: 'A', revision: 2 };
+
+    let registry = new Registry(testAdvertise);
+    const publisherA = new Application({
+      namespace: 'role-publisher-a',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const publisherB = new Application({
+      namespace: 'role-publisher-b',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const subscriberA = new Application({
+      namespace: 'role-subscriber-a',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const subscriberB = new Application({
+      namespace: 'role-subscriber-b',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    let disposeRegistry = await registry.listen(registryPort);
+    let disposePublisherA = await publisherA.listen(publisherPortA);
+    let disposePublisherB = await publisherB.listen(publisherPortB);
+    let disposeSubscriberA = await subscriberA.listen(subscriberPortA);
+    const disposeSubscriberB = await subscriberB.listen(subscriberPortB);
+
+    try {
+      const receivedA: unknown[] = [];
+      const receivedB: unknown[] = [];
+      await subscriberA.subscribe(topic, value => receivedA.push(value));
+      await subscriberB.subscribe(topic, value => receivedB.push(value));
+
+      await publisherB.publish(topic, olderPayload);
+      await waitForCondition(
+        () => receivedA.some(value => (value as any).owner === 'B') && receivedB.some(value => (value as any).owner === 'B'),
+        'subscribers did not receive older publisher payload',
+      );
+      await publisherA.publish(topic, newerPayload);
+      await waitForCondition(
+        () => receivedA.some(value => (value as any).owner === 'A') && receivedB.some(value => (value as any).owner === 'A'),
+        'subscribers did not receive newer publisher payload',
+      );
+
+      await disposeSubscriberA();
+      disposeSubscriberA = await subscriberA.listen(subscriberPortA);
+      await waitForCondition(
+        () => receivedA.filter(value => (value as any).owner === 'A').length >= 2,
+        'subscriber did not restore subscription after restart',
+        3000,
+      );
+
+      await disposePublisherB();
+      disposePublisherB = await publisherB.listen(publisherPortB);
+      await waitForCondition(
+        () => (registry as any).topics.get(topic)?.data?.owner === 'A',
+        'older publisher restart replaced newer payload',
+        3000,
+      );
+
+      await disposePublisherA();
+      await waitForCondition(
+        () => (registry as any).topics.get(topic)?.data?.owner === 'B',
+        'registry did not fall back to remaining publisher payload',
+        3000,
+      );
+      disposePublisherA = await publisherA.listen(publisherPortA);
+      await waitForCondition(
+        () => (registry as any).topics.get(topic)?.data?.owner === 'A',
+        'newer publisher did not restore payload after restart',
+        3000,
+      );
+
+      await disposeRegistry();
+      await waitForCondition(
+        () => !(publisherA as any).registry && !(publisherB as any).registry && !(subscriberA as any).registry && !(subscriberB as any).registry,
+        'applications did not observe registry restart',
+        3000,
+      );
+      registry = new Registry(testAdvertise);
+      disposeRegistry = await registry.listen(registryPort);
+
+      await waitForCondition(() => {
+        const entry = (registry as any).topics.get(topic);
+        return entry?.data?.owner === 'A' &&
+          entry.publishers.has(`127.0.0.1:${publisherPortA}`) &&
+          entry.publishers.has(`127.0.0.1:${publisherPortB}`) &&
+          entry.subscribers.has(`127.0.0.1:${subscriberPortA}`) &&
+          entry.subscribers.has(`127.0.0.1:${subscriberPortB}`);
+      }, 'roles and latest payload did not restore after registry restart', 6000);
+    } finally {
+      await disposeSubscriberB();
+      await disposeSubscriberA();
+      await disposePublisherB();
+      await disposePublisherA();
+      await disposeRegistry();
+    }
+  });
+
+  it('replays latest topic data when subscriptions are restored on reconnect', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub-replay',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const subscriber = new Application({
+      namespace: 'sub-replay',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+
+    try {
+      const received: unknown[] = [];
+      const callback = (value: unknown) => received.push(value);
+      await publisher.publish('replay-topic', { value: 'initial' });
+      await subscriber.subscribe('replay-topic', callback);
+      expect(received).toEqual([{ value: 'initial' }]);
+
+      const entry = (registry as any).topics.get('replay-topic');
+      entry.data = { value: 'latest' };
+      entry.hasData = true;
+      received.length = 0;
+      await (subscriber as any).subscribe('replay-topic', callback, true);
+      expect(received).toEqual([{ value: 'latest' }]);
+    } finally {
+      await disposeSubscriber();
+      await disposePublisher();
+      await disposeRegistry();
+    }
+  });
+
+  it('keeps restored subscriptions when replay callback throws during reconnect', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub-replay-error',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const subscriber = new Application({
+      namespace: 'sub-replay-error',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+      logger: {
+        debug: vi.fn(),
+        error: vi.fn(),
+      } as any,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+
+    try {
+      await publisher.publish('replay-error-topic', { value: 'current' });
+      const callback = vi.fn(() => {
+        throw new Error('replay failed');
+      });
+
+      await expect((subscriber as any).subscribe('replay-error-topic', callback, true)).resolves.toBeTypeOf('function');
+      expect(callback).toHaveBeenCalledWith({ value: 'current' });
+      expect((registry as any).topics.get('replay-error-topic')?.subscribers.has(`127.0.0.1:${subscriberPort}`)).toBe(true);
+    } finally {
+      await disposeSubscriber();
+      await disposePublisher();
+      await disposeRegistry();
+    }
+  });
+
+  it('cleans up topic when the last subscriber unsubscribes and there are no publishers', async () => {
+    const registryPort = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const subscriber = new Application({
+      namespace: 'sub-cleanup',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+
+    try {
+      const fallback = await subscriber.subscribe('cleanup-topic', vi.fn());
+      expect((registry as any).topics.has('cleanup-topic')).toBe(true);
+
+      await fallback();
+      expect((registry as any).topics.has('cleanup-topic')).toBe(false);
+    } finally {
+      await disposeSubscriber();
+      await disposeRegistry();
+    }
+  });
+
+  it('registers one listener when the same callback subscribes concurrently', async () => {
+    const registryPort = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const subscriber = new Application({
+      namespace: 'sub-race',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+
+    try {
+      const cb = vi.fn();
+      await Promise.all([
+        subscriber.subscribe('race-topic', cb),
+        subscriber.subscribe('race-topic', cb),
+      ]);
+
+      expect(subscriber.events.listenerCount('topic:race-topic')).toBe(1);
+    } finally {
+      await disposeSubscriber();
+      await disposeRegistry();
+    }
+  });
+
+  it('rolls back registry subscription when initial replay callback throws', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub-callback-error',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const subscriber = new Application({
+      namespace: 'sub-callback-error',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+
+    try {
+      await publisher.publish('callback-error-topic', { value: 1 });
+      await expect(
+        subscriber.subscribe('callback-error-topic', () => {
+          throw new Error('callback failed');
+        }),
+      ).rejects.toThrow('callback failed');
+
+      const subscriberKey = `127.0.0.1:${subscriberPort}`;
+      expect(subscriber.events.listenerCount('topic:callback-error-topic')).toBe(0);
+      expect(
+        (registry as any).topics.get('callback-error-topic')?.subscribers.has(subscriberKey),
+      ).toBe(false);
+    } finally {
+      await disposeSubscriber();
+      await disposePublisher();
       await disposeRegistry();
     }
   });
@@ -1352,8 +2524,8 @@ describe('@hile/micro registry utility functions', () => {
   });
 });
 
-describe('@hile/micro registry topic persistence', () => {
-  it('preserves topic data after all publishers and subscribers disconnect', async () => {
+describe('@hile/micro registry topic cleanup', () => {
+  it('removes topic data after all publishers and subscribers disconnect', async () => {
     const registryPort = await getAvailablePort();
     const publisherPort = await getAvailablePort();
     const subscriberPort = await getAvailablePort();
@@ -1390,10 +2562,8 @@ describe('@hile/micro registry topic persistence', () => {
       // Allow disconnect events to propagate
       await new Promise(r => setTimeout(r, 100));
 
-      // Topic should still exist with its data
-      const topic = (registry as any).topics.get('persist:topic');
-      expect(topic).toBeDefined();
-      expect(topic.data).toEqual({ key: 'should-survive' });
+      // Topic should be removed once nobody publishes or subscribes to it.
+      expect((registry as any).topics.has('persist:topic')).toBe(false);
     } finally {
       await disposeRegistry();
     }

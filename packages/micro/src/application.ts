@@ -37,6 +37,10 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
+function assertPubSubPayloadSerializable(topic: string, payload: any): void {
+  JSON.stringify({ topic, payload });
+}
+
 type UnionToIntersection<U> =
   (U extends any ? (x: U) => void : never) extends (x: infer I) => void ? I : never;
 
@@ -74,6 +78,11 @@ export type ApplicationProps = {
   requestTimeoutMs?: number;
 } & MicroServerProps;
 
+type TopicSnapshot<T = any> = {
+  hasData: boolean;
+  payload: T;
+};
+
 export class Application extends Server {
   private registry?: Client;
   private reconnectTimeout?: NodeJS.Timeout;
@@ -92,8 +101,13 @@ export class Application extends Server {
   }>();
   private static readonly CB_COOLDOWN_MS = 30_000;
   private readonly circuitBreakers = new Map<string, Map<string, number>>();
-  private readonly fallbacks = new Set<() => void>();
   private readonly topics = new Map<string, Set<(data: any) => any>>();
+  private readonly publishedTopics = new Map<string, any>();
+  private readonly publishedTopicRevisions = new Map<string, number>();
+  private readonly publishedTopicDirty = new Set<string>();
+  private readonly publishedTopicVersions = new Map<string, number>();
+  private readonly topicSyncs = new Map<string, Promise<void>>();
+  private publishIntentVersion = 0;
 
   constructor(props: ApplicationProps) {
     const { namespace, registry, registryLookupTimeoutMs = 10_000, requestTimeoutMs = 30_000, ...microAndLoader } = props;
@@ -102,16 +116,28 @@ export class Application extends Server {
     this._registry_address = registry;
     this._registryLookupTimeoutMs = registryLookupTimeoutMs;
     this._requestTimeoutMs = requestTimeoutMs;
-    this.fallbacks.add(this.register('/-/health', async () => ({
+    this.register('/-/health', async () => ({
       status: 'ok' as const,
       registry: !!this.registry,
       uptime: process.uptime(),
       namespaces: [...this.namespaces.keys()],
-    })))
-    this.fallbacks.add(this.register<{ topic: string, payload: any }>('/-/topic/update', async ({ data }) => {
-      this.events.emit('topic:' + data.topic, data.payload);
-      return Date.now();
     }))
+    this.register<{ topic: string, payload: any }>('/-/topic/update', async ({ data }) => {
+      this.dispatchTopicUpdate(data.topic, data.payload);
+      return Date.now();
+    })
+  }
+
+  private dispatchTopicUpdate(topic: string, payload: any) {
+    for (const listener of this.events.listeners('topic:' + topic)) {
+      try {
+        void Promise.resolve((listener as (data: any) => any)(payload)).catch(err => {
+          this.logger.error(err);
+        });
+      } catch (err) {
+        this.logger.error(err);
+      }
+    }
   }
 
   public async listen(port: number = 0) {
@@ -131,10 +157,6 @@ export class Application extends Server {
     // 这里也不清理 declare 和 undeclare 由业务方自己清理
     return async () => {
       this.stopped = true;
-      for (const fallback of this.fallbacks) {
-        fallback();
-      }
-      this.fallbacks.clear();
       if (this.reconnectTimeout) {
         clearTimeout(this.reconnectTimeout);
         this.reconnectTimeout = undefined;
@@ -158,6 +180,170 @@ export class Application extends Server {
     }, 3000);
   }
 
+  private canUsePubSub() {
+    return !!this.port && !this.stopped;
+  }
+
+  private assertCanUsePubSub() {
+    if (!this.canUsePubSub()) {
+      throw new Error('Registry not found');
+    }
+  }
+
+  private ensureRegistryReconnectScheduled() {
+    if (!this.canUsePubSub()) return;
+    void this.reconnectToRegistry().catch(() => {
+      if (this.stopped) return;
+      this.scheduleRegistryRetry();
+    });
+  }
+
+  private handleRegistrySyncFailure(registry: Client, err: any) {
+    if (this.stopped) return;
+    this.logger.error(err);
+    if (this.registry === registry) {
+      this.registry = undefined;
+      registry.dispose();
+    }
+    if (!this.stopped) {
+      this.scheduleRegistryRetry();
+    }
+  }
+
+  private registryRequestOptions() {
+    if (!Number.isFinite(this._registryLookupTimeoutMs) || this._registryLookupTimeoutMs <= 0) {
+      return undefined;
+    }
+    return { timeout: this._registryLookupTimeoutMs };
+  }
+
+  private recordPublishedTopic(topic: string, payload: any) {
+    const version = ++this.publishIntentVersion;
+    this.publishedTopics.set(topic, payload);
+    this.publishedTopicDirty.add(topic);
+    this.publishedTopicVersions.set(topic, version);
+    return version;
+  }
+
+  private enqueueTopicSync(
+    topic: string,
+    operation: (registry: Client) => Promise<void>,
+    options: { propagateError?: boolean } = {},
+  ) {
+    const previous = this.topicSyncs.get(topic) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(async () => {
+      if (!this.canUsePubSub()) return;
+      const registry = this.registry;
+      if (!registry) {
+        this.ensureRegistryReconnectScheduled();
+        if (options.propagateError) throw new Error('Registry not found');
+        return;
+      }
+      try {
+        await operation(registry);
+      } catch (err) {
+        this.handleRegistrySyncFailure(registry, err);
+        if (options.propagateError) throw err;
+      }
+    });
+    const tracked = run.finally(() => {
+      if (this.topicSyncs.get(topic) === tracked) {
+        this.topicSyncs.delete(topic);
+      }
+    });
+    this.topicSyncs.set(topic, tracked);
+    return tracked;
+  }
+
+  private syncPublishedTopic(
+    topic: string,
+    options: {
+      propagateError?: boolean;
+      payload?: any;
+      preserveRevision?: boolean;
+      version?: number;
+    } = {},
+  ) {
+    const hasPayload = Object.prototype.hasOwnProperty.call(options, 'payload');
+    return this.enqueueTopicSync(topic, async (registry) => {
+      if (!this.publishedTopics.has(topic)) return;
+      const version = options.version ?? this.publishedTopicVersions.get(topic);
+      const request: { topic: string; payload: any; revision?: number } = {
+        topic,
+        payload: hasPayload ? options.payload : this.publishedTopics.get(topic),
+      };
+      const preserveRevision = options.preserveRevision
+        ?? (!this.publishedTopicDirty.has(topic) && this.publishedTopicRevisions.has(topic));
+      if (preserveRevision && this.publishedTopicRevisions.has(topic)) {
+        request.revision = this.publishedTopicRevisions.get(topic);
+      }
+      const revision = await registry.request<number>('/-/declare', request, this.registryRequestOptions());
+      if (
+        this.publishedTopics.has(topic) &&
+        this.publishedTopicVersions.get(topic) === version &&
+        Number.isFinite(revision)
+      ) {
+        this.publishedTopicRevisions.set(topic, revision);
+        this.publishedTopicDirty.delete(topic);
+      }
+    }, options);
+  }
+
+  private syncUnpublishedTopic(topic: string, options: { propagateError?: boolean } = {}) {
+    return this.enqueueTopicSync(topic, async (registry) => {
+      await registry.request<number>('/-/undeclare', { topic }, this.registryRequestOptions());
+    }, options);
+  }
+
+  private syncUnsubscribedTopic(topic: string, options: { propagateError?: boolean } = {}) {
+    return this.enqueueTopicSync(topic, async (registry) => {
+      await registry.request<number>('/-/unsubscribe', { topic }, this.registryRequestOptions());
+    }, options);
+  }
+
+  private syncRestoredSubscription<T>(
+    topic: string,
+    callback: (data: T) => any,
+    options: { propagateError?: boolean } = {},
+  ) {
+    return this.enqueueTopicSync(topic, async (registry) => {
+      if (!this.topics.get(topic)?.has(callback)) return;
+      await this.restoreSubscription(topic, callback, registry, true);
+    }, options);
+  }
+
+  private async restoreSubscription<T>(
+    topic: string,
+    callback: (data: T) => any,
+    registry: Client,
+    isReconnect: boolean,
+    requireLocal = true,
+  ) {
+    const snapshot = await registry.request<TopicSnapshot<T>>(
+      '/-/subscribe',
+      { topic },
+      this.registryRequestOptions(),
+    );
+    if (requireLocal && !this.topics.get(topic)?.has(callback)) return;
+    if (!snapshot.hasData) return;
+    try {
+      await Promise.resolve(callback(snapshot.payload));
+    } catch (err) {
+      if (!isReconnect) throw err;
+      this.logger.error(err);
+    }
+  }
+
+  private async rollbackLocalSubscription(topic: string, callback: (data: any) => any) {
+    const callbacks = this.topics.get(topic);
+    callbacks?.delete(callback);
+    this.events.off('topic:' + topic, callback);
+    if (callbacks?.size === 0) {
+      this.topics.delete(topic);
+      await this.syncUnsubscribedTopic(topic);
+    }
+  }
+
   private async reconnectToRegistry(): Promise<void> {
     if (this.stopped) return;
     if (this.registryReconnectPromise) return this.registryReconnectPromise;
@@ -177,10 +363,16 @@ export class Application extends Server {
         });
       });
       this.registry = registry;
+      // 重新声明所有仍处于发布状态的 topic
+      for (const topic of [...this.publishedTopics.keys()]) {
+        if (!this.publishedTopics.has(topic)) continue;
+        await this.syncPublishedTopic(topic, { propagateError: true });
+      }
       // 重新订阅所有 topic
-      for (const [topic, callbacks] of this.topics) {
-        for (const callback of callbacks) {
-          await this.subscribe(topic, callback, true);
+      for (const [topic, callbacks] of [...this.topics]) {
+        for (const callback of [...callbacks]) {
+          if (!this.topics.get(topic)?.has(callback)) continue;
+          await this.syncRestoredSubscription(topic, callback, { propagateError: true });
         }
       }
       this.logger.debug('[reconnected] %s:%d', this._registry_address.host, this._registry_address.port);
@@ -368,17 +560,25 @@ export class Application extends Server {
   }
 
   public async publish<T = any>(topic: string, data: T) {
-    if (!this.registry) throw new Error('Registry not found');
-    await this.registry.request<number>('/-/declare', { topic, payload: data });
+    this.assertCanUsePubSub();
+    assertPubSubPayloadSerializable(topic, data);
+    const version = this.recordPublishedTopic(topic, data);
+    await this.syncPublishedTopic(topic, { payload: data, preserveRevision: false, version });
     const ref = {
       update: async (payload: T) => {
-        if (!this.registry) throw new Error('Registry not found');
-        await this.registry.request<number>('/-/topic/update', { topic, payload });
+        this.assertCanUsePubSub();
+        assertPubSubPayloadSerializable(topic, payload);
+        const version = this.recordPublishedTopic(topic, payload);
+        await this.syncPublishedTopic(topic, { payload, preserveRevision: false, version });
         return ref;
       },
       unpublish: async () => {
-        if (!this.registry) throw new Error('Registry not found');
-        await this.registry.request<number>('/-/undeclare', { topic });
+        this.assertCanUsePubSub();
+        this.publishedTopics.delete(topic);
+        this.publishedTopicRevisions.delete(topic);
+        this.publishedTopicDirty.delete(topic);
+        this.publishedTopicVersions.delete(topic);
+        await this.syncUnpublishedTopic(topic);
         return ref;
       }
     }
@@ -390,18 +590,26 @@ export class Application extends Server {
    * 传入同一个 callback 引用第二次调用时幂等返回 unsubscribe，不重复注册。
    */
   public async subscribe<T = any>(topic: string, callback: (data: T) => any, isReconnect = false) {
-    if (!this.registry) throw new Error('Registry not found');
+    this.assertCanUsePubSub();
     const fallback = async () => {
-      if (!this.registry) throw new Error('Registry not found');
       if (this.topics.has(topic)) {
         const callbacks = this.topics.get(topic)!;
         callbacks.delete(callback);
         this.events.off('topic:' + topic, callback);
         if (callbacks.size === 0) {
           this.topics.delete(topic);
-          await this.registry.request<number>('/-/unsubscribe', { topic });
+          await this.syncUnsubscribedTopic(topic);
         }
       }
+    }
+    let localRegistered = false;
+    if (isReconnect) {
+      if (!this.registry) {
+        this.ensureRegistryReconnectScheduled();
+        return fallback;
+      }
+      await this.restoreSubscription(topic, callback, this.registry, true, false);
+      return fallback;
     }
     if (!isReconnect) {
       // 预分配 Set 必须在 await 之前；空 Set 残留无害，会在 unsubscribe / shutdown 时清理
@@ -410,12 +618,33 @@ export class Application extends Server {
       }
       // 同一个 callback 引用已注册，幂等返回 unsubscribe，不重复发起订阅
       if (this.topics.get(topic)!.has(callback)) return fallback;
-    }
-    const payload = await this.registry.request<T>('/-/subscribe', { topic });
-    if (!isReconnect) {
       this.topics.get(topic)!.add(callback);
       this.events.on('topic:' + topic, callback);
-      await Promise.resolve(callback(payload))
+      localRegistered = true;
+    }
+    const registry = this.registry;
+    if (!registry) {
+      this.ensureRegistryReconnectScheduled();
+      return fallback;
+    }
+    let snapshot: TopicSnapshot<T> | undefined;
+    try {
+      snapshot = await registry.request<TopicSnapshot<T>>(
+        '/-/subscribe',
+        { topic },
+        this.registryRequestOptions(),
+      );
+    } catch (err) {
+      this.handleRegistrySyncFailure(registry, err);
+      return fallback;
+    }
+    try {
+      if (this.topics.get(topic)?.has(callback) && snapshot.hasData) {
+        await Promise.resolve(callback(snapshot.payload));
+      }
+    } catch (err) {
+      if (localRegistered) await this.rollbackLocalSubscription(topic, callback);
+      throw err;
     }
     return fallback;
   }
