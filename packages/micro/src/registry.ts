@@ -244,6 +244,7 @@ export class Registry extends Server {
           } else {
             this.topics.get(_key)!.retained = true;
           }
+          this.publish(_key, config[key]);
         }
       } catch { }
     }

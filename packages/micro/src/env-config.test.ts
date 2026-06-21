@@ -146,6 +146,33 @@ describe('@hile/micro config file loading', () => {
       await disposeRegistry();
     }
   });
+
+  it('hydrates an existing empty config topic during initial config load', async () => {
+    const topic = 'registry:svc-e/value';
+    const subscriber = {
+      host: '127.0.0.1',
+      port: 12345,
+      push: vi.fn(),
+    };
+    const registry = new Registry(testAdvertise);
+    (registry as any).clients.set('127.0.0.1:12345', subscriber);
+
+    await registry.dispatch('/-/subscribe', { topic }, { client: subscriber });
+    expect((registry as any).topics.get(topic)?.hasData).toBe(false);
+
+    writeFileSync(join(configsDir, 'svc-e.config.yaml'), 'value: 100');
+    const watcher = registry.watchEnvFile();
+
+    try {
+      const entry = (registry as any).topics.get(topic);
+      expect(entry?.retained).toBe(true);
+      expect(entry?.hasData).toBe(true);
+      expect(entry?.data).toBe(100);
+      expect(subscriber.push).toHaveBeenCalledWith('/-/topic/update', { topic, payload: 100 });
+    } finally {
+      watcher?.close();
+    }
+  });
 });
 
 
