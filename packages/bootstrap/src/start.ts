@@ -65,6 +65,7 @@ export async function start(options: {
   envFile?: string[],
   silent?: boolean,
   autoLoadPackages?: string[],
+  ready?: () => void | Promise<void>,
 }) {
   // 先加载 --env-file（与 Node --env-file 行为一致：先加载的优先，已存在的 key 不被覆盖）
   const envFiles = options.envFile ?? [];
@@ -134,6 +135,11 @@ export async function start(options: {
   if (!files.length) {
     offEvent();
     return;
+  }
+
+  // 如果提供了 ready 回调，则等待其完成
+  if (options.ready) {
+    await Promise.resolve(options.ready());
   }
 
   // 注册退出钩子：先 shutdown 服务，再取消事件监听并关闭 logger stream，最后 exit
