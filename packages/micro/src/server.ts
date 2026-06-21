@@ -28,6 +28,7 @@ export class Server extends MessageLoader {
   public port?: number;
   public readonly logger: Logger | Console;
   public readonly clients = new Map<string, Client>();
+  private readonly clientExtras = new Map<string, string[]>();
   private readonly announceHost: string;
   public readonly events = new EventEmitter();
 
@@ -79,18 +80,23 @@ export class Server extends MessageLoader {
     const key = `${host}:${port}`;
     const previous = this.clients.get(key);
     if (previous) {
+      const previousExtras = this.clientExtras.get(key) ?? [];
       this.clients.delete(key);
+      this.clientExtras.delete(key);
       previous.dispose();
+      this.events.emit('disconnect', previous, previousExtras);
     }
     const client = new Client({ server: this, ws, host, port });
     ws.on('close', () => {
       if (this.clients.get(key) === client) {
         this.clients.delete(key);
+        this.clientExtras.delete(key);
         client.dispose();
         this.events.emit('disconnect', client, extras);
       }
     });
     this.clients.set(key, client);
+    this.clientExtras.set(key, extras);
     this.events.emit('connect', client, extras);
     return client;
   }
@@ -169,11 +175,16 @@ export class Server extends MessageLoader {
           });
         })
       }
-      const toDispose = [...this.clients.values()];
-      for (const client of toDispose) {
+      const toDispose = [...this.clients.entries()];
+      for (const [key, client] of toDispose) {
+        const extras = this.clientExtras.get(key) ?? [];
+        this.clients.delete(key);
+        this.clientExtras.delete(key);
         client.dispose();
+        this.events.emit('disconnect', client, extras);
       }
       this.clients.clear();
+      this.clientExtras.clear();
       this.wss = undefined;
       this.port = undefined;
     }

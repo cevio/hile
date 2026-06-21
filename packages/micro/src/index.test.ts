@@ -1,4 +1,5 @@
 import { createServer, type Socket } from 'node:net';
+import { EventEmitter } from 'node:events';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import WebSocket from 'ws';
 import { selectRandomRegistryAddress, parseAddressKey, parseConfigFilename } from './registry';
@@ -160,6 +161,49 @@ class DelayingSubscribeRegistry extends Registry {
       await this.releaseSubscribe.promise;
     }
     return super.dispatch(path, data, extras);
+  }
+}
+
+class DelayingUnsubscribeRegistry extends Registry {
+  public readonly unsubscribeStarted = createDeferred<void>();
+  public readonly releaseUnsubscribe = createDeferred<void>();
+
+  constructor(private readonly delayedTopic: string) {
+    super(testAdvertise);
+  }
+
+  public override async dispatch(path: string, data: any, extras: Record<string, any> = {}) {
+    if (path === '/-/unsubscribe' && data?.topic === this.delayedTopic) {
+      this.unsubscribeStarted.resolve();
+      await this.releaseUnsubscribe.promise;
+    }
+    return super.dispatch(path, data, extras);
+  }
+}
+
+class ControlledReconnectApplication extends Application {
+  public readonly connectStarted = createDeferred<void>();
+  public readonly releaseConnect = createDeferred<void>();
+  public readonly announcedPorts: number[] = [];
+  private connectCount = 0;
+
+  protected override async connect(host: string, port: number) {
+    this.connectCount++;
+    this.announcedPorts.push(this.port!);
+    if (this.connectCount === 2) {
+      this.connectStarted.resolve();
+      await this.releaseConnect.promise;
+    }
+    return {
+      host,
+      port,
+      events: new EventEmitter(),
+      request: vi.fn(async (url: string) => {
+        if (url === '/-/subscribe') return { hasData: false, payload: undefined };
+        return Date.now();
+      }),
+      dispose: vi.fn(),
+    } as any;
   }
 }
 
@@ -326,6 +370,33 @@ describe('@hile/micro application discovery', () => {
       await dispose2();
       await disposeProvider();
       await disposeRegistry();
+    }
+  });
+
+  it('does not reuse an in-flight registry reconnect from before re-listen', async () => {
+    const registryPort = await getAvailablePort();
+    const appPort1 = await getAvailablePort();
+    const appPort2 = await getAvailablePort();
+    const app = new ControlledReconnectApplication({
+      namespace: 'stale-reconnect',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const dispose1 = await app.listen(appPort1);
+    (app as any).registry.events.emit('disconnect');
+    await app.connectStarted.promise;
+
+    await dispose1();
+    const listen2 = app.listen(appPort2);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    app.releaseConnect.resolve();
+    const dispose2 = await listen2;
+
+    try {
+      expect(app.announcedPorts).toEqual([appPort1, appPort1, appPort2]);
+    } finally {
+      await dispose2();
     }
   });
 
@@ -1565,6 +1636,60 @@ describe('@hile/micro publish/subscribe edge cases', () => {
     }
   });
 
+  it('restores pub/sub roles after the same registry instance is stopped and re-listened', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+    const topic = 'same-registry-relisten-topic';
+
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub-same-registry-relisten',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const subscriber = new Application({
+      namespace: 'sub-same-registry-relisten',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    let disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+
+    try {
+      const received: unknown[] = [];
+      await subscriber.subscribe(topic, value => received.push(value));
+      const ref = await publisher.publish(topic, { value: 'before-stop' });
+      await waitForCondition(
+        () => received.some(value => (value as any).value === 'before-stop'),
+        'subscriber did not receive initial payload before registry relisten',
+      );
+
+      await disposeRegistry();
+      await waitForCondition(
+        () => !(publisher as any).registry && !(subscriber as any).registry,
+        'applications did not observe same registry instance stop',
+        3000,
+      );
+      await ref.update({ value: 'while-stopped' });
+
+      disposeRegistry = await registry.listen(registryPort);
+      await waitForCondition(() => {
+        const entry = (registry as any).topics.get(topic);
+        return entry?.data?.value === 'while-stopped' &&
+          entry.publishers.has(`127.0.0.1:${publisherPort}`) &&
+          entry.subscribers.has(`127.0.0.1:${subscriberPort}`) &&
+          received.some(value => (value as any).value === 'while-stopped');
+      }, 'pub/sub roles did not restore after same registry instance re-listen', 6000);
+    } finally {
+      await disposeSubscriber();
+      await disposePublisher();
+      await disposeRegistry();
+    }
+  }, 10_000);
+
   it('does not re-declare a topic that was unpublished while registry was down', async () => {
     const registryPort = await getAvailablePort();
     const publisherPort = await getAvailablePort();
@@ -1918,6 +2043,49 @@ describe('@hile/micro publish/subscribe edge cases', () => {
     }
   });
 
+  it('delivers isolated payload snapshots to callbacks on the same topic', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+    const topic = 'callback-payload-isolation-topic';
+
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub-callback-payload-isolation',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const subscriber = new Application({
+      namespace: 'sub-callback-payload-isolation',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+
+    try {
+      const received: unknown[] = [];
+      await subscriber.subscribe(topic, (value: any) => {
+        value.nested.count = 99;
+      });
+      await subscriber.subscribe(topic, value => received.push(value));
+
+      await publisher.publish(topic, { nested: { count: 1 } });
+      await waitForCondition(
+        () => received.length === 1,
+        'second callback did not receive payload after first callback mutation',
+      );
+
+      expect(received).toEqual([{ nested: { count: 1 } }]);
+    } finally {
+      await disposeSubscriber();
+      await disposePublisher();
+      await disposeRegistry();
+    }
+  });
+
   it('does not leave a stale subscriber when duplicate unsubscribe happens during initial subscribe', async () => {
     const registryPort = await getAvailablePort();
     const subscriberPort = await getAvailablePort();
@@ -1953,6 +2121,55 @@ describe('@hile/micro publish/subscribe edge cases', () => {
     } finally {
       registry.releaseSubscribe.resolve();
       await disposeSubscriber();
+      await disposeRegistry();
+    }
+  });
+
+  it('keeps a fresh subscription when a prior unsubscribe finishes later', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+    const topic = 'unsubscribe-resubscribe-race-topic';
+
+    const registry = new DelayingUnsubscribeRegistry(topic);
+    const publisher = new Application({
+      namespace: 'pub-unsubscribe-resubscribe-race',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const subscriber = new Application({
+      namespace: 'sub-unsubscribe-resubscribe-race',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+
+    try {
+      const unsubscribe = await subscriber.subscribe(topic, vi.fn());
+      const pendingUnsubscribe = unsubscribe();
+      await registry.unsubscribeStarted.promise;
+
+      const received: unknown[] = [];
+      const freshSubscribe = subscriber.subscribe(topic, value => received.push(value));
+      await new Promise(resolve => setTimeout(resolve, 20));
+
+      registry.releaseUnsubscribe.resolve();
+      await freshSubscribe;
+      await pendingUnsubscribe;
+
+      await publisher.publish(topic, { value: 'fresh' });
+      await waitForCondition(
+        () => received.length === 1,
+        'fresh subscription was removed by an older unsubscribe',
+      );
+      expect(received).toEqual([{ value: 'fresh' }]);
+    } finally {
+      registry.releaseUnsubscribe.resolve();
+      await disposeSubscriber();
+      await disposePublisher();
       await disposeRegistry();
     }
   });
@@ -2094,6 +2311,109 @@ describe('@hile/micro publish/subscribe edge cases', () => {
     }
   });
 
+  it('restores the published payload snapshot instead of later object mutations', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const topic = 'published-payload-snapshot-topic';
+
+    let registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub-payload-snapshot',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    let disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+
+    try {
+      const payload = { value: 'original', nested: { count: 1 } };
+      await publisher.publish(topic, payload);
+
+      payload.value = 'mutated';
+      payload.nested.count = 2;
+
+      await disposeRegistry();
+      await waitForCondition(
+        () => !(publisher as any).registry,
+        'publisher did not observe registry restart before payload snapshot restore',
+        3000,
+      );
+
+      registry = new Registry(testAdvertise);
+      disposeRegistry = await registry.listen(registryPort);
+
+      await waitForCondition(() => {
+        const entry = (registry as any).topics.get(topic);
+        return entry?.data?.value === 'original' && entry.data.nested.count === 1;
+      }, 'registry restored a mutated publish payload instead of the original snapshot', 6000);
+    } finally {
+      await disposePublisher();
+      await disposeRegistry();
+    }
+  }, 10_000);
+
+  it('does not let an older publish ref unpublish a newer publish on the same topic', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const topic = 'stale-publish-ref-topic';
+
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub-stale-ref',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+
+    try {
+      const staleRef = await publisher.publish(topic, { value: 'old' });
+      await publisher.publish(topic, { value: 'new' });
+
+      await staleRef.unpublish();
+
+      const entry = (registry as any).topics.get(topic);
+      expect(entry?.hasData).toBe(true);
+      expect(entry?.data).toEqual({ value: 'new' });
+      expect(entry?.publishers.has(`127.0.0.1:${publisherPort}`)).toBe(true);
+    } finally {
+      await disposePublisher();
+      await disposeRegistry();
+    }
+  });
+
+  it('does not let an older publish ref update a newer publish on the same topic', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const topic = 'stale-publish-ref-update-topic';
+
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'pub-stale-update-ref',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+
+    try {
+      const staleRef = await publisher.publish(topic, { value: 'old' });
+      await publisher.publish(topic, { value: 'new' });
+
+      await staleRef.update({ value: 'stale-update' });
+
+      const entry = (registry as any).topics.get(topic);
+      expect(entry?.hasData).toBe(true);
+      expect(entry?.data).toEqual({ value: 'new' });
+    } finally {
+      await disposePublisher();
+      await disposeRegistry();
+    }
+  });
+
   it('restores the latest publisher payload by revision when redeclarations arrive out of order', async () => {
     const topic = 'revision-restored-topic';
     const registry = new Registry(testAdvertise);
@@ -2116,6 +2436,23 @@ describe('@hile/micro publish/subscribe edge cases', () => {
     );
 
     expect(snapshot).toEqual({ hasData: true, payload: { value: 'newer' } });
+  });
+
+  it('keeps publisher payload ownership when using the legacy topic update route', async () => {
+    const topic = 'legacy-topic-update-ownership';
+    const registry = new Registry(testAdvertise);
+    const publisherA = { host: '127.0.0.1', port: 1 } as any;
+    const publisherB = { host: '127.0.0.1', port: 2 } as any;
+    const subscriber = { host: '127.0.0.1', port: 3 } as any;
+
+    await registry.dispatch('/-/declare', { topic, payload: { value: 'a-old' } }, { client: publisherA });
+    await registry.dispatch('/-/declare', { topic, payload: { value: 'b' } }, { client: publisherB });
+    await registry.dispatch('/-/topic/update', { topic, payload: { value: 'a-new' } }, { client: publisherA });
+    await registry.dispatch('/-/undeclare', { topic }, { client: publisherB });
+
+    const snapshot = await registry.dispatch('/-/subscribe', { topic }, { client: subscriber });
+
+    expect(snapshot).toEqual({ hasData: true, payload: { value: 'a-new' } });
   });
 
   it('restores publisher and subscriber roles with correct data after service and registry restarts', async () => {
@@ -2525,6 +2862,47 @@ describe('@hile/micro registry utility functions', () => {
 });
 
 describe('@hile/micro registry topic cleanup', () => {
+  it('cleans old topic roles when the same host and port reconnects before close cleanup', async () => {
+    const registryPort = await getAvailablePort();
+    const servicePort = await getAvailablePort();
+    const topic = 'same-key-reconnect-cleanup-topic';
+    const key = `127.0.0.1:${servicePort}`;
+
+    const registry = new Registry(testAdvertise);
+    const disposeRegistry = await registry.listen(registryPort);
+    const ws1 = new WebSocket(`ws://127.0.0.1:${registryPort}/127.0.0.1/${servicePort}/old-service`);
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        ws1.once('open', () => resolve());
+        ws1.once('error', reject);
+      });
+      const client1 = (registry as any).clients.get(key);
+      await registry.dispatch('/-/subscribe', { topic }, { client: client1 });
+      expect((registry as any).topics.get(topic)?.subscribers.has(key)).toBe(true);
+
+      const ws2 = new WebSocket(`ws://127.0.0.1:${registryPort}/127.0.0.1/${servicePort}/new-service`);
+      await new Promise<void>((resolve, reject) => {
+        ws2.once('open', () => resolve());
+        ws2.once('error', reject);
+      });
+
+      await waitForCondition(
+        () => (registry as any).clients.get(key) !== client1,
+        'registry did not replace same-key client',
+      );
+      expect((registry as any).topics.has(topic)).toBe(false);
+
+      ws2.close();
+      await new Promise<void>((resolve) => ws2.once('close', () => resolve()));
+    } finally {
+      if (ws1.readyState === WebSocket.OPEN || ws1.readyState === WebSocket.CONNECTING) {
+        ws1.close();
+      }
+      await disposeRegistry();
+    }
+  });
+
   it('removes topic data after all publishers and subscribers disconnect', async () => {
     const registryPort = await getAvailablePort();
     const publisherPort = await getAvailablePort();

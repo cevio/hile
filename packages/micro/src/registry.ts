@@ -284,10 +284,6 @@ export class Registry extends Server {
 
     return async () => {
       if (watcher) watcher.close();
-      for (const fallback of this.fallbacks) {
-        fallback();
-      }
-      this.fallbacks.clear();
       await teardown();
     };
   }
@@ -373,10 +369,14 @@ export class Registry extends Server {
   }
 
   private registerReceiveTopicUpdate() {
-    this.fallbacks.add(this.register<{ topic: string, payload: any }>('/-/topic/update', async ({ data }) => {
+    this.fallbacks.add(this.register<{ topic: string, payload: any }, { client?: Client }>('/-/topic/update', async ({ data, client }) => {
       // 转发
-      this.publish(data.topic, data.payload);
-      return Date.now();
+      const key = client ? `${client.host}:${client.port}` : undefined;
+      const entry = this.topics.get(data.topic);
+      if (key && entry?.publishers.has(key)) {
+        return this.publish(data.topic, data.payload, key) ?? Date.now();
+      }
+      return this.publish(data.topic, data.payload) ?? Date.now();
     }))
   }
 
