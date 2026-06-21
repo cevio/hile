@@ -55,7 +55,7 @@ Hile 用一个**服务容器**（`@hile/core`）统一解决这些问题。你�
     三层抽象：协议层（<code>MessageModem</code> 定义 REQUEST / RESPONSE / ABORT）→ 传输层（WebSocket / IPC / Worker Threads 三种实现）→ 路由层（<code>MessageLoader</code> 文件系统消息路由）。统一 <code>_send</code> / <code>_push</code> / <code>_stream</code> API，切换传输只需改继承基类。
   </Card>
   <Card title="轻量级服务发现" icon="map">
-    基于 WebSocket 的 Registry 注册中心 + Application 微服务节点。Server/Client 模型，心跳保活（可配间隔/超时），namespace 分组，topic 发布/订阅，断路器（30 秒冷却），连接缓存降级，Registry 断连自动重连。不依赖 <code>@hile/core</code>，可独立使用。
+    基于 WebSocket 的 Registry 注册中心 + Application 微服务节点。Server/Client 模型，心跳保活（可配间隔/超时），namespace 分组，topic 发布/订阅，本地内存熔断器（closed/open/half-open + 探针限流），连接缓存降级，Registry 断连自动重连。不依赖 <code>@hile/core</code>，可独立使用。
   </Card>
   <Card title="运行时动态配置" icon="toggle">
     <code>MicroDynamicConfigsServer</code> 基于 Redis 持久化 + Registry topic 发布/订阅。Zod schema 校验配置结构，<code>save()</code> 写入 Redis 并实时推送所有订阅方，<code>on('change:key')</code> 监听变更。修改配置无需重启服务。
@@ -120,7 +120,7 @@ Hile 目前包含 **19 个包**，分为以下几类：
 
 | 包名 | 版本 | 说明 | 安装命令 |
 |------|------|------|----------|
-| `@hile/micro` | [![npm](https://img.shields.io/npm/v/@hile/micro?style=flat-square)](https://www.npmjs.com/package/@hile/micro) | **轻量级微服务框架**——`Server`（WebSocket 服务端 + 出站连接 + 连接事件）、`Client`（远端代理 + 心跳保活）、`Registry`（注册中心 + namespace 管理 + topic 发布/订阅 + YAML 配置监听 + fs.watch 热加载）、`Application`（服务节点 + 自动注册 Registry + `call()` 远程调用 + 断路器 + 重试 + 缓存降级 + `publish`/`subscribe` + 自动重连 + 健康检查）。不依赖 `@hile/core`。 | `pnpm add @hile/micro` |
+| `@hile/micro` | [![npm](https://img.shields.io/npm/v/@hile/micro?style=flat-square)](https://www.npmjs.com/package/@hile/micro) | **轻量级微服务框架**——`Server`（WebSocket 服务端 + 出站连接 + 连接事件）、`Client`（远端代理 + 心跳保活）、`Registry`（注册中心 + namespace 管理 + topic 发布/订阅 + YAML 配置监听 + fs.watch 热加载）、`Application`（服务节点 + 自动注册 Registry + `call()` 远程调用 + 本地熔断器 + 重试 + 缓存降级 + `publish`/`subscribe` + 自动重连 + 健康检查）。不依赖 `@hile/core`。 | `pnpm add @hile/micro` |
 | `@hile/micro-dynamic-configs` | [![npm](https://img.shields.io/npm/v/@hile/micro-dynamic-configs?style=flat-square)](https://www.npmjs.com/package/@hile/micro-dynamic-configs) | **运行时动态配置**——`MicroDynamicConfigsServer`。Zod schema → Redis 持久化 → `app.publish()` 推送 Registry → 所有订阅者实时收到。`save()` 做深度比较避免无变更推送，`on('change:key')` 监听字段变更。 | `pnpm add @hile/micro-dynamic-configs` |
 
 ### 开发工具包
@@ -172,7 +172,7 @@ Hile 目前包含 **19 个包**，分为以下几类：
   └── @hile/micro          ← 微服务框架，继承 message-loader + ws
        ├── Server           ← WebSocket 服务端 + 出站连接
        │     ├── Registry   ← 注册中心（继承 Server），依赖 yaml
-       │     └── Application ← 服务节点（继承 Server），含断路器和重试
+       │     └── Application ← 服务节点（继承 Server），含本地熔断器和重试
        └── Client           ← 远端代理（继承 MessageWs），心跳保活
 
 @hile/micro

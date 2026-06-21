@@ -1,9 +1,10 @@
 import { createServer, type Socket } from 'node:net';
 import { EventEmitter } from 'node:events';
+import { Readable } from 'node:stream';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import WebSocket from 'ws';
 import { selectRandomRegistryAddress, parseAddressKey, parseConfigFilename } from './registry';
-import { Application } from './application';
+import { Application, type CircuitBreakerOptions } from './application';
 import { Registry } from './registry';
 import { Server } from './server';
 
@@ -204,6 +205,95 @@ class ControlledReconnectApplication extends Application {
       }),
       dispose: vi.fn(),
     } as any;
+  }
+}
+
+type FakePeer = {
+  host: string;
+  port: number;
+  events: EventEmitter;
+  request: ReturnType<typeof vi.fn>;
+  stream: ReturnType<typeof vi.fn>;
+};
+
+function createFakePeer(
+  port: number,
+  request: FakePeer['request'],
+  stream: FakePeer['stream'] = vi.fn(),
+): FakePeer {
+  return {
+    host: '127.0.0.1',
+    port,
+    events: new EventEmitter(),
+    request,
+    stream,
+  };
+}
+
+class CircuitBreakerTestApplication extends Application {
+  public readonly lookupExcludes: Array<string[] | undefined> = [];
+  public readonly selectedPeers: string[] = [];
+
+  constructor(protected readonly peers: FakePeer[], circuitBreaker?: CircuitBreakerOptions) {
+    super({
+      namespace: 'consumer',
+      registry: { host: '127.0.0.1', port: 1 },
+      logger: { debug: vi.fn(), error: vi.fn() } as any,
+      ...testAdvertise,
+      circuitBreaker,
+    } as any);
+  }
+
+  protected override async resolveClient(namespace: string, exclude?: string[], _options?: any) {
+    this.lookupExcludes.push(exclude ? [...exclude] : exclude);
+    const peer = this.peers.find(peer => !exclude?.includes(`${peer.host}:${peer.port}`));
+    if (!peer) throw new Error(`Namespace not found: ${namespace}`);
+    this.selectedPeers.push(`${peer.host}:${peer.port}`);
+    return peer as any;
+  }
+}
+
+class StaleLookupCircuitBreakerTestApplication extends CircuitBreakerTestApplication {
+  private staleLookups = 0;
+
+  public returnFirstPeerOnNextLookup() {
+    this.staleLookups++;
+  }
+
+  protected override async resolveClient(namespace: string, exclude?: string[], options?: any) {
+    if (this.staleLookups > 0) {
+      this.staleLookups--;
+      this.lookupExcludes.push(exclude ? [...exclude] : exclude);
+      const peer = this.peers[0];
+      this.selectedPeers.push(`${peer.host}:${peer.port}`);
+      return peer as any;
+    }
+    return super.resolveClient(namespace, exclude, options);
+  }
+}
+
+class DelayedGetCircuitBreakerTestApplication extends CircuitBreakerTestApplication {
+  public pausedLookups = 0;
+  private delayedLookups = 0;
+  private lookupGate = createDeferred<void>();
+
+  public delayNextLookups(count: number) {
+    this.pausedLookups = 0;
+    this.delayedLookups = count;
+    this.lookupGate = createDeferred<void>();
+  }
+
+  public releasePausedLookups() {
+    this.lookupGate.resolve();
+  }
+
+  protected override async resolveClient(namespace: string, exclude?: string[], options?: any) {
+    if (this.delayedLookups > 0) {
+      this.delayedLookups--;
+      this.pausedLookups++;
+      await this.lookupGate.promise;
+    }
+    return super.resolveClient(namespace, exclude, options);
   }
 }
 
@@ -555,8 +645,11 @@ describe('@hile/micro heartbeat', () => {
 
       try {
         // Wait for Registry-side inbound Client to detect timeout
-        await new Promise(r => setTimeout(r, 2500));
-        expect((registry as any).clients.has(entryKey)).toBe(false);
+        await waitForCondition(
+          () => !(registry as any).clients.has(entryKey),
+          'Registry-side inbound client should time out',
+          3500,
+        );
       } finally {
         await disposeRegistry();
       }
@@ -628,6 +721,541 @@ describe('@hile/micro heartbeat', () => {
 });
 
 describe('@hile/micro circuit breaker', () => {
+  it('keeps a failing peer eligible until the failure threshold is reached', async () => {
+    const peerA = createFakePeer(1001, vi.fn(async () => {
+      throw new Error('A fail');
+    }));
+    const peerB = createFakePeer(1002, vi.fn(async () => ({ ok: true })));
+    const app = new CircuitBreakerTestApplication([peerA, peerB]);
+
+    await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+    await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+    await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+
+    const result = await app.call('svc', '/api', {}, { retries: 0 });
+
+    expect(result).toEqual({ ok: true });
+    expect(peerA.request).toHaveBeenCalledTimes(3);
+    expect(peerB.request).toHaveBeenCalledTimes(1);
+    expect(app.lookupExcludes[0]).toEqual([]);
+    expect(app.lookupExcludes[1]).toEqual([]);
+    expect(app.lookupExcludes[2]).toEqual([]);
+    expect(app.lookupExcludes[3]).toEqual(['127.0.0.1:1001']);
+  });
+
+  it('limits half-open probes and routes overflow to another peer', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    const probe = createDeferred<{ from: string }>();
+    let peerAAttempts = 0;
+    const peerA = createFakePeer(1001, vi.fn(async () => {
+      peerAAttempts++;
+      if (peerAAttempts === 1) throw new Error('A fail');
+      return probe.promise;
+    }));
+    const peerB = createFakePeer(1002, vi.fn(async () => ({ from: 'B' })));
+    const app = new CircuitBreakerTestApplication([peerA, peerB], {
+      failureThreshold: 1,
+      cooldownMs: 100,
+      maxCooldownMs: 100,
+      halfOpenMaxProbes: 1,
+      successThreshold: 1,
+    });
+
+    try {
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.101Z'));
+      const halfOpenProbe = app.call<{ from: string }>('svc', '/api', {}, { retries: 0 });
+      await Promise.resolve();
+
+      const overflow = await app.call<{ from: string }>('svc', '/api', {}, { retries: 0 });
+      probe.resolve({ from: 'A' });
+      await expect(halfOpenProbe).resolves.toEqual({ from: 'A' });
+
+      expect(overflow).toEqual({ from: 'B' });
+      expect(app.lookupExcludes.at(-1)).toEqual(['127.0.0.1:1001']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not reset a full half-open probe when no alternate peer exists', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    const probe = createDeferred<{ from: string }>();
+    const probeStarted = createDeferred<void>();
+    let attempts = 0;
+    const peerA = createFakePeer(1001, vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) throw new Error('A fail');
+      if (attempts === 2) {
+        probeStarted.resolve();
+        return probe.promise;
+      }
+      throw new Error('overflow called');
+    }));
+    const app = new CircuitBreakerTestApplication([peerA], {
+      failureThreshold: 1,
+      cooldownMs: 100,
+      halfOpenMaxProbes: 1,
+      successThreshold: 1,
+    });
+
+    try {
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.101Z'));
+      const halfOpenProbe = app.call<{ from: string }>('svc', '/api', {}, { retries: 0 });
+      await probeStarted.promise;
+      expect(peerA.request).toHaveBeenCalledTimes(2);
+
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow();
+      expect(peerA.request).toHaveBeenCalledTimes(2);
+
+      probe.resolve({ from: 'A' });
+      await expect(halfOpenProbe).resolves.toEqual({ from: 'A' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not reset a full half-open probe returned by stale lookups', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    const probe = createDeferred<{ from: string }>();
+    const probeStarted = createDeferred<void>();
+    let attempts = 0;
+    const peerA = createFakePeer(1001, vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) throw new Error('A fail');
+      if (attempts === 2) {
+        probeStarted.resolve();
+        return probe.promise;
+      }
+      throw new Error('overflow called');
+    }));
+    const app = new StaleLookupCircuitBreakerTestApplication([peerA], {
+      failureThreshold: 1,
+      cooldownMs: 100,
+      halfOpenMaxProbes: 1,
+      successThreshold: 1,
+    });
+
+    try {
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.101Z'));
+      const halfOpenProbe = app.call<{ from: string }>('svc', '/api', {}, { retries: 0 });
+      await probeStarted.promise;
+      app.returnFirstPeerOnNextLookup();
+      app.returnFirstPeerOnNextLookup();
+
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('Circuit breaker probe unavailable');
+      expect(peerA.request).toHaveBeenCalledTimes(2);
+
+      probe.resolve({ from: 'A' });
+      await expect(halfOpenProbe).resolves.toEqual({ from: 'A' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rechecks half-open probe capacity after lookup races', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    const probe = createDeferred<{ from: string }>();
+    let peerAAttempts = 0;
+    const peerA = createFakePeer(1001, vi.fn(async () => {
+      peerAAttempts++;
+      if (peerAAttempts === 1) throw new Error('A fail');
+      return probe.promise;
+    }));
+    const peerB = createFakePeer(1002, vi.fn(async () => ({ from: 'B' })));
+    const app = new DelayedGetCircuitBreakerTestApplication([peerA, peerB], {
+      failureThreshold: 1,
+      cooldownMs: 100,
+      maxCooldownMs: 100,
+      halfOpenMaxProbes: 1,
+      successThreshold: 1,
+    });
+
+    try {
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.101Z'));
+      app.delayNextLookups(2);
+      const firstProbe = app.call<{ from: string }>('svc', '/api', {}, { retries: 0 });
+      const racedLookup = app.call<{ from: string }>('svc', '/api', {}, { retries: 0 });
+
+      expect(app.pausedLookups).toBe(2);
+      app.releasePausedLookups();
+
+      await expect(racedLookup).resolves.toEqual({ from: 'B' });
+      probe.resolve({ from: 'A' });
+      await expect(firstProbe).resolves.toEqual({ from: 'A' });
+      expect(peerA.request).toHaveBeenCalledTimes(2);
+      expect(peerB.request).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reopens a failed half-open peer with exponential cooldown', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    const peerA = createFakePeer(1001, vi.fn(async () => {
+      throw new Error('A fail');
+    }));
+    const peerB = createFakePeer(1002, vi.fn(async () => ({ from: 'B' })));
+    const app = new CircuitBreakerTestApplication([peerA, peerB], {
+      failureThreshold: 1,
+      cooldownMs: 100,
+      maxCooldownMs: 1_000,
+      halfOpenMaxProbes: 1,
+      successThreshold: 1,
+    });
+
+    try {
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.101Z'));
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.250Z'));
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).resolves.toEqual({ from: 'B' });
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.302Z'));
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      expect(peerA.request).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not let stale half-open success close a reopened peer', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    const delayedSuccess = createDeferred<{ from: string }>();
+    let attempts = 0;
+    const peerA = createFakePeer(1001, vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) throw new Error('initial fail');
+      if (attempts === 2) return delayedSuccess.promise;
+      throw new Error('probe fail');
+    }));
+    const peerB = createFakePeer(1002, vi.fn(async () => ({ from: 'B' })));
+    const app = new CircuitBreakerTestApplication([peerA, peerB], {
+      failureThreshold: 1,
+      cooldownMs: 100,
+      maxCooldownMs: 1_000,
+      halfOpenMaxProbes: 2,
+      successThreshold: 2,
+    });
+
+    try {
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('initial fail');
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.101Z'));
+      const staleSuccess = app.call<{ from: string }>('svc', '/api', {}, { retries: 0 });
+      await Promise.resolve();
+
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('probe fail');
+      delayedSuccess.resolve({ from: 'A' });
+      await expect(staleSuccess).resolves.toEqual({ from: 'A' });
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.250Z'));
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).resolves.toEqual({ from: 'B' });
+      expect(app.lookupExcludes.at(-1)).toEqual(['127.0.0.1:1001']);
+      expect(peerA.request).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not let stale closed-state success close an opened peer', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    const staleSuccess = createDeferred<{ from: string }>();
+    let attempts = 0;
+    const peerA = createFakePeer(1001, vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) return staleSuccess.promise;
+      if (attempts === 2) throw new Error('A fail');
+      return { from: 'A' };
+    }));
+    const peerB = createFakePeer(1002, vi.fn(async () => ({ from: 'B' })));
+    const app = new CircuitBreakerTestApplication([peerA, peerB], {
+      failureThreshold: 1,
+      cooldownMs: 100,
+      maxCooldownMs: 100,
+      successThreshold: 1,
+    });
+
+    try {
+      const oldSuccess = app.call<{ from: string }>('svc', '/api', {}, { retries: 0 });
+      await Promise.resolve();
+
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      staleSuccess.resolve({ from: 'A' });
+      await expect(oldSuccess).resolves.toEqual({ from: 'A' });
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.050Z'));
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).resolves.toEqual({ from: 'B' });
+      expect(peerA.request).toHaveBeenCalledTimes(2);
+      expect(peerB.request).toHaveBeenCalledTimes(1);
+      expect(app.lookupExcludes.at(-1)).toEqual(['127.0.0.1:1001']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not let stale closed-state failure extend an opened peer cooldown', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    const staleFailure = createDeferred<{ from: string }>();
+    let attempts = 0;
+    const peerA = createFakePeer(1001, vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) return staleFailure.promise;
+      if (attempts === 2) throw new Error('A fail');
+      return { from: 'A' };
+    }));
+    const peerB = createFakePeer(1002, vi.fn(async () => ({ from: 'B' })));
+    const app = new CircuitBreakerTestApplication([peerA, peerB], {
+      failureThreshold: 1,
+      cooldownMs: 100,
+      maxCooldownMs: 1_000,
+      successThreshold: 1,
+    });
+
+    try {
+      const oldFailure = app.call<{ from: string }>('svc', '/api', {}, { retries: 0 });
+      await Promise.resolve();
+
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      staleFailure.reject(new Error('late fail'));
+      await expect(oldFailure).rejects.toThrow('late fail');
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.150Z'));
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).resolves.toEqual({ from: 'A' });
+      expect(peerA.request).toHaveBeenCalledTimes(3);
+      expect(peerB.request).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not call an open peer returned by a stale lookup', async () => {
+    let attempts = 0;
+    const peerA = createFakePeer(1001, vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) throw new Error('A fail');
+      return { from: 'A' };
+    }));
+    const peerB = createFakePeer(1002, vi.fn(async () => ({ from: 'B' })));
+    const app = new StaleLookupCircuitBreakerTestApplication([peerA, peerB], {
+      failureThreshold: 1,
+      cooldownMs: 10_000,
+      successThreshold: 1,
+    });
+
+    await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+    app.returnFirstPeerOnNextLookup();
+
+    await expect(app.call('svc', '/api', {}, { retries: 0 })).resolves.toEqual({ from: 'B' });
+    expect(peerA.request).toHaveBeenCalledTimes(1);
+    expect(peerB.request).toHaveBeenCalledTimes(1);
+    expect(app.lookupExcludes.at(-2)).toEqual(['127.0.0.1:1001']);
+    expect(app.lookupExcludes.at(-1)).toEqual(['127.0.0.1:1001']);
+  });
+
+  it('does not reset an opened peer inside the same call retry', async () => {
+    const peerA = createFakePeer(1001, vi.fn(async () => {
+      throw new Error('A fail');
+    }));
+    const app = new CircuitBreakerTestApplication([peerA], {
+      failureThreshold: 1,
+    });
+
+    await expect(app.call('svc', '/api', {})).rejects.toThrow('A fail');
+
+    expect(peerA.request).toHaveBeenCalledTimes(1);
+    expect(app.lookupExcludes[1]).toEqual(['127.0.0.1:1001']);
+  });
+
+  it('forgets closed-state failures after the failure window', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    const peerA = createFakePeer(1001, vi.fn(async () => {
+      throw new Error('A fail');
+    }));
+    const peerB = createFakePeer(1002, vi.fn(async () => ({ ok: true })));
+    const app = new CircuitBreakerTestApplication([peerA, peerB], {
+      failureThreshold: 3,
+      failureWindowMs: 100,
+    });
+
+    try {
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.050Z'));
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.151Z'));
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      expect(peerB.request).not.toHaveBeenCalled();
+
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).resolves.toEqual({ ok: true });
+      expect(peerA.request).toHaveBeenCalledTimes(5);
+      expect(peerB.request).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not record failures rejected by shouldRecordFailure', async () => {
+    const peerA = createFakePeer(1001, vi.fn(async () => {
+      throw new Error('business');
+    }));
+    const peerB = createFakePeer(1002, vi.fn(async () => ({ ok: true })));
+    const app = new CircuitBreakerTestApplication([peerA, peerB], {
+      failureThreshold: 1,
+      shouldRecordFailure: (err: unknown) => !(err instanceof Error && err.message === 'business'),
+    });
+
+    await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('business');
+    await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('business');
+
+    expect(peerA.request).toHaveBeenCalledTimes(2);
+    expect(peerB.request).not.toHaveBeenCalled();
+    expect(app.lookupExcludes[1]).toEqual([]);
+  });
+
+  it('does not retry failures rejected by shouldRetry', async () => {
+    const peerA = createFakePeer(1001, vi.fn(async () => {
+      throw new Error('non-retryable');
+    }));
+    const peerB = createFakePeer(1002, vi.fn(async () => ({ ok: true })));
+    const app = new CircuitBreakerTestApplication([peerA, peerB], {
+      failureThreshold: 1,
+      shouldRetry: (err: unknown) => !(err instanceof Error && err.message === 'non-retryable'),
+    });
+
+    await expect(app.call('svc', '/api', {}, { retries: 3 })).rejects.toThrow('non-retryable');
+
+    expect(peerA.request).toHaveBeenCalledTimes(1);
+    expect(peerB.request).not.toHaveBeenCalled();
+  });
+
+  it('does not mask the original failure when shouldRecordFailure throws', async () => {
+    const peerA = createFakePeer(1001, vi.fn(async () => {
+      throw new Error('peer fail');
+    }));
+    const app = new CircuitBreakerTestApplication([peerA], {
+      failureThreshold: 1,
+      shouldRecordFailure: () => {
+        throw new Error('record hook fail');
+      },
+    });
+
+    await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('peer fail');
+  });
+
+  it('does not mask the original failure when shouldRetry throws', async () => {
+    const peerA = createFakePeer(1001, vi.fn(async () => {
+      throw new Error('peer fail');
+    }));
+    const peerB = createFakePeer(1002, vi.fn(async () => ({ ok: true })));
+    const app = new CircuitBreakerTestApplication([peerA, peerB], {
+      failureThreshold: 1,
+      shouldRetry: () => {
+        throw new Error('retry hook fail');
+      },
+    });
+
+    await expect(app.call('svc', '/api', {}, { retries: 3 })).rejects.toThrow('peer fail');
+    expect(peerB.request).not.toHaveBeenCalled();
+  });
+
+  it('does not count a close-only half-open stream as a success', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    const peerA = createFakePeer(
+      1001,
+      vi.fn(async () => {
+        throw new Error('A fail');
+      }),
+      vi.fn(() => new Readable({ objectMode: true, read() { } })),
+    );
+    const peerB = createFakePeer(1002, vi.fn(async () => ({ from: 'B' })));
+    const app = new CircuitBreakerTestApplication([peerA, peerB], {
+      failureThreshold: 1,
+      cooldownMs: 100,
+      maxCooldownMs: 1_000,
+      successThreshold: 1,
+    });
+
+    try {
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.101Z'));
+      const halfOpenStream = await app.stream('svc', '/api', {}, { retries: 0 });
+      const closed = new Promise<void>(resolve => halfOpenStream.once('close', () => resolve()));
+      halfOpenStream.destroy();
+      await closed;
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.150Z'));
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.251Z'));
+      await expect(app.call('svc', '/api', {}, { retries: 0 })).resolves.toEqual({ from: 'B' });
+      expect(peerA.request).toHaveBeenCalledTimes(2);
+      expect(peerB.request).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('records asynchronous stream errors for circuit breaker routing', async () => {
+    const peerA = createFakePeer(
+      1001,
+      vi.fn(),
+      vi.fn(() => {
+        const stream = new Readable({ objectMode: true, read() { } });
+        queueMicrotask(() => stream.destroy(new Error('stream fail')));
+        return stream;
+      }),
+    );
+    const peerB = createFakePeer(
+      1002,
+      vi.fn(),
+      vi.fn(() => Readable.from([{ ok: true }], { objectMode: true })),
+    );
+    const app = new CircuitBreakerTestApplication([peerA, peerB], {
+      failureThreshold: 1,
+    });
+
+    const failingStream = await app.stream('svc', '/api', {}, { retries: 0 });
+    await expect(async () => {
+      for await (const _chunk of failingStream) {
+        // consume until the stream reports its async failure
+      }
+    }).rejects.toThrow('stream fail');
+
+    const recoveryStream = await app.stream('svc', '/api', {}, { retries: 0 });
+    const chunks: any[] = [];
+    for await (const chunk of recoveryStream) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toEqual([{ ok: true }]);
+    expect(peerA.stream).toHaveBeenCalledTimes(1);
+    expect(peerB.stream).toHaveBeenCalledTimes(1);
+    expect(app.lookupExcludes.at(-1)).toEqual(['127.0.0.1:1001']);
+  });
+
   it('call() returns data on success', async () => {
     const registryPort = await getAvailablePort();
     const providerPort = await getAvailablePort();
@@ -683,6 +1311,7 @@ describe('@hile/micro circuit breaker', () => {
     const consumer = new Application({
       namespace: 'consumer',
       registry: { host: '127.0.0.1', port: registryPort },
+      circuitBreaker: { failureThreshold: 1 },
       ...testAdvertise,
     });
 
@@ -733,6 +1362,7 @@ describe('@hile/micro circuit breaker', () => {
     const consumer = new Application({
       namespace: 'consumer',
       registry: { host: '127.0.0.1', port: registryPort },
+      circuitBreaker: { failureThreshold: 1 },
       ...testAdvertise,
     });
 
@@ -817,6 +1447,7 @@ describe('@hile/micro call retry', () => {
     const consumer = new Application({
       namespace: 'consumer',
       registry: { host: '127.0.0.1', port: registryPort },
+      circuitBreaker: { failureThreshold: 1 },
       ...testAdvertise,
     });
 
@@ -900,6 +1531,7 @@ describe('@hile/micro cache degradation', () => {
     const consumer = new Application({
       namespace: 'consumer',
       registry: { host: '127.0.0.1', port: registryPort },
+      circuitBreaker: { failureThreshold: 1 },
       ...testAdvertise,
     });
 
@@ -937,6 +1569,63 @@ describe('@hile/micro cache degradation', () => {
       await disposeConsumer();
       await disposeProvider();
       await disposeRegistry();
+    }
+  });
+
+  it('keeps cached client when registry is unavailable and an open peer is reset', async () => {
+    const registryPort = await getAvailablePort();
+    const providerPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const provider = new Application({
+      namespace: 'svc',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const consumer = new Application({
+      namespace: 'consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      circuitBreaker: { failureThreshold: 1 },
+      registryLookupTimeoutMs: 50,
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeProvider = await provider.listen(providerPort);
+    const disposeConsumer = await consumer.listen(consumerPort);
+    let unregister: (() => void) | undefined = provider.register('/api', async () => ({ ok: true }));
+    let registryDisposed = false;
+
+    try {
+      const result1 = await consumer.call('svc', '/api', {});
+      expect(result1).toEqual({ ok: true });
+
+      unregister();
+      unregister = provider.register('/api', async () => {
+        throw new Error('fail');
+      });
+      await expect(consumer.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('fail');
+
+      unregister();
+      unregister = provider.register('/api', async () => ({ ok: true }));
+
+      await disposeRegistry();
+      registryDisposed = true;
+      await waitForCondition(
+        () => !(consumer as any).registry,
+        'consumer did not observe registry disconnect',
+      );
+
+      const result2 = await consumer.call('svc', '/api', {}, { retries: 0 });
+      expect(result2).toEqual({ ok: true });
+    } finally {
+      unregister?.();
+      await disposeConsumer();
+      await disposeProvider();
+      if (!registryDisposed) {
+        await disposeRegistry();
+      }
     }
   });
 });
@@ -1038,6 +1727,7 @@ describe('@hile/micro stream', () => {
     const consumer = new Application({
       namespace: 'consumer',
       registry: { host: '127.0.0.1', port: registryPort },
+      circuitBreaker: { failureThreshold: 1 },
       ...testAdvertise,
     });
 
@@ -1101,6 +1791,7 @@ describe('@hile/micro stream', () => {
     const consumer = new Application({
       namespace: 'consumer',
       registry: { host: '127.0.0.1', port: registryPort },
+      circuitBreaker: { failureThreshold: 1 },
       ...testAdvertise,
     });
 

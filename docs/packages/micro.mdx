@@ -448,8 +448,8 @@ Registry 自动将 `host:port` 加入 `namespaces[namespace]` 集合。连接断
 
 - **自动连接 Registry** - `listen()` 时自动连接，失败则整个 listen 抛错
 - **服务发现** - `get()` 从 Registry 查找服务地址并缓存
-- **熔断器** - 失败的 peer 被临时排除 30 秒
-- **自动重试** - `call()` 和 `stream()` 失败后自动换 peer 重试
+- **熔断器** - 按 namespace + peer 在本地内存记录 `closed` / `open` / `half-open` 状态
+- **自动重试** - `call()` 失败后可换 peer 重试，`stream()` 的同步建流失败也可重试
 - **缓存降级** - Registry 不可用时使用最后一次成功的地址
 - **自动重连** - Registry 断连后 3 秒间隔重试，重连后自动重新订阅所有 topic
 - **发布订阅** - `publish()` / `subscribe()` 通过 Registry 实现
@@ -463,6 +463,14 @@ const app = new Application({
   advertiseHost: '127.0.0.1',
   registryLookupTimeoutMs: 10_000,   // 默认
   requestTimeoutMs: 30_000,           // 默认
+  circuitBreaker: {
+    failureThreshold: 3,
+    failureWindowMs: 60_000,
+    successThreshold: 2,
+    cooldownMs: 10_000,
+    maxCooldownMs: 120_000,
+    halfOpenMaxProbes: 1,
+  },
 });
 ```
 
@@ -475,6 +483,7 @@ const app = new Application({
 | `advertiseHost` | `string` | 否 | `getLocalIPv4()` | 宣告地址 |
 | `registryLookupTimeoutMs` | `number` | 否 | `10000` | `/-/find` 查询超时 |
 | `requestTimeoutMs` | `number` | 否 | `30000` | 远程调用默认超时 |
+| `circuitBreaker` | `CircuitBreakerOptions` | 否 | 见「熔断器详解」 | 本地内存熔断策略 |
 
 <Warning>
  `registry.host` 和 `registry.port` 经过严格校验（host 不能为空/含空白符/IPv6 须加方括号/端口 1-65535）。通不过时构造函数抛错。
@@ -583,14 +592,14 @@ const result = await app.call('payments', '/charge', { amount: 100 }, {
 ```
 call(namespace, url, data)
   │
-  ├─→ getActiveExcludes(namespace)     // 获取仍在冷却期的 peer 列表
-  ├─→ get(namespace, exclude)          // 向 Registry 查找（排除已熔断的）
-  │     └─→ 异常 → 重置断路器 → get(namespace) 重试
+  ├─→ 计算 exclude                     // 排除 open 或探针名额已满的 half-open peer
+  ├─→ get(namespace, exclude)          // 向 Registry 查找可用 peer
+  │     └─→ 所有 open peer 被排除 → 重置该 namespace 熔断状态后重新选择（可沿用仍连接的缓存 Client）
   │
   ├─→ client.request(url, data, {timeout, signal})
-  │     ├─ 成功 → recordSuccess → 从熔断名单中移除该 peer → return
-  │     └─ 失败 → recordFailure → 加入熔断名单（30s 冷却）
-  │               └─→ retries > 0 → 递归 call(retries-1)
+  │     ├─ 成功 → recordSuccess → 必要时关闭 half-open 探测 → return
+  │     └─ 失败 → recordFailure → 必要时打开或重新打开熔断
+  │               └─→ retries > 0 且 shouldRetry(err) → 下一轮选择其他 peer
   │               └─→ retries = 0 → 抛出错误
 ```
 
@@ -604,7 +613,7 @@ call(namespace, url, data)
 
 #### stream(namespace, url, data, options?)
 
-流式远程调用。与 `call()` 共享相同的发现/熔断/重试机制，但返回 `Readable` stream 而不是单次 Promise。
+流式远程调用。与 `call()` 共享相同的发现和熔断选路，但返回 `Readable` stream 而不是单次 Promise。同步建流失败可以按 `retries` 重试；流已经返回后的异步错误会计入熔断，但不会自动重放这个流。
 
 ```typescript
 const readable = await app.stream('data-svc', '/stream-logs', { startDate: '2024-01-01' });
@@ -619,7 +628,11 @@ for await (const chunk of readable) {
 | `url` | `string` | 是 | - | 请求路径 |
 | `data` | `any` | 是 | - | 请求数据 |
 | `options.signal` | `AbortSignal` | 否 | - | 取消信号 |
-| `options.retries` | `number` | 否 | `1` | 失败重试次数 |
+| `options.retries` | `number` | 否 | `1` | 同步建流失败重试次数 |
+
+<Warning>
+  `stream()` 只会在 `client.stream()` 同步抛错时自动重试。一旦 `Readable` 已返回，后续 `error` 会更新熔断状态并由消费方处理；用户主动 `destroy()` 或只触发 `close` 的流不会被当作一次成功探测。
+</Warning>
 
 **Provider 侧要求**：handler 必须返回 async generator（`async function*`）。两种注册方式均可：
 
@@ -851,17 +864,37 @@ const health = await app.dispatch('/-/health', {});
 
 ### 熔断器详解
 
-熔断器在每次 `call()` 和 `stream()` 调用中自动工作：
+熔断器在每次 `call()` 和 `stream()` 调用中自动工作。状态只保存在当前调用方 `Application` 的内存中，不写入 Registry、Redis 或数据库。
 
 ```
-1. getActiveExcludes(ns) → 遍历 circuitBreakers map，过滤出仍在 30s 冷却期内的 peer
-2. get(ns, exclude) → 向 Registry 查询时排除这些 peer
-3. 调用成功 → recordSuccess(ns, host, port) → 从熔断名单移除该 peer
-4. 调用失败 → recordFailure(ns, host, port) → 加入熔断名单（值 = Date.now()）
-5. 所有 peer 都被排除 → 重置断路器，重新从所有 peer 中选择
+closed
+  ├─ 连续失败达到 failureThreshold → open
+  └─ 成功 → 清空该 peer 的失败状态
+
+open
+  ├─ 冷却未结束 → 进入 Registry exclude
+  └─ 冷却结束 → half-open
+
+half-open
+  ├─ 探针名额已满 → 进入 Registry exclude，不额外放行
+  ├─ 探测成功达到 successThreshold → closed
+  └─ 探测失败 → open，并按指数退避延长 cooldown
 ```
 
-冷却时间：**30 秒** (`CB_COOLDOWN_MS`)，硬编码，不可配置。
+默认策略：
+
+| 配置 | 默认值 | 说明 |
+|------|--------|------|
+| `failureThreshold` | `3` | 连续失败达到阈值后打开熔断 |
+| `failureWindowMs` | `60000` | 连续失败统计窗口。窗口外的旧失败会被遗忘 |
+| `successThreshold` | `2` | half-open 连续探测成功达到阈值后恢复 |
+| `cooldownMs` | `10000` | 首次打开后的冷却时间 |
+| `maxCooldownMs` | `120000` | half-open 探测失败后的指数退避上限 |
+| `halfOpenMaxProbes` | `1` | half-open 同时放行的探测请求数 |
+| `shouldRecordFailure(err)` | `() => true` | 返回 `false` 的错误不会计入熔断 |
+| `shouldRetry(err)` | `() => true` | 返回 `false` 的错误不会自动重试 |
+
+所有 `open` peer 都被排除时，`Application` 会重置该 namespace 的本地熔断状态并重新选择，避免服务完全饿死。若 Registry 短暂不可用但重置前已经拿到仍连接的缓存 Client，会沿用该缓存连接发起探测。但如果 peer 处于 `half-open` 且探针名额已满，不会通过 reset 绕过 `halfOpenMaxProbes`。
 
 ---
 
@@ -873,7 +906,7 @@ const health = await app.dispatch('/-/health', {});
 |------|------|
 | Registry 可用 + 有缓存 | 验证缓存有效性，无效则重新查询 |
 | Registry 可用 + 无缓存 | 查询并连接 |
-| Registry 不可用 + 缓存有效（Client 仍在连接） | 返回缓存 Client |
+| Registry 不可用 + 缓存有效（Client 仍在连接） | 返回缓存 Client；熔断 reset 时也可用该缓存发起探测 |
 | Registry 不可用 + 缓存无效（Client 已断开） | 抛出错误 |
 | Registry 恢复 | 下次 `get()` 恢复查询 |
 

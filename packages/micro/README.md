@@ -108,20 +108,50 @@ const result = await response();
 
 ### 熔断器 (Circuit Breaker)
 
-`call()` 自动跟踪每个 namespace 下各 peer 的调用失败。失败的 peer 被临时排除，**30 秒冷卻期**后自动恢复。
+`call()` 和 `stream()` 自动跟踪每个 namespace 下各 peer 的调用结果。熔断状态保存在调用方 `Application` 的本地内存中，不依赖 Redis、数据库或 Registry 共享状态。
 
 | 场景 | 行为 |
 |------|------|
-| 调用 peer A 失败 | A 加入排除列表（30s cooldown） |
-| 再次调用该 namespace | Registry `/‑/find` 带上 `exclude`，返回其他 peer |
-| 所有 peer 都被排除 | 重置排除列表，重新从所有 peer 中选择 |
-| 调用成功 | 该 peer 从排除列表中移除 |
+| `closed` 状态调用失败 | 累计连续失败次数 |
+| 连续失败达到阈值 | peer 进入 `open`，选路时通过 Registry `exclude` 临时排除 |
+| 冷却时间到期 | peer 进入 `half-open`，只放行少量探测请求 |
+| `half-open` 探测成功 | 累计成功次数，达到阈值后恢复 `closed` |
+| `half-open` 探测失败 | 重新进入 `open`，冷却时间指数退避 |
+| 所有 `open` peer 都被排除 | 重置该 namespace 的本地熔断状态，重新选择 peer；若 Registry 不可用但已选中的缓存 Client 仍连接，则沿用缓存发起探测，避免完全饿死 |
 
-排除列表：
-- 键：`${host}:${port}`
-- 存储：`Map<namespace, Map<peerKey, openedAt>>`
-- 冷卻期：`CB_COOLDOWN_MS = 30_000`（30 秒）
-- 过期检查：`getActiveExcludes()` 在每次 `call()` 调用时执行
+如果 peer 正处于 `half-open` 且探测名额已满，本次调用不会占用额外探测名额；有其他 peer 时改选其他 peer，没有可用 peer 时需要在已有探测完成后再尝试。
+
+默认策略：
+
+| 配置 | 默认值 | 说明 |
+|------|--------|------|
+| `failureThreshold` | `3` | 连续失败 3 次后打开熔断 |
+| `failureWindowMs` | `60000` | 连续失败统计窗口 |
+| `successThreshold` | `2` | half-open 连续成功 2 次后恢复 |
+| `cooldownMs` | `10000` | 首次打开后的冷却时间 |
+| `maxCooldownMs` | `120000` | 指数退避冷却上限 |
+| `halfOpenMaxProbes` | `1` | half-open 同时放行的探测数 |
+
+可以在构造 `Application` 时覆盖：
+
+```typescript
+const app = new Application({
+  namespace: 'checkout',
+  registry: { host, port },
+  circuitBreaker: {
+    failureThreshold: 3,
+    failureWindowMs: 60_000,
+    successThreshold: 2,
+    cooldownMs: 10_000,
+    maxCooldownMs: 120_000,
+    halfOpenMaxProbes: 1,
+    shouldRecordFailure: (err) => true,
+    shouldRetry: (err) => true,
+  },
+});
+```
+
+`shouldRecordFailure` 返回 `false` 的错误不会计入熔断；`shouldRetry` 返回 `false` 的错误不会自动重试。可用它们区分业务错误和连接、超时等基础设施错误。
 
 ### 请求超时
 
@@ -174,7 +204,7 @@ await app.call('svc', '/api', data, { timeout: 5000, retries: 3 }); // 超时 5s
 await app.call('svc', '/api', data, { timeout: 5000, retries: 0 }); // 超时 5s, 不重试
 ```
 
-重试策略：失败 → `recordFailure`（peer 被排除）→ 递归 `call(retries-1)` → `getActiveExcludes` 排除已失败的 peer → Registry `/‑/find` 返回其他 peer。
+重试策略：失败 → 按 `shouldRecordFailure` 更新本地熔断状态 → 按 `shouldRetry` 判断是否继续下一次尝试 → 下次发现服务时用 `getActiveExcludes()` 排除 `open` 或探测名额已满的 `half-open` peer → Registry `/‑/find` 返回其他 peer。
 
 ### 流式调用 (Stream)
 
@@ -213,7 +243,7 @@ for await (const chunk of stream) {
 **注意事项**：
 - 普通 handler（返回非 async iterable）被 `stream()` 调用时会报错 `"Invalid async iterable"`
 - 不需要流式传输时用 `call()`，不要用 `stream()` 取单次返回值
-- `stream()` 享有与 `call()` 相同的熔断、重试、超时机制
+- `stream()` 享有与 `call()` 相同的选路与熔断；同步建流失败可按 `retries` 重试，流已返回后的异步错误会计入熔断但不会自动重放流
 
 ### 健康检查
 
@@ -236,7 +266,7 @@ const health = await app.dispatch('/-/health', {});
 
 ### 缓存降级
 
-当 Registry 不可用但本地仍有已缓存的 Client 连接时，`get()` 自动降级使用缓存：
+当 Registry 不可用但本地仍有已缓存的 Client 连接时，`get()` 自动降级使用缓存。熔断器在“所有 `open` peer 都被排除”并触发本地 reset 时，也会保留已经选中的可用缓存 Client，不会因为 Registry 短暂不可用而丢弃仍可通信的连接。
 
 | 场景 | 行为 |
 |------|------|
@@ -409,7 +439,7 @@ class Application extends Server {
     },
   ): Promise<T>;
 
-  // 流式调用：get + stream + 熔断 + 重试
+  // 流式调用：get + stream + 熔断；同步建流失败可重试
   // provider handler 必须返回 async generator，consumer 获得 Readable stream
   stream(
     namespace: string,

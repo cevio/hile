@@ -86,6 +86,97 @@ type EnvRequestResult<
   ? { [K in N]: EnvFieldsForRequest<T, N, F> }
   : never;
 
+export type CircuitBreakerStatus = 'closed' | 'open' | 'half-open';
+
+export type CircuitBreakerOptions = {
+  /** 连续失败达到阈值后打开熔断器，默认 3 */
+  failureThreshold?: number;
+  /** 连续失败统计窗口（毫秒），默认 60000 */
+  failureWindowMs?: number;
+  /** half-open 探测连续成功达到阈值后恢复，默认 2 */
+  successThreshold?: number;
+  /** 首次打开后的冷却时间（毫秒），默认 10000 */
+  cooldownMs?: number;
+  /** 指数退避冷却时间上限（毫秒），默认 120000 */
+  maxCooldownMs?: number;
+  /** half-open 状态下同时放行的探测请求数，默认 1 */
+  halfOpenMaxProbes?: number;
+  /** 返回 false 的错误不会计入熔断，默认全部计入 */
+  shouldRecordFailure?: (err: unknown) => boolean;
+  /** 返回 false 的错误不会自动重试，默认全部允许重试 */
+  shouldRetry?: (err: unknown) => boolean;
+};
+
+type ResolvedCircuitBreakerOptions = Required<CircuitBreakerOptions>;
+
+type CircuitBreakerPeerState = {
+  status: CircuitBreakerStatus;
+  failures: number;
+  successes: number;
+  openedAt: number;
+  nextAttemptAt: number;
+  cooldownMs: number;
+  lastFailureAt: number;
+  halfOpenInFlight: number;
+};
+
+type CircuitBreakerProbe = {
+  acquired: boolean;
+  wasHalfOpen: boolean;
+  cooldownMs: number;
+  release: () => void;
+};
+
+type RegistryLookupOptions = {
+  allowExcludedCachedFallback?: boolean;
+};
+
+const DEFAULT_CIRCUIT_BREAKER: ResolvedCircuitBreakerOptions = {
+  failureThreshold: 3,
+  failureWindowMs: 60_000,
+  successThreshold: 2,
+  cooldownMs: 10_000,
+  maxCooldownMs: 120_000,
+  halfOpenMaxProbes: 1,
+  shouldRecordFailure: () => true,
+  shouldRetry: () => true,
+};
+
+function positiveIntegerOr(value: number | undefined, fallback: number): number {
+  if (!Number.isFinite(value) || value === undefined || value < 1) return fallback;
+  return Math.trunc(value);
+}
+
+function resolveCircuitBreakerOptions(options?: CircuitBreakerOptions): ResolvedCircuitBreakerOptions {
+  const cooldownMs = positiveIntegerOr(options?.cooldownMs, DEFAULT_CIRCUIT_BREAKER.cooldownMs);
+  const configuredMaxCooldownMs = positiveIntegerOr(
+    options?.maxCooldownMs,
+    DEFAULT_CIRCUIT_BREAKER.maxCooldownMs,
+  );
+  return {
+    failureThreshold: positiveIntegerOr(
+      options?.failureThreshold,
+      DEFAULT_CIRCUIT_BREAKER.failureThreshold,
+    ),
+    failureWindowMs: positiveIntegerOr(
+      options?.failureWindowMs,
+      DEFAULT_CIRCUIT_BREAKER.failureWindowMs,
+    ),
+    successThreshold: positiveIntegerOr(
+      options?.successThreshold,
+      DEFAULT_CIRCUIT_BREAKER.successThreshold,
+    ),
+    cooldownMs,
+    maxCooldownMs: Math.max(cooldownMs, configuredMaxCooldownMs),
+    halfOpenMaxProbes: positiveIntegerOr(
+      options?.halfOpenMaxProbes,
+      DEFAULT_CIRCUIT_BREAKER.halfOpenMaxProbes,
+    ),
+    shouldRecordFailure: options?.shouldRecordFailure ?? DEFAULT_CIRCUIT_BREAKER.shouldRecordFailure,
+    shouldRetry: options?.shouldRetry ?? DEFAULT_CIRCUIT_BREAKER.shouldRetry,
+  };
+}
+
 export type GetEnvVariablesResult<
   T extends Record<string, Record<string, any>>,
   Requests extends readonly EnvRequest<T>[],
@@ -98,6 +189,8 @@ export type ApplicationProps = {
   registryLookupTimeoutMs?: number;
   /** 单次 request() 等待响应的上限（毫秒），默认 `30000` */
   requestTimeoutMs?: number;
+  /** 本地内存熔断策略配置 */
+  circuitBreaker?: CircuitBreakerOptions;
 } & MicroServerProps;
 
 type TopicSnapshot<T = any> = {
@@ -116,6 +209,7 @@ export class Application extends Server {
   private readonly _registry_address: RegistryAddress;
   private readonly _registryLookupTimeoutMs: number;
   private readonly _requestTimeoutMs: number;
+  private readonly _circuitBreaker: ResolvedCircuitBreakerOptions;
 
   private readonly namespaces = new Map<string, {
     host: string;
@@ -123,8 +217,7 @@ export class Application extends Server {
     status: RegistryLookupStatus;
     handlers: Set<[(value: Client) => void, (reason?: any) => void]>
   }>();
-  private static readonly CB_COOLDOWN_MS = 30_000;
-  private readonly circuitBreakers = new Map<string, Map<string, number>>();
+  private readonly circuitBreakers = new Map<string, Map<string, CircuitBreakerPeerState>>();
   private readonly topics = new Map<string, Set<(data: any) => any>>();
   private readonly publishedTopics = new Map<string, any>();
   private readonly publishedTopicRevisions = new Map<string, number>();
@@ -135,12 +228,20 @@ export class Application extends Server {
   private publishIntentVersion = 0;
 
   constructor(props: ApplicationProps) {
-    const { namespace, registry, registryLookupTimeoutMs = 10_000, requestTimeoutMs = 30_000, ...microAndLoader } = props;
+    const {
+      namespace,
+      registry,
+      registryLookupTimeoutMs = 10_000,
+      requestTimeoutMs = 30_000,
+      circuitBreaker,
+      ...microAndLoader
+    } = props;
     super(namespace, microAndLoader);
     assertValidRegistrySocket('registry address', registry.host, registry.port);
     this._registry_address = registry;
     this._registryLookupTimeoutMs = registryLookupTimeoutMs;
     this._requestTimeoutMs = requestTimeoutMs;
+    this._circuitBreaker = resolveCircuitBreakerOptions(circuitBreaker);
     this.register('/-/health', async () => ({
       status: 'ok' as const,
       registry: !!this.registry,
@@ -438,37 +539,273 @@ export class Application extends Server {
     return tracked;
   }
 
-  private recordSuccess(ns: string, host: string, port: number) {
-    const excludes = this.circuitBreakers.get(ns);
-    if (excludes) {
-      excludes.delete(`${host}:${port}`);
-      if (excludes.size === 0) this.circuitBreakers.delete(ns);
+  private peerKey(host: string, port: number) {
+    return `${host}:${port}`;
+  }
+
+  private getPeerStates(ns: string, create = false) {
+    let states = this.circuitBreakers.get(ns);
+    if (!states && create) {
+      states = new Map();
+      this.circuitBreakers.set(ns, states);
+    }
+    return states;
+  }
+
+  private getOrCreatePeerState(ns: string, host: string, port: number) {
+    const states = this.getPeerStates(ns, true)!;
+    const key = this.peerKey(host, port);
+    let state = states.get(key);
+    if (!state) {
+      state = {
+        status: 'closed',
+        failures: 0,
+        successes: 0,
+        openedAt: 0,
+        nextAttemptAt: 0,
+        cooldownMs: this._circuitBreaker.cooldownMs,
+        lastFailureAt: 0,
+        halfOpenInFlight: 0,
+      };
+      states.set(key, state);
+    }
+    return state;
+  }
+
+  private deletePeerState(ns: string, key: string) {
+    const states = this.circuitBreakers.get(ns);
+    if (!states) return;
+    states.delete(key);
+    if (states.size === 0) this.circuitBreakers.delete(ns);
+  }
+
+  private openCircuit(state: CircuitBreakerPeerState, cooldownMs: number) {
+    const now = Date.now();
+    state.status = 'open';
+    state.successes = 0;
+    state.openedAt = now;
+    state.lastFailureAt = now;
+    state.cooldownMs = Math.min(cooldownMs, this._circuitBreaker.maxCooldownMs);
+    state.nextAttemptAt = now + state.cooldownMs;
+    state.halfOpenInFlight = 0;
+  }
+
+  private acquireCircuitProbe(ns: string, host: string, port: number) {
+    const key = this.peerKey(host, port);
+    const state = this.circuitBreakers.get(ns)?.get(key);
+    if (state?.status === 'open') {
+      return {
+        acquired: false,
+        wasHalfOpen: false,
+        cooldownMs: state.cooldownMs,
+        release: () => { },
+      };
+    }
+    if (state?.status !== 'half-open') {
+      return {
+        acquired: true,
+        wasHalfOpen: false,
+        cooldownMs: this._circuitBreaker.cooldownMs,
+        release: () => { },
+      };
+    }
+    if (state.halfOpenInFlight >= this._circuitBreaker.halfOpenMaxProbes) {
+      return {
+        acquired: false,
+        wasHalfOpen: true,
+        cooldownMs: state.cooldownMs,
+        release: () => { },
+      };
+    }
+    state.halfOpenInFlight++;
+    let released = false;
+    return {
+      acquired: true,
+      wasHalfOpen: true,
+      cooldownMs: state.cooldownMs,
+      release: () => {
+        if (released) return;
+        released = true;
+        const current = this.circuitBreakers.get(ns)?.get(key);
+        if (current?.status === 'half-open' && current.halfOpenInFlight > 0) {
+          current.halfOpenInFlight--;
+        }
+      },
+    };
+  }
+
+  private shouldRecordCircuitFailure(err: unknown) {
+    try {
+      return this._circuitBreaker.shouldRecordFailure(err);
+    } catch (hookErr) {
+      this.logger.error(hookErr);
+      return true;
     }
   }
 
-  private recordFailure(ns: string, host: string, port: number) {
-    let excludes = this.circuitBreakers.get(ns);
-    if (!excludes) {
-      excludes = new Map();
-      this.circuitBreakers.set(ns, excludes);
+  private shouldRetryCircuitFailure(err: unknown) {
+    try {
+      return this._circuitBreaker.shouldRetry(err);
+    } catch (hookErr) {
+      this.logger.error(hookErr);
+      return false;
     }
-    excludes.set(`${host}:${port}`, Date.now());
+  }
+
+  private recordSuccess(ns: string, host: string, port: number, probe: CircuitBreakerProbe) {
+    const key = this.peerKey(host, port);
+    const state = this.circuitBreakers.get(ns)?.get(key);
+    if (!state) return;
+    if (probe.wasHalfOpen) {
+      if (state.status !== 'half-open') return;
+      state.failures = 0;
+      state.successes++;
+      if (state.successes < this._circuitBreaker.successThreshold) return;
+    } else if (state.status !== 'closed') {
+      return;
+    }
+    this.deletePeerState(ns, key);
+  }
+
+  private recordFailure(ns: string, host: string, port: number, err: unknown, probe: CircuitBreakerProbe) {
+    if (!this.shouldRecordCircuitFailure(err)) return;
+    const now = Date.now();
+    const key = this.peerKey(host, port);
+
+    if (probe.wasHalfOpen) {
+      const state = this.circuitBreakers.get(ns)?.get(key);
+      if (state?.status !== 'half-open') return;
+      state.failures = this._circuitBreaker.failureThreshold;
+      state.successes = 0;
+      this.openCircuit(state, Math.max(state.cooldownMs, probe.cooldownMs) * 2);
+      return;
+    }
+
+    const state = this.getOrCreatePeerState(ns, host, port);
+    if (state.status !== 'closed') return;
+    state.successes = 0;
+
+    if (state.lastFailureAt > 0 && now - state.lastFailureAt >= this._circuitBreaker.failureWindowMs) {
+      state.failures = 0;
+    }
+
+    state.lastFailureAt = now;
+    state.failures++;
+    if (state.failures >= this._circuitBreaker.failureThreshold) {
+      this.openCircuit(state, this._circuitBreaker.cooldownMs);
+    }
+  }
+
+  private getActiveCircuitExcludes(ns: string): {
+    keys: string[];
+    hasProbeLimitedPeer: boolean;
+  } {
+    const states = this.circuitBreakers.get(ns);
+    if (!states) return { keys: [], hasProbeLimitedPeer: false };
+    const now = Date.now();
+    const keys: string[] = [];
+    let hasProbeLimitedPeer = false;
+    for (const [key, state] of states) {
+      if (
+        state.status === 'closed' &&
+        state.lastFailureAt > 0 &&
+        now - state.lastFailureAt >= this._circuitBreaker.failureWindowMs
+      ) {
+        states.delete(key);
+        continue;
+      }
+
+      if (state.status === 'open') {
+        if (now >= state.nextAttemptAt) {
+          state.status = 'half-open';
+          state.successes = 0;
+          state.halfOpenInFlight = 0;
+        } else {
+          keys.push(key);
+        }
+      }
+
+      if (state.status === 'half-open' && state.halfOpenInFlight >= this._circuitBreaker.halfOpenMaxProbes) {
+        keys.push(key);
+        hasProbeLimitedPeer = true;
+      }
+    }
+    if (states.size === 0) this.circuitBreakers.delete(ns);
+    return { keys, hasProbeLimitedPeer };
   }
 
   private getActiveExcludes(ns: string): string[] {
-    const excludes = this.circuitBreakers.get(ns);
-    if (!excludes) return [];
-    const now = Date.now();
-    const active: string[] = [];
-    for (const [key, openedAt] of excludes) {
-      if (now - openedAt >= Application.CB_COOLDOWN_MS) {
-        excludes.delete(key);
-      } else {
-        active.push(key);
+    return this.getActiveCircuitExcludes(ns).keys;
+  }
+
+  private trackCircuitStream(
+    ns: string,
+    host: string,
+    port: number,
+    probe: CircuitBreakerProbe,
+    readable: import('stream').Readable,
+  ) {
+    let settled = false;
+    const settle = (status: 'success' | 'failure' | 'neutral', err?: unknown) => {
+      if (settled) return;
+      settled = true;
+      if (status === 'failure') {
+        this.recordFailure(ns, host, port, err, probe);
+      } else if (status === 'success') {
+        this.recordSuccess(ns, host, port, probe);
       }
+      probe.release();
+    };
+
+    readable.once('error', err => settle('failure', err));
+    readable.once('end', () => settle('success'));
+    readable.once('close', () => settle('neutral'));
+    return readable;
+  }
+
+  private async selectCircuitClient(namespace: string, allowExcludedCachedFallback = true) {
+    const { keys: exclude, hasProbeLimitedPeer } = this.getActiveCircuitExcludes(namespace);
+    try {
+      return await this.resolveClient(namespace, exclude, {
+        allowExcludedCachedFallback: allowExcludedCachedFallback && !hasProbeLimitedPeer,
+      });
+    } catch (err) {
+      if (!allowExcludedCachedFallback || hasProbeLimitedPeer) throw err;
+      this.circuitBreakers.delete(namespace);
+      return this.get(namespace);
     }
-    if (excludes.size === 0) this.circuitBreakers.delete(ns);
-    return active;
+  }
+
+  private async selectCircuitProbe(namespace: string, allowCircuitReset: boolean) {
+    let client = await this.selectCircuitClient(namespace, allowCircuitReset);
+    let probe = this.acquireCircuitProbe(namespace, client.host, client.port);
+    if (probe.acquired) return { client, probe };
+    let blockedByHalfOpenProbe = probe.wasHalfOpen;
+    let resetClient: Client | undefined = probe.wasHalfOpen ? undefined : client;
+
+    try {
+      client = await this.selectCircuitClient(namespace, false);
+      probe = this.acquireCircuitProbe(namespace, client.host, client.port);
+      if (probe.acquired) return { client, probe };
+      blockedByHalfOpenProbe ||= probe.wasHalfOpen;
+      if (!probe.wasHalfOpen) resetClient = client;
+    } catch (err) {
+      if (!allowCircuitReset) throw err;
+    }
+
+    if (!allowCircuitReset || blockedByHalfOpenProbe) {
+      throw new Error(`Circuit breaker probe unavailable for ${namespace}`);
+    }
+
+    this.circuitBreakers.delete(namespace);
+    // Preserve a cached client selected before the reset. A registry failure can
+    // clear namespace cache while the peer connection itself is still usable.
+    client = resetClient ?? await this.get(namespace);
+    probe = this.acquireCircuitProbe(namespace, client.host, client.port);
+    if (!probe.acquired) {
+      throw new Error(`Circuit breaker probe unavailable for ${namespace}`);
+    }
+    return { client, probe };
   }
 
   private async findFromRegistry(namespace: string, exclude?: string[]) {
@@ -478,6 +815,10 @@ export class Application extends Server {
   }
 
   public get(namespace: string, exclude?: string[]) {
+    return this.resolveClient(namespace, exclude);
+  }
+
+  protected resolveClient(namespace: string, exclude?: string[], options: RegistryLookupOptions = {}) {
     if (!this.namespaces.has(namespace)) {
       this.namespaces.set(namespace, {
         host: '',
@@ -529,7 +870,9 @@ export class Application extends Server {
         }).catch(e => {
           // Registry unavailable but previously cached client still valid -> degrade
           const cachedKey = `${cachedHost}:${cachedPort}`;
-          if (cachedHost && this.clients.has(cachedKey)) {
+          const cachedExcluded = exclude?.includes(cachedKey);
+          const allowCachedFallback = options.allowExcludedCachedFallback ?? true;
+          if (cachedHost && this.clients.has(cachedKey) && (allowCachedFallback || !cachedExcluded)) {
             const client = this.clients.get(cachedKey)!;
             // Restore cache so subsequent calls hit the fast path
             stack.host = cachedHost;
@@ -555,29 +898,38 @@ export class Application extends Server {
     signal?: AbortSignal
   }): Promise<T> {
     const { timeout = this._requestTimeoutMs, retries = 1, signal } = options || {};
-    const exclude = this.getActiveExcludes(namespace);
-    let client: Client;
+    let remainingRetries = retries;
+    let retrySourceError: unknown;
+    let hasRetrySourceError = false;
 
-    try {
-      client = await this.get(namespace, exclude);
-    } catch {
-      this.circuitBreakers.delete(namespace);
-      client = await this.get(namespace);
-    }
-
-    try {
-      const result = await client.request<T>(url, data, {
-        timeout: timeout ?? this._requestTimeoutMs,
-        signal,
-      });
-      this.recordSuccess(namespace, client.host, client.port);
-      return result;
-    } catch (err) {
-      this.recordFailure(namespace, client.host, client.port);
-      if (retries > 0) {
-        return this.call(namespace, url, data, { timeout, retries: retries - 1, signal });
+    for (;;) {
+      let selected: { client: Client; probe: CircuitBreakerProbe };
+      try {
+        selected = await this.selectCircuitProbe(namespace, !hasRetrySourceError);
+      } catch (err) {
+        if (hasRetrySourceError) throw retrySourceError;
+        throw err;
       }
-      throw err;
+      const { client, probe } = selected;
+      try {
+        const result = await client.request<T>(url, data, {
+          timeout: timeout ?? this._requestTimeoutMs,
+          signal,
+        });
+        this.recordSuccess(namespace, client.host, client.port, probe);
+        return result;
+      } catch (err) {
+        this.recordFailure(namespace, client.host, client.port, err, probe);
+        if (remainingRetries > 0 && this.shouldRetryCircuitFailure(err)) {
+          retrySourceError = err;
+          hasRetrySourceError = true;
+          remainingRetries--;
+          continue;
+        }
+        throw err;
+      } finally {
+        probe.release();
+      }
     }
   }
 
@@ -591,26 +943,33 @@ export class Application extends Server {
     },
   ): Promise<import('stream').Readable> {
     const { signal, retries = 1 } = options || {};
-    const exclude = this.getActiveExcludes(namespace);
-    let client: Client;
+    let remainingRetries = retries;
+    let retrySourceError: unknown;
+    let hasRetrySourceError = false;
 
-    try {
-      client = await this.get(namespace, exclude);
-    } catch {
-      this.circuitBreakers.delete(namespace);
-      client = await this.get(namespace);
-    }
-
-    try {
-      const readable = client.stream(url, data, { signal });
-      this.recordSuccess(namespace, client.host, client.port);
-      return readable;
-    } catch (err) {
-      this.recordFailure(namespace, client.host, client.port);
-      if (retries > 0) {
-        return this.stream(namespace, url, data, { signal, retries: retries - 1 });
+    for (;;) {
+      let selected: { client: Client; probe: CircuitBreakerProbe };
+      try {
+        selected = await this.selectCircuitProbe(namespace, !hasRetrySourceError);
+      } catch (err) {
+        if (hasRetrySourceError) throw retrySourceError;
+        throw err;
       }
-      throw err;
+      const { client, probe } = selected;
+      try {
+        const readable = client.stream(url, data, { signal });
+        return this.trackCircuitStream(namespace, client.host, client.port, probe, readable);
+      } catch (err) {
+        this.recordFailure(namespace, client.host, client.port, err, probe);
+        probe.release();
+        if (remainingRetries > 0 && this.shouldRetryCircuitFailure(err)) {
+          retrySourceError = err;
+          hasRetrySourceError = true;
+          remainingRetries--;
+          continue;
+        }
+        throw err;
+      }
     }
   }
 

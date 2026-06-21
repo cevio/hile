@@ -85,7 +85,7 @@ flowchart TB
 - `Server`：WebSocket 服务端 + 消息路由 + 出站连接
 - `Client`：远端代理 + 心跳保活
 - `Registry`：注册中心 + namespace 管理 + topic 发布/订阅 + YAML 配置监听
-- `Application`：集成 Registry + 断路器 + 重试 + 缓存降级 + topic 管理
+- `Application`：集成 Registry + 本地内存熔断器 + 重试 + 缓存降级 + topic 管理
 
 ### 4. 应用层
 

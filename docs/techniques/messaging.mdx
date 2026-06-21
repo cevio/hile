@@ -349,9 +349,9 @@ const health = await app.dispatch('/-/health', {})
 // { status: 'ok', registry: true, uptime: 123.45, namespaces: [...] }
 ```
 
-**断路器**：调用失败节点进入 30 秒冷却期。所有 peer 都被排除时自动重置。
+**断路器**：按调用方本地内存记录每个 namespace 下 peer 的 `closed` / `open` / `half-open` 状态；连续失败达到阈值后临时排除，冷却后只放行少量 half-open 探针。所有 `open` peer 都被排除时会重置本地状态并重新选择；Registry 短暂不可用但缓存连接仍有效时，会沿用缓存发起探测，避免服务完全饿死。
 
-**缓存降级**：Registry 不可达时使用上次缓存的连接。
+**缓存降级**：Registry 不可达时使用上次缓存且仍连接的 Client。
 
 **自动重连**：与 Registry 断开后每 3 秒重试。重连后自动重新订阅所有 topic。
 
@@ -406,7 +406,7 @@ save({ featureX: true })
     不依赖。可以独立使用。但也可以将 Application 注册为容器服务。
   </Accordion>
   <Accordion title="call 的 retries 参数含义？">
-    最大重试次数，默认 1。每次重试通过断路器排除已失败节点。
+    最大重试次数，默认 1。每次重试会结合断路器状态排除 `open` 节点，`shouldRetry` 返回 `false` 的错误不会自动重试。
   </Accordion>
   <Accordion title="Registry 是单点故障吗？">
     单节点设计。Application 有缓存降级能力，Registry 不可用时不影响已有连接。可通过 PM2/systemd 保证 Registry 高可用。
