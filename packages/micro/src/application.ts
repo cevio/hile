@@ -225,6 +225,7 @@ export class Application extends Server {
   private readonly publishedTopicVersions = new Map<string, number>();
   private readonly publishedTopicSignatures = new Map<string, string>();
   private readonly topicSyncs = new Map<string, Promise<void>>();
+  private readonly topicUpdateVersions = new Map<string, number>();
   private publishIntentVersion = 0;
 
   constructor(props: ApplicationProps) {
@@ -255,6 +256,7 @@ export class Application extends Server {
   }
 
   private dispatchTopicUpdate(topic: string, payload: any) {
+    this.topicUpdateVersions.set(topic, (this.topicUpdateVersions.get(topic) ?? 0) + 1);
     for (const listener of this.events.listeners('topic:' + topic)) {
       try {
         const listenerPayload = createPubSubPayloadSnapshot(topic, payload);
@@ -458,6 +460,7 @@ export class Application extends Server {
     isReconnect: boolean,
     requireLocal = true,
   ) {
+    const replayBaseVersion = this.topicUpdateVersions.get(topic) ?? 0;
     const snapshot = await registry.request<TopicSnapshot<T>>(
       '/-/subscribe',
       { topic },
@@ -465,6 +468,7 @@ export class Application extends Server {
     );
     if (requireLocal && !this.topics.get(topic)?.has(callback)) return;
     if (!snapshot.hasData) return;
+    if ((this.topicUpdateVersions.get(topic) ?? 0) !== replayBaseVersion) return;
     try {
       await Promise.resolve(callback(snapshot.payload));
     } catch (err) {
@@ -1046,6 +1050,7 @@ export class Application extends Server {
       this.ensureRegistryReconnectScheduled();
       return fallback;
     }
+    const replayBaseVersion = this.topicUpdateVersions.get(topic) ?? 0;
     let snapshot: TopicSnapshot<T> | undefined;
     let synced = false;
     await this.enqueueTopicSync(topic, async (registry) => {
@@ -1061,7 +1066,11 @@ export class Application extends Server {
       return fallback;
     }
     try {
-      if (this.topics.get(topic)?.has(callback) && snapshot.hasData) {
+      if (
+        this.topics.get(topic)?.has(callback) &&
+        snapshot.hasData &&
+        (this.topicUpdateVersions.get(topic) ?? 0) === replayBaseVersion
+      ) {
         await Promise.resolve(callback(snapshot.payload));
       }
     } catch (err) {

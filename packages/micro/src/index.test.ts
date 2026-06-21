@@ -165,6 +165,25 @@ class DelayingSubscribeRegistry extends Registry {
   }
 }
 
+class UpdatingDuringSubscribeRegistry extends Registry {
+  constructor(
+    private readonly topic: string,
+    private readonly payload: unknown,
+  ) {
+    super(testAdvertise);
+  }
+
+  public override async dispatch(path: string, data: any, extras: Record<string, any> = {}) {
+    if (path === '/-/subscribe' && data?.topic === this.topic) {
+      const snapshot = await super.dispatch(path, data, extras);
+      await super.dispatch('/-/topic/update', { topic: this.topic, payload: this.payload });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      return snapshot;
+    }
+    return super.dispatch(path, data, extras);
+  }
+}
+
 class DelayingUnsubscribeRegistry extends Registry {
   public readonly unsubscribeStarted = createDeferred<void>();
   public readonly releaseUnsubscribe = createDeferred<void>();
@@ -2082,6 +2101,45 @@ describe('@hile/micro publish/subscribe edge cases', () => {
       await ref.update({ value: 2 });
       await waitForCondition(() => received.length === 2, 'subscriber did not receive update');
       expect(received).toEqual([{ value: 1 }, { value: 2 }]);
+    } finally {
+      await disposeSubscriber();
+      await disposePublisher();
+      await disposeRegistry();
+    }
+  });
+
+  it('does not replay a stale initial snapshot after a live update during subscribe', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const subscriberPort = await getAvailablePort();
+    const topic = 'subscribe-live-update-topic';
+
+    const registry = new UpdatingDuringSubscribeRegistry(topic, { value: 'latest' });
+    const publisher = new Application({
+      namespace: 'pub-subscribe-live-update',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const subscriber = new Application({
+      namespace: 'sub-subscribe-live-update',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposePublisher = await publisher.listen(publisherPort);
+    const disposeSubscriber = await subscriber.listen(subscriberPort);
+
+    try {
+      const received: unknown[] = [];
+      await publisher.publish(topic, { value: 'initial' });
+      await subscriber.subscribe(topic, value => received.push(value));
+
+      await waitForCondition(
+        () => received.length === 1,
+        'subscriber did not receive live update during subscribe',
+      );
+      expect(received).toEqual([{ value: 'latest' }]);
     } finally {
       await disposeSubscriber();
       await disposePublisher();

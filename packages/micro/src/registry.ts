@@ -228,7 +228,9 @@ export class Registry extends Server {
 
   public watchEnvFile() {
     const configFile = resolve(this.workspace, 'configs');
-    if (!existsSync(configFile)) return;
+    if (!existsSync(configFile)) {
+      mkdirSync(configFile, { recursive: true });
+    }
     const configFiles = readdirSync(configFile).filter(filename => filename.endsWith(this.configFileSuffix));
     for (const filename of configFiles) {
       try {

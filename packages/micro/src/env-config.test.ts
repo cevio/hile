@@ -87,7 +87,40 @@ describe('@hile/micro config file loading', () => {
     rmSync(configsDir, { recursive: true, force: true });
     const registry = new Registry(testAdvertise);
     const watcher = registry.watchEnvFile();
-    expect(watcher).toBeUndefined();
+    expect(watcher).toBeDefined();
+    watcher?.close();
+  });
+
+  it('watches config files created after a missing configs directory is created', async () => {
+    rmSync(configsDir, { recursive: true, force: true });
+    const topic = 'registry:svc-created-later/value';
+    const subscriber = {
+      host: '127.0.0.1',
+      port: 12346,
+      push: vi.fn(),
+    };
+    const registry = new Registry(testAdvertise);
+    (registry as any).clients.set('127.0.0.1:12346', subscriber);
+
+    const watcher = registry.watchEnvFile();
+
+    try {
+      await registry.dispatch('/-/subscribe', { topic }, { client: subscriber });
+      expect((registry as any).topics.get(topic)?.hasData).toBe(false);
+
+      await new Promise(resolve => setTimeout(resolve, 50));
+      writeFileSync(join(configsDir, 'svc-created-later.config.yaml'), 'value: 101');
+
+      await vi.waitFor(() => {
+        const entry = (registry as any).topics.get(topic);
+        expect(entry?.retained).toBe(true);
+        expect(entry?.hasData).toBe(true);
+        expect(entry?.data).toBe(101);
+        expect(subscriber.push).toHaveBeenCalledWith('/-/topic/update', { topic, payload: 101 });
+      }, { timeout: 3000, interval: 100 });
+    } finally {
+      watcher?.close();
+    }
   });
 
   it('keeps config topics after unrelated clients disconnect', async () => {
