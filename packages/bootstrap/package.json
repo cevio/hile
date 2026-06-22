@@ -1,6 +1,6 @@
 {
   "name": "@hile/bootstrap",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "Hile service bootstrap - env loading, service discovery, and exit hooks",
   "type": "module",
   "main": "./dist/index.js",
