@@ -90,6 +90,58 @@ describe('defineModel', () => {
     await expect(m.handler({ id: 1 })).resolves.toBe(99);
   });
 
+  it('pipeline middleware 可短路并返回 ctx.state.result', async () => {
+    let mainCalled = false;
+    const m = defineModel({
+      pipelines: [
+        async (ctx) => {
+          ctx.state.result = `cached-${ctx.args.id}`;
+        },
+      ],
+      async main(input: { id: number }) {
+        mainCalled = true;
+        return input.id;
+      },
+    });
+
+    await expect(m.handler({ id: 1 })).resolves.toBe('cached-1');
+    expect(mainCalled).toBe(false);
+  });
+
+  it('pipeline middleware 可在 main 后改写 ctx.state.result', async () => {
+    const m = defineModel({
+      pipelines: [
+        async (ctx, next) => {
+          await next();
+          ctx.state.result = (ctx.state.result as number) * 2;
+        },
+      ],
+      async main(input: { id: number }) {
+        return input.id + 1;
+      },
+    });
+
+    await expect(m.handler({ id: 3 })).resolves.toBe(8);
+  });
+
+  it('pipeline middleware 短路但未写 result 时返回 undefined', async () => {
+    let mainCalled = false;
+    const m = defineModel({
+      pipelines: [
+        async () => {
+          // intentionally short-circuit without result
+        },
+      ],
+      async main(input: { id: number }) {
+        mainCalled = true;
+        return input.id;
+      },
+    });
+
+    await expect(m.handler({ id: 1 })).resolves.toBeUndefined();
+    expect(mainCalled).toBe(false);
+  });
+
   it('loadModel 调用 handler', async () => {
     const m = defineModel({
       services: [A],

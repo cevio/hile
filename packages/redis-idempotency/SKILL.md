@@ -44,9 +44,9 @@ Build `stableHash()` fingerprints from plain DTOs. It rejects unsupported object
 
 Default cached results must be plain JSON values. If the wrapped function returns `Date`, `BigInt`, class instances, `Map` / `Set`, or any other rich type, pass `resultCodec` so cache hits deserialize to the same shape as the first call.
 
-## Current Model Guidance
+## Model Guidance
 
-Prefer function-level `withIdempotency()` inside `defineModel().main`. Current `@hile/model@2.1.1` does not return `ctx.state.result` on middleware short-circuit, so `idempotent()` is safe for raw `Pipeline` usage and future model versions that return `ctx.state.result`, but not for current `defineModel` cache hits.
+With `@hile/model@3.0.0+`, `defineModel()` returns `ctx.state.result` after the pipeline finishes, so `idempotent()` can short-circuit model execution when the middleware is created with an already available Redis client. Prefer function-level `withIdempotency()` inside `defineModel().main` when Redis is loaded through model `services`, or when only a smaller part of `main()` needs duplicate-execution protection.
 
 ## Failure Policy
 

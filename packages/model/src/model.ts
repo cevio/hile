@@ -113,15 +113,14 @@ export function defineModel<
     if (pipelines !== undefined && pipelines.length > 0) {
       const ctx = new PipelineContext<TInput>(input);
       const chain = new Pipeline<TInput>();
-      let result: R | undefined;
       for (const middleware of pipelines) {
         chain.use(middleware as PipelineMiddleware<TInput>);
       }
       chain.use(async (ctx) => {
-        result = await invokeMain(ctx.args);
+        ctx.state.result = await invokeMain(ctx.args);
       });
       await chain.dispatch(ctx);
-      return result as R;
+      return ctx.state.result as R;
     }
     return invokeMain(input);
   };

@@ -170,25 +170,28 @@ await pipeline.dispatch(ctx)
 console.log(ctx.state.result)
 ```
 
-Current `@hile/model@2.1.1` `defineModel()` returns a local `result` variable from its terminal middleware. That means a short-circuited middleware cannot make `model.handler()` return `ctx.state.result`. Until `@hile/model` returns `ctx.state.result`, prefer function-level `withIdempotency()` inside `main()`:
+With `@hile/model@3.0.0+`, `defineModel()` returns `ctx.state.result` after the pipeline finishes, so `idempotent()` can be used directly as model middleware when the middleware is created with an already available Redis client. A cached idempotency hit can short-circuit the pipeline and still become the model result:
 
 ```typescript
-const debitModel = defineModel({
-  services: [redisService],
-  async main([redis], input: DebitInput) {
-    return withIdempotency(
-      redis,
-      `idem:prod:wallet:debit:${input.tenantId}:${input.requestId}`,
-      () => performDebit(input),
-      {
+function createDebitModel(redis: Redis) {
+  return defineModel({
+    pipelines: [
+      idempotent({
+        redis,
+        key: (input: DebitInput) => `idem:prod:wallet:debit:${input.tenantId}:${input.requestId}`,
+        fingerprint: stableHash,
         lockTtl: 60_000,
         resultTtl: 86_400_000,
-        fingerprint: stableHash(input),
-      },
-    )
-  },
-})
+      }),
+    ],
+    async main(input: DebitInput) {
+      return performDebit(input, redis)
+    },
+  })
+}
 ```
+
+For normal Hile models that load Redis through `services: [redisService]`, or for code that needs a narrower critical section than the whole model, use function-level `withIdempotency()` inside `main()` instead.
 
 ## Error Types
 

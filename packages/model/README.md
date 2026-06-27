@@ -101,8 +101,25 @@ const model = defineModel({
 
 - 通过 `ctx.args` 改写入参
 - 通过 `ctx.state` 在中间件间传递数据
-- 不调 `next()` 可短路，`main` 不会执行
+- `main` 的返回值会写入 `ctx.state.result`，`defineModel().handler()` 最终返回 `ctx.state.result`
+- 不调 `next()` 可短路，`main` 不会执行；只要 middleware 写入 `ctx.state.result`，`handler()` 就会返回这个值
+- `await next()` 后可改写 `ctx.state.result`，用于统一响应包装、缓存、幂等、审计等横切逻辑
 - 最后一个中间件不应调 `next()`
+
+短路示例：
+
+```typescript
+const cacheMiddleware: PipelineMiddleware<{ id: string }> = async (ctx, next) => {
+  const cached = await readCachedUser(ctx.args.id)
+  if (cached) {
+    ctx.state.result = cached
+    return
+  }
+
+  await next()
+  await writeCachedUser(ctx.args.id, ctx.state.result)
+}
+```
 
 ### 函数简写
 
