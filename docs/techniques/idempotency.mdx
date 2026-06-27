@@ -43,7 +43,7 @@ Redis 幂等不是 exactly-once。资金、额度、订单、通知这类不可�
 | 场景 | 原因 |
 |---|---|
 | 纯查询 | 没有副作用，使用 `@hile/cache` 更合适 |
-| 长时间不可预测任务 | 首版没有 owner lease renewal，`lockTtl` 难以选 |
+| 长时间不可预测任务 | 幂等层当前没有暴露 owner lease renewal，`lockTtl` 难以选 |
 | 已经由数据库唯一索引直接兜底且无需返回相同结果 | 可以只依赖业务约束 |
 | 每次请求都必须独立执行 | 幂等会主动合并同 key 请求 |
 | 低价值日志写入 | Redis 不可用时 fail closed 可能不划算 |
@@ -228,7 +228,7 @@ export default defineModel({
 })
 ```
 
-`idempotent()` middleware 适合直接使用 `Pipeline`，或者未来 `defineModel()` 返回 `ctx.state.result` 的版本。当前 `@hile/model@2.1.1` 的 `defineModel()` 在缓存命中短路时无法把 `ctx.state.result` 作为最终返回值，因此不要把 `idempotent()` 当作当前 model 的一行式方案。
+`@hile/model@3.0.0+` 的 `defineModel()` 会返回 Pipeline 最终的 `ctx.state.result`，所以 `idempotent()` middleware 可以直接用于 model pipeline。仍在 2.x model 的项目应继续在 `main()` 内调用 `withIdempotency()`，避免缓存命中短路后返回值不同步。
 
 ---
 
@@ -427,7 +427,7 @@ sequenceDiagram
     A->>A: 业务执行 8s
     R-->>R: key 5s 后过期
     B->>R: 抢到同一个 key
-    A->>R: COMMIT_IF_OWNER
+    A->>R: COMMIT_DONE_IF_LOCK_OWNER
     R-->>A: token 不匹配或 key 不存在
 ```
 

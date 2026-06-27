@@ -2,21 +2,24 @@
 
 Redis-backed idempotency primitives for Hile services. The package name names the storage backend; the API names stay storage-neutral:
 
+- `new RedisIdempotency(redis).run(key, fn, options)` for class-first service composition
 - `withIdempotency(redis, key, fn, options)` for functions, message handlers, jobs, and model `main()` bodies
 - `idempotent(options)` for Koa-style `@hile/model` `Pipeline` middleware
 - `stableHash(value)` for payload fingerprints
+
+从 3.0.0 开始，新增或重构的 Hile 架构包统一进入 3.x 版本线，2.x 时代结束。
 
 ## Why this package exists
 
 Retries are normal in distributed systems. `Application.call()` may retry after timeout, queues may redeliver a message, and users may submit the same form twice. If the retried operation writes money, quota, notifications, or orders, duplicate execution becomes a real business bug.
 
-This package provides a shared Redis state machine:
+This package provides a shared Redis state machine on top of `@hile/redis-lock`:
 
 ```
 FREE -> IN_FLIGHT(owner token) -> DONE(cached result)
 ```
 
-The state lives in a single Redis key. Lua scripts atomically acquire, read, commit, and release the key so callers across processes share the same view.
+The idempotency state lives in the idempotency key, while execution ownership is guarded by a Redis lease lock. Lua scripts still commit and clear the business state only when the caller owns the underlying lock.
 
 Important boundary: Redis idempotency is not exactly-once. If the business side effect succeeds and the process crashes before the `DONE` state is committed, a later retry may run the function again. For money, quota, orders, and notifications, keep database unique constraints, transactions, outbox records, or provider idempotency keys as the final wall.
 
@@ -40,17 +43,17 @@ const redis = await loadService(redisService)
 ```typescript
 import { loadService } from '@hile/core'
 import redisService from '@hile/ioredis'
-import { stableHash, withIdempotency } from '@hile/redis-idempotency'
+import { RedisIdempotency, stableHash } from '@hile/redis-idempotency'
 
 const redis = await loadService(redisService)
+const idempotency = new RedisIdempotency(redis)
 
 async function debitWallet(input: {
   tenantId: string
   requestId: string
   amount: number
 }) {
-  return withIdempotency(
-    redis,
+  return idempotency.run(
     `idem:prod:wallet:debit:${input.tenantId}:${input.requestId}`,
     async () => {
       // Put the side-effecting operation here.
@@ -77,13 +80,22 @@ What happens:
 
 ### withIdempotency(redis, key, fn, options)
 
+`withIdempotency()` 是兼容函数，内部会创建 `RedisIdempotency` 实例并调用 `.run()`。新代码更推荐在服务层复用 `RedisIdempotency` 实例。
+
+### RedisIdempotency
+
 ```typescript
-function withIdempotency<T>(
-  redis: RedisLike,
-  key: string,
-  fn: () => Promise<T>,
-  options: IdempotencyOptions<T>,
-): Promise<T>
+const idempotency = new RedisIdempotency(redis)
+
+await idempotency.run(
+  'idem:prod:wallet:debit:t1:r1',
+  async () => performDebit(input),
+  {
+    lockTtl: 60_000,
+    resultTtl: 86_400_000,
+    fingerprint,
+  },
+)
 ```
 
 `key` must already include the full namespace. A safe format is:
@@ -148,6 +160,7 @@ const fingerprint = stableHash({
 ### idempotent(options)
 
 `idempotent()` is a Koa-style `PipelineMiddleware`. It wraps `await next()`, caches `ctx.state.result`, and writes cached results back to `ctx.state.result`.
+Pass `resultCodec` when `ctx.state.result` contains non-JSON types; the middleware forwards it to the underlying `RedisIdempotency` run.
 
 ```typescript
 import { Pipeline, PipelineContext } from '@hile/model'
@@ -213,7 +226,7 @@ For normal Hile models that load Redis through `services: [redisService]`, or fo
 | Kafka / queue consumer | max handler time + margin | 24h or redelivery SLA |
 | Payment/recharge callback | max handler time + margin | 24h+ or provider retry SLA |
 
-If a job can run longer than a predictable `lockTtl`, do not use this package as-is for that job until lease renewal exists.
+If a job can run longer than a predictable `lockTtl`, do not use this package as-is for that job until the idempotency layer exposes lease renewal.
 
 ## Testing
 

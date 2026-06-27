@@ -80,6 +80,7 @@
             "pages": [
               "packages/typeorm",
               "packages/ioredis",
+              "packages/redis-lock",
               "packages/cache",
               "packages/redis-idempotency"
             ]

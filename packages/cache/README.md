@@ -2,6 +2,8 @@
 
 基于 Redis 的类型安全读穿透缓存层。依赖 `ioredis`，构造时注入已连接的 `Redis` 实例（可与 `@hile/ioredis` 配合使用）。
 
+从 3.0.0 开始，新增或重构的 Hile 架构包统一进入 3.x 版本线，2.x 时代结束。
+
 ## 安装
 
 ```bash
@@ -23,6 +25,11 @@ const userCache = defineCache('user:{id:string}:info', async (params) => {
   // params 的类型自动推导为 { id: string }
   const data = await fetchUserFromDB(params.id);
   return new Cache(data).setExpire(300); // 5 分钟 TTL
+}, {
+  singleflight: true,
+  stale: { ttl: 60 },
+  negative: { ttl: 30 },
+  tags: ({ id }) => ['users', `user:${id}`],
 });
 ```
 
@@ -49,6 +56,9 @@ const exists = await has({ id: 'u-001' });
 
 // 删除
 await remove({ id: 'u-001' });
+
+// 按 tag 批量失效
+await cache.removeTag('users');
 ```
 
 ---
@@ -86,6 +96,31 @@ read(params)
     └─ false → write(params) → handler 回源 → SET/SETEX → 返回
 ```
 
+### Singleflight
+
+`singleflight` 使用 `@hile/redis-lock` 合并同一个 key 的并发 miss，避免热点 key 同时打到数据库。
+
+```typescript
+const userCache = defineCache('user:{id:string}', fetchUser, {
+  singleflight: {
+    ttl: 10_000,
+    wait: 10_000,
+  },
+});
+```
+
+### Stale Cache
+
+`stale: { ttl }` 会在数据过了 `Cache#setExpire()` 的 fresh 时间后继续保留一段 stale 时间。读取 stale 数据时立即返回旧值，并在后台刷新。
+
+### Negative Cache
+
+默认 `new Cache(undefined)` 不写 Redis。配置 `negative: { ttl }` 后会写入一个短 TTL 哨兵，避免不存在的数据反复回源。
+
+### Tags
+
+`tags` 会把缓存 key 记录到 Redis set，之后可用 `cache.removeTag(tag)` 批量删除。
+
 ---
 
 ## API 参考
@@ -95,15 +130,20 @@ read(params)
 ```typescript
 function defineCache<T extends string = string, R = any>(
   key: T,
-  fn: (params: ExtractParams<T>) => Promise<Cache<R>>
+  fn: (params: ExtractParams<T>) => Promise<Cache<R>>,
+  options?: boolean | DefineCacheOptions<T, R>
 ): DefineCacheResult<T, R>;
 ```
+
+第三个参数仍兼容旧的 `boolean` fieldable 写法；新能力使用 options 对象。
+
+> `fieldable` 使用 Redis Hash 存储，不兼容 `stale` 和 `negative` 这类依赖字符串 payload 的策略；组合使用会在 `defineCache()` 阶段直接抛出配置错误。
 
 ### RedisCache
 
 ```typescript
 class RedisCache {
-  constructor(prefix: string, redis: Redis);
+  constructor(prefix: string, redis: Redis, options?: { locks?: RedisLock });
 
   loadCache<T extends string, R>(
     target: DefineCacheResult<T, R>
@@ -113,6 +153,8 @@ class RedisCache {
     remove(params: ExtractParams<T>): Promise<number>;
     has(params: ExtractParams<T>): Promise<boolean>;
   }>;
+
+  removeTag(tag: string): Promise<number>;
 }
 ```
 
@@ -122,6 +164,7 @@ class RedisCache {
 | `write` | `R \| undefined` | 强制执行回源并写入 Redis（data=undefined 则删除 key） |
 | `remove` | `number` | 删除缓存，返回 0/1 |
 | `has` | `boolean` | 检查 key 是否存在 |
+| `removeTag` | `number` | 删除某个 tag 下记录的所有缓存 key |
 
 ### Redis 中的 key 结构
 

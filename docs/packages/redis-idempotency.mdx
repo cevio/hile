@@ -9,6 +9,8 @@ description: "基于 Redis 单 key 状态机的幂等原语：withIdempotency、
 pnpm add @hile/redis-idempotency @hile/ioredis
 ```
 
+从 3.0.0 开始，新增或重构的 Hile 架构包统一进入 3.x 版本线，2.x 时代结束。
+
 `@hile/redis-idempotency` 不创建 Redis 连接。它接收一个满足 `RedisLike` 结构的客户端；在 Hile 应用里通常来自 `@hile/ioredis`：
 
 ```typescript
@@ -35,7 +37,7 @@ const redis = await loadService(redisService)
 
 如果重复执行的是查询，通常只是浪费资源；如果重复执行的是扣费、下单、发通知、写额度，就会变成真实业务事故。
 
-`@hile/redis-idempotency` 提供一个 Redis-backed 幂等原语：同一个业务 key 和同一个 payload fingerprint 只允许一个 owner 执行业务函数，其他调用等待或复用第一次成功结果。
+`@hile/redis-idempotency` 提供一个 Redis-backed 幂等原语：同一个业务 key 和同一个 payload fingerprint 只允许一个 owner 执行业务函数，其他调用等待或复用第一次成功结果。3.x 版本的执行权底座统一使用 `@hile/redis-lock`。
 
 ### 幂等和缓存的区别
 
@@ -68,7 +70,7 @@ Redis 幂等不是 exactly-once。如果业务副作用已经成功，但进程�
 
 ## 状态机
 
-每个幂等键只占用一个 Redis key。value 是 JSON 字符串，状态只在 `IN_FLIGHT` 和 `DONE` 之间流转：
+每个幂等键保存业务状态，另有一个 `@hile/redis-lock` lease key 保护执行权。业务 value 是 JSON 字符串，状态只在 `IN_FLIGHT` 和 `DONE` 之间流转：
 
 ```mermaid
 flowchart LR
@@ -77,9 +79,9 @@ flowchart LR
     C["DONE<br/>fingerprint + cached result"]
     D["Retryable error<br/>key 消失或等待超时"]
 
-    A -->|"ACQUIRE_OR_READ"| B
-    B -->|"COMMIT_IF_OWNER<br/>owner token 匹配"| C
-    B -->|"RELEASE_IF_OWNER<br/>fn 抛错"| A
+    A -->|"RedisLock acquired + mark IN_FLIGHT"| B
+    B -->|"COMMIT_DONE_IF_LOCK_OWNER"| C
+    B -->|"CLEAR_IN_FLIGHT_IF_LOCK_OWNER<br/>fn 抛错"| A
     B -->|"TTL 过期"| D
     C -->|"同 key + 同 fingerprint"| C
     C -->|"同 key + 不同 fingerprint"| E["Payload mismatch"]
@@ -91,12 +93,12 @@ flowchart LR
 | `IN_FLIGHT` | `{ state, token, fingerprint, startedAt }` | `lockTtl` | 某个 owner 正在执行业务函数 |
 | `DONE` | `{ state, fingerprint, data, finishedAt }` | `resultTtl` | 成功结果已缓存，后续同 payload 返回缓存结果 |
 
-为什么只用一个 Redis key？
+为什么拆成业务状态和锁底座？
 
-- 避免 lock key 已过期但 result key 仍存在时的竞态窗口
-- Lua 脚本可以原子地完成 acquire、read、commit、release
-- `COMMIT_IF_OWNER` 会校验 owner token，旧 owner 不能覆盖新 owner 的状态
-- `fingerprint` 和状态保存在同一个 value 中，payload mismatch 可以统一判断
+- `@hile/redis-lock` 统一处理租约、等待、释放、owner 校验
+- 幂等包只保留业务状态机：`IN_FLIGHT`、`DONE`、fingerprint、结果缓存
+- commit/clear 脚本会同时校验业务 token 和底层 lock owner，旧 owner 不能覆盖新状态
+- `fingerprint` 和业务状态保存在同一个 value 中，payload mismatch 可以统一判断
 
 ---
 
@@ -109,9 +111,10 @@ flowchart LR
 ```typescript
 import { loadService } from '@hile/core'
 import redisService from '@hile/ioredis'
-import { stableHash, withIdempotency } from '@hile/redis-idempotency'
+import { RedisIdempotency, stableHash } from '@hile/redis-idempotency'
 
 const redis = await loadService(redisService)
+const idempotency = new RedisIdempotency(redis)
 
 type CreateOrderInput = {
   tenantId: string
@@ -121,8 +124,7 @@ type CreateOrderInput = {
 }
 
 async function createOrder(input: CreateOrderInput) {
-  return withIdempotency(
-    redis,
+  return idempotency.run(
     `idem:prod:order:create:${input.tenantId}:${input.requestId}`,
     () => actuallyCreateOrder(input),
     {
@@ -186,7 +188,7 @@ export default defineModel({
 ```
 
 <Note>
-当前 `@hile/model@2.1.1` 的 `defineModel()` 还不是以 `ctx.state.result` 作为最终返回值，因此 `idempotent()` middleware 不适合直接挂在当前版本的 `defineModel({ pipelines })` 上做缓存命中短路。当前 model 推荐使用函数级 `withIdempotency()`。
+`@hile/model@3.0.0+` 会在 Pipeline 执行结束后返回 `ctx.state.result`，因此 `idempotent()` middleware 可以直接用于 model pipeline。若项目仍停留在 2.x model，推荐在 `main()` 内使用函数级 `withIdempotency()`。
 </Note>
 
 ---
@@ -197,7 +199,8 @@ export default defineModel({
 
 | 导出 | 类型 | 说明 |
 |---|---|---|
-| `withIdempotency(redis, key, fn, options)` | `function` | 函数级幂等保护，最常用 |
+| `RedisIdempotency` | `class` | class-first 幂等执行器，推荐服务层复用 |
+| `withIdempotency(redis, key, fn, options)` | `function` | 函数级兼容包装，内部调用 `RedisIdempotency.run()` |
 | `idempotent(options)` | `function` | `@hile/model` raw `Pipeline` middleware |
 | `stableHash(value)` | `function` | 稳定 payload fingerprint，基于 SHA-256 |
 | `IdempotencyError` | `class` | 所有幂等错误的基类 |
@@ -235,26 +238,29 @@ function withIdempotency<T>(
 ```mermaid
 flowchart TD
     A["withIdempotency(redis, key, fn, options)"]
-    B["ACQUIRE_OR_READ Lua"]
-    C{"脚本返回"}
-    D["ACQUIRED: 执行 fn()"]
-    E["fn 成功"]
-    F["COMMIT_IF_OWNER Lua"]
+    B["读取幂等 key"]
+    C{"当前状态"}
+    D["@hile/redis-lock 抢占执行锁"]
+    E["写入 IN_FLIGHT 后执行 fn()"]
+    F["COMMIT_DONE_IF_LOCK_OWNER Lua"]
     G["返回 result"]
     H["fn 失败"]
-    I["RELEASE_IF_OWNER Lua"]
+    I["CLEAR_IN_FLIGHT_IF_LOCK_OWNER Lua"]
     J["抛原始错误"]
     K["CACHED: 反序列化 DONE.data"]
     L["IN_FLIGHT: wait 或 reject"]
     M["MISMATCH: 抛 PayloadMismatch"]
+    N["EMPTY: 进入抢锁流程"]
 
     A --> B --> C
-    C -->|"ACQUIRED"| D
-    D --> E --> F --> G
-    D --> H --> I --> J
-    C -->|"CACHED"| K
+    C -->|"DONE"| K
     C -->|"IN_FLIGHT"| L
     C -->|"MISMATCH"| M
+    C -->|"EMPTY"| N --> D
+    D -->|"ACQUIRED"| E
+    D -->|"LOCKED"| L
+    E -->|"成功"| F --> G
+    E -->|"失败"| H --> I --> J
 ```
 
 `fn()` 成功之后，如果结果序列化失败或 commit 失败，包不会释放 `IN_FLIGHT` key。这是有意为之：业务副作用可能已经发生，立即释放会让下一次请求立刻重跑，风险比等待 `lockTtl` 更高。
@@ -452,6 +458,8 @@ await withIdempotency(redis, key, createRecord, {
 
 `idempotent()` 是 Koa 风格的 `@hile/model` `PipelineMiddleware`。它包装 `await next()`，缓存 `ctx.state.result`，命中缓存时把结果写回 `ctx.state.result` 并短路后续 middleware。
 
+如果 `ctx.state.result` 不是纯 JSON 值，可以像 `withIdempotency()` 一样传入 `resultCodec`，middleware 会把它透传到底层幂等执行器。
+
 ```typescript
 import { Pipeline, PipelineContext } from '@hile/model'
 import { idempotent, stableHash } from '@hile/redis-idempotency'
@@ -491,11 +499,7 @@ console.log(ctx.state.result)
 - 你的终端 middleware 明确把业务结果写入 `ctx.state.result`
 - 你希望复用 Pipeline 的前置/后置中间件能力
 
-当前不适合：
-
-- 直接挂到 `@hile/model@2.1.1` 的 `defineModel({ pipelines })` 上做一行式缓存命中短路
-
-原因是当前 `defineModel()` 返回内部局部变量 `result`，缓存命中短路时 `ctx.state.result` 不会成为 `model.handler()` 的返回值。
+`@hile/model@3.0.0+` 的 `defineModel()` 会返回 Pipeline 最终的 `ctx.state.result`，所以可以直接把 `idempotent()` 放进 model pipeline。仍在 2.x model 的项目应继续在 `main()` 内调用 `withIdempotency()`，避免缓存命中短路后返回值不同步。
 
 ---
 

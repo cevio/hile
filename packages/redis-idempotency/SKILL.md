@@ -12,14 +12,15 @@ Use `@hile/redis-idempotency` when a write operation may be retried or redeliver
 Package name names the backend; API names stay generic:
 
 ```typescript
-import { stableHash, withIdempotency } from '@hile/redis-idempotency'
+import { RedisIdempotency, stableHash } from '@hile/redis-idempotency'
 ```
 
 Wrap the smallest side-effecting function:
 
 ```typescript
-return withIdempotency(
-  redis,
+const idempotency = new RedisIdempotency(redis)
+
+return idempotency.run(
   `idem:prod:wallet:debit:${tenantId}:${requestId}`,
   () => debitWallet(input),
   {
@@ -29,6 +30,12 @@ return withIdempotency(
   },
 )
 ```
+
+`withIdempotency(redis, key, fn, options)` remains as a compatibility wrapper around `RedisIdempotency.run()`.
+
+## Redis Lock Base
+
+`@hile/redis-idempotency` is a higher-level abstraction over `@hile/redis-lock`: use the lock package for execution ownership and waiting, and keep idempotency-specific `IN_FLIGHT` / `DONE` state in this package.
 
 ## Key Design
 

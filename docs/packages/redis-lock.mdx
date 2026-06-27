@@ -1,0 +1,56 @@
+---
+title: "@hile/redis-lock"
+description: "Redis lease lock 底座：RedisLock class、RedisLockLease、withLock、tryLock、续租、等待和 fencing token"
+---
+
+从 3.0.0 开始，新增或重构的 Hile 架构包统一进入 3.x 版本线，2.x 时代结束。
+
+## 安装
+
+```bash
+pnpm add @hile/redis-lock
+```
+
+`@hile/redis-lock` 接收任何满足 `RedisLockLike` 的客户端。Hile 应用里通常直接传入 `@hile/ioredis` 提供的 Redis 实例。
+
+## Class-first 用法
+
+```typescript
+import { RedisLock } from '@hile/redis-lock'
+
+const locks = new RedisLock(redis, {
+  prefix: 'billing:',
+  defaultTtl: 30_000,
+  wait: 2_000,
+})
+
+await locks.withLock('invoice:sync', async (lease) => {
+  await syncInvoices(lease.token)
+})
+```
+
+`RedisLock` 是主 API，适合服务初始化时创建一次并注入。`tryLock()` 和 `withLock()` 函数仍保留为兼容层。
+
+## RedisLockLease
+
+拿到锁后会得到 `RedisLockLease`：
+
+| 属性/方法 | 说明 |
+|---|---|
+| `key` | 实际 Redis lock key，包含实例 prefix |
+| `token` | owner token |
+| `fencingToken` | 开启 fencing 时返回的递增 token |
+| `renew(ttl?)` | 续租 |
+| `release()` | compare-owner-and-delete 释放锁 |
+| `assertOwner()` | 校验当前 token 仍拥有锁 |
+
+## 适用场景
+
+- 定时任务多实例只跑一个
+- cache miss singleflight
+- 幂等状态提交前的执行权保护
+- 迁移、补偿任务、库存扣减等短租约临界区
+
+<Warning>
+这是 lease lock，不是事务系统。不可逆写操作仍应有数据库唯一约束、CAS、fencing token 或 outbox 等最终保护。
+</Warning>
