@@ -376,6 +376,19 @@ importers:
         specifier: ^4.0.18
         version: 4.0.18(@types/node@25.3.1)(less@4.5.1)(terser@5.46.0)(tsx@4.21.0)(yaml@2.9.0)
 
+  packages/redis-idempotency:
+    dependencies:
+      '@hile/model':
+        specifier: workspace:^
+        version: link:../model
+    devDependencies:
+      fix-esm-import-path:
+        specifier: ^1.10.3
+        version: 1.10.3
+      vitest:
+        specifier: ^4.0.18
+        version: 4.0.18(@types/node@25.3.1)(less@4.5.1)(terser@5.46.0)(tsx@4.21.0)(yaml@2.9.0)
+
   packages/schedule:
     dependencies:
       '@hile/loader':

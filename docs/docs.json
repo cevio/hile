@@ -41,6 +41,7 @@
               "techniques/configuration",
               "techniques/database",
               "techniques/caching",
+              "techniques/idempotency",
               "techniques/messaging"
             ]
           },
@@ -79,7 +80,8 @@
             "pages": [
               "packages/typeorm",
               "packages/ioredis",
-              "packages/cache"
+              "packages/cache",
+              "packages/redis-idempotency"
             ]
           },
           {
