@@ -104,6 +104,8 @@ scheduler.add('daily-report', '0 8 * * *', handler, {
 
 **解决痛点：** 现在 `RedisCache.read()` 在缓存 miss 时会直接回源。并发请求同时 miss 时，可能一起打到数据库，形成缓存击穿或雪崩。
 
+**兼容性要求：** 这个升级必须保持现有 `@hile/cache` 行为默认不变。当前公开 API 是 `defineCache(key, fn, fieldable?)`，第三个参数已经用于 `fieldable` 布尔值；不能直接改成 `options` 对象，否则会破坏 `defineCache(..., ..., true)` 的 Redis hash 缓存用法。
+
 **核心 API 草案：**
 
 ```ts
@@ -117,12 +119,31 @@ const userCache = defineCache('user:{id:string}', fetchUser, {
 })
 ```
 
+为了兼容旧用法，最终 API 应该设计成重载：
+
+```ts
+defineCache(key, fn)
+defineCache(key, fn, true) // 旧用法：fieldable hash
+defineCache(key, fn, {
+  fieldable: true,
+  singleflight: true,
+  staleTtl: 3600,
+})
+```
+
 **实现要点：**
 
 - 用 `@hile/redis-lock` 做跨进程 singleflight，同一个 key 只有一个请求回源。
 - 支持 stale-while-revalidate：数据过期但还在 stale 窗口内时，先返回旧值，同时后台刷新。
 - 支持 negative cache：查不到的数据也短时间缓存，防止不存在的 id 被打爆数据库。
 - 支持 tag invalidation：例如 `cache.invalidateTag('user:123')` 删除相关 key。
+- 默认关闭所有新能力。老的 `read/write/remove/has/multi` 语义必须保持不变。
+- 不改变旧缓存的主 key 存储格式：普通缓存仍然是 JSON 字符串，`fieldable` 缓存仍然是 Redis hash。
+- 新能力需要元数据时，优先使用 sidecar key，例如 `{cacheKey}:__meta`、`{cacheKey}:__lock`，不要把主 key 包一层新 JSON 结构。
+- `Cache#setExpire(seconds)` 仍然是现有 TTL 语义。`options.ttl` 如果保留，只能作为新能力的默认 TTL，且不能让 `new Cache(data)` 从“永不过期”悄悄变成“会过期”。
+- `remove()` 可以额外清理 meta/tag/lock sidecar key，但返回值仍然以主 key 删除结果为准，保持 `0 | 1` 兼容。
+- `multi()` 会把真实 Redis 主 key 暴露给调用者，所以主 key 类型和内容不能因为开启 metadata 而变成包装对象。
+- negative cache 必须是显式 opt-in。默认情况下 `new Cache(undefined)` 仍然表示不写入 Redis 或删除已有 key。
 
 **测试重点：**
 
@@ -130,6 +151,9 @@ const userCache = defineCache('user:{id:string}', fetchUser, {
 - 刷新时能先返回 stale 数据。
 - 回源失败时，根据配置保留 stale 数据。
 - tag invalidation 能删除所有相关 key。
+- 旧 API 兼容测试：`defineCache(key, fn, true)` 仍然走 hash；`defineCache(key, fn, false)` 仍然走 JSON 字符串。
+- 旧存量数据兼容测试：升级前写入的 JSON 字符串和 hash，升级后还能正常 `read/has/remove/multi`。
+- 默认行为兼容测试：不传 options 时，并发 miss 仍允许多次回源，不引入锁等待、stale 或 negative cache。
 
 ---
 
@@ -437,4 +461,3 @@ graph TD
 - 实现计划：`docs/superpowers/plans/YYYY-MM-DD-redis-lock-implementation.md`
 - 新包目录：`packages/redis-lock`
 - 测试：内存 Redis 行为测试 + Redis 集成测试
-
