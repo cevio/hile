@@ -1,6 +1,6 @@
 {
   "name": "@hile/schedule",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Declarative job scheduler based on node-schedule",
   "type": "module",
   "main": "./dist/index.js",
