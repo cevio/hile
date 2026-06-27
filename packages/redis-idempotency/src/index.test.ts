@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Pipeline, PipelineContext } from '@hile/model';
+import { RedisLock } from '@hile/redis-lock';
 import {
   IdempotencyOwnershipLostError,
   IdempotencyConflictError,
   IdempotencyPayloadMismatchError,
   IdempotencyRetryableError,
+  IdempotencyTimeoutError,
+  RedisIdempotency,
   idempotent,
   stableHash,
   withIdempotency,
@@ -39,22 +42,45 @@ class MemoryRedis implements RedisLike {
     return this.values.delete(key) ? 1 : 0;
   }
 
-  public async eval(script: string, _keyCount: number, key: string, ...args: Array<string | number>) {
-    if (script.includes('ACQUIRE_OR_READ')) {
-      const [token, fingerprint, inFlight, lockTtl] = args as [string, string, string, number];
-      const raw = this.values.get(key);
-      if (!raw) {
-        await this.set(key, inFlight, 'PX', lockTtl);
-        return ['ACQUIRED'];
+  public async eval(script: string, keyCount: number, ...keysAndArgs: Array<string | number>) {
+    if (script.includes('TRY_ACQUIRE_LOCK')) {
+      const key = String(keysAndArgs[0]);
+      const maybeFenceKey = keyCount === 2 ? String(keysAndArgs[1]) : '';
+      const token = String(keyCount === 2 ? keysAndArgs[2] : keysAndArgs[1]);
+      const ttl = Number(keyCount === 2 ? keysAndArgs[3] : keysAndArgs[2]);
+      const fencing = String(keyCount === 2 ? keysAndArgs[4] : keysAndArgs[3]);
+      if (this.values.has(key)) return ['LOCKED'];
+      if (ttl <= 0) throw new Error('ttl must be positive');
+      this.values.set(key, token);
+      if (fencing === '1') {
+        const next = Number(this.values.get(maybeFenceKey) ?? '0') + 1;
+        this.values.set(maybeFenceKey, String(next));
+        return ['ACQUIRED', String(next)];
       }
-      const value = JSON.parse(raw);
-      if (value.fingerprint !== fingerprint) return ['MISMATCH'];
-      if (value.state === 'DONE') return ['CACHED', raw];
-      return ['IN_FLIGHT'];
+      return ['ACQUIRED'];
     }
 
-    if (script.includes('COMMIT_IF_OWNER')) {
-      const [token, done, resultTtl] = args as [string, string, number];
+    if (script.includes('RELEASE_LOCK_IF_OWNER')) {
+      const [key, token] = keysAndArgs as [string, string];
+      if (this.values.get(key) !== token) return 0;
+      this.values.delete(key);
+      return 1;
+    }
+
+    if (script.includes('RENEW_LOCK_IF_OWNER')) {
+      const [key, token, ttl] = keysAndArgs as [string, string, number];
+      if (ttl <= 0) throw new Error('ttl must be positive');
+      return this.values.get(key) === token ? 1 : 0;
+    }
+
+    if (script.includes('ASSERT_LOCK_OWNER')) {
+      const [key, token] = keysAndArgs as [string, string];
+      return this.values.get(key) === token ? 1 : 0;
+    }
+
+    if (script.includes('COMMIT_DONE_IF_LOCK_OWNER')) {
+      const [key, lockKey, token, done, resultTtl] = keysAndArgs as [string, string, string, string, number];
+      if (this.values.get(lockKey) !== token) return 0;
       const raw = this.values.get(key);
       if (!raw) return 0;
       const value = JSON.parse(raw);
@@ -65,8 +91,9 @@ class MemoryRedis implements RedisLike {
       return 0;
     }
 
-    if (script.includes('RELEASE_IF_OWNER')) {
-      const [token] = args as [string];
+    if (script.includes('CLEAR_IN_FLIGHT_IF_LOCK_OWNER')) {
+      const [key, lockKey, token] = keysAndArgs as [string, string, string];
+      if (this.values.get(lockKey) !== token) return 0;
       const raw = this.values.get(key);
       if (!raw) return 0;
       const value = JSON.parse(raw);
@@ -108,6 +135,46 @@ describe('stableHash', () => {
 });
 
 describe('withIdempotency', () => {
+  it('RedisIdempotency class caches results through an instance redis client', async () => {
+    const redis = new MemoryRedis();
+    const idempotency = new RedisIdempotency(redis);
+    const fn = vi.fn(async () => ({ value: 'created' }));
+
+    await expect(idempotency.run('idem:test:class', fn, {
+      lockTtl: 1000,
+      resultTtl: 1000,
+      fingerprint: 'same',
+    })).resolves.toEqual({ value: 'created' });
+    await expect(idempotency.run('idem:test:class', fn, {
+      lockTtl: 1000,
+      resultTtl: 1000,
+      fingerprint: 'same',
+    })).resolves.toEqual({ value: 'created' });
+
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it('commits results when the injected RedisLock applies a key prefix', async () => {
+    const redis = new MemoryRedis();
+    const idempotency = new RedisIdempotency(redis, {
+      locks: new RedisLock(redis, { prefix: 'tenant-a:' }),
+    });
+    const fn = vi.fn(async () => ({ value: 'created' }));
+
+    await expect(idempotency.run('idem:test:prefixed-lock', fn, {
+      lockTtl: 1000,
+      resultTtl: 1000,
+      fingerprint: 'same',
+    })).resolves.toEqual({ value: 'created' });
+    await expect(idempotency.run('idem:test:prefixed-lock', fn, {
+      lockTtl: 1000,
+      resultTtl: 1000,
+      fingerprint: 'same',
+    })).resolves.toEqual({ value: 'created' });
+
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
   it('coalesces concurrent calls for the same key and fingerprint', async () => {
     const redis = new MemoryRedis();
     const gate = createDeferred<{ ok: true }>();
@@ -281,11 +348,11 @@ describe('withIdempotency', () => {
 
   it('preserves both the function failure and release failure', async () => {
     class ReleaseFailingRedis extends MemoryRedis {
-      public override async eval(script: string, keyCount: number, key: string, ...args: Array<string | number>) {
-        if (script.includes('RELEASE_IF_OWNER')) {
+      public override async eval(script: string, keyCount: number, ...keysAndArgs: Array<string | number>) {
+        if (script.includes('CLEAR_IN_FLIGHT_IF_LOCK_OWNER')) {
           throw new Error('release failed');
         }
-        return super.eval(script, keyCount, key, ...args);
+        return super.eval(script, keyCount, ...keysAndArgs);
       }
     }
     const redis = new ReleaseFailingRedis();
@@ -305,6 +372,64 @@ describe('withIdempotency', () => {
         'business failed',
         'release failed',
       ]);
+    }
+  });
+
+  it('preserves the function failure when clearing the in-flight key loses ownership', async () => {
+    class ClearLostRedis extends MemoryRedis {
+      public override async eval(script: string, keyCount: number, ...keysAndArgs: Array<string | number>) {
+        if (script.includes('CLEAR_IN_FLIGHT_IF_LOCK_OWNER')) {
+          return 0;
+        }
+        return super.eval(script, keyCount, ...keysAndArgs);
+      }
+    }
+    const redis = new ClearLostRedis();
+
+    try {
+      await withIdempotency(redis, 'idem:test:clear-lost', async () => {
+        throw new Error('business failed');
+      }, {
+        lockTtl: 1000,
+        resultTtl: 1000,
+        fingerprint: 'same',
+      });
+      throw new Error('expected withIdempotency to throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(AggregateError);
+      const errors = (err as AggregateError).errors;
+      expect((errors[0] as Error).message).toBe('business failed');
+      expect(errors[1]).toBeInstanceOf(IdempotencyOwnershipLostError);
+    }
+  });
+
+  it('does not wait past the configured wait when pollInterval is larger', async () => {
+    vi.useFakeTimers();
+    const redis = new MemoryRedis();
+    redis.values.set('idem:test:short-wait', JSON.stringify({
+      state: 'IN_FLIGHT',
+      token: 'other-owner',
+      fingerprint: 'same',
+      startedAt: Date.now(),
+    }));
+
+    try {
+      const result = withIdempotency(redis, 'idem:test:short-wait', vi.fn(), {
+        lockTtl: 1000,
+        resultTtl: 1000,
+        wait: 5,
+        pollInterval: 50,
+        fingerprint: 'same',
+      }).catch(error => error);
+
+      await vi.advanceTimersByTimeAsync(5);
+
+      await expect(Promise.race([
+        result,
+        Promise.resolve('pending'),
+      ])).resolves.toBeInstanceOf(IdempotencyTimeoutError);
+    } finally {
+      vi.useRealTimers();
     }
   });
 });
@@ -335,6 +460,43 @@ describe('idempotent middleware', () => {
     const second = new PipelineContext({ tenantId: 't1', requestId: 'r1' });
     await pipeline.dispatch(second);
     expect(second.state.result).toEqual({ charged: true, requestId: 'r1' });
+
+    expect(main).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes resultCodec through to middleware idempotency runs', async () => {
+    const redis = new MemoryRedis();
+    const main = vi.fn(async () => ({
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    }));
+    const resultCodec = {
+      serialize: (value: { createdAt: Date }) => JSON.stringify({ createdAt: value.createdAt.toISOString() }),
+      deserialize: (value: string) => {
+        const parsed = JSON.parse(value) as { createdAt: string };
+        return { createdAt: new Date(parsed.createdAt) };
+      },
+    };
+    const pipeline = new Pipeline<{ requestId: string }>();
+    pipeline.use(idempotent<{ requestId: string }, { createdAt: Date }>({
+      redis,
+      key: (input) => `idem:test:middleware-codec:${input.requestId}`,
+      fingerprint: stableHash,
+      lockTtl: 1000,
+      resultTtl: 1000,
+      resultCodec,
+    }));
+    pipeline.use(async (ctx) => {
+      ctx.state.result = await main();
+    });
+
+    const first = new PipelineContext({ requestId: 'r1' });
+    await pipeline.dispatch(first);
+    expect(first.state.result.createdAt).toBeInstanceOf(Date);
+
+    const second = new PipelineContext({ requestId: 'r1' });
+    await pipeline.dispatch(second);
+    expect(second.state.result.createdAt).toBeInstanceOf(Date);
+    expect(second.state.result.createdAt.toISOString()).toBe('2026-01-01T00:00:00.000Z');
 
     expect(main).toHaveBeenCalledTimes(1);
   });

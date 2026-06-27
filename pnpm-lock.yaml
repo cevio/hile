@@ -51,6 +51,9 @@ importers:
 
   packages/cache:
     dependencies:
+      '@hile/redis-lock':
+        specifier: workspace:^
+        version: link:../redis-lock
       ioredis:
         specifier: ^5.11.0
         version: 5.11.1
@@ -381,6 +384,18 @@ importers:
       '@hile/model':
         specifier: workspace:^
         version: link:../model
+      '@hile/redis-lock':
+        specifier: workspace:^
+        version: link:../redis-lock
+    devDependencies:
+      fix-esm-import-path:
+        specifier: ^1.10.3
+        version: 1.10.3
+      vitest:
+        specifier: ^4.0.18
+        version: 4.1.9(@types/node@25.9.4)(@vitest/coverage-v8@4.1.9)(vite@8.1.0(@types/node@25.9.4)(esbuild@0.28.1)(tsx@4.22.4)(yaml@2.9.0))
+
+  packages/redis-lock:
     devDependencies:
       fix-esm-import-path:
         specifier: ^1.10.3
@@ -394,6 +409,9 @@ importers:
       '@hile/loader':
         specifier: workspace:^
         version: link:../loader
+      '@hile/redis-lock':
+        specifier: workspace:^
+        version: link:../redis-lock
       node-schedule:
         specifier: ^2.1.1
         version: 2.1.1

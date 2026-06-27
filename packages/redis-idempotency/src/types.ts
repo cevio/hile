@@ -1,3 +1,5 @@
+import type { RedisLockLike } from '@hile/redis-lock';
+
 export type RedisEvalResult = unknown;
 
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -7,11 +9,10 @@ export type StoredIdempotencyResult =
   | { encoding: 'json'; value: JsonValue }
   | { encoding: 'custom'; value: string };
 
-export interface RedisLike {
+export interface RedisLike extends RedisLockLike {
   get(key: string): Promise<string | null>;
   set(key: string, value: string, px: 'PX', ttl: number): Promise<unknown>;
   del(key: string): Promise<unknown>;
-  eval(script: string, numberOfKeys: number, key: string, ...args: Array<string | number>): Promise<RedisEvalResult>;
 }
 
 export interface IdempotencyResultCodec<T = unknown> {
@@ -30,8 +31,10 @@ export interface IdempotencyOptions<T = unknown> {
   resultCodec?: IdempotencyResultCodec<T>;
 }
 
-export interface IdempotentMiddlewareOptions<TInput extends object = Record<string, unknown>>
-  extends Omit<IdempotencyOptions, 'fingerprint'> {
+export interface IdempotentMiddlewareOptions<
+  TInput extends object = Record<string, unknown>,
+  TResult = unknown,
+> extends Omit<IdempotencyOptions<TResult>, 'fingerprint'> {
   redis: RedisLike;
   key: (input: TInput) => string;
   fingerprint: string | ((input: TInput) => string);

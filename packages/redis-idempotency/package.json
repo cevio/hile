@@ -22,6 +22,7 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
-    "@hile/model": "workspace:^"
+    "@hile/model": "workspace:^",
+    "@hile/redis-lock": "workspace:^"
   }
 }

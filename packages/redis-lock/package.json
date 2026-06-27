@@ -1,16 +1,18 @@
 {
-  "name": "@hile/cache",
+  "name": "@hile/redis-lock",
   "version": "3.0.0",
+  "description": "Redis-backed lease locks for Hile services",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
     "build": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
     "dev": "tsc -b --watch",
-    "test": "vitest run && tsc -p tsconfig.typecheck.json"
+    "test": "vitest run"
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "SKILL.md"
   ],
   "license": "MIT",
   "publishConfig": {
@@ -19,9 +21,5 @@
   "devDependencies": {
     "fix-esm-import-path": "^1.10.3",
     "vitest": "^4.0.18"
-  },
-  "dependencies": {
-    "@hile/redis-lock": "workspace:^",
-    "ioredis": "^5.11.0"
   }
 }

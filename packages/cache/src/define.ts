@@ -29,17 +29,67 @@ export type ExtractParams<Template extends string> =
   : {};
 
 export type DefineCacheHandler<T extends string = string, R = any> = (opts: ExtractParams<T>) => Promise<Cache<R>>;
+export type CacheTagResolver<T extends string = string, R = any> =
+  | string[]
+  | ((params: ExtractParams<T>, data: R | undefined) => string[]);
+
+export type CacheSingleflightOptions = {
+  ttl?: number;
+  wait?: number;
+  pollInterval?: number;
+  maxPollInterval?: number;
+};
+
+export type CacheStaleOptions = {
+  ttl: number;
+};
+
+export type CacheNegativeOptions = {
+  ttl: number;
+};
+
+export type DefineCacheOptions<T extends string = string, R = any> = {
+  fieldable?: boolean;
+  singleflight?: boolean | CacheSingleflightOptions;
+  stale?: CacheStaleOptions;
+  negative?: CacheNegativeOptions;
+  tags?: CacheTagResolver<T, R>;
+};
+
 export type DefineCacheResult<T extends string = string, R = any> = {
   fn: DefineCacheHandler<T, R>;
-  key: string;
+  key: T;
   fieldable: boolean;
+  options: DefineCacheOptions<T, R>;
 }
 
-export function defineCache<T extends string = string, R = any>(key: T, fn: DefineCacheHandler<T, R>, fieldable = false): DefineCacheResult<T, R> {
+function normalizeDefineCacheOptions<T extends string, R>(
+  options: boolean | DefineCacheOptions<T, R>,
+): DefineCacheOptions<T, R> {
+  return typeof options === 'boolean'
+    ? { fieldable: options }
+    : options;
+}
+
+function assertCompatibleCacheOptions<T extends string, R>(options: DefineCacheOptions<T, R>): void {
+  if (!options.fieldable) return;
+  if (options.negative || options.stale) {
+    throw new TypeError('fieldable cache cannot be combined with negative or stale cache options');
+  }
+}
+
+export function defineCache<T extends string = string, R = any>(
+  key: T,
+  fn: DefineCacheHandler<T, R>,
+  options: boolean | DefineCacheOptions<T, R> = false,
+): DefineCacheResult<T, R> {
+  const normalized = normalizeDefineCacheOptions(options);
+  assertCompatibleCacheOptions(normalized);
   return {
     fn,
     key,
-    fieldable,
+    fieldable: normalized.fieldable ?? false,
+    options: normalized,
   };
 }
 

@@ -9,8 +9,11 @@ function resolveFingerprint<TInput extends object>(
   return typeof fingerprint === 'function' ? fingerprint(input) : fingerprint;
 }
 
-export function idempotent<TInput extends object = Record<string, unknown>>(
-  options: IdempotentMiddlewareOptions<TInput>,
+export function idempotent<
+  TInput extends object = Record<string, unknown>,
+  TResult = unknown,
+>(
+  options: IdempotentMiddlewareOptions<TInput, TResult>,
 ): PipelineMiddleware<TInput> {
   return async (ctx, next) => {
     const result = await withIdempotency(
@@ -28,6 +31,7 @@ export function idempotent<TInput extends object = Record<string, unknown>>(
         pollInterval: options.pollInterval,
         maxPollInterval: options.maxPollInterval,
         fingerprint: resolveFingerprint(options.fingerprint, ctx.args),
+        resultCodec: options.resultCodec,
       },
     );
     ctx.state.result = result;

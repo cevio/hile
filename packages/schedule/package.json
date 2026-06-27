@@ -1,6 +1,6 @@
 {
   "name": "@hile/schedule",
-  "version": "2.1.1",
+  "version": "3.0.0",
   "description": "Declarative job scheduler based on node-schedule",
   "type": "module",
   "main": "./dist/index.js",
@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@hile/loader": "workspace:^",
+    "@hile/redis-lock": "workspace:^",
     "node-schedule": "^2.1.1"
   }
 }
