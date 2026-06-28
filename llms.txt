@@ -1,0 +1,50 @@
+# Hile LLM Context
+
+Hile is a lightweight Node.js service toolkit for async service lifecycle, Koa HTTP APIs, Next.js integration, reusable models, messaging/microservices, jobs, and Redis reliability primitives.
+
+Use `llms-full.txt` for complete examples. Use `references/package-map.md` to choose packages before generating code.
+
+## AI Instructions
+
+- Prefer examples from `references/packages/*.md` and `references/recipes/*.md` over prose.
+- Use source code and tests as truth if generated docs drift.
+- Preserve lifecycle cleanup through `shutdown()` callbacks.
+- Keep durable jobs in `@hile/redis-stream-queue`, RPC in `@hile/micro`, business logic in `@hile/model`, and request boundaries in `@hile/http` or `@hile/http-next`.
+- Never use stale message examples that append a secondary response getter.
+
+## Package Selection Matrix
+
+| User asks for | Use | Also read |
+|---|---|---|
+| Start an app, manage lifecycle, graceful shutdown | `@hile/core`, `@hile/cli`, `@hile/bootstrap` | `packages/core-lifecycle.md` |
+| Create an HTTP endpoint or Koa middleware | `@hile/http` | `packages/http.md`, `recipes/http-api-model-typeorm.md` |
+| Run Next.js and API controllers on one port | `@hile/http-next` | `packages/http-next.md`, `recipes/http-next-fullstack.md` |
+| Put business logic somewhere reusable | `@hile/model` | `packages/model-context.md` |
+| Propagate request id, tenant id, logger bindings, or micro context | `@hile/context` | `packages/model-context.md` |
+| Connect to SQL through TypeORM | `@hile/typeorm` | `packages/core-lifecycle.md`, `packages/infrastructure.md` |
+| Connect to Redis | `@hile/ioredis` | `packages/core-lifecycle.md`, `packages/infrastructure.md` |
+| Create structured logs | `@hile/logger` | `packages/core-lifecycle.md`, `packages/infrastructure.md` |
+| Add read-through Redis cache | `@hile/cache` | `packages/infrastructure.md`, `recipes/redis-cache-singleflight.md` |
+| Run cron or delayed jobs | `@hile/schedule` | `packages/infrastructure.md` |
+| Build a custom file loader or understand route mapping | `@hile/loader` | `packages/infrastructure.md` |
+| Add request/response messaging over WS/IPC/worker | `@hile/message-*` | `packages/messaging-micro.md` |
+| Load file-based message handlers | `@hile/message-loader` | `packages/messaging-micro.md`, `recipes/micro-rpc-message-loader.md` |
+| Build service discovery or RPC | `@hile/micro` | `packages/messaging-micro.md`, `recipes/micro-rpc-message-loader.md` |
+| Push runtime config without restarts | `@hile/micro-dynamic-configs` | `packages/messaging-micro.md`, `recipes/runtime-config.md` |
+| Protect a critical section with a lease | `@hile/redis-lock` | `packages/redis-reliability.md` |
+| Stop duplicate retry side effects | `@hile/redis-idempotency` | `packages/redis-reliability.md`, `recipes/queue-worker-idempotency.md` |
+| Enforce shared quotas or 429s | `@hile/redis-rate-limit` | `packages/redis-reliability.md` |
+| Persist and retry background jobs | `@hile/redis-stream-queue` | `packages/redis-reliability.md`, `recipes/queue-worker-idempotency.md` |
+| Scaffold a new project | `create-hile` | `packages/create-hile.md`, `recipes/new-project-scaffold.md` |
+
+## Never Generate These Patterns
+
+- Do not call `loadService()` at module top level; it starts resources during import.
+- Do not default-export plain functions from `*.boot.*` files; `hile start` expects a Hile service.
+- Do not set `ctx.body` and also return a controller value.
+- Do not assume `@hile/http` Zod validation mutates or coerces `ctx.query`, `ctx.params`, or `ctx.request.body`.
+- Do not put reusable business logic only in controllers, pages, queue workers, or message handlers.
+- Do not use old message examples that append a secondary response getter; current request APIs return promises directly.
+- Do not claim exactly-once delivery or execution from Redis locks, queues, idempotency, or rate limits.
+- Do not use queue `jobId` as the only side-effect idempotency boundary.
+- Do not log the entire async context by default.

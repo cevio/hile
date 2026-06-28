@@ -1,0 +1,150 @@
+# Redis Reliability
+
+Packages: `@hile/redis-lock`, `@hile/redis-idempotency`, `@hile/redis-rate-limit`, `@hile/redis-stream-queue`.
+
+## Copy-Paste Example
+
+Idempotent queue worker:
+
+```ts
+import { loadService } from '@hile/core'
+import redisService from '@hile/ioredis'
+import { RedisIdempotency, stableHash } from '@hile/redis-idempotency'
+import { RedisStreamQueue, defineQueue } from '@hile/redis-stream-queue'
+
+type EmailJob = { tenantId: string; userId: string; template: 'welcome' }
+
+const emailQueue = defineQueue<EmailJob>('email')
+
+const redis = await loadService(redisService)
+const queue = new RedisStreamQueue(redis, { prefix: 'app:' })
+const idempotency = new RedisIdempotency(redis)
+
+queue.worker(emailQueue, async (job) => {
+  await idempotency.run(
+    `idem:email:${job.data.tenantId}:${job.jobId ?? job.id}`,
+    () => sendEmail(job.data),
+    {
+      lockTtl: 60_000,
+      resultTtl: 86_400_000,
+      fingerprint: stableHash(job.data),
+    },
+  )
+}, {
+  group: 'email-workers',
+  consumer: process.env.HOSTNAME ?? `${process.pid}`,
+  concurrency: 8,
+}).start()
+```
+
+## More Examples
+
+Distributed lock with fencing:
+
+```ts
+import { RedisLock } from '@hile/redis-lock'
+
+const locks = new RedisLock(redis, {
+  prefix: 'billing:',
+  defaultTtl: 30_000,
+})
+
+await locks.withLock('lock:account:acct_1', {
+  wait: 2_000,
+  fencing: true,
+  renew: true,
+}, async ({ fencingToken }) => {
+  await accountRepo.updateIfFencingTokenIsNewer('acct_1', changes, fencingToken!)
+})
+```
+
+Rate limit HTTP middleware:
+
+```ts
+import { defineLimit, RedisRateLimiter, rateLimitHttp } from '@hile/redis-rate-limit'
+
+const loginLimit = defineLimit('rl:login:{ip:string}', {
+  algorithm: 'sliding-window',
+  limit: 5,
+  window: 60_000,
+})
+
+const limiter = new RedisRateLimiter(redis, { prefix: 'app:' })
+
+http.use(rateLimitHttp(loginLimit, {
+  limiter,
+  key: (ctx) => ({ ip: ctx.ip }),
+}))
+```
+
+Queue add with delayed retry policy:
+
+```ts
+await queue.add(emailQueue, payload, {
+  jobId: `welcome:${payload.tenantId}:${payload.userId}`,
+  delay: 10_000,
+  maxAttempts: 5,
+  backoff: { type: 'exponential', baseMs: 1_000, maxMs: 60_000 },
+})
+```
+
+## Use When
+
+Use these packages for distributed lease locks, duplicate execution protection, shared quotas, and durable Redis Streams job processing.
+
+## Do Not Use When
+
+- Do not claim exactly-once behavior.
+- Do not use locks as a replacement for database constraints.
+- Do not use queue `jobId` as the only idempotency boundary for side effects.
+- Do not use rate limits as authorization or authentication.
+
+## Install
+
+```bash
+pnpm add @hile/redis-lock @hile/redis-idempotency @hile/redis-rate-limit @hile/redis-stream-queue
+```
+
+## Imports
+
+```ts
+import { RedisLock } from '@hile/redis-lock'
+import { RedisIdempotency, stableHash, withIdempotency, idempotent } from '@hile/redis-idempotency'
+import { RedisRateLimiter, defineLimit, rateLimitHttp, rateLimitModel } from '@hile/redis-rate-limit'
+import { RedisStreamQueue, defineQueue } from '@hile/redis-stream-queue'
+```
+
+## Compose With
+
+- Use `@hile/ioredis` for the Redis client.
+- Use `idempotent()` and `rateLimitModel()` in `@hile/model` pipelines.
+- Use `@hile/context` with queues; active context is snapshotted during enqueue and restored in handlers.
+- Use `@hile/cache` singleflight to reduce stampedes.
+
+## Runtime And Lifecycle Notes
+
+- `RedisLock.withLock()` asserts ownership before returning a successful callback result.
+- `tryLock()` returns `undefined` if the key is already locked.
+- `RedisIdempotency.run()` stores `IN_FLIGHT` and `DONE` states in Redis and uses Redis locks for ownership.
+- Idempotency requires a stable `fingerprint`.
+- `stableHash()` is for plain DTOs and rejects unsupported shapes.
+- Rate limit algorithms: `fixed-window`, `sliding-window`, `token-bucket`.
+- `dryRun` rate limit checks do not mutate Redis.
+- Queue workers use Redis Streams consumer groups, delayed sorted sets, pending claim recovery, retry backoff, and DLQ streams.
+- Queue payload schema can expose `parse()` or `safeParse()`.
+
+## Anti-Patterns
+
+- Random UUID per retry as idempotency key.
+- Returning `Date`, `BigInt`, or class instances from idempotent functions without a `resultCodec`.
+- Using `stream()` or RPC retries without idempotency around irreversible handlers.
+- Ignoring DLQ after max attempts.
+
+## Verification Checklist
+
+- Lock TTL is longer than normal critical-section time.
+- Fencing is enabled when stale owners can write to external resources.
+- Idempotency keys use business identifiers.
+- Queue handlers are idempotent or wrapped in idempotency.
+- Rate limit `Retry-After` is exposed in seconds for HTTP.
+- DLQ is monitored.

@@ -18,6 +18,7 @@
     "test:coverage": "lerna run test -- --coverage && node scripts/coverage-summary.mjs",
     "dev": "lerna run dev",
     "publish": "lerna publish",
+    "build:ai-context": "node scripts/build-ai-context.mjs",
     "create": "bash scripts/create-package.sh",
     "update-template-hile-deps": "node scripts/update-template-hile-deps.mjs",
     "update-template-hile-deps:dry-run": "node scripts/update-template-hile-deps.mjs --dry-run"

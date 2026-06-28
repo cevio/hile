@@ -39,15 +39,14 @@ export class NotFoundException extends Error {
  *     return result;
  *   }
  *   public request(url: string, data: any, timeout?: number) {
- *     return this._send({ url, data }, timeout);
+ *     return this._send({ url, data }, { timeout });
  *   }
  * }
  * const ws = new WebSocket('ws://localhost:8080');
- * ws.on('open', () => {
+ * ws.on('open', async () => {
  *   const modem = new MyWs(ws);
- *   modem.request('/-/hello', { name: 'world' }).response()
- *     .then(console.log)
- *     .catch(console.error);
+ *   const result = await modem.request('/-/hello', { name: 'world' });
+ *   console.log(result);
  *   modem.dispose();
  *   ws.close();
  * });
@@ -61,12 +60,12 @@ export class NotFoundException extends Error {
  *     return result;
  *   }
  *   public request(url: string, data: any, timeout?: number) {
- *     return this._send({ url, data }, timeout);
+ *     return this._send({ url, data }, { timeout });
  *   }
  * }
  * const worker = new Worker('./worker.js');
  * const wt = new MyWorkerThread(worker);
- * const result = await wt.request('/-/hello', { name: 'world' }).response();
+ * const result = await wt.request('/-/hello', { name: 'world' });
  * wt.dispose();
  * await worker.terminate();
  * 
@@ -78,11 +77,11 @@ export class NotFoundException extends Error {
  *     return result;
  *   }
  *   public request(url: string, data: any, timeout?: number) {
- *     return this._send({ url, data }, timeout);
+ *     return this._send({ url, data }, { timeout });
  *   }
  * }
  * const ipc = new MyIpc();
- * const result = await ipc.request('/-/hello', { name: 'world' }).response();
+ * const result = await ipc.request('/-/hello', { name: 'world' });
  * ipc.dispose();
  */
 export class MessageLoader extends Loader<MessageRegisterProps> {

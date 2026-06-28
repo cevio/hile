@@ -10,7 +10,8 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "AI.md"
   ],
   "bin": {
     "hile": "./dist/index.js"

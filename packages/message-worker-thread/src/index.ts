@@ -18,7 +18,7 @@ import { parentPort, type Worker, type MessagePort } from 'node:worker_threads';
  * // 主线程
  * const worker = new Worker('./worker.js');
  * const wt = new MyWorkerThread(worker);
- * const res = await wt.request('hello').response();
+ * const res = await wt.request('hello');
  * wt.dispose();
  * await worker.terminate();
  *

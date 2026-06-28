@@ -1,0 +1,117 @@
+# Core Lifecycle, Bootstrap, CLI, Logger, Redis, TypeORM
+
+Packages: `@hile/core`, `@hile/bootstrap`, `@hile/cli`, `@hile/logger`, `@hile/ioredis`, `@hile/typeorm`.
+
+## Use When
+
+Use these packages when an app needs managed startup, singleton resources, dependency ordering, environment-file loading, graceful shutdown, logs, Redis, or SQL database connections.
+
+## Do Not Use When
+
+- Do not use `loadService()` at module top level.
+- Do not use `auto_load_packages` for file paths. It accepts package names only.
+- Do not use the default `@hile/ioredis` or `@hile/typeorm` services when one app needs multiple Redis or database connections; define separate services with separate keys.
+
+## Install
+
+```bash
+pnpm add @hile/core @hile/logger @hile/ioredis @hile/typeorm
+pnpm add -D @hile/cli
+```
+
+## Imports
+
+```ts
+import { defineService, loadService, container } from '@hile/core'
+import { createLogger } from '@hile/logger'
+import redisService, { createRedis } from '@hile/ioredis'
+import typeormService, { createDataSource, transaction } from '@hile/typeorm'
+```
+
+## Copy-Paste Example
+
+```ts
+// src/services/http.boot.ts
+import { defineService } from '@hile/core'
+import { Http } from '@hile/http'
+
+export default defineService('http', async (shutdown) => {
+  const http = new Http({ port: Number(process.env.HTTP_PORT ?? 3000) })
+  await http.load(new URL('../controllers', import.meta.url).pathname)
+  const close = await http.listen()
+  shutdown(close)
+  return http
+})
+```
+
+Run:
+
+```bash
+hile start --dev --env-file .env
+```
+
+## More Examples
+
+Use `package.json` auto-load for integration services that default-export a Hile service:
+
+```json
+{
+  "type": "module",
+  "scripts": {
+    "dev": "hile start --dev --env-file .env",
+    "start": "hile start --env-file .env.prod"
+  },
+  "hile": {
+    "auto_load_packages": ["@hile/logger", "@hile/ioredis", "@hile/typeorm"]
+  }
+}
+```
+
+Inside another service, load dependencies:
+
+```ts
+import { defineService, loadService } from '@hile/core'
+import redisService from '@hile/ioredis'
+import typeormService from '@hile/typeorm'
+
+export default defineService('user.service', async () => {
+  const [redis, ds] = await Promise.all([
+    loadService(redisService),
+    loadService(typeormService),
+  ])
+  return { redis, ds }
+})
+```
+
+## Compose With
+
+- Use `@hile/http` boot services to start APIs.
+- Use `@hile/model` services arrays to load TypeORM or Redis for business logic.
+- Use `@hile/cache`, `@hile/redis-lock`, queues, rate limits, and idempotency with a Redis client from `@hile/ioredis`.
+
+## Runtime And Lifecycle Notes
+
+- `defineService(key, fn)` registers a service factory and does not execute it.
+- `loadService(service)` executes the factory on first call and returns the cached value afterwards.
+- The `shutdown` callback registers teardown functions; they run in LIFO order.
+- The container tracks dependencies when service factories call `loadService()`.
+- `container.shutdown()` triggers registered teardowns.
+- `@hile/bootstrap` loads env files first, sets `NODE_ENV`, imports auto-load packages, scans boot files, and installs exit hooks.
+- `@hile/logger.createLogger()` returns `{ logger, teardown }`.
+- `@hile/ioredis.createRedis()` waits for `connect`.
+- `@hile/typeorm.createDataSource()` initializes a TypeORM `DataSource`.
+
+## Anti-Patterns
+
+- Reusing one service key for unrelated factories.
+- Missing `shutdown()` callbacks for network connections or servers.
+- Assuming TypeORM env config fills entities automatically when `TYPEORM_ENTITIES` is not set.
+- Calling `transaction()` and manually committing; the helper commits or rolls back internally.
+
+## Verification Checklist
+
+- Boot files default-export `defineService(...)`.
+- Long-lived resources register teardown callbacks.
+- `auto_load_packages` contains package names, not local files.
+- `hile start --dev` can find `src/**/*.boot.ts`.
+- Production build emits `dist/**/*.boot.js`.

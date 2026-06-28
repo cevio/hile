@@ -1,0 +1,110 @@
+# Infrastructure Helpers
+
+Packages: `@hile/typeorm`, `@hile/ioredis`, `@hile/logger`, `@hile/cache`, `@hile/schedule`, `@hile/loader`.
+
+## Use When
+
+Use these packages for database connections, Redis connections, structured logging, typed Redis caches, scheduled jobs, and file-system loaders.
+
+## Do Not Use When
+
+- Do not use default TypeORM or Redis services for multiple connections.
+- Do not use `@hile/cache` without returning `new Cache(...)` from the loader function.
+- Do not use `@hile/schedule` distributed mode without Redis lock TTLs sized for job duration.
+
+## Install
+
+```bash
+pnpm add @hile/typeorm @hile/ioredis @hile/logger @hile/cache @hile/schedule @hile/loader
+```
+
+## Imports
+
+```ts
+import typeormService, { transaction } from '@hile/typeorm'
+import redisService from '@hile/ioredis'
+import { createLogger } from '@hile/logger'
+import { Cache, defineCache, RedisCache } from '@hile/cache'
+import { Scheduler, defineJob } from '@hile/schedule'
+import { scanDirectory, compileRoutePath, toRouterPath, normalizePath, Loader } from '@hile/loader'
+```
+
+## Copy-Paste Example
+
+```ts
+import { loadService } from '@hile/core'
+import redisService from '@hile/ioredis'
+import { Cache, defineCache, RedisCache } from '@hile/cache'
+
+const userProfile = defineCache('user:{id:string}:profile', async ({ id }) => {
+  const user = await loadUser(id)
+  return new Cache(user).setExpire(300)
+})
+
+const redis = await loadService(redisService)
+const cache = new RedisCache('app:', redis)
+const users = await cache.loadCache(userProfile)
+const user = await users.read({ id: 'u1' })
+```
+
+## More Examples
+
+TypeORM transaction with compensation:
+
+```ts
+await transaction(ds, async (runner, rollback) => {
+  const user = await runner.manager.save(User, input)
+  rollback(() => redis.del(`user:${user.id}`))
+  await runner.manager.save(AuditLog, { userId: user.id, action: 'create' })
+  return user
+})
+```
+
+Distributed scheduled job:
+
+```ts
+const scheduler = new Scheduler()
+scheduler.add('daily-report', '0 8 * * *', async () => {
+  await sendDailyReport()
+}, {
+  distributed: {
+    redis,
+    ttl: 60_000,
+    namespace: 'reports',
+    policy: 'skip-if-locked',
+  },
+})
+```
+
+## Compose With
+
+- Use `RedisCache` with `@hile/ioredis`.
+- Use `defineCache(..., { singleflight: true })` to reduce stampedes; internally it uses Redis locks.
+- Use scheduler distributed mode with `@hile/redis-lock`.
+- Use `Loader` only when building a new file-system based convention.
+
+## Runtime And Lifecycle Notes
+
+- `Cache(undefined)` removes the key unless negative caching is configured.
+- `Cache#setExpire(seconds)` uses seconds.
+- `defineCache` typed placeholders support `string`, `number`, and `boolean`.
+- `RedisCache.loadCache()` returns `read`, `write`, `remove`, `has`, and `multi`.
+- `RedisCache.removeTag(tag)` removes tagged cache entries.
+- `fieldable` caches use Redis hashes and cannot combine with stale or negative cache options.
+- `Scheduler.add()` supports cron strings and `{ delay }`.
+- `Scheduler.load()` reads default exports from `*.schedule.*` files produced by `defineJob()`.
+- `scanDirectory()` matches `.ts`, `.js`, `.tsx`, `.jsx`, and `.mjs`.
+
+## Anti-Patterns
+
+- Returning raw values from `defineCache` handlers instead of `new Cache(value)`.
+- Treating cache as source of truth.
+- Forgetting to destroy manually created Redis or TypeORM clients.
+- Scheduling jobs without idempotency when side effects can repeat.
+
+## Verification Checklist
+
+- Manual Redis clients call `disconnect()` during cleanup.
+- Manual TypeORM data sources call `destroy()` during cleanup.
+- Cache keys include app/tenant prefixes when shared Redis is used.
+- Scheduled jobs have clear duplicate-run policy.

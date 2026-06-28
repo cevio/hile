@@ -11,7 +11,7 @@
   "files": [
     "dist",
     "README.md",
-    "SKILL.md"
+    "AI.md"
   ],
   "license": "MIT",
   "publishConfig": {

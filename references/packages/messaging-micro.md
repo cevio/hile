@@ -1,0 +1,160 @@
+# Messaging And Microservices
+
+Packages: `@hile/message-modem`, `@hile/message-ws`, `@hile/message-ipc`, `@hile/message-worker-thread`, `@hile/message-loader`, `@hile/micro`, `@hile/micro-dynamic-configs`.
+
+## Copy-Paste Example
+
+Message handler file:
+
+```ts
+// src/messages/ping.msg.ts
+import { defineMessage } from '@hile/message-loader'
+
+export default defineMessage(async ({ data, params }) => {
+  return {
+    type: 'pong',
+    data,
+    params,
+    timestamp: Date.now(),
+  }
+})
+```
+
+Microservice boot file:
+
+```ts
+// src/services/app.boot.ts
+import { defineService } from '@hile/core'
+import { Application } from '@hile/micro'
+
+export default defineService('micro.app', async (shutdown) => {
+  const app = new Application({
+    namespace: process.env.MICRO_NAMESPACE ?? 'example.service',
+    registry: {
+      host: process.env.REGISTRY_HOST ?? '127.0.0.1',
+      port: Number(process.env.REGISTRY_PORT ?? 9876),
+    },
+    advertiseHost: process.env.HILE_ADVERTISE_HOST ?? '127.0.0.1',
+  })
+
+  await app.load(new URL('../messages', import.meta.url).pathname)
+  const stop = await app.listen(Number(process.env.MICRO_PORT ?? 0))
+  shutdown(stop)
+  return app
+})
+```
+
+Caller:
+
+```ts
+const result = await app.call('example.service', '/ping', { hello: 'world' })
+```
+
+## More Examples
+
+Streaming handler:
+
+```ts
+// src/messages/events.msg.ts
+import { defineMessage } from '@hile/message-loader'
+
+export default defineMessage(async function* () {
+  for (let i = 0; i < 3; i++) {
+    yield { seq: i }
+  }
+})
+```
+
+Streaming caller:
+
+```ts
+const stream = await app.stream('example.service', '/events', {})
+for await (const chunk of stream) {
+  console.log(chunk)
+}
+```
+
+Custom WebSocket modem:
+
+```ts
+import { MessageWs } from '@hile/message-ws'
+import type WebSocket from 'ws'
+
+class RpcWs extends MessageWs {
+  constructor(ws: WebSocket, private readonly dispatch: (url: string, data: unknown) => Promise<unknown>) {
+    super(ws)
+  }
+
+  protected exec(data: { url: string; data: unknown }) {
+    return this.dispatch(data.url, data.data)
+  }
+
+  request<T>(url: string, data: unknown, timeout = 30_000) {
+    return this._send<T>({ url, data }, { timeout })
+  }
+}
+```
+
+Notice that `request()` returns a `Promise<T>`. Await it directly.
+
+## Use When
+
+Use the message packages for request/response messaging over WebSocket, process IPC, worker threads, file-system message handlers, service discovery, streaming RPC, and registry-backed pub/sub.
+
+## Do Not Use When
+
+- Do not use `stream()` for normal single-result calls.
+- Do not rely on message IDs for business idempotency. They are transport IDs.
+- Do not bypass `defineMessage()` for file-loaded handlers.
+
+## Install
+
+```bash
+pnpm add @hile/micro @hile/message-loader @hile/message-ws
+```
+
+Use transport-specific packages only when you need to build custom IPC or worker-thread bridges.
+
+## Imports
+
+```ts
+import { defineMessage, MessageLoader } from '@hile/message-loader'
+import { Application, Registry, Server } from '@hile/micro'
+import { MessageWs } from '@hile/message-ws'
+import { MessageIpc } from '@hile/message-ipc'
+import { MessageWorkerThread } from '@hile/message-worker-thread'
+```
+
+## Compose With
+
+- `@hile/context` propagates context in micro message metadata.
+- `@hile/redis-idempotency` protects retryable side effects in message handlers.
+- `@hile/redis-stream-queue` is better for durable background jobs.
+
+## Runtime And Lifecycle Notes
+
+- `MessageLoader` maps `*.msg.*` files to routes using `@hile/loader`.
+- `MessageLoader.dispatch(path, data, extras?)` invokes the matched handler.
+- `MessageModem._send()` returns a `Promise`.
+- `MessageModem._stream()` returns a Node `Readable` in object mode.
+- A stream request requires `exec()` to return an async iterable.
+- `Application.call(namespace, url, data, options?)` returns a promise.
+- `Application.stream(namespace, url, data, options?)` returns a readable stream.
+- `Application.publish(topic, payload)` returns an object with `update()` and `unpublish()`.
+- `Application.subscribe(topic, callback)` returns an unsubscribe function.
+- `Registry` stores service addresses and retained config/topic state under `~/.registry`.
+
+## Anti-Patterns
+
+- Appending a secondary response getter to `client.request('/x', data)`
+- Returning a plain object from a handler called through `stream()`.
+- Using pub/sub as a durable queue.
+- Forgetting to register `shutdown(await app.listen(...))`.
+
+## Verification Checklist
+
+- Message files default-export `defineMessage(...)`.
+- RPC callers use `await app.call(...)`.
+- Streaming handlers are async generators.
+- Registry is started before application nodes need discovery.
+- Micro apps use stable namespaces and advertise reachable hosts.

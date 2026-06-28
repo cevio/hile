@@ -16,9 +16,10 @@ import type WebSocket from 'ws';
  * }
  *
  * const ws = new WebSocket('ws://localhost:8080');
- * ws.on('open', () => {
+ * ws.on('open', async () => {
  *   const modem = new MyWs(ws);
- *   modem.request('hello').response().then(console.log);
+ *   const result = await modem.request('hello');
+ *   console.log(result);
  * });
  */
 export abstract class MessageWs extends MessageModem {
