@@ -1,6 +1,6 @@
 {
   "name": "@hile/context",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "description": "Typed async context propagation primitives for Hile applications",
   "type": "module",
   "main": "./dist/index.js",
