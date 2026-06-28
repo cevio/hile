@@ -1,0 +1,165 @@
+---
+title: "@hile/redis-stream-queue"
+description: "Redis Streams 后台任务队列：持久化、延迟任务、失败重试、并发控制、pending 恢复、死信队列"
+---
+
+## 安装
+
+```bash
+pnpm add @hile/redis-stream-queue @hile/ioredis
+```
+
+`@hile/redis-stream-queue` 不创建 Redis 连接。它接收任何满足 `RedisStreamQueueLike` 的客户端；Hile 应用里通常来自 `@hile/ioredis`。
+
+## 它解决什么问题？
+
+`@hile/micro.call()` 适合“现在问、现在答”的在线通信；后台任务需要的是另一套能力：
+
+| 问题 | 队列能力 |
+|---|---|
+| HTTP 请求不能等慢任务 | 先把 job 入队，worker 后台处理 |
+| 发邮件/同步外部系统失败 | 自动按 backoff 重试 |
+| worker 处理到一半崩溃 | Redis Streams pending job 可被其他 worker claim |
+| 下游服务有限速 | 用 `concurrency` 控制并发 |
+| 同一个任务被重复提交 | 用 `jobId` 去重 |
+| 多次失败不能静默消失 | 进入 dead-letter stream 方便排查 |
+
+## 快速开始
+
+```typescript
+import { RedisStreamQueue, defineQueue } from '@hile/redis-stream-queue'
+
+type EmailPayload = {
+  template: 'welcome'
+  userId: string
+}
+
+const emailQueue = defineQueue<EmailPayload>('email')
+const queue = new RedisStreamQueue(redis, { prefix: 'myapp:' })
+
+await queue.add(emailQueue, {
+  template: 'welcome',
+  userId: 'user-1',
+}, {
+  jobId: 'welcome:user-1',
+  maxAttempts: 5,
+  backoff: { type: 'exponential', baseMs: 1_000 },
+})
+
+queue.worker(emailQueue, async (job) => {
+  await sendEmail(job.data)
+}, {
+  group: 'email-workers',
+  consumer: 'worker-1',
+  concurrency: 8,
+}).start()
+```
+
+## defineQueue()
+
+```typescript
+const resizeQueue = defineQueue('image-resize', {
+  parse(value) {
+    if (typeof value !== 'object' || value === null) throw new Error('invalid payload')
+    return value as { imageId: string; size: 'small' | 'large' }
+  },
+})
+```
+
+schema 可以提供 `parse(value)` 或 `safeParse(value)`。入队前和 worker 处理前都会校验 payload。
+
+## add()
+
+```typescript
+await queue.add(emailQueue, payload, {
+  jobId: `welcome:${payload.userId}`,
+  delay: 30_000,
+  maxAttempts: 5,
+  backoff: { type: 'fixed', delay: 5_000 },
+})
+```
+
+| 选项 | 说明 |
+|---|---|
+| `jobId` | 入队去重 key；相同 `jobId` 第二次入队返回 `{ duplicate: true }` |
+| `delay` | 延迟多少毫秒后可被 worker 读取 |
+| `maxAttempts` | 最多尝试次数，默认 `1` |
+| `backoff` | 失败后重试间隔：数字、fixed 或 exponential |
+
+## worker()
+
+```typescript
+const worker = queue.worker(emailQueue, async (job) => {
+  await sendEmail(job.data)
+}, {
+  group: 'email-workers',
+  consumer: process.env.HOSTNAME ?? 'local',
+  concurrency: 4,
+  claimIdle: 60_000,
+})
+
+worker.start()
+```
+
+测试或脚本里可以使用 `runOnce()`：
+
+```typescript
+await worker.runOnce()
+await worker.stop()
+```
+
+## 状态机
+
+| 状态 | Redis 结构 | 含义 |
+|---|---|---|
+| `scheduled` | `{prefix}queue:{name}:delayed` sorted set | 延迟 job 还没到可执行时间 |
+| `ready` | `{prefix}queue:{name}:stream` stream | job 已可被 consumer group 读取 |
+| `pending` | Redis Streams PEL | worker 已取到 job，但还没 `XACK` |
+| `retrying` | delayed sorted set | 失败后等待 backoff 再试 |
+| `done` | stream entry 已 ack | handler 成功结束 |
+| `dead-lettered` | `{prefix}queue:{name}:dlq` stream | 尝试次数耗尽 |
+
+## Pending 恢复
+
+worker 使用 Redis consumer group。某个 worker 取到 job 后崩溃，job 不会消失，而是留在 pending entries list。其他 worker 在 `claimIdle` 时间后可以通过 `XCLAIM` 接手。
+
+## Dead Letter
+
+```typescript
+const failed = await queue.readDeadLetters(emailQueue, { count: 20 })
+```
+
+DLQ 里保留 payload、attempt、`firstFailureReason`、`lastFailureReason` 等元数据。
+
+## Context 传播
+
+如果入队时存在 `@hile/context`，队列会保存快照，并在 handler 运行时恢复：
+
+```typescript
+await runWithContext<AppContext>({ shopId: 'shop-1' }, async () => {
+  await queue.add(emailQueue, payload)
+})
+```
+
+```typescript
+queue.worker(emailQueue, async () => {
+  const context = getContext<AppContext>()
+  console.log(context.shopId)
+})
+```
+
+## 边界
+
+- 这是后台任务队列，不是在线 RPC。
+- 提供 at-least-once delivery；handler 必须幂等。
+- 不承诺 exactly-once。
+- 延迟任务和重试任务在 worker poll 时被提升到 stream。
+- payload 和 context 必须是 JSON 可序列化值。
+- `jobId` 只保证同一个 key 不重复入队，不保证业务副作用只执行一次。
+
+## 测试
+
+```bash
+pnpm --filter @hile/redis-stream-queue test
+pnpm --filter @hile/redis-stream-queue build
+```
