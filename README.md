@@ -9,7 +9,7 @@
 
 Hile is a lightweight Node.js service toolkit for async service lifecycle, HTTP APIs, Next.js apps, reusable models, message-based microservices, jobs, and Redis-backed reliability primitives.
 
-The repository is now organized around AI-usable examples. `docs/ai` is the source, `SKILL.md` is the agent entrypoint, `references/` is the skill payload, `llms.txt`/`llms-full.txt` are web/npm LLM context files, and every npm package ships an `AI.md`.
+The repository is now organized around AI-usable examples. `docs/ai` is the source, `skills/hile/` is the installable skill payload, `references/` is the repo-local AI reference payload, `llms.txt`/`llms-full.txt` are web/npm LLM context files, and every npm package ships an `AI.md`.
 
 For skill.sh/OpenSkill publishing, use the generated `skills/hile/` directory. It contains only `SKILL.md` and `references/` so agents do not ingest the whole monorepo.
 
@@ -95,7 +95,7 @@ pnpm run test
 pnpm run build:ai-context
 ```
 
-Run `pnpm run build:ai-context` after editing `docs/ai` so `SKILL.md`, `references/`, package `AI.md`, README files, and Mintlify MDX pages stay aligned.
+Run `pnpm run build:ai-context` after editing `docs/ai` so `skills/hile/`, `references/`, package `AI.md`, README files, and Mintlify MDX pages stay aligned.
 
 ## License
 

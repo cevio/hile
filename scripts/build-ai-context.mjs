@@ -217,7 +217,7 @@ const topicPages = {
       '',
       'Hile is a lightweight Node.js service toolkit for HTTP APIs, Next.js apps, reusable models, message-based microservices, jobs, and Redis-backed reliability primitives.',
       '',
-      'The docs in this repository are generated from the same AI context that powers `SKILL.md`, `llms.txt`, `llms-full.txt`, and every package `AI.md`.',
+      'The docs in this repository are generated from the same AI context that powers `skills/hile/`, `llms.txt`, `llms-full.txt`, and every package `AI.md`.',
       '',
       section(ai('index.md'), '## Core Mental Model'),
       '',
@@ -508,7 +508,7 @@ const templateReadmes = {
 function main() {
   validateAiSource()
   syncReferences()
-  writeRootSkill()
+  removeRootSkill()
   writePublishSkill()
   writeLlmsFiles()
   syncPackageFiles()
@@ -547,43 +547,8 @@ function syncReferences() {
   cpSync(aiDir, references, { recursive: true })
 }
 
-function writeRootSkill() {
-  const content = [
-    '---',
-    'name: hile',
-    'description: "Example-first AI development guide for Hile (@hile/* packages). Use when generating or editing code with @hile/core, @hile/http, @hile/http-next, @hile/model, @hile/context, @hile/typeorm, @hile/ioredis, @hile/cache, @hile/message-*, @hile/micro, Redis reliability packages, @hile/schedule, or create-hile."',
-    '---',
-    '',
-    '# Hile AI Development Skill',
-    '',
-    'This skill is optimized for AI coding agents, not for narrative documentation. Prefer examples, source-calibrated package boundaries, and verification checklists.',
-    '',
-    '## Required Workflow',
-    '',
-    '1. Read `references/package-map.md` and pick the package card or recipe that matches the user task.',
-    '2. Read `references/conventions.md` before writing code.',
-    '3. Start from the closest copy-paste example in `references/packages/*.md` or `references/recipes/*.md`.',
-    '4. Read `references/anti-patterns.md` before finalizing.',
-    '5. When README/MDX conflicts with source, tests, or `references/`, trust source/tests and update the docs.',
-    '',
-    '## High-Risk Rules',
-    '',
-    '- Do not call `loadService()` at module top level; call it inside boot services, controllers, models, handlers, or functions.',
-    '- Load `@hile/http` controllers before `http.listen()` in new code.',
-    '- `@hile/http` Zod validation validates only; parse again when the handler needs coerced data.',
-    '- `MessageModem._send()` and `Application.call()` return promises. Never append a secondary response getter.',
-    '- Redis lock, idempotency, rate limit, cache, and queue helpers are not exactly-once guarantees.',
-    '- Queue handlers and retryable HTTP/RPC handlers with side effects need idempotency or a stronger business uniqueness wall.',
-    '',
-    '## Start Here',
-    '',
-    '- Package chooser: `references/package-map.md`',
-    '- Global conventions: `references/conventions.md`',
-    '- Common failure modes: `references/anti-patterns.md`',
-    '- Full context for website or npm consumers: `llms-full.txt`',
-  ].join('\n')
-
-  write('SKILL.md', content)
+function removeRootSkill() {
+  rmSync(path.join(root, 'SKILL.md'), { force: true })
 }
 
 function writePublishSkill() {
@@ -602,7 +567,6 @@ function writePublishSkill() {
     'name: hile',
     'description: "Example-first AI development guide for Hile @hile/* packages. Use when building or editing Node.js/TypeScript services with @hile/core, @hile/http, @hile/http-next, @hile/model, @hile/context, @hile/typeorm, @hile/ioredis, @hile/cache, @hile/message-*, @hile/micro, Redis reliability packages, @hile/schedule, or create-hile."',
     'license: MIT',
-    'compatibility: "SKILL.md-compatible agents including skill.sh/OpenSkill, Codex, Claude Code, and Cursor. Best for Node.js 20+ TypeScript Hile projects."',
     'metadata:',
     '  version: "1.0.0"',
     '  author: Hile',
@@ -821,7 +785,7 @@ function writeRootReadme() {
     '',
     'Hile is a lightweight Node.js service toolkit for async service lifecycle, HTTP APIs, Next.js apps, reusable models, message-based microservices, jobs, and Redis-backed reliability primitives.',
     '',
-    'The repository is now organized around AI-usable examples. `docs/ai` is the source, `SKILL.md` is the agent entrypoint, `references/` is the skill payload, `llms.txt`/`llms-full.txt` are web/npm LLM context files, and every npm package ships an `AI.md`.',
+    'The repository is now organized around AI-usable examples. `docs/ai` is the source, `skills/hile/` is the installable skill payload, `references/` is the repo-local AI reference payload, `llms.txt`/`llms-full.txt` are web/npm LLM context files, and every npm package ships an `AI.md`.',
     '',
     'For skill.sh/OpenSkill publishing, use the generated `skills/hile/` directory. It contains only `SKILL.md` and `references/` so agents do not ingest the whole monorepo.',
     '',
@@ -846,7 +810,7 @@ function writeRootReadme() {
     'pnpm run build:ai-context',
     '```',
     '',
-    'Run `pnpm run build:ai-context` after editing `docs/ai` so `SKILL.md`, `references/`, package `AI.md`, README files, and Mintlify MDX pages stay aligned.',
+    'Run `pnpm run build:ai-context` after editing `docs/ai` so `skills/hile/`, `references/`, package `AI.md`, README files, and Mintlify MDX pages stay aligned.',
     '',
     '## License',
     '',

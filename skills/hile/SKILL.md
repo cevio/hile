@@ -2,7 +2,6 @@
 name: hile
 description: "Example-first AI development guide for Hile @hile/* packages. Use when building or editing Node.js/TypeScript services with @hile/core, @hile/http, @hile/http-next, @hile/model, @hile/context, @hile/typeorm, @hile/ioredis, @hile/cache, @hile/message-*, @hile/micro, Redis reliability packages, @hile/schedule, or create-hile."
 license: MIT
-compatibility: "SKILL.md-compatible agents including skill.sh/OpenSkill, Codex, Claude Code, and Cursor. Best for Node.js 20+ TypeScript Hile projects."
 metadata:
   version: "1.0.0"
   author: Hile
