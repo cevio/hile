@@ -82,7 +82,8 @@
               "packages/ioredis",
               "packages/redis-lock",
               "packages/cache",
-              "packages/redis-idempotency"
+              "packages/redis-idempotency",
+              "packages/redis-rate-limit"
             ]
           },
           {
