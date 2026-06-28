@@ -1,6 +1,7 @@
 {
-  "name": "@hile/micro",
-  "version": "2.1.1",
+  "name": "@hile/context",
+  "version": "3.0.0",
+  "description": "Typed async context propagation primitives for Hile applications",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
@@ -18,17 +19,11 @@
     "access": "public"
   },
   "devDependencies": {
-    "@types/ws": "^8.18.1",
+    "@types/node": "^25.3.1",
     "fix-esm-import-path": "^1.10.3",
     "vitest": "^4.0.18"
   },
   "dependencies": {
-    "@hile/context": "workspace:^",
-    "@hile/logger": "workspace:^",
-    "@hile/message-loader": "workspace:^",
-    "@hile/message-ws": "workspace:^",
-    "internal-ip": "^9.0.0",
-    "ws": "^8.21.0",
-    "yaml": "^2.9.0"
+    "@hile/model": "workspace:^"
   }
 }

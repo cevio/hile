@@ -64,6 +64,7 @@
               "packages/core",
               "packages/loader",
               "packages/logger",
+              "packages/context",
               "packages/schedule",
               "packages/model"
             ]

@@ -1,4 +1,11 @@
 import { MessageWs } from "@hile/message-ws";
+import {
+  isContextData,
+  runWithContext,
+  snapshotContext,
+  type ContextData,
+  type ContextInput,
+} from '@hile/context';
 import { Server } from './server';
 import { WebSocket } from 'ws';
 import { EventEmitter } from 'node:events';
@@ -8,6 +15,82 @@ export interface ClientProps {
   port: number;
   server: Server;
   ws: WebSocket;
+}
+
+export type MicroMessageMetadata = {
+  context?: ContextInput<ContextData>;
+  [key: string]: unknown;
+};
+
+export type MicroMessage<T = any> = {
+  url: string;
+  data: T;
+  metadata?: MicroMessageMetadata;
+};
+
+function createEnvelope<T = any>(url: string, data: T): MicroMessage<T> {
+  const context = snapshotContext();
+  if (Object.keys(context).length === 0) return { url, data };
+  return {
+    url,
+    data,
+    metadata: {
+      context,
+    },
+  };
+}
+
+function getEnvelopeContext(data: MicroMessage): ContextInput<ContextData> | undefined {
+  const context = data.metadata?.context;
+  if (!isContextData(context)) return undefined;
+  return context;
+}
+
+function isAsyncIterable<T = any>(value: unknown): value is AsyncIterable<T> {
+  return value != null && typeof (value as AsyncIterable<T>)[Symbol.asyncIterator] === 'function';
+}
+
+function bindAsyncIterableToContext<T>(
+  iterable: AsyncIterable<T>,
+  context: ContextInput<ContextData>,
+): AsyncIterable<T> {
+  return {
+    [Symbol.asyncIterator]() {
+      const iterator = iterable[Symbol.asyncIterator]();
+      return {
+        next() {
+          return Promise.resolve(
+            runWithContext<ContextData, Promise<IteratorResult<T>> | IteratorResult<T>>(
+              context,
+              () => iterator.next(),
+            ),
+          );
+        },
+        return(value?: unknown) {
+          if (!iterator.return) {
+            return Promise.resolve({ done: true, value } as IteratorResult<T>);
+          }
+          return Promise.resolve(
+            runWithContext<ContextData, Promise<IteratorResult<T>> | IteratorResult<T>>(
+              context,
+              () => iterator.return!(value),
+            ),
+          );
+        },
+        throw(error?: unknown) {
+          if (!iterator.throw) {
+            return Promise.reject(error);
+          }
+          return Promise.resolve(
+            runWithContext<ContextData, Promise<IteratorResult<T>> | IteratorResult<T>>(
+              context,
+              () => iterator.throw!(error),
+            ),
+          );
+        },
+      };
+    },
+  };
 }
 
 export class Client extends MessageWs {
@@ -54,30 +137,41 @@ export class Client extends MessageWs {
     }, checkInterval);
   }
 
-  protected async exec(data: { url: string; data: any }): Promise<any> {
+  protected async exec(data: MicroMessage): Promise<any> {
     if (data.url === '/-/heartbeat') {
       this.lastHeartbeat = Date.now();
       return;
     }
     if (!this._online) throw new Error('Client is not online');
-    return this.server.dispatch(data.url, data.data, {
-      client: this,
-    });
+    const context = getEnvelopeContext(data);
+    const dispatch = async () => {
+      const result = await this.server.dispatch(data.url, data.data, {
+        client: this,
+        metadata: data.metadata,
+      });
+      if (context && isAsyncIterable(result)) {
+        return bindAsyncIterableToContext(result, context);
+      }
+      return result;
+    };
+
+    if (context) return runWithContext(context, dispatch);
+    return dispatch();
   }
 
   public request<T = any>(url: string, data: any, options?: { timeout?: number; signal?: AbortSignal }) {
     if (!this._online) throw new Error('Client is not online');
-    return this._send<T>({ url, data }, options);
+    return this._send<T>(createEnvelope(url, data), options);
   }
 
   public push(url: string, data: any, options?: { timeout?: number; signal?: AbortSignal }) {
     if (!this._online) throw new Error('Client is not online');
-    return this._push({ url, data }, options);
+    return this._push(createEnvelope(url, data), options);
   }
 
   public stream(url: string, data: any, options?: { signal?: AbortSignal }) {
     if (!this._online) throw new Error('Client is not online');
-    return this._stream({ url, data }, options);
+    return this._stream(createEnvelope(url, data), options);
   }
 
   public dispose(): void {

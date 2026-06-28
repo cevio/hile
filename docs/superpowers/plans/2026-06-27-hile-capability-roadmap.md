@@ -200,34 +200,39 @@ pipeline.use(rateLimitModel(loginLimit, {
 
 ### 5. `@hile/context`
 
-**解决痛点：** `requestId`、`tenantId`、`actorId`、`idempotencyKey`、`traceId`、`locale` 这些上下文经常在 HTTP、model、micro、queue、logger 之间手动传来传去，很容易漏。
+**解决痛点：** 一次请求、任务或业务操作的上下文经常在 HTTP、model、micro、queue、logger 之间手动传来传去，很容易漏。上下文字段必须由业务方自己定义，框架只负责存储、隔离和传播。
 
 **核心 API 草案：**
 
 ```ts
-await runWithContext({
-  requestId,
-  tenantId,
-  actorId,
+type AppContext = {
+  shopId: string
+  channel: 'web' | 'wechat'
+}
+
+await runWithContext<AppContext>({
+  shopId,
+  channel,
 }, async () => {
   await loadModel(createOrderModel, input)
 })
 
-const ctx = getContext()
+const ctx = getContext<AppContext>()
 ```
 
 **适配能力：**
 
-- HTTP middleware 从请求头读取上下文，并写回响应头。
+- HTTP middleware 通过用户提供的 mapper 读取/写回上下文，不规定 header 名。
 - `@hile/micro` 调用时把上下文放进 message metadata。
 - queue job 入队时保存上下文，worker 执行时恢复上下文。
-- logger 可以自动带上上下文字段。
+- logger 只输出用户通过 `pick`/`map` 明确选择的上下文字段。
 
 **实现要点：**
 
 - 基于 Node `AsyncLocalStorage`。
 - 支持嵌套 context 合并。
-- 提供 `requireContext(keys)`，在必须有租户或用户的业务里强校验。
+- 提供 `requireContext(keys)`，在业务自己选择的必要字段缺失时强校验。
+- 核心包不能出现固定业务字段；类型应是泛型化的 context bag。
 - 所有包都应该在没有 context 时正常工作。
 
 ---

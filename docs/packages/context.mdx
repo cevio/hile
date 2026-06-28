@@ -1,0 +1,169 @@
+---
+title: "@hile/context"
+description: "通用异步上下文：AsyncLocalStorage、用户自定义字段、HTTP/model/logger adapter、micro metadata 传播"
+---
+
+## 安装
+
+```bash
+pnpm add @hile/context
+```
+
+## 它解决什么问题？
+
+`@hile/context` 负责把一次请求、一次任务或一次业务操作的上下文贯穿异步调用链。它只提供“存储、读取、隔离、传播”机制，不规定业务字段。
+
+字段由应用自己定义：
+
+```typescript
+import { getContext, runWithContext } from '@hile/context'
+
+type AppContext = {
+  shopId: string
+  memberId: string
+  channel: 'web' | 'wechat'
+}
+
+await runWithContext<AppContext>({
+  shopId: 'shop-1',
+  memberId: 'member-1',
+  channel: 'web',
+}, async () => {
+  const context = getContext<AppContext>()
+  console.log(context.shopId)
+})
+```
+
+<Note>`@hile/context` 不内置任何业务维度。你可以定义 `shopId`、`workspace`、`region` 或任何自己的字段。</Note>
+
+## 核心 API
+
+### runWithContext()
+
+```typescript
+await runWithContext<AppContext>({ shopId: 'shop-1' }, async () => {
+  await doWork()
+})
+```
+
+默认会和父级 context 合并：
+
+```typescript
+await runWithContext<AppContext>({ shopId: 'shop-1', channel: 'web' }, async () => {
+  await runWithContext<AppContext>({ channel: 'wechat' }, async () => {
+    getContext<AppContext>() // { shopId: 'shop-1', channel: 'wechat' }
+  })
+})
+```
+
+传 `{ merge: false }` 可以替换父级 context。
+
+### getContext()
+
+返回当前异步链路中的只读浅快照。没有 active context 时返回 `{}`。
+
+### snapshotContext()
+
+返回当前 context 的浅快照，用于传播。跨进程传递时应只放 JSON 可序列化值。
+
+### requireContext()
+
+只校验应用选择的字段：
+
+```typescript
+const context = requireContext<AppContext>(['shopId', 'channel'])
+```
+
+缺失时抛出 `MissingContextError`。
+
+## HTTP adapter
+
+`contextHttp()` 只接收映射函数，不规定 header 名：
+
+```typescript
+import { contextHttp } from '@hile/context'
+
+app.use(contextHttp<AppContext, Koa.Context>({
+  read: ctx => ({
+    shopId: ctx.get('x-shop'),
+    channel: ctx.get('x-channel') as AppContext['channel'],
+  }),
+  write: (context, ctx) => {
+    if (context.shopId) ctx.set('x-current-shop', context.shopId)
+  },
+}))
+```
+
+## Model adapter
+
+```typescript
+import { contextModel, getContext } from '@hile/context'
+import { defineModel } from '@hile/model'
+
+const createCheckout = defineModel({
+  pipelines: [
+    contextModel<{ store: string; source: 'web' | 'wechat' }, AppContext>({
+      read: input => ({
+        shopId: input.store,
+        channel: input.source,
+      }),
+    }),
+  ],
+  async main(input) {
+    const context = getContext<AppContext>()
+    return { input, context }
+  },
+})
+```
+
+## Logger adapter
+
+日志字段是显式 opt-in。没有 `pick` 或 `map` 时不会输出 context。
+
+```typescript
+import { withContextLogger } from '@hile/context'
+
+const logger = withContextLogger<AppContext>(baseLogger, {
+  pick: ['shopId', 'channel'],
+})
+
+logger.info({ event: 'checkout' }, 'checkout created')
+```
+
+## @hile/micro 传播
+
+`@hile/micro` 会把当前 context 放在消息 metadata 中传递，不污染业务 payload：
+
+```typescript
+await runWithContext<AppContext>({ shopId: 'shop-1', channel: 'web' }, async () => {
+  await app.call('inventory', '/reserve', { sku: 'sku-1' })
+})
+```
+
+远端 handler 中：
+
+```typescript
+import { getContext } from '@hile/context'
+
+app.register('/reserve', async ({ data }) => {
+  const context = getContext<AppContext>()
+  return { sku: data.sku, shopId: context.shopId }
+})
+```
+
+## 边界
+
+| 边界 | 说明 |
+|---|---|
+| 不定义业务字段 | 字段名、类型、来源都由应用决定 |
+| 非配置中心 | context 是一次请求/任务的临时上下文，不是进程级配置 |
+| 浅快照 | `getContext()` 不做深拷贝 |
+| 日志默认不输出 | 只有 `pick` 或 `map` 选中的字段会进入日志 |
+| 跨进程需可序列化 | micro/WebSocket 等传输应使用 JSON 可序列化值 |
+
+## 测试
+
+```bash
+pnpm --filter @hile/context test
+pnpm --filter @hile/context build
+```
