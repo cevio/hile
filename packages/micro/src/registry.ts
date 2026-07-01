@@ -14,6 +14,77 @@ export interface RegistryAddress {
   port: number;
 }
 
+export interface RegistryNamespaceSnapshot {
+  namespace: string;
+  peerCount: number;
+  peers: RegistryAddress[];
+}
+
+export interface RegistryNamespacesResult {
+  namespaces: RegistryNamespaceSnapshot[];
+}
+
+export type RegistryNamespacePeersData = RegistryFindData;
+
+export interface RegistryNamespacePeersResult {
+  namespace: string;
+  peers: RegistryAddress[];
+}
+
+export interface RegistryStatusSnapshot {
+  status: 'ok';
+  startedAt: number;
+  uptime: number;
+  clientCount: number;
+  namespaceCount: number;
+  topicCount: number;
+  configNamespaceCount: number;
+}
+
+export interface RegistryTopicsData {
+  prefix?: string;
+}
+
+export interface RegistryTopicSummary {
+  topic: string;
+  publisherCount: number;
+  subscriberCount: number;
+  hasData: boolean;
+  retained: boolean;
+}
+
+export interface RegistryTopicsResult {
+  topics: RegistryTopicSummary[];
+}
+
+export interface RegistryTopicGetData {
+  topic: string;
+}
+
+export interface RegistryTopicSnapshot extends RegistryTopicSummary {
+  payload: any;
+}
+
+export interface RegistryConfigSummary {
+  namespace: string;
+  keys: string[];
+}
+
+export interface RegistryConfigsResult {
+  configs: RegistryConfigSummary[];
+}
+
+export interface RegistryConfigGetData {
+  namespace: string;
+  key?: string;
+}
+
+export type RegistryConfigGetResult =
+  | { namespace: string; hasConfig: true; config: any }
+  | { namespace: string; hasConfig: false }
+  | { namespace: string; key: string; hasValue: true; value: any }
+  | { namespace: string; key: string; hasValue: false };
+
 /** 将 `host:port` 或 `[ipv6]:port` 形式的 key 解析为地址（端口取最后一个 `:` 之后） */
 export function parseAddressKey(key: string): RegistryAddress | undefined {
   const i = key.lastIndexOf(':');
@@ -41,6 +112,29 @@ export function selectRandomRegistryAddress(keys: Iterable<string>): RegistryAdd
 
   const index = Math.floor(Math.random() * addresses.length);
   return addresses[index];
+}
+
+function compareRegistryAddress(a: RegistryAddress, b: RegistryAddress) {
+  const byHost = a.host.localeCompare(b.host);
+  if (byHost !== 0) return byHost;
+  return a.port - b.port;
+}
+
+function registryAddressesFromKeys(keys: Iterable<string>, exclude?: string[]) {
+  const excludeSet = exclude?.length ? new Set(exclude) : undefined;
+  return Array.from(keys)
+    .filter(key => !excludeSet?.has(key))
+    .map(parseAddressKey)
+    .filter((address): address is RegistryAddress => address !== undefined)
+    .sort(compareRegistryAddress);
+}
+
+function cloneRegistryValue<T>(value: T): T {
+  try {
+    return structuredClone(value);
+  } catch {
+    return value;
+  }
 }
 
 export function getRegistryConfigsDir(): string {
@@ -113,6 +207,7 @@ export class Registry extends Server {
   private readonly fallbacks = new Set<() => void>();
   private readonly topics = new Map<string, TopicEntry>();
   private topicRevision = 0;
+  private readonly startedAt = Date.now();
 
   constructor(props: MicroServerProps = {}) {
     const workspace = resolve(homedir(), '.registry');
@@ -167,6 +262,115 @@ export class Registry extends Server {
     this.registerSubscribe();
     this.registerUnsubscribe();
     this.registerReceiveTopicUpdate();
+    this.registerReadApis();
+  }
+
+  private createNamespaceSnapshot(namespace: string, keys: Set<string>): RegistryNamespaceSnapshot {
+    const peers = registryAddressesFromKeys(keys);
+    return {
+      namespace,
+      peerCount: peers.length,
+      peers,
+    };
+  }
+
+  private createTopicSummary(topic: string, entry: TopicEntry): RegistryTopicSummary {
+    return {
+      topic,
+      publisherCount: entry.publishers.size,
+      subscriberCount: entry.subscribers.size,
+      hasData: entry.hasData,
+      retained: entry.retained,
+    };
+  }
+
+  private createTopicSnapshot(topic: string, entry: TopicEntry): RegistryTopicSnapshot {
+    return {
+      ...this.createTopicSummary(topic, entry),
+      payload: cloneRegistryValue(entry.data),
+    };
+  }
+
+  private listTopicSummaries(prefix?: string) {
+    const hasPrefix = typeof prefix === 'string' && prefix.length > 0;
+    return [...this.topics.entries()]
+      .filter(([topic]) => !hasPrefix || topic.startsWith(prefix!))
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([topic, entry]) => this.createTopicSummary(topic, entry));
+  }
+
+  private registerReadApis() {
+    this.fallbacks.add(this.register<{}, {}>('/-/namespaces', async (): Promise<RegistryNamespacesResult> => {
+      const namespaces = [...this.namespaces.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([namespace, keys]) => this.createNamespaceSnapshot(namespace, keys));
+      return { namespaces };
+    }));
+    this.fallbacks.add(this.register<RegistryNamespacePeersData, {}>('/-/namespace/peers', async ({ data }): Promise<RegistryNamespacePeersResult> => {
+      const namespace = typeof data?.namespace === 'string' ? data.namespace : '';
+      const keys = this.namespaces.get(namespace);
+      return {
+        namespace,
+        peers: keys ? registryAddressesFromKeys(keys, data.exclude) : [],
+      };
+    }));
+    this.fallbacks.add(this.register<{}, {}>('/-/registry/status', async (): Promise<RegistryStatusSnapshot> => ({
+      status: 'ok',
+      startedAt: this.startedAt,
+      uptime: Date.now() - this.startedAt,
+      clientCount: this.clients.size,
+      namespaceCount: this.namespaces.size,
+      topicCount: this.topics.size,
+      configNamespaceCount: this.configs.size,
+    })));
+    this.fallbacks.add(this.register<RegistryTopicsData, {}>('/-/topics', async ({ data }): Promise<RegistryTopicsResult> => ({
+      topics: this.listTopicSummaries(data?.prefix),
+    })));
+    this.fallbacks.add(this.register<RegistryTopicGetData, {}>('/-/topic/get', async ({ data }) => {
+      if (typeof data?.topic !== 'string') return;
+      const entry = this.topics.get(data.topic);
+      if (!entry) return;
+      return this.createTopicSnapshot(data.topic, entry);
+    }));
+    this.fallbacks.add(this.register<{}, {}>('/-/configs', async (): Promise<RegistryConfigsResult> => {
+      const configs = [...this.configs.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([namespace, config]) => ({
+          namespace,
+          keys: Object.keys(config).sort(),
+        }));
+      return { configs };
+    }));
+    this.fallbacks.add(this.register<RegistryConfigGetData, {}>('/-/config/get', async ({ data }): Promise<RegistryConfigGetResult> => {
+      const namespace = typeof data?.namespace === 'string' ? data.namespace : '';
+      const config = this.configs.get(namespace);
+      if (typeof data?.key === 'string') {
+        if (config && Object.prototype.hasOwnProperty.call(config, data.key)) {
+          return {
+            namespace,
+            key: data.key,
+            hasValue: true,
+            value: cloneRegistryValue(config[data.key]),
+          };
+        }
+        return {
+          namespace,
+          key: data.key,
+          hasValue: false,
+        };
+      }
+      if (!config) {
+        return {
+          namespace,
+          hasConfig: false,
+        };
+      }
+      return {
+        namespace,
+        hasConfig: true,
+        config: cloneRegistryValue(config),
+      };
+    }));
   }
 
   private cleanupTopicIfUnused(topic: string, entry = this.topics.get(topic)) {

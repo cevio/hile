@@ -136,6 +136,9 @@ const packageConfigs = {
     purpose: 'Run registry-backed service discovery, RPC, streaming RPC, and pub/sub between Node services.',
     cards: ['packages/messaging-micro.md'],
     recipes: ['recipes/micro-rpc-message-loader.md', 'recipes/runtime-config.md'],
+    extraSections: [
+      { rel: 'recipes/micro-registry-read-apis.md', heading: '## Registry Read APIs' },
+    ],
   },
   '@hile/model': {
     dir: 'model',
@@ -534,7 +537,8 @@ function validateAiSource() {
 
   for (const [name, config] of Object.entries(packageConfigs)) {
     assertExists(path.join(root, 'packages', config.dir, 'package.json'))
-    for (const rel of [...config.cards, ...config.recipes]) {
+    const extraSectionFiles = (config.extraSections ?? []).map((extra) => extra.rel)
+    for (const rel of [...config.cards, ...config.recipes, ...extraSectionFiles]) {
       assertExists(path.join(aiDir, rel), `${name} references missing AI source ${rel}`)
     }
   }
@@ -716,6 +720,7 @@ function writePackageAi(packageName, config) {
     selectPackageMapRows(packageName),
     '',
     ...config.cards.map((rel) => ai(rel)),
+    ...(config.extraSections ?? []).map(({ rel, heading }) => section(ai(rel), heading)),
   ]
 
   if (config.recipes.length) {
@@ -857,6 +862,10 @@ function packageMdxBody(packageName, config) {
     '',
     section(primary, '## Runtime And Lifecycle Notes'),
     '',
+    ...(config.extraSections ?? []).flatMap(({ rel, heading }) => [
+      section(ai(rel), heading),
+      '',
+    ]),
     section(primary, '## Anti-Patterns'),
     '',
     section(primary, '## Verification Checklist'),

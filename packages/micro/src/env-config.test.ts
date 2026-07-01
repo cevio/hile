@@ -44,6 +44,7 @@ describe('@hile/micro config file loading', () => {
   const configsDir = join(testDir, '.registry', 'configs');
 
   beforeEach(() => {
+    rmSync(configsDir, { recursive: true, force: true });
     mkdirSync(configsDir, { recursive: true });
   });
 
@@ -65,6 +66,85 @@ describe('@hile/micro config file loading', () => {
     watcher!.close();
   });
 
+  it('exposes loaded configs through read APIs', async () => {
+    writeFileSync(join(configsDir, 'svc-read.config.yaml'), [
+      'enabled: true',
+      'nested:',
+      '  host: localhost',
+      '  port: 3000',
+    ].join('\n'));
+    const registry = new Registry(testAdvertise);
+    const watcher = registry.watchEnvFile();
+
+    try {
+      await expect(registry.dispatch('/-/configs', {})).resolves.toEqual({
+        configs: [
+          {
+            namespace: 'svc-read',
+            keys: ['enabled', 'nested'],
+          },
+        ],
+      });
+      await expect(registry.dispatch('/-/config/get', {
+        namespace: 'svc-read',
+      })).resolves.toEqual({
+        namespace: 'svc-read',
+        hasConfig: true,
+        config: {
+          enabled: true,
+          nested: { host: 'localhost', port: 3000 },
+        },
+      });
+      await expect(registry.dispatch('/-/config/get', {
+        namespace: 'svc-read',
+        key: 'enabled',
+      })).resolves.toEqual({
+        namespace: 'svc-read',
+        key: 'enabled',
+        hasValue: true,
+        value: true,
+      });
+      await expect(registry.dispatch('/-/config/get', {
+        namespace: 'svc-read',
+        key: 'missing',
+      })).resolves.toEqual({
+        namespace: 'svc-read',
+        key: 'missing',
+        hasValue: false,
+      });
+    } finally {
+      watcher!.close();
+    }
+  });
+
+  it('returns config snapshots without exposing registry state by reference', async () => {
+    writeFileSync(join(configsDir, 'svc-copy.config.yaml'), [
+      'nested:',
+      '  value: current',
+    ].join('\n'));
+    const registry = new Registry(testAdvertise);
+    const watcher = registry.watchEnvFile();
+
+    try {
+      const snapshot = await registry.dispatch('/-/config/get', {
+        namespace: 'svc-copy',
+      });
+      snapshot.config.nested.value = 'mutated';
+
+      await expect(registry.dispatch('/-/config/get', {
+        namespace: 'svc-copy',
+      })).resolves.toEqual({
+        namespace: 'svc-copy',
+        hasConfig: true,
+        config: {
+          nested: { value: 'current' },
+        },
+      });
+    } finally {
+      watcher!.close();
+    }
+  });
+
   it('reloads config when yaml file changes', async () => {
     const configFile = join(configsDir, 'svc-b.config.yaml');
     writeFileSync(configFile, 'value: 1');
@@ -73,6 +153,7 @@ describe('@hile/micro config file loading', () => {
     const watcher = registry.watchEnvFile();
     expect((registry as any).configs.get('svc-b')).toEqual({ value: 1 });
 
+    await new Promise(resolve => setTimeout(resolve, 50));
     writeFileSync(configFile, 'value: 2');
 
     await vi.waitFor(() => {

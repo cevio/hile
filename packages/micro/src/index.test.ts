@@ -108,6 +108,14 @@ class ServerWithoutAnnounce extends Server {
   }
 }
 
+function createRegistryTestClient(host: string, port: number) {
+  return {
+    host,
+    port,
+    events: new EventEmitter(),
+  };
+}
+
 class DelayingDeclareRegistry extends Registry {
   public readonly declareStarted = createDeferred<void>();
   public readonly releaseDeclare = createDeferred<void>();
@@ -404,6 +412,136 @@ describe('@hile/micro registry selection', () => {
     } finally {
       await d();
     }
+  });
+});
+
+describe('@hile/micro registry read APIs', () => {
+  it('lists namespaces with all connected peers', async () => {
+    const registry = new Registry(testAdvertise);
+    registry.events.emit('connect', createRegistryTestClient('127.0.0.1', 3102) as any, ['svc']);
+    registry.events.emit('connect', createRegistryTestClient('127.0.0.1', 3101) as any, ['svc']);
+    registry.events.emit('connect', createRegistryTestClient('127.0.0.1', 3201) as any, ['other']);
+
+    await expect(registry.dispatch('/-/namespaces', {})).resolves.toEqual({
+      namespaces: [
+        {
+          namespace: 'other',
+          peerCount: 1,
+          peers: [{ host: '127.0.0.1', port: 3201 }],
+        },
+        {
+          namespace: 'svc',
+          peerCount: 2,
+          peers: [
+            { host: '127.0.0.1', port: 3101 },
+            { host: '127.0.0.1', port: 3102 },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('lists peers for one namespace and honors exclusions', async () => {
+    const registry = new Registry(testAdvertise);
+    registry.events.emit('connect', createRegistryTestClient('127.0.0.1', 3301) as any, ['svc']);
+    registry.events.emit('connect', createRegistryTestClient('127.0.0.1', 3302) as any, ['svc']);
+
+    await expect(registry.dispatch('/-/namespace/peers', {
+      namespace: 'svc',
+      exclude: ['127.0.0.1:3301'],
+    })).resolves.toEqual({
+      namespace: 'svc',
+      peers: [{ host: '127.0.0.1', port: 3302 }],
+    });
+
+    await expect(registry.dispatch('/-/find', {
+      namespace: 'svc',
+      exclude: ['127.0.0.1:3301'],
+    })).resolves.toEqual({ host: '127.0.0.1', port: 3302 });
+  });
+
+  it('reports registry status counts without changing registered state', async () => {
+    const startedBefore = Date.now();
+    const registry = new Registry(testAdvertise);
+    registry.events.emit('connect', createRegistryTestClient('127.0.0.1', 3401) as any, ['svc']);
+    await registry.dispatch('/-/declare', { topic: 'status-topic', payload: { ok: true } }, {
+      client: { host: '127.0.0.1', port: 3401 },
+    });
+
+    const status = await registry.dispatch('/-/registry/status', {});
+    expect(status).toMatchObject({
+      status: 'ok',
+      namespaceCount: 1,
+      topicCount: 1,
+      configNamespaceCount: 0,
+    });
+    expect(status.startedAt).toBeGreaterThanOrEqual(startedBefore);
+    expect(status.uptime).toBeGreaterThanOrEqual(0);
+    expect(status.clientCount).toBe(0);
+  });
+
+  it('lists topics by prefix with role counts and retained state', async () => {
+    const registry = new Registry(testAdvertise);
+    const publisher = { host: '127.0.0.1', port: 3501 };
+    const subscriber = { host: '127.0.0.1', port: 3502 };
+
+    await registry.dispatch('/-/declare', { topic: 'orders.created', payload: { id: 1 } }, {
+      client: publisher,
+    });
+    await registry.dispatch('/-/subscribe', { topic: 'orders.created' }, {
+      client: subscriber,
+    });
+    await registry.dispatch('/-/subscribe', { topic: 'billing.created' }, {
+      client: subscriber,
+    });
+
+    await expect(registry.dispatch('/-/topics', { prefix: 'orders.' })).resolves.toEqual({
+      topics: [
+        {
+          topic: 'orders.created',
+          publisherCount: 1,
+          subscriberCount: 1,
+          hasData: true,
+          retained: false,
+        },
+      ],
+    });
+  });
+
+  it('returns a topic snapshot without subscribing the caller', async () => {
+    const registry = new Registry(testAdvertise);
+    const publisher = { host: '127.0.0.1', port: 3601 };
+
+    await registry.dispatch('/-/declare', { topic: 'snapshot-topic', payload: { value: 'current' } }, {
+      client: publisher,
+    });
+
+    await expect(registry.dispatch('/-/topic/get', { topic: 'snapshot-topic' })).resolves.toEqual({
+      topic: 'snapshot-topic',
+      publisherCount: 1,
+      subscriberCount: 0,
+      hasData: true,
+      payload: { value: 'current' },
+      retained: false,
+    });
+    await expect(registry.dispatch('/-/topic/get', { topic: 'missing-topic' })).resolves.toBeUndefined();
+    expect((registry as any).topics.get('snapshot-topic')?.subscribers.size).toBe(0);
+  });
+
+  it('returns topic payload snapshots without exposing registry state by reference', async () => {
+    const registry = new Registry(testAdvertise);
+    const publisher = { host: '127.0.0.1', port: 3701 };
+
+    await registry.dispatch('/-/declare', { topic: 'immutable-topic', payload: { nested: { value: 'current' } } }, {
+      client: publisher,
+    });
+
+    const snapshot = await registry.dispatch('/-/topic/get', { topic: 'immutable-topic' });
+    snapshot.payload.nested.value = 'mutated';
+
+    await expect(registry.dispatch('/-/topic/get', { topic: 'immutable-topic' })).resolves.toMatchObject({
+      payload: { nested: { value: 'current' } },
+    });
   });
 });
 

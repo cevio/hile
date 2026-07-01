@@ -152,6 +152,20 @@ Notice that `request()` returns a `Promise<T>`. Await it directly.
 - `Application.subscribe(topic, callback)` returns an unsubscribe function.
 - `Registry` stores service addresses and retained config/topic state under `~/.registry`.
 
+## Registry Read APIs
+
+`Registry` exposes read-only routes for diagnostics and admin tooling. These routes return
+snapshots of current registry state; they do not change service discovery, topic declarations,
+subscriptions, or retained config data.
+
+- `/-/namespaces` returns all registered namespaces with peer counts and addresses.
+- `/-/namespace/peers` accepts `{ namespace, exclude? }` and returns every peer for one namespace.
+- `/-/registry/status` returns registry uptime and counts for clients, namespaces, topics, and config namespaces.
+- `/-/topics` accepts `{ prefix? }` and returns topic summaries with publisher/subscriber counts and retained/data flags.
+- `/-/topic/get` accepts `{ topic }` and returns the current topic payload snapshot when the topic exists.
+- `/-/configs` returns loaded config namespaces and keys.
+- `/-/config/get` accepts `{ namespace, key? }` and returns either a config snapshot or one config value.
+
 ## Anti-Patterns
 
 - Appending a secondary response getter to `client.request('/x', data)`

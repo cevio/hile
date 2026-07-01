@@ -60,6 +60,7 @@ Then load the relevant package card or recipe:
 - `references/packages/redis-reliability.md`
 - `references/recipes/http-api-model-typeorm.md`
 - `references/recipes/http-next-fullstack.md`
+- `references/recipes/micro-registry-read-apis.md`
 - `references/recipes/micro-rpc-message-loader.md`
 - `references/recipes/new-project-scaffold.md`
 - `references/recipes/queue-worker-idempotency.md`
