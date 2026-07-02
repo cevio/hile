@@ -21,6 +21,7 @@ Use this map to decide what to read.
 | Load file-based message handlers | `@hile/message-loader` | `packages/messaging-micro.md`, `recipes/micro-rpc-message-loader.md` |
 | Build service discovery or RPC | `@hile/micro` | `packages/messaging-micro.md`, `recipes/micro-rpc-message-loader.md` |
 | Push runtime config without restarts | `@hile/micro-dynamic-configs` | `packages/messaging-micro.md`, `recipes/runtime-config.md` |
+| Stabilize config-driven runtime reloads | `@hile/reloader` | `packages/reloader.md`, `recipes/stable-runtime-reload.md` |
 | Protect a critical section with a lease | `@hile/redis-lock` | `packages/redis-reliability.md` |
 | Stop duplicate retry side effects | `@hile/redis-idempotency` | `packages/redis-reliability.md`, `recipes/queue-worker-idempotency.md` |
 | Enforce shared quotas or 429s | `@hile/redis-rate-limit` | `packages/redis-reliability.md` |
@@ -35,6 +36,7 @@ Use this map to decide what to read.
 - If the task is background work, use `@hile/redis-stream-queue`; do not use micro RPC as a queue.
 - If the task is "only one replica should run this", use `@hile/redis-lock` or `@hile/schedule` distributed mode, and keep a final business consistency wall.
 - If the task is "prevent too many attempts", use `@hile/redis-rate-limit`; do not confuse it with authentication or idempotency.
+- If config changes can arrive in bursts, use `@hile/reloader` around the runtime; do not reload directly inside every subscribe callback.
 
 ## Project Startup And Lifecycle
 
@@ -109,7 +111,19 @@ Read `packages/messaging-micro.md` when the task mentions:
 - streaming RPC
 - pub/sub topics
 
-Packages: `@hile/message-modem`, `@hile/message-ws`, `@hile/message-ipc`, `@hile/message-worker-thread`, `@hile/message-loader`, `@hile/micro`, `@hile/micro-dynamic-configs`.
+Packages: `@hile/message-modem`, `@hile/message-ws`, `@hile/message-ipc`, `@hile/message-worker-thread`, `@hile/message-loader`, `@hile/micro`, `@hile/micro-dynamic-configs`, `@hile/reloader`.
+
+## Runtime Reload And Config Aggregation
+
+Read `packages/reloader.md` when the task mentions:
+
+- debounce config reloads
+- aggregate multiple subscribe values
+- stable reload of runtime state
+- keep HTTP port stable while changing handlers
+- prevent concurrent create/dispose cycles
+
+Package: `@hile/reloader`.
 
 ## Redis Reliability
 
@@ -144,4 +158,5 @@ Package: `create-hile`.
 - Queue worker with idempotency: `recipes/queue-worker-idempotency.md`
 - Micro RPC with message loader: `recipes/micro-rpc-message-loader.md`
 - Runtime dynamic config: `recipes/runtime-config.md`
+- Stable runtime reload: `recipes/stable-runtime-reload.md`
 - New scaffolded project: `recipes/new-project-scaffold.md`

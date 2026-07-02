@@ -68,6 +68,7 @@ export default defineService('http', async (shutdown) => {
 | Load file-based message handlers | `@hile/message-loader` | `packages/messaging-micro.md`, `recipes/micro-rpc-message-loader.md` |
 | Build service discovery or RPC | `@hile/micro` | `packages/messaging-micro.md`, `recipes/micro-rpc-message-loader.md` |
 | Push runtime config without restarts | `@hile/micro-dynamic-configs` | `packages/messaging-micro.md`, `recipes/runtime-config.md` |
+| Stabilize config-driven runtime reloads | `@hile/reloader` | `packages/reloader.md`, `recipes/stable-runtime-reload.md` |
 | Protect a critical section with a lease | `@hile/redis-lock` | `packages/redis-reliability.md` |
 | Stop duplicate retry side effects | `@hile/redis-idempotency` | `packages/redis-reliability.md`, `recipes/queue-worker-idempotency.md` |
 | Enforce shared quotas or 429s | `@hile/redis-rate-limit` | `packages/redis-reliability.md` |

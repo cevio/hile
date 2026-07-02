@@ -135,7 +135,7 @@ const packageConfigs = {
     dir: 'micro',
     purpose: 'Run registry-backed service discovery, RPC, streaming RPC, and pub/sub between Node services.',
     cards: ['packages/messaging-micro.md'],
-    recipes: ['recipes/micro-rpc-message-loader.md', 'recipes/runtime-config.md'],
+    recipes: ['recipes/micro-rpc-message-loader.md', 'recipes/runtime-config.md', 'recipes/stable-runtime-reload.md'],
     extraSections: [
       { rel: 'recipes/micro-registry-read-apis.md', heading: '## Registry Read APIs' },
     ],
@@ -151,6 +151,12 @@ const packageConfigs = {
     purpose: 'Protect retryable side effects with Redis-backed IN_FLIGHT/DONE state and stable fingerprints.',
     cards: ['packages/redis-reliability.md'],
     recipes: ['recipes/queue-worker-idempotency.md'],
+  },
+  '@hile/reloader': {
+    dir: 'reloader',
+    purpose: 'Stabilize config-driven runtime reloads with debounce, singleflight, latest-wins, safe disposal, and multi-source config aggregation.',
+    cards: ['packages/reloader.md'],
+    recipes: ['recipes/stable-runtime-reload.md', 'recipes/runtime-config.md'],
   },
   '@hile/redis-lock': {
     dir: 'redis-lock',
@@ -204,6 +210,7 @@ const docPackagePages = {
   'packages/micro.mdx': '@hile/micro',
   'packages/model.mdx': '@hile/model',
   'packages/redis-idempotency.mdx': '@hile/redis-idempotency',
+  'packages/reloader.mdx': '@hile/reloader',
   'packages/redis-lock.mdx': '@hile/redis-lock',
   'packages/redis-rate-limit.mdx': '@hile/redis-rate-limit',
   'packages/redis-stream-queue.mdx': '@hile/redis-stream-queue',
@@ -569,7 +576,7 @@ function writePublishSkill() {
   const content = [
     '---',
     'name: hile',
-    'description: "Example-first AI development guide for Hile @hile/* packages. Use when building or editing Node.js/TypeScript services with @hile/core, @hile/http, @hile/http-next, @hile/model, @hile/context, @hile/typeorm, @hile/ioredis, @hile/cache, @hile/message-*, @hile/micro, Redis reliability packages, @hile/schedule, or create-hile."',
+    'description: "Example-first AI development guide for Hile @hile/* packages. Use when building or editing Node.js/TypeScript services with @hile/core, @hile/http, @hile/http-next, @hile/model, @hile/context, @hile/typeorm, @hile/ioredis, @hile/cache, @hile/message-*, @hile/micro, @hile/reloader, Redis reliability packages, @hile/schedule, or create-hile."',
     'license: MIT',
     'metadata:',
     '  version: "1.0.0"',

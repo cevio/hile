@@ -71,6 +71,7 @@ Use this map to decide what to read.
 | Load file-based message handlers | `@hile/message-loader` | `packages/messaging-micro.md`, `recipes/micro-rpc-message-loader.md` |
 | Build service discovery or RPC | `@hile/micro` | `packages/messaging-micro.md`, `recipes/micro-rpc-message-loader.md` |
 | Push runtime config without restarts | `@hile/micro-dynamic-configs` | `packages/messaging-micro.md`, `recipes/runtime-config.md` |
+| Stabilize config-driven runtime reloads | `@hile/reloader` | `packages/reloader.md`, `recipes/stable-runtime-reload.md` |
 | Protect a critical section with a lease | `@hile/redis-lock` | `packages/redis-reliability.md` |
 | Stop duplicate retry side effects | `@hile/redis-idempotency` | `packages/redis-reliability.md`, `recipes/queue-worker-idempotency.md` |
 | Enforce shared quotas or 429s | `@hile/redis-rate-limit` | `packages/redis-reliability.md` |
@@ -85,6 +86,7 @@ Use this map to decide what to read.
 - If the task is background work, use `@hile/redis-stream-queue`; do not use micro RPC as a queue.
 - If the task is "only one replica should run this", use `@hile/redis-lock` or `@hile/schedule` distributed mode, and keep a final business consistency wall.
 - If the task is "prevent too many attempts", use `@hile/redis-rate-limit`; do not confuse it with authentication or idempotency.
+- If config changes can arrive in bursts, use `@hile/reloader` around the runtime; do not reload directly inside every subscribe callback.
 
 ## Project Startup And Lifecycle
 
@@ -159,7 +161,19 @@ Read `packages/messaging-micro.md` when the task mentions:
 - streaming RPC
 - pub/sub topics
 
-Packages: `@hile/message-modem`, `@hile/message-ws`, `@hile/message-ipc`, `@hile/message-worker-thread`, `@hile/message-loader`, `@hile/micro`, `@hile/micro-dynamic-configs`.
+Packages: `@hile/message-modem`, `@hile/message-ws`, `@hile/message-ipc`, `@hile/message-worker-thread`, `@hile/message-loader`, `@hile/micro`, `@hile/micro-dynamic-configs`, `@hile/reloader`.
+
+## Runtime Reload And Config Aggregation
+
+Read `packages/reloader.md` when the task mentions:
+
+- debounce config reloads
+- aggregate multiple subscribe values
+- stable reload of runtime state
+- keep HTTP port stable while changing handlers
+- prevent concurrent create/dispose cycles
+
+Package: `@hile/reloader`.
 
 ## Redis Reliability
 
@@ -194,6 +208,7 @@ Package: `create-hile`.
 - Queue worker with idempotency: `recipes/queue-worker-idempotency.md`
 - Micro RPC with message loader: `recipes/micro-rpc-message-loader.md`
 - Runtime dynamic config: `recipes/runtime-config.md`
+- Stable runtime reload: `recipes/stable-runtime-reload.md`
 - New scaffolded project: `recipes/new-project-scaffold.md`
 
 ---
@@ -1295,6 +1310,191 @@ import { RedisStreamQueue, defineQueue } from '@hile/redis-stream-queue'
 
 ---
 
+# Runtime Reloader
+
+Packages: `@hile/reloader`.
+
+## Copy-Paste Example
+
+Stable HTTP shell with reloadable runtime:
+
+```ts
+import type { Middleware } from 'koa'
+import { createRuntimeReloader } from '@hile/reloader'
+
+type RuntimeConfig = {
+  mysql: { host: string; port: number }
+  redis: { host: string; port: number }
+  flags: Record<string, boolean>
+}
+
+type RuntimeHandler = Middleware & {
+  close?: () => Promise<void> | void
+}
+
+const reloader = createRuntimeReloader<RuntimeConfig, RuntimeHandler>({
+  debounceMs: 100,
+  createTimeoutMs: 30_000,
+  disposeTimeoutMs: 10_000,
+  normalize: config => ({
+    mysql: config.mysql,
+    redis: config.redis,
+    flags: config.flags,
+  }),
+  create: async config => {
+    const runtime = await createRuntime(config)
+    return runtime.handler
+  },
+  dispose: async handler => {
+    await handler.close?.()
+  },
+  onError: (error, context) => {
+    logger.error({ error, stage: context.stage }, 'runtime reload failed')
+  },
+})
+
+http.use(async (ctx, next) => {
+  const handler = reloader.current()
+  if (!handler) {
+    ctx.status = 503
+    ctx.body = { error: 'runtime is not ready' }
+    return
+  }
+  await handler(ctx, next)
+})
+```
+
+## More Examples
+
+Aggregate multiple micro config topics before reloading:
+
+```ts
+import { createConfigAggregator, createRuntimeReloader } from '@hile/reloader'
+
+type RuntimeConfig = {
+  mysql: { host: string; port: number }
+  redis: { host: string; port: number }
+  flags: Record<string, boolean>
+}
+
+const configs = createConfigAggregator<RuntimeConfig>({
+  required: ['mysql', 'redis'],
+  defaults: { flags: {} },
+  debounceMs: 100,
+  normalize: config => ({
+    mysql: config.mysql,
+    redis: config.redis,
+    flags: config.flags,
+  }),
+  onError: (error) => {
+    logger.error({ error }, 'runtime config emit failed')
+  },
+})
+
+const reloader = createRuntimeReloader<RuntimeConfig, Runtime>({
+  debounceMs: 100,
+  signature: config => `${config.mysql.host}:${config.mysql.port}|${config.redis.host}:${config.redis.port}`,
+  create: createRuntime,
+  dispose: runtime => runtime.close(),
+})
+
+configs.onChange(config => reloader.update(config))
+
+const cleanupMysql = await app.subscribe('config:mysql', value => configs.set('mysql', value))
+const cleanupRedis = await app.subscribe('config:redis', value => configs.set('redis', value))
+const cleanupFlags = await app.subscribe('config:flags', value => configs.set('flags', value))
+
+shutdown(async () => {
+  await cleanupMysql()
+  await cleanupRedis()
+  await cleanupFlags()
+  configs.dispose()
+  await reloader.stop()
+})
+```
+
+Manual file watcher:
+
+```ts
+watch(configFile, async () => {
+  const next = await loadConfig(configFile)
+  await reloader.update(next)
+})
+```
+
+## Use When
+
+Use `@hile/reloader` when runtime config can change frequently and service code needs debounce, singleflight reload, latest-wins behavior, and safe old-runtime preservation.
+
+## Do Not Use When
+
+- Do not use it as a durable queue.
+- Do not use it to restart an HTTP server on the same port; keep the listener stable and reload handlers or runtime state.
+- Do not pass `Map`, `Set`, class instances, functions, symbols, circular objects, or sparse arrays to the default comparator; use `signature` or `normalize`.
+- Do not rely on timeouts to kill non-cooperative work; timeouts reject the reload path and abort the signal, and late-created runtimes are disposed best-effort.
+
+## Install
+
+```bash
+pnpm add @hile/reloader
+```
+
+## Imports
+
+```ts
+import {
+  createRuntimeReloader,
+  createConfigAggregator,
+  type RuntimeReloader,
+  type ConfigAggregator,
+} from '@hile/reloader'
+```
+
+## Compose With
+
+- Use `@hile/micro` `subscribe()` callbacks to feed a `ConfigAggregator`.
+- Use `@hile/micro-dynamic-configs` when config must persist in Redis and be published through micro topics.
+- Use `@hile/http` with a stable listener and resolve `reloader.current()` inside middleware.
+- Use `@hile/core` `shutdown()` to call `reloader.stop()`.
+
+## Runtime And Lifecycle Notes
+
+- `RuntimeReloader.update(input)` schedules reload work and settles when the scheduler becomes idle.
+- If that input starts `create()` and `create()` fails, that `update()` rejects, the old runtime remains current, and the failed input is not marked applied.
+- If an update is superseded before its input starts `create()`, it settles with the newer pending input because latest-wins coalesced it into that reload.
+- Only one reload runs at a time.
+- Updates during an active reload collapse to the latest pending input.
+- Debounce timers reset while updates arrive before reload starts.
+- `create()` must succeed before `current()` switches.
+- After a successful switch, `dispose(oldRuntime)` runs; dispose failures are reported but do not roll back the new runtime.
+- `stop()` rejects future updates, aborts an in-flight `create()` through `AbortSignal`, clears queued input, and disposes the current runtime.
+- If `create()` resolves after timeout or abort, that late runtime is not made current and is disposed best-effort.
+- Default compare priority is `equals`, then `signature`, then `normalize`, then an internal stable signature.
+- The internal stable signature is not exported and only supports JSON-like plain config values plus `Date` and `bigint`.
+- Default timeouts are 30 seconds for create and 10 seconds for dispose. Override with `createTimeoutMs` and `disposeTimeoutMs`.
+- `ConfigAggregator.required` keys must be explicitly received; `defaults` do not satisfy required keys.
+- `undefined` is an explicit received value. Use `unset(key)` to remove a value and mark the key as not received.
+- `ConfigAggregator` serializes emits. If values change while listeners are running, the next emit uses the latest snapshot after the current emit finishes.
+- `ConfigAggregator` records the last emitted signature only after all listeners finish successfully.
+- `ConfigAggregator.flush()` rejects when a listener fails. Timer-driven emits call `onError` and leave the signature uncommitted so the same config can retry later.
+
+## Anti-Patterns
+
+- Recreating an HTTP server on the same port for every config change.
+- Letting multiple subscribe callbacks each reload the same runtime independently.
+- Comparing whole runtime objects instead of normalized config.
+- Forgetting to call `stop()` during application shutdown.
+
+## Verification Checklist
+
+- Burst config updates produce at most one reload per debounce window.
+- A reload failure leaves the previous runtime serving traffic.
+- Multiple required config keys are present before the first reload.
+- HTTP handlers read `reloader.current()` instead of rebinding the port.
+- `onError` and `onCompareError` are connected to logs or metrics.
+
+---
+
 # HTTP API + Model + TypeORM
 
 ## Complete Example
@@ -1942,3 +2142,121 @@ Use this recipe when config changes should persist to Redis and be pushed throug
 - `redis_key` is app-specific.
 - Change handlers use `change:key`.
 - Cleanup from `initialize()` is registered.
+
+---
+
+# Stable Runtime Reload
+
+## Complete Example
+
+```ts
+import { defineService, loadService } from '@hile/core'
+import { Application } from '@hile/micro'
+import { Http } from '@hile/http'
+import { createConfigAggregator, createRuntimeReloader } from '@hile/reloader'
+import appService from './micro.app.boot'
+import httpService from './http.boot'
+
+type RuntimeConfig = {
+  mysql: { host: string; port: number }
+  redis: { host: string; port: number }
+  flags: Record<string, boolean>
+}
+
+export default defineService('runtime.reload', async (shutdown) => {
+  const app = await loadService<Application>(appService)
+  const http = await loadService<Http>(httpService)
+
+  const reloader = createRuntimeReloader<RuntimeConfig, AppRuntime>({
+    debounceMs: 100,
+    normalize: config => ({
+      mysql: config.mysql,
+      redis: config.redis,
+      flags: config.flags,
+    }),
+    create: config => createAppRuntime(config),
+    dispose: runtime => runtime.close(),
+    onError: (error, context) => {
+      logger.error({ error, stage: context.stage }, 'runtime reload failed')
+    },
+  })
+
+  const configs = createConfigAggregator<RuntimeConfig>({
+    required: ['mysql', 'redis'],
+    defaults: { flags: {} },
+    debounceMs: 100,
+    onError: (error) => {
+      logger.error({ error }, 'runtime config emit failed')
+    },
+  })
+
+  configs.onChange(config => reloader.update(config))
+
+  const cleanupMysql = await app.subscribe('config:mysql', value => configs.set('mysql', value))
+  const cleanupRedis = await app.subscribe('config:redis', value => configs.set('redis', value))
+  const cleanupFlags = await app.subscribe('config:flags', value => configs.set('flags', value))
+
+  http.use(async (ctx, next) => {
+    const runtime = reloader.current()
+    if (!runtime) {
+      ctx.status = 503
+      ctx.body = { error: 'runtime is not ready' }
+      return
+    }
+    await runtime.handle(ctx, next)
+  })
+
+  shutdown(async () => {
+    await cleanupMysql()
+    await cleanupRedis()
+    await cleanupFlags()
+    configs.dispose()
+    await reloader.stop()
+  })
+
+  return reloader
+})
+```
+
+## File Layout
+
+```text
+src/services/runtime.reload.boot.ts
+src/services/micro.app.boot.ts
+src/services/http.boot.ts
+```
+
+## User Intent
+
+Use this recipe when `app.subscribe()` receives config updates that should rebuild business runtime state without thrashing services or rebinding ports.
+
+## Packages To Use
+
+- `@hile/reloader`
+- `@hile/micro`
+- `@hile/http`
+- `@hile/core`
+
+## Implementation Steps
+
+1. Keep the HTTP listener outside the reloader.
+2. Create `RuntimeReloader` for the runtime object that can be safely swapped.
+3. Create `ConfigAggregator` for all required subscribe topics.
+4. Feed each `app.subscribe()` callback into `configs.set(key, value)`.
+5. Use `configs.onChange(config => reloader.update(config))`.
+6. Register subscribe cleanup, `configs.dispose()`, and `reloader.stop()` with shutdown.
+
+## Failure And Cleanup Behavior
+
+- Config bursts collapse through aggregator debounce and reloader debounce.
+- Reloads never run concurrently.
+- If `create()` fails, the previous runtime stays active.
+- Old runtime disposal happens after the new runtime becomes current.
+- Same-port HTTP services are not restarted.
+
+## Verification Checklist
+
+- Required config keys are received before the first runtime is created.
+- Repeated equivalent configs do not reload.
+- A failed create logs an error and leaves old traffic handling intact.
+- The HTTP server is started once and reads `reloader.current()` per request.
