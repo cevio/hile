@@ -158,6 +158,12 @@ const packageConfigs = {
     cards: ['packages/reloader.md'],
     recipes: ['recipes/stable-runtime-reload.md', 'recipes/runtime-config.md'],
   },
+  '@hile/reactivity': {
+    dir: 'reactivity',
+    purpose: 'Compose Hile micro topics, dynamic config, and runtime reloader state as refs with explicit async watch strategies.',
+    cards: ['packages/reactivity.md'],
+    recipes: ['recipes/stable-runtime-reload.md', 'recipes/runtime-config.md'],
+  },
   '@hile/redis-lock': {
     dir: 'redis-lock',
     purpose: 'Protect short critical sections with Redis lease locks, wait policies, renewal, and fencing tokens.',
@@ -211,6 +217,7 @@ const docPackagePages = {
   'packages/model.mdx': '@hile/model',
   'packages/redis-idempotency.mdx': '@hile/redis-idempotency',
   'packages/reloader.mdx': '@hile/reloader',
+  'packages/reactivity.mdx': '@hile/reactivity',
   'packages/redis-lock.mdx': '@hile/redis-lock',
   'packages/redis-rate-limit.mdx': '@hile/redis-rate-limit',
   'packages/redis-stream-queue.mdx': '@hile/redis-stream-queue',

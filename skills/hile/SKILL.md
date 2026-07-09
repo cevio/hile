@@ -57,6 +57,7 @@ Then load the relevant package card or recipe:
 - `references/packages/infrastructure.md`
 - `references/packages/messaging-micro.md`
 - `references/packages/model-context.md`
+- `references/packages/reactivity.md`
 - `references/packages/redis-reliability.md`
 - `references/packages/reloader.md`
 - `references/recipes/http-api-model-typeorm.md`

@@ -148,6 +148,8 @@ import {
 ## Runtime And Lifecycle Notes
 
 - `RuntimeReloader.update(input)` schedules reload work and settles when the scheduler becomes idle.
+- `RuntimeReloader.onStateChange(state)` fires when the observable state changes, including `status`, `hasCurrent`, and `hasPending` transitions.
+- During an active reload, a newer update flips `hasPending` to `true`; when that pending input is consumed, `hasPending` flips back to `false`.
 - If that input starts `create()` and `create()` fails, that `update()` rejects, the old runtime remains current, and the failed input is not marked applied.
 - If an update is superseded before its input starts `create()`, it settles with the newer pending input because latest-wins coalesced it into that reload.
 - Only one reload runs at a time.

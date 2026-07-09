@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createConfigAggregator,
   createRuntimeReloader,
+  type RuntimeReloaderState,
 } from './index';
 
 afterEach(() => {
@@ -85,6 +86,36 @@ describe('RuntimeReloader', () => {
 
     expect(created).toEqual([1, 3]);
     expect(reloader.current()).toEqual({ value: 3 });
+  });
+
+  it('emits state changes when pending updates are added and consumed during an active reload', async () => {
+    let releaseFirst!: () => void;
+    const firstCreateStarted = new Promise<void>(resolve => {
+      releaseFirst = resolve;
+    });
+    const states: RuntimeReloaderState[] = [];
+    const reloader = createRuntimeReloader<number, { value: number }>({
+      create: async value => {
+        if (value === 1) await firstCreateStarted;
+        return { value };
+      },
+      onStateChange: state => states.push(state),
+    });
+
+    const first = reloader.update(1);
+    await tick();
+    expect(states.at(-1)).toMatchObject({ status: 'reloading', hasPending: false });
+
+    const second = reloader.update(2);
+    await tick();
+    expect(states.at(-1)).toMatchObject({ status: 'reloading', hasPending: true });
+
+    releaseFirst();
+    await first;
+    await second;
+
+    expect(states).toContainEqual({ status: 'reloading', hasCurrent: true, hasPending: false });
+    expect(reloader.current()).toEqual({ value: 2 });
   });
 
   it('keeps the current runtime when create fails', async () => {

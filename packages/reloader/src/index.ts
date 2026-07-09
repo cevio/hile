@@ -306,8 +306,8 @@ class RuntimeReloaderImpl<Input, Runtime> implements RuntimeReloader<Input, Runt
       waiter = { resolve, reject };
     });
     this.pendingInput = input;
-    this.hasPending = true;
     this.pendingUpdateWaiters.add(waiter);
+    this.setHasPending(true);
     this.schedule();
     return promise;
   }
@@ -319,8 +319,8 @@ class RuntimeReloaderImpl<Input, Runtime> implements RuntimeReloader<Input, Runt
     this.activeCreateController?.abort();
     this.clearScheduled();
     this.completeUpdateWaiters(this.takePendingUpdateWaiters());
-    this.hasPending = false;
     this.pendingInput = undefined;
+    this.setHasPending(false);
     this.setStatus('stopping');
 
     await this.waitForRunningToFinish();
@@ -409,7 +409,7 @@ class RuntimeReloaderImpl<Input, Runtime> implements RuntimeReloader<Input, Runt
         const input = this.pendingInput as Input;
         const updateWaiters = this.takePendingUpdateWaiters();
         this.pendingInput = undefined;
-        this.hasPending = false;
+        this.setHasPending(false);
 
         if (this.shouldSkip(input)) {
           this.completeUpdateWaiters(updateWaiters);
@@ -552,6 +552,16 @@ class RuntimeReloaderImpl<Input, Runtime> implements RuntimeReloader<Input, Runt
   private setStatus(status: RuntimeReloaderStatus) {
     if (this.status === status) return;
     this.status = status;
+    this.emitStateChange();
+  }
+
+  private setHasPending(hasPending: boolean) {
+    if (this.hasPending === hasPending) return;
+    this.hasPending = hasPending;
+    this.emitStateChange();
+  }
+
+  private emitStateChange() {
     safeCall(() => this.options.onStateChange?.(this.state()));
   }
 

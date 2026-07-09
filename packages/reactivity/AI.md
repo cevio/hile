@@ -1,4 +1,4 @@
-# AI Guide For @hile/reloader
+# AI Guide For @hile/reactivity
 
 
 
@@ -6,7 +6,7 @@
 
 
 
-Purpose: Stabilize config-driven runtime reloads with debounce, singleflight, latest-wins, safe disposal, and multi-source config aggregation.
+Purpose: Compose Hile micro topics, dynamic config, and runtime reloader state as refs with explicit async watch strategies.
 
 
 
@@ -20,21 +20,20 @@ Use this file when an AI agent installs the npm package and needs package-local 
 
 | User asks for | Use | Also read |
 |---|---|---|
-| Stabilize config-driven runtime reloads | `@hile/reloader` | `packages/reloader.md`, `recipes/stable-runtime-reload.md` |
+| Compose topics, config, and reloader state as refs | `@hile/reactivity` | `packages/reactivity.md`, `recipes/stable-runtime-reload.md` |
 
 
 
-# Runtime Reloader
+# Runtime Reactivity
 
-Packages: `@hile/reloader`.
+Packages: `@hile/reactivity`.
 
 ## Copy-Paste Example
 
-Stable HTTP shell with reloadable runtime:
+Reactive config topics feeding a reloadable runtime:
 
 ```ts
-import type { Middleware } from 'koa'
-import { createRuntimeReloader } from '@hile/reloader'
+import { reactiveConfig, reactiveReloader, watchSerialLatest } from '@hile/reactivity'
 
 type RuntimeConfig = {
   mysql: { host: string; port: number }
@@ -42,172 +41,165 @@ type RuntimeConfig = {
   flags: Record<string, boolean>
 }
 
-type RuntimeHandler = Middleware & {
-  close?: () => Promise<void> | void
-}
+const configs = await reactiveConfig<RuntimeConfig>(app, {
+  topics: {
+    mysql: 'config:mysql',
+    redis: 'config:redis',
+    flags: 'config:flags',
+  },
+  required: ['mysql', 'redis'],
+  defaults: { flags: {} },
+})
 
-const reloader = createRuntimeReloader<RuntimeConfig, RuntimeHandler>({
+const runtime = reactiveReloader<RuntimeConfig, Runtime>({
   debounceMs: 100,
-  createTimeoutMs: 30_000,
-  disposeTimeoutMs: 10_000,
-  normalize: config => ({
-    mysql: config.mysql,
-    redis: config.redis,
-    flags: config.flags,
-  }),
-  create: async config => {
-    const runtime = await createRuntime(config)
-    return runtime.handler
-  },
-  dispose: async handler => {
-    await handler.close?.()
-  },
+  create: createRuntime,
+  dispose: runtime => runtime.close(),
   onError: (error, context) => {
     logger.error({ error, stage: context.stage }, 'runtime reload failed')
   },
 })
 
+const stopReload = watchSerialLatest(configs.current, async config => {
+  if (!config) return
+  await runtime.update(config)
+})
+
 http.use(async (ctx, next) => {
-  const handler = reloader.current()
+  const handler = runtime.current.value
   if (!handler) {
     ctx.status = 503
     ctx.body = { error: 'runtime is not ready' }
     return
   }
-  await handler(ctx, next)
+  await handler.handle(ctx, next)
+})
+
+shutdown(async () => {
+  stopReload()
+  await configs.stop()
+  await runtime.stop()
 })
 ```
 
 ## More Examples
 
-Aggregate multiple micro config topics before reloading:
+Subscribe to one topic as a readonly ref:
 
 ```ts
-import { createConfigAggregator, createRuntimeReloader } from '@hile/reloader'
+import { topicRef, watchLatest } from '@hile/reactivity'
 
-type RuntimeConfig = {
-  mysql: { host: string; port: number }
-  redis: { host: string; port: number }
-  flags: Record<string, boolean>
-}
+const limit = await topicRef<number>(app, 'config:limit', { defaultValue: 10 })
 
-const configs = createConfigAggregator<RuntimeConfig>({
-  required: ['mysql', 'redis'],
-  defaults: { flags: {} },
-  debounceMs: 100,
-  normalize: config => ({
-    mysql: config.mysql,
-    redis: config.redis,
-    flags: config.flags,
-  }),
-  onError: (error) => {
-    logger.error({ error }, 'runtime config emit failed')
-  },
+watchLatest(limit.ref, async value => {
+  logger.info({ value }, 'limit changed')
 })
 
-const reloader = createRuntimeReloader<RuntimeConfig, Runtime>({
-  debounceMs: 100,
-  signature: config => `${config.mysql.host}:${config.mysql.port}|${config.redis.host}:${config.redis.port}`,
-  create: createRuntime,
-  dispose: runtime => runtime.close(),
-})
-
-configs.onChange(config => reloader.update(config))
-
-const cleanupMysql = await app.subscribe('config:mysql', value => configs.set('mysql', value))
-const cleanupRedis = await app.subscribe('config:redis', value => configs.set('redis', value))
-const cleanupFlags = await app.subscribe('config:flags', value => configs.set('flags', value))
-
-shutdown(async () => {
-  await cleanupMysql()
-  await cleanupRedis()
-  await cleanupFlags()
-  configs.dispose()
-  await reloader.stop()
-})
+shutdown(limit.stop)
 ```
 
-Manual file watcher:
+Publish a local ref as a topic with serial latest-wins updates:
 
 ```ts
-watch(configFile, async () => {
-  const next = await loadConfig(configFile)
-  await reloader.update(next)
+import { publishRef, shallowRef } from '@hile/reactivity'
+
+const limit = shallowRef(10)
+const published = await publishRef(app, 'runtime:limit', limit)
+
+limit.value = 20
+
+shutdown(published.stop)
+```
+
+Choose an async watch strategy explicitly:
+
+```ts
+import { watchLatest, watchSerialLatest, watchQueue } from '@hile/reactivity'
+
+watchLatest(searchText, async (value, { signal }) => {
+  const result = await fetchResult(value, { signal })
+  cache.value = result
+})
+
+watchSerialLatest(configRef, async config => {
+  await reloader.update(config)
+})
+
+watchQueue(auditEventRef, async event => {
+  await appendAuditLog(event)
 })
 ```
 
 ## Use When
 
-Use `@hile/reloader` when runtime config can change frequently and service code needs debounce, singleflight reload, latest-wins behavior, and safe old-runtime preservation.
+Use `@hile/reactivity` when Hile service code needs to compose micro topics, dynamic config, or runtime reloader state as refs instead of manual callback chains.
 
 ## Do Not Use When
 
-- Do not use it as a durable queue.
-- Do not use it to restart an HTTP server on the same port; keep the listener stable and reload handlers or runtime state.
-- Do not pass `Map`, `Set`, class instances, functions, symbols, circular objects, or sparse arrays to the default comparator; use `signature` or `normalize`.
-- Do not rely on timeouts to kill non-cooperative work; timeouts reject the reload path and abort the signal, and late-created runtimes are disposed best-effort.
+- Do not use it to replace `@hile/micro`; it adapts `publish()` and `subscribe()` but does not change RPC or pub/sub semantics.
+- Do not use it to replace `@hile/reloader`; use `reactiveReloader()` when callers need refs for `current`, `state`, and `error`.
+- Do not use it as an event log. Refs model current state; use a queue for durable event processing.
+- Do not use `watchLatest` for side effects that must all run. Use `watchQueue` for every-event handling.
+- Do not rely on AbortSignal to kill non-cooperative async work. It prevents stale writes only when handlers respect the signal or check `isCurrent()`.
 
 ## Install
 
 ```bash
-pnpm add @hile/reloader
+pnpm add @hile/reactivity
 ```
 
 ## Imports
 
 ```ts
 import {
-  createRuntimeReloader,
-  createConfigAggregator,
-  type RuntimeReloader,
-  type ConfigAggregator,
-} from '@hile/reloader'
+  topicRef,
+  publishRef,
+  reactiveConfig,
+  reactiveReloader,
+  watchLatest,
+  watchSerialLatest,
+  watchQueue,
+  shallowRef,
+  computed,
+} from '@hile/reactivity'
 ```
 
 ## Compose With
 
-- Use `@hile/micro` `subscribe()` callbacks to feed a `ConfigAggregator`.
-- Use `@hile/micro-dynamic-configs` when config must persist in Redis and be published through micro topics.
-- Use `@hile/http` with a stable listener and resolve `reloader.current()` inside middleware.
-- Use `@hile/core` `shutdown()` to call `reloader.stop()`.
+- Use `@hile/micro` for the `Application` passed to `topicRef()`, `publishRef()`, and `reactiveConfig()`.
+- Use `@hile/reloader` behavior through `reactiveReloader()` when runtime creation/disposal must stay singleflight and latest-wins.
+- Use `@hile/micro-dynamic-configs` to persist config in Redis and publish config fields through micro topics.
+- Use `@hile/http` or `@hile/http-next` with a stable listener that reads `runtime.current.value`.
 
 ## Runtime And Lifecycle Notes
 
-- `RuntimeReloader.update(input)` schedules reload work and settles when the scheduler becomes idle.
-- `RuntimeReloader.onStateChange(state)` fires when the observable state changes, including `status`, `hasCurrent`, and `hasPending` transitions.
-- During an active reload, a newer update flips `hasPending` to `true`; when that pending input is consumed, `hasPending` flips back to `false`.
-- If that input starts `create()` and `create()` fails, that `update()` rejects, the old runtime remains current, and the failed input is not marked applied.
-- If an update is superseded before its input starts `create()`, it settles with the newer pending input because latest-wins coalesced it into that reload.
-- Only one reload runs at a time.
-- Updates during an active reload collapse to the latest pending input.
-- Debounce timers reset while updates arrive before reload starts.
-- `create()` must succeed before `current()` switches.
-- After a successful switch, `dispose(oldRuntime)` runs; dispose failures are reported but do not roll back the new runtime.
-- `stop()` rejects future updates, aborts an in-flight `create()` through `AbortSignal`, clears queued input, and disposes the current runtime.
-- If `create()` resolves after timeout or abort, that late runtime is not made current and is disposed best-effort.
-- Default compare priority is `equals`, then `signature`, then `normalize`, then an internal stable signature.
-- The internal stable signature is not exported and only supports JSON-like plain config values plus `Date` and `bigint`.
-- Default timeouts are 30 seconds for create and 10 seconds for dispose. Override with `createTimeoutMs` and `disposeTimeoutMs`.
-- `ConfigAggregator.required` keys must be explicitly received; `defaults` do not satisfy required keys.
-- `undefined` is an explicit received value. Use `unset(key)` to remove a value and mark the key as not received.
-- `ConfigAggregator` serializes emits. If values change while listeners are running, the next emit uses the latest snapshot after the current emit finishes.
-- `ConfigAggregator` records the last emitted signature only after all listeners finish successfully.
-- `ConfigAggregator.flush()` rejects when a listener fails. Timer-driven emits call `onError` and leave the signature uncommitted so the same config can retry later.
+- `topicRef()` subscribes once, stores the latest payload in a readonly ref, marks `ready` after the first payload, and unsubscribes on `stop()`.
+- `publishRef()` publishes the initial ref value, then watches later changes with serial latest-wins updates. `stop()` drops pending values that have not started, waits for the active `publisher.update()` to settle, then calls `publisher.unpublish()`.
+- `reactiveConfig()` uses `createConfigAggregator()` internally, so required keys, defaults, debounce, signatures, and listener error semantics stay aligned with `@hile/reloader`.
+- `reactiveConfig().stop()` attempts every subscribed cleanup before reporting unsubscribe failures. Failed cleanup remains retryable, and `onError` can receive `stage: 'unsubscribe'`.
+- `reactiveReloader()` wraps `createRuntimeReloader()` and exposes readonly refs for `current`, `state`, and `error`.
+- `watchLatest()` aborts stale work and reports errors only for the latest non-aborted run.
+- `watchSerialLatest()` never runs handlers concurrently and collapses pending changes to the latest value.
+- `watchQueue()` never runs handlers concurrently and processes every observed value in order.
+- `@vue/reactivity` is a peer dependency. Import refs and watch helpers from `@hile/reactivity`, or ensure the application resolves a single physical copy of `@vue/reactivity`.
+- Register every returned `stop()` with Hile shutdown.
 
 ## Anti-Patterns
 
-- Recreating an HTTP server on the same port for every config change.
-- Letting multiple subscribe callbacks each reload the same runtime independently.
-- Comparing whole runtime objects instead of normalized config.
-- Forgetting to call `stop()` during application shutdown.
+- Starting async work inside a raw `watch()` without choosing latest-wins, serial latest-wins, or queue semantics.
+- Updating a micro topic directly from multiple uncoordinated watchers.
+- Creating refs from a second physical copy of `@vue/reactivity`; cross-instance refs can be recognized as refs but not tracked by this package's watchers.
+- Passing large mutable objects through deep reactive proxies. Prefer `shallowRef` for Hile runtime/config snapshots.
+- Forgetting to stop topic subscriptions or publisher bindings during service shutdown.
 
 ## Verification Checklist
 
-- Burst config updates produce at most one reload per debounce window.
-- A reload failure leaves the previous runtime serving traffic.
-- Multiple required config keys are present before the first reload.
-- HTTP handlers read `reloader.current()` instead of rebinding the port.
-- `onError` and `onCompareError` are connected to logs or metrics.
+- Unit-test async watcher behavior with overlapping updates.
+- Verify `topicRef().stop()` unsubscribes and later topic pushes do not mutate the ref.
+- Verify `publishRef()` skips superseded pending values and calls `unpublish()` on stop.
+- Verify `reactiveConfig()` does not emit until required topics are present.
+- Verify `reactiveConfig()` preserves subscribe failures even when best-effort cleanup also fails, and that failed stop cleanup can be retried.
+- Verify `reactiveReloader()` preserves `@hile/reloader` failure behavior and exposes current runtime after successful update.
 
 
 

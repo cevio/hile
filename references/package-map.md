@@ -22,6 +22,7 @@ Use this map to decide what to read.
 | Build service discovery or RPC | `@hile/micro` | `packages/messaging-micro.md`, `recipes/micro-rpc-message-loader.md` |
 | Push runtime config without restarts | `@hile/micro-dynamic-configs` | `packages/messaging-micro.md`, `recipes/runtime-config.md` |
 | Stabilize config-driven runtime reloads | `@hile/reloader` | `packages/reloader.md`, `recipes/stable-runtime-reload.md` |
+| Compose topics, config, and reloader state as refs | `@hile/reactivity` | `packages/reactivity.md`, `recipes/stable-runtime-reload.md` |
 | Protect a critical section with a lease | `@hile/redis-lock` | `packages/redis-reliability.md` |
 | Stop duplicate retry side effects | `@hile/redis-idempotency` | `packages/redis-reliability.md`, `recipes/queue-worker-idempotency.md` |
 | Enforce shared quotas or 429s | `@hile/redis-rate-limit` | `packages/redis-reliability.md` |
@@ -37,6 +38,7 @@ Use this map to decide what to read.
 - If the task is "only one replica should run this", use `@hile/redis-lock` or `@hile/schedule` distributed mode, and keep a final business consistency wall.
 - If the task is "prevent too many attempts", use `@hile/redis-rate-limit`; do not confuse it with authentication or idempotency.
 - If config changes can arrive in bursts, use `@hile/reloader` around the runtime; do not reload directly inside every subscribe callback.
+- If service code needs refs or async watch strategies for topics/config/reloader state, use `@hile/reactivity`.
 
 ## Project Startup And Lifecycle
 
@@ -124,6 +126,19 @@ Read `packages/reloader.md` when the task mentions:
 - prevent concurrent create/dispose cycles
 
 Package: `@hile/reloader`.
+
+## Runtime Reactivity
+
+Read `packages/reactivity.md` when the task mentions:
+
+- topic refs
+- config refs
+- reactive reloader state
+- async watch latest-wins
+- serial topic publishing
+- composing micro config with refs
+
+Package: `@hile/reactivity`.
 
 ## Redis Reliability
 

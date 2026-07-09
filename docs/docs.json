@@ -67,7 +67,8 @@
               "packages/context",
               "packages/schedule",
               "packages/model",
-              "packages/reloader"
+              "packages/reloader",
+              "packages/reactivity"
             ]
           },
           {

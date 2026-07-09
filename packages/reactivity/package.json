@@ -1,7 +1,7 @@
 {
-  "name": "@hile/reloader",
-  "version": "3.0.2",
-  "description": "Hile reloader - stable runtime reload and config aggregation utilities",
+  "name": "@hile/reactivity",
+  "version": "3.0.0",
+  "description": "Reactive state adapters for Hile topics, dynamic config, and runtime reloaders",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
@@ -18,7 +18,14 @@
   "publishConfig": {
     "access": "public"
   },
+  "dependencies": {
+    "@hile/reloader": "workspace:^"
+  },
+  "peerDependencies": {
+    "@vue/reactivity": "^3.5.39"
+  },
   "devDependencies": {
+    "@vue/reactivity": "^3.5.39",
     "fix-esm-import-path": "^1.10.3",
     "vitest": "^4.0.18"
   }
