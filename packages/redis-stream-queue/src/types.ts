@@ -73,8 +73,11 @@ export type QueueWorkerOptions = {
   concurrency?: number;
   block?: number;
   pollInterval?: number;
+  errorRetryInterval?: number;
   claimIdle?: number;
   claimCount?: number;
+  removeOnAck?: boolean;
+  onError?: (err: unknown) => void | Promise<void>;
 };
 
 export type RedisStreamEntry = [id: string, fields: string[]];
@@ -88,10 +91,12 @@ export interface RedisStreamQueueLike {
   xpending(...args: any[]): Promise<any>;
   xclaim(...args: any[]): Promise<any>;
   xack(...args: any[]): Promise<any>;
+  xdel(...args: any[]): Promise<any>;
   xrange(...args: any[]): Promise<any>;
   zadd(...args: any[]): Promise<any>;
   zrangebyscore(...args: any[]): Promise<any>;
   zrem(...args: any[]): Promise<any>;
+  eval(...args: any[]): Promise<any>;
   set(...args: any[]): Promise<any>;
   get(...args: any[]): Promise<any>;
   del(...args: any[]): Promise<any>;

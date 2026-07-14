@@ -40,9 +40,14 @@ class MemoryRedis implements RedisStreamQueueLike {
   private readonly values = new Map<string, string>();
   public xreadgroupCalls: Array<Array<string | number>> = [];
   public failNextXadd = false;
+  public failNextXgroup = false;
 
   public async xgroup(command: string, key: string, group: string, _id: string, mkstream?: string) {
     if (command !== 'CREATE') throw new Error(`unsupported xgroup command: ${command}`);
+    if (this.failNextXgroup) {
+      this.failNextXgroup = false;
+      throw new Error('xgroup failed');
+    }
     if (mkstream === 'MKSTREAM' && !this.streams.has(key)) this.streams.set(key, []);
     const groupKey = this.groupKey(key, group);
     if (this.groups.has(groupKey)) throw new Error('BUSYGROUP Consumer Group name already exists');
@@ -133,6 +138,14 @@ class MemoryRedis implements RedisStreamQueueLike {
     return count;
   }
 
+  public async xdel(key: string, ...ids: string[]) {
+    const entries = this.streams.get(key) ?? [];
+    const idSet = new Set(ids);
+    const removed = entries.filter(entry => idSet.has(entry.id));
+    this.streams.set(key, entries.filter(entry => !idSet.has(entry.id)));
+    return removed.length;
+  }
+
   public async xrange(key: string, _start: string, _end: string, countCommand?: string, count?: number) {
     const entries = this.streams.get(key) ?? [];
     const limited = countCommand === 'COUNT' && count !== undefined ? entries.slice(0, count) : entries;
@@ -168,6 +181,16 @@ class MemoryRedis implements RedisStreamQueueLike {
       if (zset.delete(member)) count++;
     }
     return count;
+  }
+
+  public async eval(_script: string, keyCount: number, ...args: string[]) {
+    if (keyCount !== 2) throw new Error('MemoryRedis only supports two-key scripts');
+    const [delayedKey, streamKey, member] = args;
+    if (!delayedKey || !streamKey || !member) throw new Error('missing script arguments');
+    if (!this.zsets.get(delayedKey)?.has(member)) return 0;
+    const streamId = await this.xadd(streamKey, '*', 'job', member);
+    await this.zrem(delayedKey, member);
+    return streamId;
   }
 
   public async set(key: string, value: string, mode?: string) {
@@ -304,6 +327,62 @@ describe('@hile/redis-stream-queue', () => {
     redis.now = 500;
     await expect(worker.runOnce()).resolves.toBe(1);
     expect(handled).toHaveBeenCalledOnce();
+  });
+
+  it('does not lose a delayed job when promotion cannot append it to the stream', async () => {
+    const redis = new MemoryRedis();
+    const queue = new RedisStreamQueue(redis, { prefix: 'test:', now: () => redis.now });
+    const emailQueue = defineQueue('email', EmailSchema);
+    const handled = vi.fn();
+
+    await queue.add(emailQueue, { template: 'welcome', userId: 'user-1' }, { delay: 100 });
+    const worker = queue.worker(emailQueue, handled, { group: 'workers', consumer: 'worker-1' });
+
+    redis.now = 100;
+    redis.failNextXadd = true;
+    await expect(worker.runOnce()).rejects.toThrow('xadd failed');
+
+    await expect(worker.runOnce()).resolves.toBe(1);
+    expect(handled).toHaveBeenCalledOnce();
+  });
+
+  it('removes acknowledged entries when the worker opts into stream cleanup', async () => {
+    const redis = new MemoryRedis();
+    const queue = new RedisStreamQueue(redis, { prefix: 'test:', now: () => redis.now });
+    const emailQueue = defineQueue('email', EmailSchema);
+
+    await queue.add(emailQueue, { template: 'welcome', userId: 'user-1' });
+    const worker = queue.worker(emailQueue, async () => {}, {
+      group: 'workers',
+      consumer: 'worker-1',
+      removeOnAck: true,
+    } as never);
+
+    await expect(worker.runOnce()).resolves.toBe(1);
+    expect(redis.streamLength('test:queue:email:stream')).toBe(0);
+  });
+
+  it('keeps a started worker alive after a transient Redis failure', async () => {
+    const redis = new MemoryRedis();
+    const queue = new RedisStreamQueue(redis, { prefix: 'test:', now: () => redis.now });
+    const emailQueue = defineQueue('email', EmailSchema);
+    const handled = vi.fn();
+    const onError = vi.fn();
+
+    await queue.add(emailQueue, { template: 'welcome', userId: 'user-1' });
+    redis.failNextXgroup = true;
+    const worker = queue.worker(emailQueue, handled, {
+      group: 'workers',
+      consumer: 'worker-1',
+      pollInterval: 0,
+      errorRetryInterval: 0,
+      onError,
+    } as never);
+
+    worker.start();
+    await vi.waitFor(() => expect(handled).toHaveBeenCalledOnce());
+    await worker.stop();
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'xgroup failed' }));
   });
 
   it('does not pass BLOCK 0 to XREADGROUP for non-blocking runOnce calls', async () => {

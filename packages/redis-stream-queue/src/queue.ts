@@ -31,7 +31,16 @@ const DEFAULT_MAX_ATTEMPTS = 1;
 const DEFAULT_CONCURRENCY = 1;
 const DEFAULT_CLAIM_IDLE = 60_000;
 const DEFAULT_POLL_INTERVAL = 1_000;
+const DEFAULT_ERROR_RETRY_INTERVAL = 1_000;
 const DEFAULT_READ_BLOCK = 0;
+const PROMOTE_DELAYED_SCRIPT = `
+if redis.call('ZSCORE', KEYS[1], ARGV[1]) == false then
+  return 0
+end
+local streamId = redis.call('XADD', KEYS[2], '*', 'job', ARGV[1])
+redis.call('ZREM', KEYS[1], ARGV[1])
+return streamId
+`;
 
 export class RedisStreamQueue {
   private readonly prefix: string;
@@ -191,9 +200,22 @@ export class RedisStreamQueue {
       } else {
         await run();
       }
-      await this.redis.xack(this.streamKey(definition), options.group, streamId);
     } catch (err) {
-      await this.handleFailure(definition, stored, streamId, attempt, options.group, err);
+      await this.handleFailure(definition, stored, streamId, attempt, options, err);
+      return;
+    }
+
+    await this.acknowledge(definition, options, streamId);
+  }
+
+  private async acknowledge<TData>(
+    definition: QueueDefinition<TData>,
+    options: RequiredWorkerOptions,
+    streamId: string,
+  ): Promise<void> {
+    await this.redis.xack(this.streamKey(definition), options.group, streamId);
+    if (options.removeOnAck) {
+      await this.redis.xdel(this.streamKey(definition), streamId);
     }
   }
 
@@ -202,7 +224,7 @@ export class RedisStreamQueue {
     stored: StoredQueueJob,
     streamId: string,
     attempt: number,
-    group: string,
+    options: RequiredWorkerOptions,
     err: unknown,
   ): Promise<void> {
     const reason = errorReason(err);
@@ -221,7 +243,7 @@ export class RedisStreamQueue {
       await this.redis.xadd(this.deadLetterKey(definition), '*', 'job', this.encodeJob(definition, failed));
     }
 
-    await this.redis.xack(this.streamKey(definition), group, streamId);
+    await this.acknowledge(definition, options, streamId);
   }
 
   private createJob<TData>(
@@ -256,10 +278,14 @@ export class RedisStreamQueue {
     let promoted = 0;
 
     for (const member of members) {
-      const removed = await this.redis.zrem(this.delayedKey(definition), member);
-      if (removed === 0) continue;
-      await this.redis.xadd(this.streamKey(definition), '*', 'job', member);
-      promoted++;
+      const streamId = await this.redis.eval(
+        PROMOTE_DELAYED_SCRIPT,
+        2,
+        this.delayedKey(definition),
+        this.streamKey(definition),
+        member,
+      );
+      if (streamId !== 0) promoted++;
     }
 
     return promoted;
@@ -391,9 +417,20 @@ export class RedisStreamQueueWorker<TData = unknown> {
 
   private async runLoop(): Promise<void> {
     while (this.running) {
-      const processed = await this.runOnce();
-      if (processed === 0) {
-        await sleep(this.options.pollInterval);
+      try {
+        const processed = await this.runOnce();
+        if (processed === 0) {
+          await sleep(this.options.pollInterval);
+        }
+      } catch (err) {
+        try {
+          await this.options.onError?.(err);
+        } catch {
+          // Error observers must not stop a worker that is already recovering.
+        }
+        if (this.running) {
+          await sleep(this.options.errorRetryInterval);
+        }
       }
     }
   }
@@ -405,8 +442,11 @@ type RequiredWorkerOptions = {
   concurrency: number;
   block: number;
   pollInterval: number;
+  errorRetryInterval: number;
   claimIdle: number;
   claimCount: number;
+  removeOnAck: boolean;
+  onError?: (err: unknown) => void | Promise<void>;
 };
 
 function normalizeWorkerOptions<TData>(
@@ -420,8 +460,14 @@ function normalizeWorkerOptions<TData>(
     concurrency,
     block: assertNonNegativeInteger(options.block ?? DEFAULT_READ_BLOCK, 'block'),
     pollInterval: assertNonNegativeInteger(options.pollInterval ?? DEFAULT_POLL_INTERVAL, 'pollInterval'),
+    errorRetryInterval: assertNonNegativeInteger(
+      options.errorRetryInterval ?? DEFAULT_ERROR_RETRY_INTERVAL,
+      'errorRetryInterval',
+    ),
     claimIdle: assertNonNegativeInteger(options.claimIdle ?? DEFAULT_CLAIM_IDLE, 'claimIdle'),
     claimCount: assertPositiveInteger(options.claimCount ?? concurrency, 'claimCount'),
+    removeOnAck: options.removeOnAck ?? false,
+    onError: options.onError,
   };
 }
 
