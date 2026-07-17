@@ -243,6 +243,14 @@ export class Application extends Server {
     this._registryLookupTimeoutMs = registryLookupTimeoutMs;
     this._requestTimeoutMs = requestTimeoutMs;
     this._circuitBreaker = resolveCircuitBreakerOptions(circuitBreaker);
+    this.events.on('disconnect', (client: Client) => {
+      const disconnectedKey = `${client.host}:${client.port}`;
+      // 一个物理连接可承载多个 namespace；集中清理可避免每次服务发现都向 Client 重复注册监听器。
+      for (const [namespace, stack] of this.namespaces) {
+        if (`${stack.host}:${stack.port}` !== disconnectedKey) continue;
+        this.namespaces.delete(namespace);
+      }
+    });
     this.register('/-/health', async () => ({
       status: 'ok' as const,
       registry: !!this.registry,
@@ -865,12 +873,6 @@ export class Application extends Server {
             }
             return client;
           })
-        }).then(client => {
-          client.events.on('disconnect', () => {
-            if (this.namespaces.has(namespace)) {
-              this.namespaces.delete(namespace);
-            }
-          });
         }).catch(e => {
           // Registry unavailable but previously cached client still valid -> degrade
           const cachedKey = `${cachedHost}:${cachedPort}`;
