@@ -17,7 +17,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "eslint": "^10.1.0",
-    "eslint-config-next": "16.2.1",
+    "eslint-config-next": "16.3.0",
     "fix-esm-import-path": "^1.10.3"
   },
   "dependencies": {
@@ -26,8 +26,8 @@
     "@hile/http": "^2.0.2",
     "@hile/http-next": "^2.0.4",
     "@hile/model": "^2.0.2",
-    "next": "^16.2.1",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "next": "^16.3.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   }
 }

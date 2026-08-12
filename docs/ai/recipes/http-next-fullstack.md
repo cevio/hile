@@ -13,7 +13,6 @@ export default defineService('http.next', async (shutdown) => {
   const app = new HttpNext({
     port: Number(process.env.HTTP_PORT ?? 3000),
     cwd: process.cwd(),
-    publicPath: 'public',
   })
   const stop = await app.start()
   shutdown(stop)
@@ -91,8 +90,9 @@ Use this recipe when the user wants Next.js pages and Hile API controllers on on
 
 ## Failure And Cleanup Behavior
 
-- `HttpNext.start()` returns a stop function; register it with `shutdown()`.
-- Next.js is the final fallback handler after static files and API controllers.
+- `HttpNext.start()` returns an async stop function; register it with `shutdown()`.
+- Hile API controllers run first and Next.js is the final raw request fallback.
+- Next.js owns `public/`, build assets, RSC, Server Functions, and graceful runtime cleanup.
 
 ## Verification Checklist
 

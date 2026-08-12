@@ -1,11 +1,12 @@
-import { describe, it, expect, afterEach, vi } from 'vitest'
+import { createServer } from 'node:http'
+import { describe, it, expect, afterEach } from 'vitest'
 import { Http } from './http'
 
 describe('Http - HTTP 服务类', () => {
-  let closeServer: (() => void) | undefined
+  let closeServer: (() => void | Promise<void>) | undefined
 
-  afterEach(() => {
-    closeServer?.()
+  afterEach(async () => {
+    await closeServer?.()
     closeServer = undefined
   })
 
@@ -96,6 +97,17 @@ describe('Http - HTTP 服务类', () => {
       expect(typeof closeServer).toBe('function')
     })
 
+    it('close 回调返回可等待的 Promise', async () => {
+      const http = new Http({ port: 4010 })
+      closeServer = await http.listen()
+
+      const closing = closeServer()
+
+      expect(closing).toBeInstanceOf(Promise)
+      await closing
+      closeServer = undefined
+    })
+
     it('启动后调用 onListen 回调', async () => {
       const http = new Http({ port: 4002 })
       let serverRef: any = null
@@ -168,9 +180,33 @@ describe('Http - HTTP 服务类', () => {
     })
 
     it('端口冲突时 listen 应 reject', async () => {
-      const http = new Http({ port: 4099 })
-      vi.spyOn(http, 'listen').mockRejectedValueOnce(new Error('EADDRINUSE'))
-      await expect(http.listen()).rejects.toThrow('EADDRINUSE')
+      const occupied = createServer()
+      await new Promise<void>((resolve) => occupied.listen(0, resolve))
+      const address = occupied.address()
+      if (!address || typeof address === 'string') throw new Error('Missing test port')
+
+      try {
+        const http = new Http({ port: address.port })
+        await expect(http.listen()).rejects.toMatchObject({ code: 'EADDRINUSE' })
+      } finally {
+        await new Promise<void>((resolve, reject) => {
+          occupied.close((error) => error ? reject(error) : resolve())
+        })
+      }
+    })
+
+    it('onListen 可在 callback 创建前注册 fallback 中间件', async () => {
+      const http = new Http({ port: 4011 })
+      closeServer = await http.listen(() => {
+        http.use(async (ctx) => {
+          ctx.body = 'fallback'
+        })
+      })
+
+      const res = await fetch('http://127.0.0.1:4011/missing')
+
+      expect(res.status).toBe(200)
+      expect(await res.text()).toBe('fallback')
     })
 
     it('load 委托给 loader.from 并返回 Promise', () => {

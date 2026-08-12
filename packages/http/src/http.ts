@@ -79,22 +79,51 @@ export class Http {
 
   /**
    * 启动服务
-   * @param onListen - 启动服务后回调函数，可选，回调函数返回值为关闭服务回调函数
-   * @returns - 关闭服务回调函数
+   * @param onPrepare - 端口监听前调用，可用于配置共享的 Node HTTP server
+   * @returns - 可等待且可重复调用的关闭服务函数
    */
-  public async listen(onListen?: (server: Server) => void | Promise<void>) {
+  public async listen(onPrepare?: (server: Server) => void | Promise<void>) {
     this.koa.use(this.router.routes());
-    this.server = createServer(this.koa.callback());
-    if (onListen) await onListen(this.server!);
-    await new Promise<void>((resolve, reject) => {
-      this.server!.listen(this.props.port, (err?: any) => {
-        if (err) return reject(err);
-        resolve();
-      })
-    })
-    return () => {
-      this.server!.close();
+    const server = createServer();
+    this.server = server;
+    try {
+      if (onPrepare) await onPrepare(server);
+      server.on('request', this.koa.callback());
+      await new Promise<void>((resolve, reject) => {
+        const onError = (error: Error) => {
+          server.off('listening', onListening);
+          reject(error);
+        };
+        const onListening = () => {
+          server.off('error', onError);
+          resolve();
+        };
+        server.once('error', onError);
+        server.once('listening', onListening);
+        server.listen(this.props.port);
+      });
+    } catch (error) {
+      if (this.server === server) this.server = undefined;
+      throw error;
     }
+
+    let closing: Promise<void> | undefined;
+    return () => {
+      if (closing) return closing;
+      closing = new Promise<void>((resolve, reject) => {
+        if (!server.listening) {
+          if (this.server === server) this.server = undefined;
+          resolve();
+          return;
+        }
+        server.close((error) => {
+          if (this.server === server) this.server = undefined;
+          if (error) reject(error);
+          else resolve();
+        });
+      });
+      return closing;
+    };
   }
 
   /**

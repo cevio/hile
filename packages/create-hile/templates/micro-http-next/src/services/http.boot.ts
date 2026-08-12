@@ -11,7 +11,6 @@ export default defineService("http.next", async (shutdown) => {
     port,
     // 项目根（含 package.json / next.config），相对本文件在 src/services/
     cwd: resolve(__dirname, "../.."),
-    publicPath: "public",
   });
 
   shutdown(await httpNext.start());

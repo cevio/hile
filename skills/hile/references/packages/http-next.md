@@ -9,7 +9,7 @@ Use `HttpNext` when a Next.js app and Hile API controllers should share the same
 ## Do Not Use When
 
 - Do not use `@hile/http-next` for a pure API service; use `@hile/http`.
-- Do not put Hile controllers inside `src/app` unless you intentionally change `controllerDirectory`.
+- Do not put Hile controllers inside `src/app`; the default convention is `src/controllers`.
 
 ## Install
 
@@ -36,7 +36,6 @@ export default defineService('http.next', async (shutdown) => {
   const app = new HttpNext({
     port: Number(process.env.HTTP_PORT ?? 3000),
     cwd: process.cwd(),
-    publicPath: 'public',
   })
   const stop = await app.start()
   shutdown(stop)
@@ -70,21 +69,28 @@ export const dynamic = 'force-dynamic'
 
 ## Runtime And Lifecycle Notes
 
-- `HttpNext` wraps an internal `Http` instance.
-- It serves `publicPath`, then `.next/static`, then Hile controllers, then Next.js as the fallback handler.
+- `HttpNext` keeps its internal `Http` instance private and exposes only `use()`, `load()`, and `start()`.
+- Hile middleware and controllers run first; unmatched requests are passed to Next.js with the original Node request and response.
 - Development mode is determined by `process.env.NODE_ENV === 'development'`.
-- Controller directory is `{cwd}/src/{controllerDirectory}` in development and `{cwd}/dist/{controllerDirectory}` in production.
-- `specialControllers` load additional controller roots with their own prefixes.
+- Controllers use `{cwd}/src/controllers` in development and `{cwd}/dist/controllers` in production with prefix `/-`.
+- `load(directory)` explicitly loads an additional controller directory with the same fixed conventions.
+- Call `use()` and `load()` before `start()`; configuration is frozen once startup begins.
+- Next.js exclusively owns `public/`, `distDir`, `/_next/static`, RSC, Server Functions, and `next.config`.
+- `start(onReady)` calls readiness only after Next is prepared and the shared HTTP server is listening.
+- The returned async stop function drains HTTP requests before closing the Next runtime.
 
 ## Anti-Patterns
 
 - Putting API routes in Next.js when the app is intentionally using Hile controllers.
 - Calling `loadService()` at module top level in Next.js files.
-- Forgetting `cwd`; relative controller and Next artifact paths depend on it.
+- Serving Next.js `public/` or `/_next/static` through a separate Koa static middleware.
+- Trying to override `distDir` at runtime instead of configuring it in `next.config`.
+- Forgetting `cwd`; controller and Next project paths depend on it.
 
 ## Verification Checklist
 
 - `HttpNext.start()` close function is registered with `shutdown`.
-- Controllers live under the configured controller directory.
-- API routes use the configured prefix, default `/-`.
+- Controllers live under the conventional `src/controllers` or `dist/controllers` directory.
+- API routes use the fixed `/-` prefix.
+- Next.js static assets and `public/` are served by Next.js itself.
 - Next.js production build runs before `hile start` in production.

@@ -28,11 +28,15 @@ NODE_ENV=production pnpm run start
 
 ## Runtime And Lifecycle Notes
 
-- `HttpNext` wraps an internal `Http` instance.
-- It serves `publicPath`, then `.next/static`, then Hile controllers, then Next.js as the fallback handler.
+- `HttpNext` keeps its internal `Http` instance private and exposes only `use()`, `load()`, and `start()`.
+- Hile middleware and controllers run first; unmatched requests are passed to Next.js with the original Node request and response.
 - Development mode is determined by `process.env.NODE_ENV === 'development'`.
-- Controller directory is `{cwd}/src/{controllerDirectory}` in development and `{cwd}/dist/{controllerDirectory}` in production.
-- `specialControllers` load additional controller roots with their own prefixes.
+- Controllers use `{cwd}/src/controllers` in development and `{cwd}/dist/controllers` in production with prefix `/-`.
+- `load(directory)` explicitly loads an additional controller directory with the same fixed conventions.
+- Call `use()` and `load()` before `start()`; configuration is frozen once startup begins.
+- Next.js exclusively owns `public/`, `distDir`, `/_next/static`, RSC, Server Functions, and `next.config`.
+- `start(onReady)` calls readiness only after Next is prepared and the shared HTTP server is listening.
+- The returned async stop function drains HTTP requests before closing the Next runtime.
 
 ## Production Checklist
 
