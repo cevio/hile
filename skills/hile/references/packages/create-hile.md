@@ -78,7 +78,7 @@ The CLI entrypoint exports a `create` command. Application code does not import 
 
 - Templates use `_env`, `_env.prod`, and `_gitignore`; creation renames them to dotfiles.
 - The CLI prompts for a template and optional dependency installation.
-- The package manager preference is `pnpm`, then `yarn`, then `npm`.
+- Generated templates use pnpm consistently; install pnpm before running `create-hile` without `--skip-install`.
 
 ## Anti-Patterns
 

@@ -5,9 +5,9 @@ import { loadService } from "@hile/core";
 import appService from "../services/app.boot";
 
 export default defineController("GET", async (ctx) => {
-  const { app } = await loadService(appService);
-  const data = await app.call('com.zlooks.micro', 'ping', {});
-  const x = await loadModel(postModel, ctx.url);
+  const app = await loadService(appService);
+  const data = await app.call(process.env.MICRO_NAMESPACE ?? 'com.zlooks.micro-next', 'ping', {});
+  const x = await loadModel(postModel, { url: ctx.url });
   return {
     ...x,
     ping: data,

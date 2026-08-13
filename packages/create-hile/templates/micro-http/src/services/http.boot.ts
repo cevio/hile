@@ -13,12 +13,12 @@ export default defineService('http', async (shutdown) => {
       ? parseInt(process.env.HTTP_PORT)
       : 3000
   });
-  shutdown(await http.listen());
-
   await http.load(__controllers, {
     suffix: 'controller',
     conflict: 'warn',
   })
+
+  shutdown(await http.listen());
 
   console.log(`+ http://127.0.0.1:${http.port}`);
 

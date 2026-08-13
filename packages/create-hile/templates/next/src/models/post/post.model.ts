@@ -1,6 +1,6 @@
 import { defineModel } from "@hile/model";
 
-export default defineModel(async (url: string) => ({
+export default defineModel(async ({ url }: { url: string }) => ({
   id: 1,
   title: "Hile Http Next Demo",
   url,

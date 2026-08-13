@@ -1,9 +1,72 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
-import { PROJECT_TEMPLATES } from './create';
+import * as createModule from './create';
+
+const { PROJECT_TEMPLATES } = createModule;
 
 const templates = path.resolve(import.meta.dirname, '../templates');
+
+describe('project template contracts', () => {
+  it('registers every template directory exactly once', () => {
+    const directories = readdirSync(templates, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+    expect(PROJECT_TEMPLATES.map(({ name }) => name).sort()).toEqual(directories);
+  });
+
+  it.each(PROJECT_TEMPLATES.map(({ name }) => name))('%s has normalized application metadata', (template) => {
+    const packageJson = JSON.parse(readFileSync(path.join(templates, template, 'package.json'), 'utf8'));
+    expect(packageJson).toMatchObject({ private: true, version: '0.1.0', type: 'module' });
+    expect(packageJson.engines?.node).toBeTypeOf('string');
+  });
+
+  it('uses the current exact React and Next compatibility set', () => {
+    for (const template of ['next', 'micro-http-next', 'rsc-host']) {
+      const packageJson = JSON.parse(readFileSync(path.join(templates, template, 'package.json'), 'utf8'));
+      expect(packageJson.dependencies.next).toBe('16.3.0');
+      expect(packageJson.dependencies.react).toBe('19.2.8');
+      expect(packageJson.dependencies['react-dom']).toBe('19.2.8');
+    }
+  });
+
+  it.each(['default', 'micro-http'])('%s loads controllers before listening', (template) => {
+    const bootFile = template === 'default' ? 'index.boot.ts' : 'http.boot.ts';
+    const source = readFileSync(path.join(templates, template, 'src/services', bootFile), 'utf8');
+    expect(source.indexOf('http.load(')).toBeGreaterThan(-1);
+    expect(source.indexOf('http.load(')).toBeLessThan(source.indexOf('http.listen('));
+  });
+
+  it('keeps the micro-http-next RPC sample namespace configuration-driven', () => {
+    const source = readFileSync(
+      path.join(templates, 'micro-http-next/src/controllers/post.controller.ts'),
+      'utf8',
+    );
+    expect(source).toContain('process.env.MICRO_NAMESPACE');
+    expect(source).not.toContain("app.call('com.zlooks.micro'");
+  });
+
+  it('exposes a path-safe generic scaffold API', () => {
+    const api = createModule as unknown as Record<string, unknown>;
+    expect(api.createHileProject).toBeTypeOf('function');
+    expect(api.resolveProjectTarget).toBeTypeOf('function');
+    const resolveProjectTarget = api.resolveProjectTarget as (cwd: string, projectName: string) => string;
+    expect(() => resolveProjectTarget('/tmp/work', '../escape')).toThrow(/项目名称/);
+    expect(resolveProjectTarget('/tmp/work', 'valid-app')).toBe('/tmp/work/valid-app');
+  });
+
+  it('provides a check-only latest dependency gate', () => {
+    const result = spawnSync(
+      process.execPath,
+      [path.resolve(templates, '../../../scripts/update-template-hile-deps.mjs'), '--check'],
+      { encoding: 'utf8' },
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('全部模板依赖均为 npm latest');
+  }, 30_000);
+});
 
 describe('RSC project templates', () => {
   it('publishes separate host and plugin architecture roles', () => {
@@ -41,9 +104,9 @@ describe('RSC project templates', () => {
     expect(sources).not.toMatch(/dashboard|tenant|billing|order|analytics/i);
   });
 
-  it.each(['rsc-host', 'rsc-plugin'])('%s pins the compatible micro runtime major', (template) => {
+  it.each(['rsc-host', 'rsc-plugin'])('%s uses the current micro runtime major', (template) => {
     const packageJson = JSON.parse(readFileSync(path.join(templates, template, 'package.json'), 'utf8'));
-    expect(packageJson.dependencies['@hile/micro']).toBe('^3.0.6');
+    expect(packageJson.dependencies['@hile/micro']).toBe('^4.0.0');
   });
 
   it('keeps Next host-only while pinning the private host adapter version', () => {

@@ -1,6 +1,5 @@
 import { defineService } from '@hile/core';
 import { Application } from '@hile/micro';
-import { Server } from 'node:http';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { detect } from 'detect-port';

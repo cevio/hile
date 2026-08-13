@@ -1,5 +1,5 @@
 import { dirname, relative, resolve } from 'node:path';
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import ora from 'ora';
 import { ensureDir, copy } from 'fs-extra';
 import { fileURLToPath } from 'node:url';
@@ -22,46 +22,68 @@ export const PROJECT_TEMPLATES = Object.freeze([
   { name: 'monorepo', message: 'Monorepo 模板（Lerna + pnpm workspace）' },
 ]);
 
-export async function CreateHileHttpNextProject(projectName: string, options: {
-  skipInstall: boolean
+export function resolveProjectTarget(cwd: string, projectName: string): string {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(projectName) || projectName === '.' || projectName === '..') {
+    throw new Error(`项目名称无效: ${projectName}`);
+  }
+  const target = resolve(cwd, projectName);
+  if (dirname(target) !== resolve(cwd)) {
+    throw new Error(`项目名称不能超出当前目录: ${projectName}`);
+  }
+  return target;
+}
+
+export async function createHileProject(projectName: string, options: {
+  skipInstall: boolean;
+  template?: string;
+  install?: boolean;
 }) {
   const cwd = process.cwd();
-  const targetDir = resolve(cwd, projectName);
+  const targetDir = resolveProjectTarget(cwd, projectName);
 
   if (existsSync(targetDir)) {
     throw new Error(`目录 ${projectName} 已存在`);
   }
 
-  const { template, install } = await choose(options.skipInstall);
+  const selection = options.template
+    ? {
+        template: resolveTemplate(options.template),
+        install: options.skipInstall ? false : (options.install ?? true),
+      }
+    : await choose(options.skipInstall);
+  const { template, install } = selection;
   if (!template) {
     throw new Error('未选择模板');
   }
 
   const spinner = ora('正在创建项目...').start();
-  await ensureDir(targetDir);
-  await copy(template, targetDir);
-  promoteUnderscoreDotfiles(targetDir);
+  try {
+    await ensureDir(targetDir);
+    await copy(template, targetDir);
+    promoteUnderscoreDotfiles(targetDir);
 
-  const packageJson = resolve(targetDir, 'package.json');
-  const packageJsonContent = readFileSync(packageJson, 'utf-8');
-  const packageJsonData = JSON.parse(packageJsonContent);
-  packageJsonData.name = projectName;
-  writeFileSync(packageJson, JSON.stringify(packageJsonData, null, 2), 'utf-8');
+    const packageJson = resolve(targetDir, 'package.json');
+    const packageJsonContent = readFileSync(packageJson, 'utf-8');
+    const packageJsonData = JSON.parse(packageJsonContent);
+    packageJsonData.name = projectName;
+    writeFileSync(packageJson, `${JSON.stringify(packageJsonData, null, 2)}\n`, 'utf-8');
+  } catch (error) {
+    rmSync(targetDir, { recursive: true, force: true });
+    spinner.fail('创建项目失败');
+    throw error;
+  }
 
   if (install) {
-    const [pnpmexists, yarnexists, npmexists] = await Promise.all([
-      commandExists('pnpm'),
-      commandExists('yarn'),
-      commandExists('npm'),
-    ]);
-    if (!pnpmexists && !yarnexists && !npmexists) {
-      return spinner.fail('未安装 pnpm、yarn 或 npm');
+    if (!(await commandExists('pnpm'))) {
+      spinner.fail('未安装 pnpm');
+      throw new Error('create-hile 需要 pnpm');
     }
-    const command = pnpmexists ? 'pnpm' : yarnexists ? 'yarn' : npmexists ? 'npm' : null;
+    const command = 'pnpm';
     spinner.info(`正在安装依赖...`);
-    const result = await runCommand(command!, ['install'], targetDir);
+    const result = await runCommand(command, ['install'], targetDir);
     if (!result) {
-      return spinner.fail('安装依赖失败，请手动安装！');
+      spinner.fail(`安装依赖失败，请在 ${relative(cwd, targetDir)} 中运行 ${command} install`);
+      throw new Error('安装依赖失败');
     }
   }
 
@@ -72,6 +94,13 @@ export async function CreateHileHttpNextProject(projectName: string, options: {
     console.log(`  $ pnpm install`);
   }
   console.log(`  $ pnpm run dev\n`);
+}
+
+function resolveTemplate(template: string): string {
+  if (!PROJECT_TEMPLATES.some((item) => item.name === template)) {
+    throw new Error(`未知模板: ${template}`);
+  }
+  return resolve(__templates, template);
 }
 
 async function choose(skipInstall: boolean) {
@@ -89,7 +118,7 @@ async function choose(skipInstall: boolean) {
     name: 'install',
     message: '是否安装依赖',
   });
-  return { template: resolve(__templates, template), install };
+  return { template: resolveTemplate(template), install };
 }
 
 /** 模板中用 `_env`、`_env.prod`、`_gitignore` 避免工具链忽略；拷贝到目标目录后还原为点文件 */
@@ -121,5 +150,6 @@ function runCommand(command: string, args: string[], cwd: string) {
     child.on('close', (code) => {
       resolve(code === 0);
     });
+    child.on('error', () => resolve(false));
   });
 }

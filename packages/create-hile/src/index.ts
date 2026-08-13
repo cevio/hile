@@ -1,15 +1,20 @@
 #!/usr/bin/env node
 
 import { program } from 'commander';
-import { CreateHileHttpNextProject } from './create.js';
+import { readFileSync } from 'node:fs';
+import { createHileProject } from './create.js';
+
+const packageJson = JSON.parse(
+  readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+) as { version: string };
 
 program
-  .version('1.0.0')
+  .version(packageJson.version)
   .command('create <project-name>')
   .option('--skip-install', '跳过安装依赖')
   .description('创建新项目')
   .action(async (projectName, options: { skipInstall: boolean }) => {
-    await CreateHileHttpNextProject(projectName, options);
+    await createHileProject(projectName, options);
   });
 
 program.parseAsync(process.argv);

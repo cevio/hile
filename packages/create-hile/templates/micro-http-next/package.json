@@ -1,12 +1,13 @@
 {
   "name": "micro-http-next",
   "description": "Hile Http Next Example",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "type": "module",
   "private": true,
+  "engines": { "node": ">=20.19.0" },
   "scripts": {
-    "build": "npm run build:base && npm run build:next",
-    "build:base": "rm -rf dist && tsc -b && npm run build:fix",
+    "build": "pnpm run build:base && pnpm run build:next",
+    "build:base": "rm -rf dist && tsc -b && pnpm run build:fix",
     "build:next": "next build",
     "build:fix": "fix-esm-import-path --preserve-import-type ./dist ",
     "dev": "hile start --dev --env-file .env",
@@ -15,21 +16,22 @@
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^26.2.0",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "fix-esm-import-path": "^1.10.3"
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "fix-esm-import-path": "^1.10.3",
+    "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@hile/cli": "^2.0.9",
-    "@hile/core": "^2.0.1",
-    "@hile/http": "^2.0.2",
-    "@hile/http-next": "^2.0.4",
-    "@hile/model": "^2.0.2",
-    "next": "^16.3.0",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "@hile/micro": "^2.0.6",
-    "@hile/message-loader": "^2.0.1",
+    "@hile/cli": "^4.0.0",
+    "@hile/core": "^4.0.0",
+    "@hile/http": "^4.0.0",
+    "@hile/http-next": "^4.0.0",
+    "@hile/model": "^4.0.0",
+    "next": "16.3.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "@hile/micro": "^4.0.0",
+    "@hile/message-loader": "^4.0.0",
     "detect-port": "^2.1.0"
   }
 }

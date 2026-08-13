@@ -13,16 +13,14 @@ export default defineService('http', async (shutdown) => {
       ? parseInt(process.env.HTTP_PORT)
       : 3000
   });
-  const close = await http.listen()
-
-  shutdown(close)
-
   await http.load(__controllers, {
     suffix: 'controller',
     conflict: 'warn',
   })
 
-  console.log(`Server is running on port http://localhost:${process.env.HTTP_PORT}`);
+  shutdown(await http.listen())
+
+  console.log(`Server is running at http://localhost:${http.port}`);
 
   return http
 });

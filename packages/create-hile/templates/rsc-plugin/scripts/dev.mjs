@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 
 const children = [
-  spawn('npm', ['run', 'dev:rsc'], { stdio: 'inherit' }),
-  spawn('npm', ['run', 'dev:service'], { stdio: 'inherit' }),
+  spawn('pnpm', ['run', 'dev:rsc'], { stdio: 'inherit' }),
+  spawn('pnpm', ['run', 'dev:service'], { stdio: 'inherit' }),
 ];
 let stopping = false;
 async function stop(signal = 'SIGTERM') {
