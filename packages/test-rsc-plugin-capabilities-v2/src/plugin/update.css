@@ -1,0 +1,26 @@
+.capability-v2 {
+  border: 2px solid #0f766e;
+  border-radius: 18px;
+  padding: 24px;
+  background: linear-gradient(135deg, #ccfbf1, #ffffff);
+  color: #134e4a;
+}
+
+.update-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 18px;
+  border-radius: 12px;
+  background: #99f6e4;
+}
+
+.update-panel button {
+  width: max-content;
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 13px;
+  color: white;
+  background: #0f766e;
+  cursor: pointer;
+}

@@ -1,0 +1,39 @@
+.capability-shell {
+  border: 2px solid #7c3aed;
+  border-radius: 18px;
+  padding: 24px;
+  background: linear-gradient(135deg, #f5f3ff, #ffffff);
+  color: #2e1065;
+}
+
+.capability-panel {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+  padding: 18px;
+  border-radius: 12px;
+  background: #ede9fe;
+}
+
+.capability-counter,
+.capability-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.capability-panel button {
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 13px;
+  background: #6d28d9;
+  color: white;
+  cursor: pointer;
+}
+
+.capability-lazy {
+  padding: 12px;
+  border-left: 4px solid #7c3aed;
+  background: white;
+}

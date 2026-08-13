@@ -1,0 +1,20 @@
+.isolation-shell {
+  border: 2px solid #c2410c;
+  border-radius: 18px;
+  padding: 24px;
+  color: #7c2d12;
+  background: #fff7ed;
+}
+
+.isolation-widget {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.isolation-widget input {
+  max-width: 360px;
+  padding: 8px;
+  border: 1px solid #fdba74;
+  border-radius: 6px;
+}

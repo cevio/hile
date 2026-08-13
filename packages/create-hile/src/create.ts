@@ -11,6 +11,17 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const __templates = resolve(__dirname, '../templates');
 
+export const PROJECT_TEMPLATES = Object.freeze([
+  { name: 'default', message: '默认模板' },
+  { name: 'next', message: 'Next.js 模板' },
+  { name: 'micro-http', message: 'Micro + HTTP 模板' },
+  { name: 'micro', message: 'Micro 独立服务模板' },
+  { name: 'micro-http-next', message: 'Next.js + Micro + HTTP 模板' },
+  { name: 'rsc-host', message: '单端口 Next.js RSC 插件宿主' },
+  { name: 'rsc-plugin', message: '无 HTTP 的 RSC 插件服务' },
+  { name: 'monorepo', message: 'Monorepo 模板（Lerna + pnpm workspace）' },
+]);
+
 export async function CreateHileHttpNextProject(projectName: string, options: {
   skipInstall: boolean
 }) {
@@ -64,19 +75,11 @@ export async function CreateHileHttpNextProject(projectName: string, options: {
 }
 
 async function choose(skipInstall: boolean) {
-  const templates = [
-    { name: 'default', message: '默认模板' },
-    { name: 'next', message: 'Next.js 模板' },
-    { name: 'micro-http', message: 'Micro + HTTP 模板' },
-    { name: 'micro', message: 'Micro 独立服务模板' },
-    { name: 'micro-http-next', message: 'Next.js + Micro + HTTP 模板' },
-    { name: 'monorepo', message: 'Monorepo 模板（Lerna + pnpm workspace）' },
-  ];
   const { template } = await Enquirer.prompt<{ template: string }>({
     type: 'select',
     name: 'template',
     message: '请选择模板',
-    choices: templates,
+    choices: [...PROJECT_TEMPLATES],
   });
   if (skipInstall) {
     return { template: resolve(__templates, template), install: false };

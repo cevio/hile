@@ -19,6 +19,10 @@ Use `llms-full.txt` for complete examples. Use `references/package-map.md` to ch
 | Start an app, manage lifecycle, graceful shutdown | `@hile/core`, `@hile/cli`, `@hile/bootstrap` | `packages/core-lifecycle.md` |
 | Create an HTTP endpoint or Koa middleware | `@hile/http` | `packages/http.md`, `recipes/http-api-model-typeorm.md` |
 | Run Next.js and API controllers on one port | `@hile/http-next` | `packages/http-next.md`, `recipes/http-next-fullstack.md` |
+| Run independently built RSC plugins through one Host | `@hile/rsc` | `packages/rsc.md`, `recipes/rsc-plugin-host.md` |
+| Compile immutable production RSC plugin artifacts | `@hile/rsc-build` | `packages/rsc.md` |
+| Add incremental RSC development and hot reload | `@hile/rsc-development` | `packages/rsc.md` |
+| Decode plugin Flight inside a Next Host | `@hile/rsc-next` | `packages/rsc.md`, `recipes/rsc-plugin-host.md` |
 | Put business logic somewhere reusable | `@hile/model` | `packages/model-context.md` |
 | Propagate request id, tenant id, logger bindings, or micro context | `@hile/context` | `packages/model-context.md` |
 | Connect to SQL through TypeORM | `@hile/typeorm` | `packages/core-lifecycle.md`, `packages/infrastructure.md` |

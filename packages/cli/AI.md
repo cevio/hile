@@ -173,6 +173,8 @@ next             Next.js + Hile controllers on one port
 micro-http       Microservice plus HTTP endpoint
 micro            Pure microservice
 micro-http-next  Next.js + microservice + HTTP
+rsc-host         Single public Next host for internal RSC plugins
+rsc-plugin       Independently built RSC plugin service without HTTP
 monorepo         Lerna + pnpm workspace
 ```
 
@@ -213,6 +215,8 @@ The CLI entrypoint exports a `create` command. Application code does not import 
 - HTTP templates use `@hile/core` and `@hile/http`.
 - Next templates use `@hile/http-next` and `@hile/model`.
 - Micro templates use `@hile/micro` and `@hile/message-loader`.
+- RSC host/plugin templates compose `@hile/rsc`, `@hile/http-next`, and `@hile/micro` as separate architecture roles.
+- The RSC host template exposes a domain-free `/plugins/[pluginId]/[[...path]]` catch-all; plugin ID, active build, and route path are resolved at request time.
 
 ## Runtime And Lifecycle Notes
 
@@ -231,6 +235,9 @@ The CLI entrypoint exports a `create` command. Application code does not import 
 - New project has `"type": "module"`.
 - Dev script runs `hile start --dev`.
 - Production script runs `hile start` after build.
+- `rsc-host` is the only public HTTP owner; `rsc-plugin` starts only an internal micro listener.
+- RSC templates pin React 19.2.8 exactly and verify plugin artifacts before startup.
+- The RSC plugin template does not install Next; only the host pins the supported Next adapter version.
 - Boot files default-export `defineService(...)`.
 
 

@@ -14,6 +14,10 @@ class EchoWs extends MessageWs {
     }
     return this._send<T>(data, { timeout: options?.timeout, signal: options?.signal });
   }
+
+  public stream(data: any, options?: { signal?: AbortSignal }) {
+    return this._stream(data, options);
+  }
 }
 
 class CustomWs extends MessageWs {
@@ -27,6 +31,10 @@ class CustomWs extends MessageWs {
       return this._send<T>(data, { timeout: options });
     }
     return this._send<T>(data, { timeout: options?.timeout, signal: options?.signal });
+  }
+
+  public stream(data: any, options?: { signal?: AbortSignal }) {
+    return this._stream(data, options);
   }
 }
 
@@ -194,7 +202,107 @@ describe('@hile/message-ws', () => {
     });
   });
 
+  describe('binary streams', () => {
+    it('round trips multiple binary chunks byte-for-byte', async () => {
+      const { client, server } = await connectPair();
+      await waitForOpen(client);
+      const clientModem = new EchoWs(client);
+      const serverModem = new CustomWs(server);
+      serverModem.execFn = async () => ({
+        async *[Symbol.asyncIterator]() {
+          yield Buffer.from([0, 1, 2, 255]);
+          yield new Uint8Array([3, 4, 5]);
+          yield Buffer.alloc(0);
+        },
+      });
+
+      const chunks: Buffer[] = [];
+      for await (const chunk of clientModem.stream('flight')) {
+        chunks.push(chunk);
+      }
+
+      expect(chunks).toEqual([
+        Buffer.from([0, 1, 2, 255]),
+        Buffer.from([3, 4, 5]),
+        Buffer.alloc(0),
+      ]);
+      clientModem.dispose();
+      serverModem.dispose();
+    });
+
+    it('preserves mixed text and binary chunk order', async () => {
+      const { client, server } = await connectPair();
+      await waitForOpen(client);
+      const clientModem = new EchoWs(client);
+      const serverModem = new CustomWs(server);
+      serverModem.execFn = async () => ({
+        async *[Symbol.asyncIterator]() {
+          yield 'begin';
+          yield Buffer.from('flight');
+          yield { end: true };
+        },
+      });
+
+      const chunks: any[] = [];
+      for await (const chunk of clientModem.stream('mixed')) chunks.push(chunk);
+
+      expect(chunks[0]).toBe('begin');
+      expect(chunks[1]).toEqual(Buffer.from('flight'));
+      expect(chunks[2]).toEqual({ end: true });
+      clientModem.dispose();
+      serverModem.dispose();
+    });
+
+    it('supports a binary stream while JSON requests are in flight', async () => {
+      const { client, server } = await connectPair();
+      await waitForOpen(client);
+      const clientModem = new EchoWs(client);
+      const serverModem = new CustomWs(server);
+      serverModem.execFn = async (value) => {
+        if (value === 'stream') {
+          return {
+            async *[Symbol.asyncIterator]() {
+              yield Buffer.from('a');
+              await new Promise((resolve) => setTimeout(resolve, 10));
+              yield Buffer.from('b');
+            },
+          };
+        }
+        return `json:${value}`;
+      };
+
+      const streamChunks: Buffer[] = [];
+      const consume = (async () => {
+        for await (const chunk of clientModem.stream('stream')) streamChunks.push(chunk);
+      })();
+      const responses = await Promise.all([
+        clientModem.request('one'),
+        clientModem.request('two'),
+      ]);
+      await consume;
+
+      expect(responses).toEqual(['json:one', 'json:two']);
+      expect(streamChunks).toEqual([Buffer.from('a'), Buffer.from('b')]);
+      clientModem.dispose();
+      serverModem.dispose();
+    });
+  });
+
   describe('error handling', () => {
+    it('closes the connection with a protocol error for a malformed binary frame', async () => {
+      const { client, server } = await connectPair();
+      await waitForOpen(client);
+      const modem = new EchoWs(client);
+      const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+        server.once('close', (code, reason) => resolve({ code, reason: reason.toString() }));
+      });
+
+      server.send(Buffer.from('not-a-hile-frame'));
+
+      await expect(closed).resolves.toEqual({ code: 1002, reason: 'Invalid Hile message frame' });
+      modem.dispose();
+    });
+
     it('Exception in exec preserves status', async () => {
       const { client, server } = await connectPair();
       await waitForOpen(client);

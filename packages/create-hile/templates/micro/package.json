@@ -20,6 +20,7 @@
     "detect-port": "^2.1.0"
   },
   "devDependencies": {
+    "@types/node": "^26.2.0",
     "@hile/cli": "^2.0.9"
   }
 }

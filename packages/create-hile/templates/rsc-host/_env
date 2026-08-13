@@ -1,0 +1,11 @@
+HTTP_PORT=3000
+REGISTRY_HOST=127.0.0.1
+REGISTRY_PORT=9876
+HOST_MICRO_NAMESPACE=com.hile.rsc.host
+CATALOG_NAMESPACE=com.hile.rsc.catalog
+CATALOG_MICRO_PORT=4102
+HOST_MICRO_PORT=4103
+RSC_PLUGIN_NAMESPACE=org.example.rsc-plugin.dev
+RSC_ARTIFACT_ROOT=../rsc-plugin/.hile-rsc/build-a
+RSC_DEVELOPMENT_STATE=../rsc-plugin/.hile-rsc/development.json
+RSC_ASSET_MOUNT=/_hile/rsc/assets

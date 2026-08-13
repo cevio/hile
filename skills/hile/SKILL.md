@@ -1,6 +1,6 @@
 ---
 name: hile
-description: "Example-first AI development guide for Hile @hile/* packages. Use when building or editing Node.js/TypeScript services with @hile/core, @hile/http, @hile/http-next, @hile/model, @hile/context, @hile/typeorm, @hile/ioredis, @hile/cache, @hile/message-*, @hile/micro, @hile/reloader, Redis reliability packages, @hile/schedule, or create-hile."
+description: "Example-first AI development guide for Hile @hile/* packages. Use when building or editing Node.js/TypeScript services with @hile/core, @hile/http, @hile/http-next, @hile/rsc, @hile/model, @hile/context, @hile/typeorm, @hile/ioredis, @hile/cache, @hile/message-*, @hile/micro, @hile/reloader, Redis reliability packages, @hile/schedule, or create-hile."
 license: MIT
 metadata:
   version: "1.0.0"
@@ -60,6 +60,7 @@ Then load the relevant package card or recipe:
 - `references/packages/reactivity.md`
 - `references/packages/redis-reliability.md`
 - `references/packages/reloader.md`
+- `references/packages/rsc.md`
 - `references/recipes/http-api-model-typeorm.md`
 - `references/recipes/http-next-fullstack.md`
 - `references/recipes/micro-registry-read-apis.md`
@@ -67,6 +68,7 @@ Then load the relevant package card or recipe:
 - `references/recipes/new-project-scaffold.md`
 - `references/recipes/queue-worker-idempotency.md`
 - `references/recipes/redis-cache-singleflight.md`
+- `references/recipes/rsc-plugin-host.md`
 - `references/recipes/runtime-config.md`
 - `references/recipes/stable-runtime-reload.md`
 

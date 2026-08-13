@@ -59,6 +59,10 @@ Use this map to decide what to read.
 | Start an app, manage lifecycle, graceful shutdown | `@hile/core`, `@hile/cli`, `@hile/bootstrap` | `packages/core-lifecycle.md` |
 | Create an HTTP endpoint or Koa middleware | `@hile/http` | `packages/http.md`, `recipes/http-api-model-typeorm.md` |
 | Run Next.js and API controllers on one port | `@hile/http-next` | `packages/http-next.md`, `recipes/http-next-fullstack.md` |
+| Run independently built RSC plugins through one Host | `@hile/rsc` | `packages/rsc.md`, `recipes/rsc-plugin-host.md` |
+| Compile immutable production RSC plugin artifacts | `@hile/rsc-build` | `packages/rsc.md` |
+| Add incremental RSC development and hot reload | `@hile/rsc-development` | `packages/rsc.md` |
+| Decode plugin Flight inside a Next Host | `@hile/rsc-next` | `packages/rsc.md`, `recipes/rsc-plugin-host.md` |
 | Put business logic somewhere reusable | `@hile/model` | `packages/model-context.md` |
 | Propagate request id, tenant id, logger bindings, or micro context | `@hile/context` | `packages/model-context.md` |
 | Connect to SQL through TypeORM | `@hile/typeorm` | `packages/core-lifecycle.md`, `packages/infrastructure.md` |
@@ -126,6 +130,18 @@ Read `packages/http-next.md` when the task mentions:
 - `/-` API prefix
 
 Package: `@hile/http-next`.
+
+## Dynamic RSC Plugins
+
+Read `packages/rsc.md` when the task mentions:
+
+- independently built Next/React page plugins
+- React Server Components or Flight streams
+- plugin-owned `'use client'` components
+- one public Next host with internal plugin microservices
+- plugin install, upgrade, drain, deactivate, or artifact integrity
+
+Core package: `@hile/rsc`. Compose `@hile/rsc-build` for production compilation, `@hile/rsc-development` only in development, and `@hile/rsc-next` only in the Next Host. Also compose with `@hile/http-next`, `@hile/micro`, and the message transport packages.
 
 ## Business Logic And Context
 
@@ -529,6 +545,8 @@ next             Next.js + Hile controllers on one port
 micro-http       Microservice plus HTTP endpoint
 micro            Pure microservice
 micro-http-next  Next.js + microservice + HTTP
+rsc-host         Single public Next host for internal RSC plugins
+rsc-plugin       Independently built RSC plugin service without HTTP
 monorepo         Lerna + pnpm workspace
 ```
 
@@ -569,6 +587,8 @@ The CLI entrypoint exports a `create` command. Application code does not import 
 - HTTP templates use `@hile/core` and `@hile/http`.
 - Next templates use `@hile/http-next` and `@hile/model`.
 - Micro templates use `@hile/micro` and `@hile/message-loader`.
+- RSC host/plugin templates compose `@hile/rsc`, `@hile/http-next`, and `@hile/micro` as separate architecture roles.
+- The RSC host template exposes a domain-free `/plugins/[pluginId]/[[...path]]` catch-all; plugin ID, active build, and route path are resolved at request time.
 
 ## Runtime And Lifecycle Notes
 
@@ -587,6 +607,9 @@ The CLI entrypoint exports a `create` command. Application code does not import 
 - New project has `"type": "module"`.
 - Dev script runs `hile start --dev`.
 - Production script runs `hile start` after build.
+- `rsc-host` is the only public HTTP owner; `rsc-plugin` starts only an internal micro listener.
+- RSC templates pin React 19.2.8 exactly and verify plugin artifacts before startup.
+- The RSC plugin template does not install Next; only the host pins the supported Next adapter version.
 - Boot files default-export `defineService(...)`.
 
 ---
@@ -1087,7 +1110,7 @@ pnpm add @hile/model @hile/context
 ## Imports
 
 ```ts
-import { defineModel, loadModel } from '@hile/model'
+import { defineActionModel, defineModel, loadModel } from '@hile/model'
 import { contextHttp, contextModel, getContext, requireContext, runWithContext } from '@hile/context'
 ```
 
@@ -1106,6 +1129,18 @@ Use it:
 ```ts
 const result = await loadModel(greetModel, { name: 'Ada' })
 ```
+
+Action adapters can discover a model explicitly without changing how it executes:
+
+```ts
+import { defineActionModel } from '@hile/model'
+
+export default defineActionModel(async (input: { value: number }) => ({
+  value: input.value + 1,
+}))
+```
+
+`ModelActionRegistry` extends `@hile/loader.Loader`, scans domain-organized `*.model.*` files, and registers only action-marked models. `RscPluginService.load(modelsDirectory)` owns this lifecycle for RSC plugins.
 
 ## More Examples
 
@@ -1154,6 +1189,7 @@ const withTenant = contextModel<{ tenantId: string }>({
 ## Runtime And Lifecycle Notes
 
 - `loadModel(model, input)` rejects if the first argument was not created by `defineModel()`.
+- `defineActionModel()` returns a normal model definition plus an explicit action capability marker.
 - Model input must be an object.
 - Services are loaded in the order of the `services` tuple.
 - Pipeline middleware follows Koa-style `await next()`.
@@ -1168,10 +1204,12 @@ const withTenant = contextModel<{ tenantId: string }>({
 - Mutating context snapshots.
 - Logging whole context objects by default.
 - Assuming context propagation changes business payloads; it should stay in metadata or async storage.
+- Exposing every scanned model as a browser action; only action-marked models may be mounted.
 
 ## Verification Checklist
 
 - Models export `defineModel(...)` results.
+- Browser-callable models explicitly use `defineActionModel(...)`.
 - Controllers and pages call `loadModel(model, objectInput)`.
 - Pipeline middleware writes derived state to `ctx.state`.
 - Context keys are app-defined and JSON-serializable when crossing process boundaries.
@@ -1694,6 +1732,201 @@ import {
 - Multiple required config keys are present before the first reload.
 - HTTP handlers read `reloader.current()` instead of rebinding the port.
 - `onError` and `onCompareError` are connected to logs or metrics.
+
+---
+
+# RSC Plugin Architecture
+
+Packages: `@hile/rsc`, `@hile/rsc-build`, `@hile/rsc-development`, and `@hile/rsc-next`.
+
+The packages form a one-way dependency graph:
+
+- `@hile/rsc` owns only the transport-neutral protocol, verified artifacts, plugin/Host runtime, build leases, actions, transport ports, and client runtime boundary.
+- `@hile/rsc-build` owns the production compiler, directive analysis, shared React build shim, configuration loader, and `hile-rsc` CLI.
+- `@hile/rsc-development` owns persistent incremental compilation, file observation, immutable revision state, plugin/model reload, Host activation, SSE, browser reload, and `hile-rsc-dev`.
+- `@hile/rsc-next` owns the Next-version-specific Flight decoder and is the only RSC package allowed to import Next private modules.
+
+Dependencies point from adapters and tooling toward core; `@hile/rsc` never imports the other three packages.
+
+## Copy-Paste Example
+
+```ts
+import { RscPluginService, createOfficialRscRenderer } from '@hile/rsc/plugin'
+import { attachRscPluginService } from '@hile/rsc/transport'
+
+const service = new RscPluginService({
+  manifest,
+  renderer: createOfficialRscRenderer(artifactRoot),
+})
+await service.load(fileURLToPath(new URL('../models', import.meta.url)))
+
+const detach = attachRscPluginService(service, internalRegistrar)
+shutdown(async () => {
+  service.deactivate()
+  await service.drain()
+  detach()
+})
+```
+
+The registrar may be a Hile `Server`, an in-process adapter, or another transport implementation. The plugin service itself creates no HTTP listener.
+
+## More Examples
+
+Build and verify an immutable plugin artifact:
+
+```bash
+hile-rsc build --config hile-rsc.json
+hile-rsc inspect .hile-rsc/build-a
+hile-rsc verify .hile-rsc/build-a \
+  --react 19.2.8 --react-dom 19.2.8 --rsc 19.2.8
+```
+
+Compose a host runtime:
+
+```ts
+import { RscHostRuntime } from '@hile/rsc/host'
+
+const runtime = new RscHostRuntime({
+  locator,
+  decoder,
+})
+
+const tree = await runtime.render({
+  pluginId,
+  request: { buildId, path, params, searchParams },
+  signal,
+})
+```
+
+Every route entry receives framework-owned `RscRouteProps`. The `rsc`
+field is the exact immutable deployment identity selected for that render,
+including development revision suffixes. Pass this serializable value into
+`'use client'` boundaries that invoke actions; never copy the base build id
+from configuration into browser code.
+
+```tsx
+import type { RscRouteProps } from '@hile/rsc/plugin'
+import InteractiveBoundary from './interactive'
+
+export function PluginPage({ rsc }: RscRouteProps) {
+  return <InteractiveBoundary rsc={rsc} />
+}
+```
+
+## Use When
+
+- Plugins must be built, installed, activated, upgraded, and removed independently from the host Next build.
+- One public `HttpNext` listener must own HTML, Next assets, plugin assets, and navigation responses.
+- Plugin RSC generation belongs to internal microservices.
+- Plugin-owned `'use client'` graphs need real SSR, hydration, hooks, context, effects, CSS, and lazy chunks.
+
+## Do Not Use When
+
+- A static Next application can include every route at host build time.
+- A plugin is only JSON data or a small UI schema and does not need React code ownership.
+- Each plugin is intentionally a separately deployed public web application.
+- The plugin depends on unsupported Next-private APIs rather than React component boundaries.
+
+## Install
+
+Plugin build/runtime (does not install Next):
+
+```bash
+pnpm add @hile/rsc @hile/rsc-build @hile/model react@19.2.8 react-dom@19.2.8 react-server-dom-webpack@19.2.8
+```
+
+Host-only Next adapter:
+
+```bash
+pnpm add @hile/rsc @hile/rsc-next next@16.3.0 react@19.2.8 react-dom@19.2.8
+```
+
+React, React DOM, and the RSC runtime are exact compatibility pins.
+Next exists only in `@hile/rsc-next`; plugin services and the core package do not install or evaluate it.
+Start the plugin renderer with `NODE_OPTIONS=--conditions=react-server`; this is the official React server export condition and applies equally to production and development processes.
+
+## Imports
+
+```ts
+import { buildRscPlugin } from '@hile/rsc-build'
+import { RscPluginService } from '@hile/rsc/plugin'
+import { createHileRscPluginClient } from '@hile/rsc/transport'
+import { RscHostRuntime, InMemoryRscDeploymentCatalog } from '@hile/rsc/host'
+import { RscClientRuntimeProvider } from '@hile/rsc/client'
+import { verifyRscPluginArtifact } from '@hile/rsc/artifact'
+import { decodePluginFlight } from '@hile/rsc-next'
+```
+
+## Incremental development
+
+Production continues to use `buildRscPlugin()` and an empty immutable output directory. Development uses a separate long-lived compiler:
+
+```ts
+import { createRscDevelopmentCompiler } from '@hile/rsc-development/compiler'
+
+const compiler = await createRscDevelopmentCompiler({
+  ...config,
+  cwd: pluginRoot,
+  outdir: developmentRoot,
+  sessionId: 'local-dev',
+})
+
+const revision = await compiler.rebuild()
+// revision.artifactRoot is immutable and is published only after all targets succeed.
+await compiler.dispose()
+```
+
+The server, browser, and SSR esbuild contexts are reused. Browser and SSR contexts are recreated only when the set of `'use client'` entries or their exports changes. Failed rebuilds leave the last successful revision intact.
+
+`RscPluginService.activate()` switches new render requests to a verified manifest/renderer pair while in-flight requests finish on their captured revision. `RscPluginService.load()` atomically replaces the model snapshot; `bindRscModelDevelopment()` can watch model files without rebuilding RSC assets. The Host can compose `bindRscHostDevelopmentState()`, `createRscDevelopmentEventMiddleware()`, and `RscDevelopmentReload` so browser refresh happens only after the plugin namespace reports the matching build.
+
+This development path performs full-page refresh after activation. It does not claim React Fast Refresh state preservation across independently compiled plugin boundaries.
+
+The core package root exports only the transport-neutral protocol. Build, development, and Next-specific behavior are physically separate packages, so a production service that does not install them cannot evaluate their code or inherit their dependencies.
+
+## Compose With
+
+- `@hile/http-next` owns the only public HTTP/Next server and exposes request cancellation context.
+- `@hile/micro` provides service discovery and internal RPC/streaming.
+- `@hile/message-modem` provides cancellation and stream credit/backpressure.
+- `@hile/message-ws` provides binary Flight frames when WebSocket is selected.
+- `@hile/core` owns startup and graceful shutdown order.
+
+## Runtime And Lifecycle Notes
+
+- `protocol` is the stable manifest ABI and imports no runtime implementation.
+- `plugin` receives the renderer and scans domain-organized models through `RscPluginService.load()`.
+- Only `defineActionModel()` exports are mounted as actions; ordinary `defineModel()` exports remain internal.
+- `transport` owns registrar/client/locator ports and optional Hile adapters.
+- `host` composes build leases, artifact catalogs, action policy, and an injected Flight decoder.
+- `@hile/rsc-next` is the isolated Next-private adapter. Keep every Next-version-specific import there.
+- A request holds an exact build lease until its decoder consumes or closes the Flight stream. Activation moves new requests to the new build while old leases drain.
+- Browser artifacts are immutable and integrity-checked before activation.
+- The public asset middleware exposes only browser modules, browser chunks, styles, and a sanitized browser manifest; server and SSR artifacts remain internal.
+- Internal stream requests negotiate protocol version 1. New peers use binary frames and per-chunk credit; rolling upgrades fall back to the legacy JSON stream when an older peer does not advertise the version.
+
+## Anti-Patterns
+
+- Creating `HttpNext`, Koa, Express, or another HTTP listener inside a plugin service.
+- Importing Hile or Next implementations into `RscHostRuntime` instead of an adapter.
+- Putting product routes, tenants, permission decisions, or domain state in `@hile/rsc`.
+- Treating `'use server'` as the Server Component marker.
+- Detecting `'use client'` with string search instead of directive-prologue AST parsing.
+- Bundling a second React copy into plugin browser or SSR artifacts.
+- Switching a mutable global build id while a request is streaming.
+- Handwriting a second `actions` handler map or exposing ordinary models automatically.
+
+## Verification Checklist
+
+- `plugin.json` passes protocol and exact runtime validation.
+- Every server, browser, SSR, chunk, and style artifact passes SHA-256 verification.
+- Only the host owns a public TCP/HTTP listener.
+- Real Flight bytes cross the internal transport with abort and backpressure.
+- SSR HTML contains plugin client output before browser JavaScript runs.
+- Hooks, context, effects, CSS, lazy imports, and interaction hydrate without console errors.
+- Disconnect aborts the internal renderer.
+- Old build requests finish during upgrade; new requests select the new build.
+- Deactivated builds reject new leases and host routes map that state explicitly.
 
 ---
 
@@ -2272,6 +2505,90 @@ Use this recipe when reads are expensive and Redis should provide read-through c
 - Key params match placeholders.
 - Redis prefix is app-specific.
 - Update flows call `remove()` or `removeTag()`.
+
+---
+
+# Single-Host RSC Plugin Recipe
+
+Use this recipe to assemble a domain-free RSC plugin platform. Application routes and authorization decisions remain outside `@hile/rsc`.
+
+## Complete Example
+
+```ts
+const service = new RscPluginService({
+  manifest,
+  renderer: createOfficialRscRenderer(artifactRoot),
+})
+const detach = attachRscPluginService(service, pluginRegistrar)
+
+const locator = createCatalogRscPluginLocator(deploymentCatalog, async (deployment) =>
+  createHileRscPluginClient(hostApplication, deployment.namespace))
+const hostRuntime = new RscHostRuntime({ locator, decoder })
+
+const tree = await hostRuntime.render({
+  pluginId,
+  request: { buildId, path },
+  signal: requestSignal,
+})
+```
+
+The plugin registrar and host application are internal transports. Only the separately composed `HttpNext` host owns public HTTP.
+
+## Plugin build
+
+Create a config with `pluginId`, immutable `buildId`, source root, entry, output directory, route exports, and the exact React/RSC runtime tuple. Run `hile-rsc build`, then `hile-rsc verify` before installation.
+
+The build emits:
+
+- `server-rsc`: Server Component bundle;
+- `client-ssr`: host-React-compatible SSR bundles and integrity-declared lazy chunks;
+- `client-browser`: host-React-compatible browser bundles and lazy chunks;
+- CSS assets and SHA-256 integrity;
+- `plugin.json` protocol manifest.
+
+## Internal plugin runtime
+
+```ts
+const service = new RscPluginService({
+  manifest,
+  renderer: createOfficialRscRenderer(artifactRoot),
+})
+await service.load(fileURLToPath(new URL('../models', import.meta.url)))
+
+const detach = attachRscPluginService(service, microServer, operationMap)
+```
+
+`operationMap` is optional and configurable. No plugin code creates HTTP.
+
+## Host composition
+
+1. Verify and register immutable artifacts in an `RscArtifactCatalog`.
+2. Install `{ pluginId, buildId, namespace }` in an `RscDeploymentCatalog`.
+3. Create a catalog-backed locator whose connector returns an `RscPluginClient`.
+4. Create `RscHostRuntime` with that locator and a request-scoped Next decoder.
+5. Wrap decoded trees with `RscClientRuntimeProvider` using the same asset mount configured on `createRscAssetMiddleware`.
+6. Forward `getHttpNextRequestSignal()` so client disconnect aborts the internal stream.
+
+## Upgrade
+
+1. Verify and install the new immutable build without replacing old files.
+2. Activate the new deployment; the previous one becomes `draining`.
+3. New page renders acquire the new build.
+4. Existing renders retain the old lease until the decoder consumes or closes the Flight stream.
+5. After `catalog.drain(oldBuild)` and `service.drain()`, stop the old runtime.
+6. Retain old browser assets according to host cache policy before removal.
+
+## Actions
+
+Use `RscActionGateway` with a required application-supplied authorizer. `createSameOriginCsrfAuthorizer` composes origin and token validation, but the application still owns authentication, token issuance, and permission decisions.
+
+Define browser-callable behavior with `defineActionModel()` anywhere in the domain-organized `src/models` tree. `ModelActionRegistry` scans every `*.model.*` file, validates its default export, and mounts only action-marked models. An action id is the relative model path (`account/update.model.ts` becomes `account/update`). Ordinary `defineModel()` exports remain internal.
+
+Action bodies use `{ input: object }`, matching the model input contract. Never accept a namespace, internal message URL, metadata, retry policy, or module path from the browser. `/-/rsc/action` is infrastructure transport only; service-to-service behavior remains under `messages/**`.
+
+## Shutdown
+
+Deactivate deployments, abort in-flight work, await runtime and catalog drains, detach internal operations, unregister artifacts after retention permits, then stop the single `HttpNext` server.
 
 ---
 

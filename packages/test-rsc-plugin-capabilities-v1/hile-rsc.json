@@ -1,0 +1,13 @@
+{
+  "pluginId": "demo.rsc.capabilities",
+  "buildId": "v1",
+  "cwd": ".",
+  "entry": "src/plugin/page.tsx",
+  "outdir": ".hile-rsc/v1",
+  "routes": [
+    { "path": "/", "entry": "CapabilitiesPage" },
+    { "path": "/details", "entry": "DetailsPage" },
+    { "path": "/slow", "entry": "SlowPage" }
+  ],
+  "runtime": { "react": "19.2.8", "reactDom": "19.2.8", "rsc": "19.2.8" }
+}

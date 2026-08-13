@@ -2068,7 +2068,7 @@ describe('@hile/micro stream', () => {
         for await (const chunk of stream) {
           chunks.push(chunk);
         }
-      }).rejects.toThrow('Unknown error');
+      }).rejects.toThrow('stream fail');
       expect(chunks).toEqual([{ seq: 1 }]);
     } finally {
       unregister();

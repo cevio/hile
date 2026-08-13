@@ -9,6 +9,10 @@ Use this map to decide what to read.
 | Start an app, manage lifecycle, graceful shutdown | `@hile/core`, `@hile/cli`, `@hile/bootstrap` | `packages/core-lifecycle.md` |
 | Create an HTTP endpoint or Koa middleware | `@hile/http` | `packages/http.md`, `recipes/http-api-model-typeorm.md` |
 | Run Next.js and API controllers on one port | `@hile/http-next` | `packages/http-next.md`, `recipes/http-next-fullstack.md` |
+| Run independently built RSC plugins through one Host | `@hile/rsc` | `packages/rsc.md`, `recipes/rsc-plugin-host.md` |
+| Compile immutable production RSC plugin artifacts | `@hile/rsc-build` | `packages/rsc.md` |
+| Add incremental RSC development and hot reload | `@hile/rsc-development` | `packages/rsc.md` |
+| Decode plugin Flight inside a Next Host | `@hile/rsc-next` | `packages/rsc.md`, `recipes/rsc-plugin-host.md` |
 | Put business logic somewhere reusable | `@hile/model` | `packages/model-context.md` |
 | Propagate request id, tenant id, logger bindings, or micro context | `@hile/context` | `packages/model-context.md` |
 | Connect to SQL through TypeORM | `@hile/typeorm` | `packages/core-lifecycle.md`, `packages/infrastructure.md` |
@@ -76,6 +80,18 @@ Read `packages/http-next.md` when the task mentions:
 - `/-` API prefix
 
 Package: `@hile/http-next`.
+
+## Dynamic RSC Plugins
+
+Read `packages/rsc.md` when the task mentions:
+
+- independently built Next/React page plugins
+- React Server Components or Flight streams
+- plugin-owned `'use client'` components
+- one public Next host with internal plugin microservices
+- plugin install, upgrade, drain, deactivate, or artifact integrity
+
+Core package: `@hile/rsc`. Compose `@hile/rsc-build` for production compilation, `@hile/rsc-development` only in development, and `@hile/rsc-next` only in the Next Host. Also compose with `@hile/http-next`, `@hile/micro`, and the message transport packages.
 
 ## Business Logic And Context
 

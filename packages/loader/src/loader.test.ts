@@ -247,4 +247,36 @@ describe('Loader base class', () => {
     await loader.load(tmp)
     expect(loader.lastKey).toBe('/b')
   })
+
+  it('rolls back the current batch when a later binding fails', async () => {
+    writeFileSync(join(tmp, 'a.test.js'), `export default { value: 'a' }`, 'utf8')
+    writeFileSync(join(tmp, 'b.test.js'), `export default { value: 'fail' }`, 'utf8')
+    class FailingLoader extends TestLoader {
+      protected bind(file: ScannedFile, mod: { value: string }) {
+        if (mod.value === 'fail') throw new Error('bind failed')
+        return super.bind(file, mod)
+      }
+    }
+    const loader = new FailingLoader()
+    await expect(loader.load(tmp)).rejects.toThrow('bind failed')
+    expect(loader.registry.size).toBe(0)
+  })
+
+  it('unloads batches independently and idempotently', async () => {
+    const first = join(tmp, 'first')
+    const second = join(tmp, 'second')
+    mkdirSync(first)
+    mkdirSync(second)
+    writeFileSync(join(first, 'a.test.js'), `export default { value: 'a' }`, 'utf8')
+    writeFileSync(join(second, 'b.test.js'), `export default { value: 'b' }`, 'utf8')
+    const loader = new TestLoader()
+    const unloadFirst = await loader.load(first)
+    const unloadSecond = await loader.load(second)
+    unloadFirst()
+    unloadFirst()
+    expect(loader.registry.has('/a')).toBe(false)
+    expect(loader.registry.get('/b')).toBe('b')
+    unloadSecond()
+    expect(loader.registry.size).toBe(0)
+  })
 })

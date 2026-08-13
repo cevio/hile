@@ -18,6 +18,7 @@
     "@hile/http": "^2.0.2"
   },
   "devDependencies": {
+    "@types/node": "^26.2.0",
     "@hile/cli": "^2.0.9"
   }
 }

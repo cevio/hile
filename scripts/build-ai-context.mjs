@@ -77,6 +77,12 @@ const packageConfigs = {
     cards: ['packages/http.md'],
     recipes: ['recipes/http-api-model-typeorm.md'],
   },
+  '@hile/rsc': {
+    dir: 'rsc',
+    purpose: 'Build and run independently deployed React Server Component plugins behind one composable Next.js host.',
+    cards: ['packages/rsc.md'],
+    recipes: ['recipes/rsc-plugin-host.md'],
+  },
   '@hile/ioredis': {
     dir: 'ioredis',
     purpose: 'Create Redis clients manually or as Hile services with lifecycle cleanup.',
@@ -204,6 +210,7 @@ const docPackagePages = {
   'packages/create-hile.mdx': 'create-hile',
   'packages/http-next.mdx': '@hile/http-next',
   'packages/http.mdx': '@hile/http',
+  'packages/rsc.mdx': '@hile/rsc',
   'packages/ioredis.mdx': '@hile/ioredis',
   'packages/loader.mdx': '@hile/loader',
   'packages/logger.mdx': '@hile/logger',
@@ -583,7 +590,7 @@ function writePublishSkill() {
   const content = [
     '---',
     'name: hile',
-    'description: "Example-first AI development guide for Hile @hile/* packages. Use when building or editing Node.js/TypeScript services with @hile/core, @hile/http, @hile/http-next, @hile/model, @hile/context, @hile/typeorm, @hile/ioredis, @hile/cache, @hile/message-*, @hile/micro, @hile/reloader, Redis reliability packages, @hile/schedule, or create-hile."',
+    'description: "Example-first AI development guide for Hile @hile/* packages. Use when building or editing Node.js/TypeScript services with @hile/core, @hile/http, @hile/http-next, @hile/rsc, @hile/model, @hile/context, @hile/typeorm, @hile/ioredis, @hile/cache, @hile/message-*, @hile/micro, @hile/reloader, Redis reliability packages, @hile/schedule, or create-hile."',
     'license: MIT',
     'metadata:',
     '  version: "1.0.0"',

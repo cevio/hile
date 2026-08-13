@@ -1,0 +1,9 @@
+{
+  "pluginId": "org.example.rsc-plugin",
+  "buildId": "build-a",
+  "cwd": ".",
+  "entry": "src/plugin/page.tsx",
+  "outdir": ".hile-rsc/build-a",
+  "routes": [{ "path": "/page", "entry": "default" }],
+  "runtime": { "react": "19.2.8", "reactDom": "19.2.8", "rsc": "19.2.8" }
+}

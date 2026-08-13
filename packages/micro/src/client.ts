@@ -137,7 +137,7 @@ export class Client extends MessageWs {
     }, checkInterval);
   }
 
-  protected async exec(data: MicroMessage): Promise<any> {
+  protected async exec(data: MicroMessage, signal?: AbortSignal): Promise<any> {
     if (data.url === '/-/heartbeat') {
       this.lastHeartbeat = Date.now();
       return;
@@ -148,6 +148,7 @@ export class Client extends MessageWs {
       const result = await this.server.dispatch(data.url, data.data, {
         client: this,
         metadata: data.metadata,
+        signal,
       });
       if (context && isAsyncIterable(result)) {
         return bindAsyncIterableToContext(result, context);

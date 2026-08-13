@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
     "dev": "tsc -b --watch",
-    "test": "vitest run"
+    "test": "vitest run src"
   },
   "files": [
     "dist",
@@ -18,10 +18,12 @@
     "access": "public"
   },
   "devDependencies": {
+    "@types/node": "^26.2.0",
     "fix-esm-import-path": "^1.10.3",
     "vitest": "^4.0.18"
   },
   "dependencies": {
-    "@hile/core": "workspace:^"
+    "@hile/core": "workspace:^",
+    "@hile/loader": "workspace:^"
   }
 }

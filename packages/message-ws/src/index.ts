@@ -1,12 +1,15 @@
 import { MessageModem, type MessageTransferFormat } from '@hile/message-modem';
 import type WebSocket from 'ws';
+import { decodeMessageFrame, encodeMessageFrame } from './codec';
+
+export * from './codec';
 
 /**
  * 基于 `ws` 模块的 WebSocket 通信层。
  * exec 方法由子类实现，本类不做实现。
  *
  * 构造时传入已连接的 WebSocket 实例，自动绑定 message 事件。
- * 消息通过 JSON 序列化/反序列化传输。
+ * 普通消息通过 JSON 传输；二进制 stream response 使用 Hile 二进制帧，避免 Base64 开销。
  *
  * @example
  * class MyWs extends MessageWs {
@@ -24,16 +27,20 @@ import type WebSocket from 'ws';
  */
 export abstract class MessageWs extends MessageModem {
   private readonly ws: WebSocket;
-  private readonly listener: (data: WebSocket.RawData) => void;
+  private readonly listener: (data: WebSocket.RawData, isBinary: boolean) => void;
 
   constructor(ws: WebSocket) {
     super();
     this.ws = ws;
-    this.listener = (raw: WebSocket.RawData) => {
+    this.listener = (raw: WebSocket.RawData, isBinary: boolean) => {
       try {
-        const msg = JSON.parse(raw.toString());
+        const msg = decodeMessageFrame(raw, isBinary);
         this.receive(msg);
-      } catch { }
+      } catch {
+        // A malformed protocol frame is fatal. Keeping the connection alive would
+        // hide peer incompatibility and can leave pending requests unresolved.
+        this.ws.close(1002, 'Invalid Hile message frame');
+      }
     };
     this.ws.on('message', this.listener);
   }
@@ -42,7 +49,7 @@ export abstract class MessageWs extends MessageModem {
     if (this.ws.readyState !== this.ws.OPEN) {
       throw new Error('WebSocket is not open. Current readyState: ' + this.ws.readyState);
     }
-    this.ws.send(JSON.stringify(data));
+    this.ws.send(encodeMessageFrame(data));
   }
 
   /**

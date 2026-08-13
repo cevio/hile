@@ -32,6 +32,18 @@ Use it:
 const result = await loadModel(greetModel, { name: 'Ada' })
 ```
 
+Action adapters can discover a model explicitly without changing how it executes:
+
+```ts
+import { defineActionModel } from '@hile/model'
+
+export default defineActionModel(async (input: { value: number }) => ({
+  value: input.value + 1,
+}))
+```
+
+`ModelActionRegistry` extends `@hile/loader.Loader`, scans domain-organized `*.model.*` files, and registers only action-marked models. `RscPluginService.load(modelsDirectory)` owns this lifecycle for RSC plugins.
+
 ## Boundaries
 
 - Do not put business logic only in controllers when it will be reused by jobs, pages, or message handlers.
@@ -41,10 +53,12 @@ const result = await loadModel(greetModel, { name: 'Ada' })
 - Mutating context snapshots.
 - Logging whole context objects by default.
 - Assuming context propagation changes business payloads; it should stay in metadata or async storage.
+- Exposing every scanned model as a browser action; only action-marked models may be mounted.
 
 ## Verify
 
 - Models export `defineModel(...)` results.
+- Browser-callable models explicitly use `defineActionModel(...)`.
 - Controllers and pages call `loadModel(model, objectInput)`.
 - Pipeline middleware writes derived state to `ctx.state`.
 - Context keys are app-defined and JSON-serializable when crossing process boundaries.

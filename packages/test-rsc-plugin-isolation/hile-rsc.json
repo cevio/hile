@@ -1,0 +1,12 @@
+{
+  "pluginId": "demo.rsc.isolation",
+  "buildId": "isolation-v1",
+  "cwd": ".",
+  "entry": "src/plugin/page.tsx",
+  "outdir": ".hile-rsc/isolation-v1",
+  "routes": [
+    { "path": "/", "entry": "IsolationPage" },
+    { "path": "/inspect", "entry": "InspectPage" }
+  ],
+  "runtime": { "react": "19.2.8", "reactDom": "19.2.8", "rsc": "19.2.8" }
+}

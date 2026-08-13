@@ -1,4 +1,5 @@
 import { type ServiceRegisterProps, defineService, loadService } from '@hile/core';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import {
   Pipeline,
   PipelineContext,
@@ -6,9 +7,16 @@ import {
 } from './pipeline';
 
 const modelFlag = Symbol.for('@hile/model');
+const actionModelFlag = Symbol.for('@hile/model/action');
+const modelExecutionStorage = new AsyncLocalStorage<ModelExecutionContext>();
 
 /** `defineModel` 返回值上的标记类型 */
 export type ModelFlag = typeof modelFlag;
+export type ActionModelFlag = typeof actionModelFlag;
+
+export interface ModelExecutionContext {
+  signal?: AbortSignal;
+}
 
 /** model 可用的 pipeline 中间件列表（默认可跨 model 复用） */
 export type ModelPipeline = readonly PipelineMiddleware[];
@@ -48,6 +56,14 @@ export type ModelDefinition<
   readonly handler: (input: TInput) => Promise<R>;
 };
 
+/** A normal model explicitly marked as safe to mount through an action adapter. */
+export type ActionModelDefinition<
+  TInput extends object = Record<string, unknown>,
+  R = unknown,
+> = ModelDefinition<TInput, R> & {
+  readonly actionFlag: ActionModelFlag;
+};
+
 /**
  * 使用给定参数执行 `model.handler(input)`，并以 Promise 返回其结果
  *（`handler` 内同步抛错也会变为 reject）。
@@ -55,13 +71,22 @@ export type ModelDefinition<
 export function loadModel<TInput extends object, R>(
   model: ModelDefinition<TInput, R>,
   input: TInput,
+  context?: ModelExecutionContext,
 ): Promise<R> {
   if (!isModel(model)) {
     return Promise.reject(
       new TypeError('loadModel: first argument must be a return value of defineModel'),
     );
   }
+  if (context !== undefined) {
+    return modelExecutionStorage.run(context, () => model.handler(input));
+  }
   return model.handler(input);
+}
+
+/** Returns request-scoped execution state without adding transport fields to model input. */
+export function getModelExecutionContext(): Readonly<ModelExecutionContext> | undefined {
+  return modelExecutionStorage.getStore();
 }
 
 /** 判断值是否为 {@link defineModel} 的返回值 */
@@ -72,6 +97,35 @@ export function isModel(value: unknown): value is ModelDefinition {
     (value as ModelDefinition).flag === modelFlag &&
     typeof (value as ModelDefinition).handler === 'function'
   );
+}
+
+export function isActionModel(value: unknown): value is ActionModelDefinition {
+  return isModel(value) && (value as ActionModelDefinition).actionFlag === actionModelFlag;
+}
+
+/**
+ * Defines a model that may be discovered by action adapters.
+ * It remains a regular ModelDefinition and is always executed with loadModel().
+ */
+export function defineActionModel<TInput extends object, R>(
+  main: (input: TInput) => R | Promise<R>,
+): ActionModelDefinition<TInput, R>;
+export function defineActionModel<
+  const S extends readonly ServiceRegisterProps<any>[] | undefined = undefined,
+  TInput extends object = Record<string, unknown>,
+  R = unknown,
+>(options: ModelProps<S, TInput, R>): ActionModelDefinition<TInput, R>;
+export function defineActionModel<
+  const S extends readonly ServiceRegisterProps<any>[] | undefined = undefined,
+  TInput extends object = Record<string, unknown>,
+  R = unknown,
+>(
+  optionsOrMain: ModelProps<S, TInput, R> | ((input: TInput) => R | Promise<R>),
+): ActionModelDefinition<TInput, R> {
+  const model = typeof optionsOrMain === 'function'
+    ? defineModel(optionsOrMain)
+    : defineModel(optionsOrMain);
+  return Object.assign(model, { actionFlag: actionModelFlag as ActionModelFlag });
 }
 
 /** 无 services / pipelines 时可直接传入 main：`defineModel(async (input) => ...)` */

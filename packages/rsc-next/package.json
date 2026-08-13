@@ -1,0 +1,37 @@
+{
+  "name": "@hile/rsc-next",
+  "description": "Optional Next.js Flight decoder adapter for Hile RSC hosts",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "scripts": {
+    "build": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
+    "dev": "tsc -b --watch",
+    "test": "vitest run --passWithNoTests"
+  },
+  "files": ["dist", "README.md"],
+  "license": "MIT",
+  "publishConfig": { "access": "public" },
+  "dependencies": {
+    "@hile/rsc": "workspace:^"
+  },
+  "peerDependencies": {
+    "next": "16.3.0",
+    "react": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@hile/http-next": "workspace:^",
+    "@hile/micro": "workspace:^",
+    "@hile/rsc-build": "workspace:^",
+    "@playwright/test": "^1.62.1",
+    "@types/react": "^19.2.14",
+    "fix-esm-import-path": "^1.10.3",
+    "next": "16.3.0",
+    "react": "19.2.8",
+    "react-server-dom-webpack": "19.2.8",
+    "vitest": "^4.0.18"
+  }
+}

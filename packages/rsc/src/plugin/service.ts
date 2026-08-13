@@ -1,0 +1,302 @@
+import type { RscPluginManifest } from '../protocol';
+import {
+  ModelActionRegistry,
+  ModelActionRegistryError,
+  type ModelActionLoadOptions,
+} from '@hile/model';
+import type { RscActionRequest, RscPluginServiceOptions, RscRenderRequest } from './types';
+
+export type RscPluginServiceErrorCode =
+  | 'ERR_RSC_PLUGIN_INACTIVE'
+  | 'ERR_RSC_BUILD_MISMATCH'
+  | 'ERR_RSC_ROUTE_NOT_FOUND'
+  | 'ERR_RSC_ACTION_NOT_FOUND'
+  | 'ERR_RSC_INVALID_REQUEST';
+
+export class RscPluginServiceError extends Error {
+  public readonly code: RscPluginServiceErrorCode;
+
+  constructor(code: RscPluginServiceErrorCode, message: string) {
+    super(message);
+    this.name = 'RscPluginServiceError';
+    this.code = code;
+  }
+}
+
+function assertRecord(value: unknown, name: string): asserts value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new RscPluginServiceError('ERR_RSC_INVALID_REQUEST', `${name} must be an object`);
+  }
+}
+
+function assertBuildId(value: unknown): asserts value is string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new RscPluginServiceError('ERR_RSC_INVALID_REQUEST', 'buildId must be a string');
+  }
+}
+
+function combineSignals(primary: AbortSignal | undefined, shutdown: AbortSignal): {
+  signal: AbortSignal;
+  cleanup: () => void;
+} {
+  const controller = new AbortController();
+  const abort = (source: AbortSignal) => {
+    if (!controller.signal.aborted) controller.abort(source.reason);
+  };
+  const onPrimary = () => primary && abort(primary);
+  const onShutdown = () => abort(shutdown);
+  if (primary?.aborted) abort(primary);
+  else primary?.addEventListener('abort', onPrimary, { once: true });
+  if (shutdown.aborted) abort(shutdown);
+  else shutdown.addEventListener('abort', onShutdown, { once: true });
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      primary?.removeEventListener('abort', onPrimary);
+      shutdown.removeEventListener('abort', onShutdown);
+    },
+  };
+}
+
+export class RscPluginService {
+  private manifest: RscPluginManifest;
+  private renderer: RscPluginServiceOptions['renderer'];
+  private readonly retainedRevisions: number;
+  private readonly revisions = new Map<string, {
+    manifest: RscPluginManifest;
+    renderer: RscPluginServiceOptions['renderer'];
+  }>();
+  private actionModels = new ModelActionRegistry();
+  private unloadActiveModels?: () => void;
+  private modelLoadQueue: Promise<void> = Promise.resolve();
+  private readonly shutdown = new AbortController();
+  private active = true;
+  private inFlight = 0;
+  private readonly drainWaiters = new Set<() => void>();
+  private readonly deactivateListeners = new Set<() => void>();
+
+  constructor(options: RscPluginServiceOptions) {
+    const retainedRevisions = options.retainedRevisions ?? 2;
+    if (!Number.isSafeInteger(retainedRevisions) || retainedRevisions < 1) {
+      throw new TypeError('RSC plugin retainedRevisions must be a positive safe integer');
+    }
+    this.retainedRevisions = retainedRevisions;
+    this.manifest = structuredClone(options.manifest);
+    this.renderer = options.renderer;
+    this.revisions.set(this.manifest.buildId, { manifest: this.manifest, renderer: this.renderer });
+  }
+
+  /** Scans domain-organized `*.model.*` files and mounts only defineActionModel exports. */
+  public async load(directory: string, options: ModelActionLoadOptions = {}): Promise<() => void> {
+    this.assertActive();
+    let resolveUnload!: (unload: () => void) => void;
+    let rejectLoad!: (error: unknown) => void;
+    const result = new Promise<() => void>((resolve, reject) => {
+      resolveUnload = resolve;
+      rejectLoad = reject;
+    });
+    const replace = async () => {
+      try {
+        const nextRegistry = new ModelActionRegistry();
+        const unloadRegistry = await nextRegistry.load(directory, options);
+        if (!this.active) {
+          unloadRegistry();
+          throw new RscPluginServiceError('ERR_RSC_PLUGIN_INACTIVE', 'RSC plugin is inactive');
+        }
+        const previousUnload = this.unloadActiveModels;
+        this.actionModels = nextRegistry;
+        this.unloadActiveModels = unloadRegistry;
+        previousUnload?.();
+
+        let unloaded = false;
+        resolveUnload(() => {
+          if (unloaded) return;
+          unloaded = true;
+          if (this.actionModels === nextRegistry) {
+            this.actionModels = new ModelActionRegistry();
+            this.unloadActiveModels = undefined;
+          }
+          unloadRegistry();
+        });
+      } catch (error) {
+        rejectLoad(error);
+      }
+    };
+    const queued = this.modelLoadQueue.then(replace, replace);
+    this.modelLoadQueue = queued.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  public describe(): RscPluginManifest {
+    return structuredClone(this.manifest);
+  }
+
+  /** Atomically switches new requests to a compatible immutable RSC revision. */
+  public activate(options: RscPluginServiceOptions): void {
+    this.assertActive();
+    if (options.manifest.pluginId !== this.manifest.pluginId) {
+      throw new TypeError('RSC revision pluginId must match the active service');
+    }
+    for (const key of ['react', 'reactDom', 'rsc'] as const) {
+      if (options.manifest.runtime[key] !== this.manifest.runtime[key]) {
+        throw new TypeError(`RSC revision runtime ${key} must match the active service`);
+      }
+    }
+    if (options.manifest.buildId === this.manifest.buildId) {
+      throw new TypeError('RSC revision buildId must differ from the active immutable build');
+    }
+    this.manifest = structuredClone(options.manifest);
+    this.renderer = options.renderer;
+    this.revisions.set(this.manifest.buildId, { manifest: this.manifest, renderer: this.renderer });
+    while (this.revisions.size > this.retainedRevisions) {
+      this.revisions.delete(this.revisions.keys().next().value!);
+    }
+  }
+
+  private assertActive(): void {
+    if (!this.active) {
+      throw new RscPluginServiceError('ERR_RSC_PLUGIN_INACTIVE', 'RSC plugin is inactive');
+    }
+  }
+
+  private requiredRevision(buildId: string) {
+    const revision = this.revisions.get(buildId);
+    if (!revision) {
+      throw new RscPluginServiceError(
+        'ERR_RSC_BUILD_MISMATCH',
+        `RSC build mismatch: requested=${buildId}, active=${this.manifest.buildId}`,
+      );
+    }
+    return revision;
+  }
+
+  private entered(): () => void {
+    this.inFlight++;
+    let left = false;
+    return () => {
+      if (left) return;
+      left = true;
+      this.inFlight--;
+      if (this.inFlight === 0) {
+        for (const resolve of this.drainWaiters) resolve();
+        this.drainWaiters.clear();
+      }
+    };
+  }
+
+  public render(value: unknown, remoteSignal?: AbortSignal): AsyncIterable<Uint8Array> {
+    this.assertActive();
+    assertRecord(value, 'render request');
+    assertBuildId(value.buildId);
+    if (typeof value.path !== 'string' || !value.path.startsWith('/')) {
+      throw new RscPluginServiceError('ERR_RSC_INVALID_REQUEST', 'path must be absolute');
+    }
+    const revision = this.requiredRevision(value.buildId);
+    const route = revision.manifest.routes.find(({ path }) => path === value.path);
+    if (!route) {
+      throw new RscPluginServiceError('ERR_RSC_ROUTE_NOT_FOUND', `unknown RSC route: ${value.path}`);
+    }
+    const request = value as unknown as RscRenderRequest;
+    const { renderer, manifest } = revision;
+    const service = this;
+    return {
+      async *[Symbol.asyncIterator]() {
+        service.assertActive();
+        const leave = service.entered();
+        const combined = combineSignals(remoteSignal, service.shutdown.signal);
+        try {
+          const iterable = await renderer({
+            manifest,
+            routeEntry: route.entry,
+            request,
+            signal: combined.signal,
+          });
+          for await (const chunk of iterable) {
+            if (combined.signal.aborted) return;
+            if (!(chunk instanceof Uint8Array)) {
+              throw new TypeError('RSC renderer must yield Uint8Array chunks');
+            }
+            yield chunk;
+          }
+        } finally {
+          combined.cleanup();
+          leave();
+        }
+      },
+    };
+  }
+
+  public async action(value: unknown, remoteSignal?: AbortSignal): Promise<unknown> {
+    this.assertActive();
+    assertRecord(value, 'action request');
+    assertBuildId(value.buildId);
+    if (
+      typeof value.actionId !== 'string' || value.actionId.length === 0 ||
+      value.input === null || typeof value.input !== 'object' || Array.isArray(value.input)
+    ) {
+      throw new RscPluginServiceError('ERR_RSC_INVALID_REQUEST', 'actionId and object input are required');
+    }
+    this.requiredRevision(value.buildId);
+    const request = value as unknown as RscActionRequest;
+    const leave = this.entered();
+    const combined = combineSignals(remoteSignal, this.shutdown.signal);
+    try {
+      try {
+        return await this.actionModels.invoke(request.actionId, request.input, { signal: combined.signal });
+      } catch (error) {
+        if (
+          error instanceof ModelActionRegistryError &&
+          error.code === 'ERR_MODEL_ACTION_NOT_FOUND'
+        ) {
+          throw new RscPluginServiceError(
+            'ERR_RSC_ACTION_NOT_FOUND',
+            `unknown RSC action: ${request.actionId}`,
+          );
+        }
+        throw error;
+      }
+    } finally {
+      combined.cleanup();
+      leave();
+    }
+  }
+
+  public onDeactivate(listener: () => void): () => void {
+    if (!this.active) {
+      listener();
+      return () => undefined;
+    }
+    this.deactivateListeners.add(listener);
+    return () => this.deactivateListeners.delete(listener);
+  }
+
+  public deactivate(): void {
+    if (!this.active) return;
+    this.active = false;
+    this.shutdown.abort(new RscPluginServiceError('ERR_RSC_PLUGIN_INACTIVE', 'RSC plugin was deactivated'));
+    const errors: unknown[] = [];
+    if (this.unloadActiveModels) {
+      try {
+        this.unloadActiveModels();
+      } catch (error) {
+        errors.push(error);
+      }
+      this.unloadActiveModels = undefined;
+      this.actionModels = new ModelActionRegistry();
+    }
+    for (const listener of this.deactivateListeners) {
+      try {
+        listener();
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    this.deactivateListeners.clear();
+    if (errors.length > 0) throw new AggregateError(errors, 'RSC plugin deactivation listeners failed');
+  }
+
+  public async drain(): Promise<void> {
+    if (this.inFlight === 0) return;
+    await new Promise<void>((resolve) => this.drainWaiters.add(resolve));
+  }
+}

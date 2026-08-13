@@ -24,6 +24,7 @@
     "update-template-hile-deps:dry-run": "node scripts/update-template-hile-deps.mjs --dry-run"
   },
   "devDependencies": {
+    "@types/node": "^26.2.0",
     "@vitest/coverage-v8": "^4.0.18",
     "lerna": "^8.2.2",
     "typescript": "^5.9.3"

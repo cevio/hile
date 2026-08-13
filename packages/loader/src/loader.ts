@@ -4,7 +4,7 @@ import { scanDirectory } from './index.js'
 
 export abstract class Loader<TFile, TOptions extends ScanOptions = ScanOptions> {
   protected readonly options: TOptions
-  private unregisters: (() => void)[] = []
+  private readonly unregisters = new Set<() => void>()
 
   constructor(options?: TOptions) {
     this.options = (options ?? {}) as TOptions
@@ -14,26 +14,44 @@ export abstract class Loader<TFile, TOptions extends ScanOptions = ScanOptions> 
   protected abstract bind(file: ScannedFile, module: TFile): (() => void) | void
 
   /** 批量从目录加载，返回批量注销函数。 */
-  async load(directory: string): Promise<() => void> {
+  async load(directory: string, options: { cacheBust?: string | number } = {}): Promise<() => void> {
     const files = await scanDirectory(directory, this.options)
+    const batch: (() => void)[] = []
+    try {
+      for (const file of files) {
+        const url = new URL(pathToFileURL(file.absolute))
+        if (options.cacheBust !== undefined) url.searchParams.set('v', String(options.cacheBust))
+        const mod: { default?: TFile } = await import(url.href)
+        if (mod.default == null) continue
 
-    for (const file of files) {
-      const href = pathToFileURL(file.absolute).href
-      const mod: { default?: TFile } = await import(href)
-      if (mod.default == null) continue
-
-      const unregister = this.bind(file, mod.default)
-      if (unregister) {
-        this.unregisters.push(unregister)
+        const unregister = this.bind(file, mod.default)
+        if (unregister) {
+          batch.push(unregister)
+          this.unregisters.add(unregister)
+        }
       }
+    } catch (error) {
+      const cleanupErrors: unknown[] = []
+      for (const unregister of batch.reverse()) {
+        this.unregisters.delete(unregister)
+        try { unregister() } catch (cleanupError) { cleanupErrors.push(cleanupError) }
+      }
+      if (cleanupErrors.length > 0) {
+        throw new AggregateError([error, ...cleanupErrors], 'Loader failed and rollback was incomplete')
+      }
+      throw error
     }
 
+    let unloaded = false
     return () => {
-      let i = this.unregisters.length
-      while (i--) {
-        this.unregisters[i]()
+      if (unloaded) return
+      unloaded = true
+      const errors: unknown[] = []
+      for (const unregister of batch.reverse()) {
+        if (!this.unregisters.delete(unregister)) continue
+        try { unregister() } catch (error) { errors.push(error) }
       }
-      this.unregisters.length = 0
+      if (errors.length > 0) throw new AggregateError(errors, 'Loader unload failed')
     }
   }
 }

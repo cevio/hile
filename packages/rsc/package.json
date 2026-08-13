@@ -1,0 +1,100 @@
+{
+  "name": "@hile/rsc",
+  "description": "Core protocol and runtime for dynamically loaded React Server Component plugins",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./protocol": {
+      "types": "./dist/protocol/index.d.ts",
+      "import": "./dist/protocol/index.js"
+    },
+    "./plugin": {
+      "types": "./dist/plugin/index.d.ts",
+      "import": "./dist/plugin/index.js"
+    },
+    "./host": {
+      "types": "./dist/host/index.d.ts",
+      "import": "./dist/host/index.js"
+    },
+    "./host/actions": {
+      "types": "./dist/host/actions.d.ts",
+      "import": "./dist/host/actions.js"
+    },
+    "./host/assets": {
+      "types": "./dist/host/assets.d.ts",
+      "import": "./dist/host/assets.js"
+    },
+    "./host/catalog": {
+      "types": "./dist/host/catalog.d.ts",
+      "import": "./dist/host/catalog.js"
+    },
+    "./host/deployment-manager": {
+      "types": "./dist/host/deployment-manager.d.ts",
+      "import": "./dist/host/deployment-manager.js"
+    },
+    "./host/mount": {
+      "types": "./dist/host/mount.d.ts",
+      "import": "./dist/host/mount.js"
+    },
+    "./host/registry": {
+      "types": "./dist/host/registry.d.ts",
+      "import": "./dist/host/registry.js"
+    },
+    "./host/runtime": {
+      "types": "./dist/host/runtime.d.ts",
+      "import": "./dist/host/runtime.js"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "import": "./dist/client/index.js"
+    },
+    "./transport": {
+      "types": "./dist/transport/index.d.ts",
+      "import": "./dist/transport/index.js"
+    },
+    "./artifact": {
+      "types": "./dist/artifact/index.d.ts",
+      "import": "./dist/artifact/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
+    "dev": "tsc -b --watch",
+    "test": "vitest run"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "AI.md",
+    "ARCHITECTURE.md"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@hile/micro": "workspace:^",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "fix-esm-import-path": "^1.10.3",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "vitest": "^4.0.18"
+  },
+  "dependencies": {
+    "@hile/model": "workspace:^",
+    "react-server-dom-webpack": "19.2.8"
+  },
+  "peerDependencies": {
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "peerDependenciesMeta": {}
+}

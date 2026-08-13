@@ -1,0 +1,39 @@
+{
+  "name": "@hile/rsc-development",
+  "description": "Incremental development and hot-reload orchestration for Hile RSC plugins",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": { "hile-rsc-dev": "./dist/bin.js" },
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./client": { "types": "./dist/client.d.ts", "import": "./dist/client.js" },
+    "./compiler": { "types": "./dist/compiler.d.ts", "import": "./dist/compiler.js" },
+    "./host": { "types": "./dist/host.d.ts", "import": "./dist/host.js" },
+    "./plugin": { "types": "./dist/plugin.d.ts", "import": "./dist/plugin.js" },
+    "./project": { "types": "./dist/project.d.ts", "import": "./dist/project.js" },
+    "./state": { "types": "./dist/state.d.ts", "import": "./dist/state.js" }
+  },
+  "scripts": {
+    "build": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
+    "dev": "tsc -b --watch",
+    "test": "vitest run"
+  },
+  "files": ["dist", "README.md"],
+  "license": "MIT",
+  "publishConfig": { "access": "public" },
+  "dependencies": {
+    "@hile/rsc": "workspace:^",
+    "@hile/rsc-build": "workspace:^",
+    "esbuild": "^0.28.2"
+  },
+  "peerDependencies": { "react": "19.2.8" },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.14",
+    "fix-esm-import-path": "^1.10.3",
+    "react": "19.2.8",
+    "vitest": "^4.0.18"
+  }
+}

@@ -46,7 +46,7 @@ pnpm add @hile/model @hile/context
 ## Imports
 
 ```ts
-import { defineModel, loadModel } from '@hile/model'
+import { defineActionModel, defineModel, loadModel } from '@hile/model'
 import { contextHttp, contextModel, getContext, requireContext, runWithContext } from '@hile/context'
 ```
 
@@ -65,6 +65,18 @@ Use it:
 ```ts
 const result = await loadModel(greetModel, { name: 'Ada' })
 ```
+
+Action adapters can discover a model explicitly without changing how it executes:
+
+```ts
+import { defineActionModel } from '@hile/model'
+
+export default defineActionModel(async (input: { value: number }) => ({
+  value: input.value + 1,
+}))
+```
+
+`ModelActionRegistry` extends `@hile/loader.Loader`, scans domain-organized `*.model.*` files, and registers only action-marked models. `RscPluginService.load(modelsDirectory)` owns this lifecycle for RSC plugins.
 
 ## More Examples
 
@@ -113,6 +125,7 @@ const withTenant = contextModel<{ tenantId: string }>({
 ## Runtime And Lifecycle Notes
 
 - `loadModel(model, input)` rejects if the first argument was not created by `defineModel()`.
+- `defineActionModel()` returns a normal model definition plus an explicit action capability marker.
 - Model input must be an object.
 - Services are loaded in the order of the `services` tuple.
 - Pipeline middleware follows Koa-style `await next()`.
@@ -127,10 +140,12 @@ const withTenant = contextModel<{ tenantId: string }>({
 - Mutating context snapshots.
 - Logging whole context objects by default.
 - Assuming context propagation changes business payloads; it should stay in metadata or async storage.
+- Exposing every scanned model as a browser action; only action-marked models may be mounted.
 
 ## Verification Checklist
 
 - Models export `defineModel(...)` results.
+- Browser-callable models explicitly use `defineActionModel(...)`.
 - Controllers and pages call `loadModel(model, objectInput)`.
 - Pipeline middleware writes derived state to `ctx.state`.
 - Context keys are app-defined and JSON-serializable when crossing process boundaries.

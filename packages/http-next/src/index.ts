@@ -3,9 +3,22 @@ import { Http } from '@hile/http'
 import type { Middleware } from 'koa'
 import { resolve } from 'node:path'
 import type { Server } from 'node:http'
+import { AsyncLocalStorage } from 'node:async_hooks'
 
 type NextApplication = ReturnType<typeof NextServer>
 type NextRequestHandler = ReturnType<NextApplication['getRequestHandler']>
+
+const requestSignalStorageKey = Symbol.for('@hile/http-next/request-signals')
+const requestSignals = (
+  globalThis as typeof globalThis & {
+    [requestSignalStorageKey]?: AsyncLocalStorage<AbortSignal>
+  }
+)[requestSignalStorageKey] ??= new AsyncLocalStorage<AbortSignal>()
+
+/** 返回当前 HttpNext 请求的取消信号；仅在请求异步上下文内有值。 */
+export function getHttpNextRequestSignal(): AbortSignal | undefined {
+  return requestSignals.getStore()
+}
 
 export type HttpNextProps = {
   /** 共享的 Hile 与 Next.js HTTP 端口。 */
@@ -38,7 +51,30 @@ export class HttpNext {
       }
       ctx.respond = false
       ctx.status = 200
-      await this.nextHandler(ctx.req, ctx.res)
+      const controller = new AbortController()
+      const abort = () => {
+        if (!controller.signal.aborted && !ctx.res.writableEnded) {
+          controller.abort(new Error('HTTP client disconnected'))
+        }
+      }
+      const cleanup = () => {
+        ctx.req.off?.('aborted', abort)
+        ctx.res.off?.('close', abort)
+        ctx.res.off?.('finish', cleanup)
+      }
+      ctx.req.once?.('aborted', abort)
+      ctx.res.once?.('close', abort)
+      ctx.res.once?.('finish', cleanup)
+      try {
+        await requestSignals.run(
+          controller.signal,
+          () => this.nextHandler!(ctx.req, ctx.res),
+        )
+        if (ctx.res.writableEnded) cleanup()
+      } catch (error) {
+        cleanup()
+        throw error
+      }
     }
   }
 

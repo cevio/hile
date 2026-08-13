@@ -18,6 +18,7 @@
     "access": "public"
   },
   "devDependencies": {
+    "@types/node": "^26.2.0",
     "fix-esm-import-path": "^1.10.3",
     "vitest": "^4.0.18"
   },

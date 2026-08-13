@@ -1,0 +1,34 @@
+{
+  "name": "test-rsc-plugin-capabilities-v1",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:rsc": "node scripts/build-rsc.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build:runtime": "node scripts/clean-runtime.mjs && tsc -p tsconfig.runtime.json && fix-esm-import-path --preserve-import-type ./dist",
+    "build": "pnpm typecheck && pnpm build:rsc && pnpm build:runtime",
+    "verify": "hile-rsc verify .hile-rsc/v1 --react 19.2.8 --react-dom 19.2.8 --rsc 19.2.8",
+    "dev": "NODE_OPTIONS=--conditions=react-server hile start --dev --env-file .env",
+    "start": "NODE_OPTIONS=--conditions=react-server hile start --env-file .env.prod"
+  },
+  "dependencies": {
+    "@hile/cli": "workspace:^",
+    "@hile/core": "workspace:^",
+    "@hile/micro": "workspace:^",
+    "@hile/model": "workspace:^",
+    "@hile/rsc": "workspace:^",
+    "@hile/rsc-build": "workspace:^",
+    "@hile/rsc-development": "workspace:^",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-server-dom-webpack": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "fix-esm-import-path": "^1.10.3",
+    "typescript": "^5.9.3"
+  }
+}

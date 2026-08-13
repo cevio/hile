@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Server } from 'node:http'
+import { EventEmitter } from 'node:events'
 
 const lifecycle: string[] = []
 const server = { listen: vi.fn() } as unknown as Server
@@ -45,7 +46,7 @@ vi.mock('next', () => ({
 }))
 
 import NextServer from 'next'
-import { HttpNext } from './index'
+import { getHttpNextRequestSignal, HttpNext } from './index'
 
 describe('HttpNext', () => {
   beforeEach(() => {
@@ -171,6 +172,62 @@ describe('HttpNext', () => {
     expect(ctx.respond).toBe(false)
     expect(ctx.status).toBe(200)
     expect(nextHandler).toHaveBeenCalledWith(ctx.req, ctx.res)
+  })
+
+  it('在 Next 请求上下文中暴露同一个未中止信号', async () => {
+    const app = new HttpNext({ port: 3000, cwd: '/proj' })
+    await app.start()
+    const fallback = useMock.mock.calls[0][0]
+    const req = new EventEmitter()
+    const res = Object.assign(new EventEmitter(), { writableEnded: false })
+    nextHandler.mockImplementationOnce(async () => {
+      const signal = getHttpNextRequestSignal()
+      expect(signal).toBeInstanceOf(AbortSignal)
+      expect(signal!.aborted).toBe(false)
+    })
+
+    await fallback({ respond: true, status: 404, req, res })
+  })
+
+  it('客户端断开响应连接时中止 Next 请求信号', async () => {
+    const app = new HttpNext({ port: 3000, cwd: '/proj' })
+    await app.start()
+    const fallback = useMock.mock.calls[0][0]
+    const req = new EventEmitter()
+    const res = Object.assign(new EventEmitter(), { writableEnded: false })
+    let requestSignal: AbortSignal | undefined
+    let release!: () => void
+    nextHandler.mockImplementationOnce(async () => {
+      requestSignal = getHttpNextRequestSignal()
+      await new Promise<void>((resolve) => { release = resolve })
+    })
+
+    const pending = fallback({ respond: true, status: 404, req, res })
+    await vi.waitFor(() => expect(requestSignal).toBeDefined())
+    res.emit('close')
+    expect(requestSignal!.aborted).toBe(true)
+    release()
+    await pending
+  })
+
+  it('正常完成响应会清理监听器且不会中止信号', async () => {
+    const app = new HttpNext({ port: 3000, cwd: '/proj' })
+    await app.start()
+    const fallback = useMock.mock.calls[0][0]
+    const req = new EventEmitter()
+    const res = Object.assign(new EventEmitter(), { writableEnded: false })
+    let requestSignal: AbortSignal | undefined
+    nextHandler.mockImplementationOnce(async () => { requestSignal = getHttpNextRequestSignal() })
+
+    await fallback({ respond: true, status: 404, req, res })
+    res.writableEnded = true
+    res.emit('finish')
+    res.emit('close')
+
+    expect(requestSignal!.aborted).toBe(false)
+    expect(req.listenerCount('aborted')).toBe(0)
+    expect(res.listenerCount('finish')).toBe(0)
+    expect(res.listenerCount('close')).toBe(0)
   })
 
   it('stop 先等待 HTTP drain 再关闭 Next，且重复调用安全', async () => {

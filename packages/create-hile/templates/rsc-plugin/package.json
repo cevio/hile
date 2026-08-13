@@ -1,0 +1,34 @@
+{
+  "name": "rsc-plugin",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:rsc": "hile-rsc build --config hile-rsc.json",
+    "build:runtime": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
+    "build": "npm run build:rsc && npm run build:runtime",
+    "dev:rsc": "hile-rsc-dev --config hile-rsc.json --state .hile-rsc/development.json --namespace org.example.rsc-plugin.dev --outdir .hile-rsc/development",
+    "dev:service": "NODE_OPTIONS=--conditions=react-server RSC_DEVELOPMENT_STATE=.hile-rsc/development.json hile start --dev --env-file .env",
+    "dev": "node scripts/dev.mjs",
+    "start": "NODE_OPTIONS=--conditions=react-server hile start --env-file .env.prod",
+    "verify": "hile-rsc verify .hile-rsc/build-a --react 19.2.8 --react-dom 19.2.8 --rsc 19.2.8"
+  },
+  "dependencies": {
+    "@hile/cli": "^2.0.9",
+    "@hile/core": "^2.0.1",
+    "@hile/micro": "^3.0.6",
+    "@hile/model": "^3.0.2",
+    "@hile/rsc": "^0.1.0",
+    "@hile/rsc-build": "^0.1.0",
+    "@hile/rsc-development": "^0.1.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-server-dom-webpack": "19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "fix-esm-import-path": "^1.10.3",
+    "typescript": "^5.9.3"
+  }
+}

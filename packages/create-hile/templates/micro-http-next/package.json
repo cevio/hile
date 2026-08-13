@@ -14,6 +14,7 @@
   },
   "license": "MIT",
   "devDependencies": {
+    "@types/node": "^26.2.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "fix-esm-import-path": "^1.10.3"
