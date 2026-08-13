@@ -1,7 +1,7 @@
 {
   "name": "@hile/http",
   "description": "Hile http - HTTP service framework",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
@@ -19,8 +19,8 @@
     "access": "public"
   },
   "devDependencies": {
-    "@types/node": "^26.2.0",
     "@types/koa": "^3.0.1",
+    "@types/node": "^26.2.0",
     "fix-esm-import-path": "^1.10.3",
     "vitest": "^4.0.18"
   },

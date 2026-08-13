@@ -1,23 +1,36 @@
 {
   "name": "@hile/rsc-build",
   "description": "Production compiler and artifact CLI for Hile RSC plugins",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": { "hile-rsc": "./dist/bin.js" },
+  "bin": {
+    "hile-rsc": "./dist/bin.js"
+  },
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-    "./cli": { "types": "./dist/cli-index.d.ts", "import": "./dist/cli-index.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./cli": {
+      "types": "./dist/cli-index.d.ts",
+      "import": "./dist/cli-index.js"
+    }
   },
   "scripts": {
     "build": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
     "dev": "tsc -b --watch",
     "test": "vitest run"
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "license": "MIT",
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@hile/rsc": "workspace:^",
     "esbuild": "^0.28.2",

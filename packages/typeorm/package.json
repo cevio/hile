@@ -1,6 +1,6 @@
 {
   "name": "@hile/typeorm",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "description": "TypeORM DataSource as Hile service with transaction helper",
   "type": "module",
   "main": "./dist/index.js",

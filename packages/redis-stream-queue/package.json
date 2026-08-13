@@ -1,6 +1,6 @@
 {
   "name": "@hile/redis-stream-queue",
-  "version": "3.0.4",
+  "version": "4.0.0",
   "description": "Redis Streams backed durable job queue primitives for Hile applications",
   "type": "module",
   "main": "./dist/index.js",

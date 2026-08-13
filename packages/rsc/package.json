@@ -1,7 +1,7 @@
 {
   "name": "@hile/rsc",
   "description": "Core protocol and runtime for dynamically loaded React Server Component plugins",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -87,8 +87,8 @@
     "access": "public"
   },
   "devDependencies": {
-    "@types/node": "^26.2.0",
     "@hile/micro": "workspace:^",
+    "@types/node": "^26.2.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "fix-esm-import-path": "^1.10.3",

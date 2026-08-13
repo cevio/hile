@@ -1,6 +1,6 @@
 {
   "name": "@hile/bootstrap",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "description": "Hile service bootstrap - env loading, service discovery, and exit hooks",
   "type": "module",
   "main": "./dist/index.js",
@@ -22,8 +22,8 @@
     "node": ">=20.12.0"
   },
   "devDependencies": {
-    "@types/node": "^26.2.0",
     "@types/async-exit-hook": "^2.0.2",
+    "@types/node": "^26.2.0",
     "fix-esm-import-path": "^1.10.3",
     "vitest": "^4.0.18"
   },
