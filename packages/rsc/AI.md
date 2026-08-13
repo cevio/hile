@@ -158,14 +158,14 @@ export function PluginPage({ rsc }: RscRouteProps) {
 Plugin build/runtime (does not install Next):
 
 ```bash
-pnpm add @hile/rsc @hile/rsc-discovery-hile @hile/model react@19.2.8 react-dom@19.2.8 react-server-dom-webpack@19.2.8
+pnpm add @hile/cli @hile/core @hile/micro @hile/model @hile/rsc @hile/rsc-discovery-hile react@19.2.8 react-dom@19.2.8 react-server-dom-webpack@19.2.8
 pnpm add -D @hile/rsc-build @hile/rsc-development
 ```
 
 Host-only Next adapter:
 
 ```bash
-pnpm add @hile/rsc @hile/rsc-discovery-hile @hile/rsc-next next@16.3.0 react@19.2.8 react-dom@19.2.8
+pnpm add @hile/cli @hile/core @hile/http-next @hile/micro @hile/rsc @hile/rsc-discovery-hile @hile/rsc-next next@16.3.0 react@19.2.8 react-dom@19.2.8
 pnpm add -D @hile/rsc-development
 ```
 
@@ -910,6 +910,14 @@ For Ant Design or another CSS-in-JS library:
 
 The validated Ant Design Host setup installs `antd@6.6.0` and `@ant-design/nextjs-registry@1.3.0`, then composes:
 
+```bash
+# in rsc-host
+pnpm add antd@6.6.0 @ant-design/nextjs-registry@1.3.0
+
+# in rsc-plugin
+pnpm add antd@6.6.0
+```
+
 ```tsx
 import { AntdRegistry } from '@ant-design/nextjs-registry'
 import HostShell from './host-shell'
@@ -927,16 +935,65 @@ export default function Layout({ children }: { children: React.ReactNode }) {
 }
 ```
 
-`HostShell` may be a Host Client Component containing `ConfigProvider`, `App`, navigation, and layout state. A plugin using Ant Design places its own `ConfigProvider`/`App` inside its remote Client Boundary; that provider does not replace or escape the Host collector. Re-run compatibility tests when changing Ant Design or its Next registry version.
+The Host shell owns navigation and application-wide theme state:
 
-The executable Ant Design reference is `packages/test-rsc-plugin-capabilities-v2`; the outer shell reference is `packages/test-rsc-host/src/app/layout.tsx` and `host-shell.tsx`.
+```tsx
+'use client'
+
+import { App, ConfigProvider, Layout } from 'antd'
+
+export default function HostShell({ children }: { children: React.ReactNode }) {
+  return (
+    <ConfigProvider theme={{ token: { colorPrimary: '#1677ff' } }}>
+      <App>
+        <Layout>
+          <Layout.Header>Host navigation</Layout.Header>
+          <Layout.Content>{children}</Layout.Content>
+        </Layout>
+      </App>
+    </ConfigProvider>
+  )
+}
+```
+
+The plugin owns a separate provider inside its remote Client Boundary. This module is compiled as part of the plugin browser/SSR graph and must not wrap `<html>` or replace the Host collector:
+
+```tsx
+'use client'
+
+import { App, Button, Card, ConfigProvider, Space } from 'antd'
+import type { ThemeConfig } from 'antd'
+import type { RscRouteIdentity } from '@hile/rsc/plugin'
+
+const pluginTheme: ThemeConfig = {
+  token: { colorPrimary: '#722ed1', borderRadius: 10 },
+}
+
+export default function PluginPanel({ rsc }: { rsc: RscRouteIdentity }) {
+  return (
+    <ConfigProvider theme={pluginTheme}>
+      <App>
+        <Card title="Independent plugin">
+          <Space>
+            <Button type="primary">Hydrated by {rsc.buildId}</Button>
+          </Space>
+        </Card>
+      </App>
+    </ConfigProvider>
+  )
+}
+```
+
+For a larger plugin, move the `ThemeConfig` into a plugin-owned module while keeping the provider at this boundary. Re-run raw-HTML, hydration, and compatibility tests whenever Ant Design or its Next registry version changes.
+
+Repository maintainers can compare the larger executable examples in `packages/test-rsc-plugin-capabilities-v2` and `packages/test-rsc-host`. Published-doc readers do not need those private demo paths to implement the provider structure above.
 
 ## 9. Production Build And Startup
 
 Start Registry in its own process:
 
 ```bash
-pnpm exec hile registry --host 127.0.0.1 --port 9876 --pretty
+cd rsc-host && pnpm exec hile registry --host 127.0.0.1 --port 9876 --pretty
 ```
 
 Readiness is the `registry started on port 9876` log plus a successful plugin/Host Registry connection; merely having a process with that PID is not readiness. In production, supervise Registry separately and bind it to the intended private interface.
@@ -1033,7 +1090,9 @@ curl --fail http://127.0.0.1:3000/plugins/org.example.rsc-plugin/page
 
 The response must contain the plugin's server-rendered heading. In a browser, open the same URL, increment local client state, submit the Server Function form added in sections 3–4, and confirm the Model result appears without a page error. Inspect Network to confirm plugin JS/CSS and the Server Function POST use `127.0.0.1:3000`; no browser request may target the plugin Micro port. Stop the plugin and wait past the configured missing-announcement grace to verify automatic removal, then restart it to verify automatic reinstallation. Edit a Server Component in the four-terminal development topology and verify a new immutable build ID appears only after a successful rebuild; introduce and repair a syntax error to verify last-good behavior.
 
-The repository's exhaustive architecture acceptance suite adds negative, boundary, upgrade, and isolation coverage:
+For a generated external project, record the browser's successful Server Function request and use “Copy as cURL” to repeat it with a wrong Origin, missing/incorrect CSRF token, stale build ID, unknown reference ID, oversized body, and an aborted connection. Every altered request must fail without invoking the Model. For upgrade coverage, build a new immutable `buildId`, start it at higher priority, verify new requests select it while an already-started slow request finishes on the old build, then remove the old announcement. For isolation coverage, generate a second plugin with a distinct `pluginId`, namespace, and Micro port, and verify neither plugin's assets or Server Function references resolve under the other identity.
+
+The following exhaustive architecture acceptance suite is available only to maintainers working in the Hile monorepo; it is not a command for scaffolded sibling projects:
 
 ```bash
 pnpm --filter test-rsc-demo-suite test:contracts
@@ -1041,7 +1100,7 @@ pnpm --filter test-rsc-demo-suite test:e2e
 pnpm --filter test-rsc-demo-suite test:e2e:dev
 ```
 
-Interactive reference:
+Monorepo-only interactive reference:
 
 ```bash
 pnpm --filter test-rsc-demo-suite dev

@@ -129,14 +129,14 @@ export function PluginPage({ rsc }: RscRouteProps) {
 Plugin build/runtime (does not install Next):
 
 ```bash
-pnpm add @hile/rsc @hile/rsc-discovery-hile @hile/model react@19.2.8 react-dom@19.2.8 react-server-dom-webpack@19.2.8
+pnpm add @hile/cli @hile/core @hile/micro @hile/model @hile/rsc @hile/rsc-discovery-hile react@19.2.8 react-dom@19.2.8 react-server-dom-webpack@19.2.8
 pnpm add -D @hile/rsc-build @hile/rsc-development
 ```
 
 Host-only Next adapter:
 
 ```bash
-pnpm add @hile/rsc @hile/rsc-discovery-hile @hile/rsc-next next@16.3.0 react@19.2.8 react-dom@19.2.8
+pnpm add @hile/cli @hile/core @hile/http-next @hile/micro @hile/rsc @hile/rsc-discovery-hile @hile/rsc-next next@16.3.0 react@19.2.8 react-dom@19.2.8
 pnpm add -D @hile/rsc-development
 ```
 

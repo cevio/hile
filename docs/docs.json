@@ -36,6 +36,12 @@
             ]
           },
           {
+            "group": "RSC 插件平台",
+            "pages": [
+              "techniques/rsc-plugins"
+            ]
+          },
+          {
             "group": "实用技巧",
             "pages": [
               "techniques/configuration",
@@ -76,6 +82,12 @@
             "pages": [
               "packages/http",
               "packages/http-next"
+            ]
+          },
+          {
+            "group": "RSC 插件",
+            "pages": [
+              "packages/rsc"
             ]
           },
           {

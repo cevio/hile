@@ -232,6 +232,29 @@ const docPackagePages = {
   'packages/typeorm.mdx': '@hile/typeorm',
 }
 
+const mintlifySourceRoutes = new Map([
+  ['packages/core-lifecycle.md', { route: '/packages/core', label: 'Core lifecycle' }],
+  ['packages/create-hile.md', { route: '/packages/create-hile', label: 'create-hile' }],
+  ['packages/http.md', { route: '/packages/http', label: 'HTTP API' }],
+  ['packages/http-next.md', { route: '/packages/http-next', label: 'HttpNext' }],
+  ['packages/rsc.md', { route: '/packages/rsc', label: 'RSC packages' }],
+  ['packages/model-context.md', { route: '/packages/model', label: 'Model and context' }],
+  ['packages/infrastructure.md', { route: '/architecture', label: 'Infrastructure architecture' }],
+  ['packages/messaging-micro.md', { route: '/packages/micro', label: 'Messaging and Micro' }],
+  ['packages/reloader.md', { route: '/packages/reloader', label: 'Reloader' }],
+  ['packages/reactivity.md', { route: '/packages/reactivity', label: 'Reactivity' }],
+  ['packages/redis-reliability.md', { route: '/techniques/idempotency', label: 'Redis reliability' }],
+  ['recipes/new-project-scaffold.md', { route: '/quickstart', label: 'Project scaffold' }],
+  ['recipes/http-api-model-typeorm.md', { route: '/techniques/database', label: 'HTTP, Model, and TypeORM' }],
+  ['recipes/http-next-fullstack.md', { route: '/fundamentals/http-next-pipeline', label: 'HttpNext fullstack' }],
+  ['recipes/rsc-plugin-host.md', { route: '/techniques/rsc-plugins', label: 'Complete RSC plugin guide' }],
+  ['recipes/redis-cache-singleflight.md', { route: '/techniques/caching', label: 'Redis cache' }],
+  ['recipes/queue-worker-idempotency.md', { route: '/techniques/idempotency', label: 'Queue idempotency' }],
+  ['recipes/micro-rpc-message-loader.md', { route: '/techniques/messaging', label: 'Micro RPC' }],
+  ['recipes/runtime-config.md', { route: '/techniques/configuration', label: 'Runtime config' }],
+  ['recipes/stable-runtime-reload.md', { route: '/packages/reloader', label: 'Stable runtime reload' }],
+])
+
 const topicPages = {
   'introduction.mdx': {
     title: 'Introduction',
@@ -415,6 +438,19 @@ const topicPages = {
       section(ai('packages/messaging-micro.md'), '## Anti-Patterns'),
     ].join('\n'),
   },
+  'techniques/rsc-plugins.mdx': {
+    title: 'RSC Plugin Platform',
+    description: 'Build independently deployed RSC plugin microservices behind one public Next.js Host.',
+    body: () => [
+      '# RSC Plugin Platform',
+      '',
+      'Use this guide to scaffold, customize, run, secure, and verify independently compiled React Server Component plugins behind one public `HttpNext` listener.',
+      '',
+      '> API and package boundaries: [`@hile/rsc`](/packages/rsc).',
+      '',
+      markdownBody(ai('recipes/rsc-plugin-host.md')),
+    ].join('\n'),
+  },
   'cli/overview.mdx': {
     title: 'CLI',
     description: 'How hile start loads env files, auto-loaded packages, and boot services.',
@@ -538,6 +574,7 @@ function main() {
   syncPackageFiles()
   writeRootReadme()
   writeDocs()
+  validateMintlifyNavigation()
   writeTemplateReadmes()
   removeOldEvalArtifacts()
   console.log('AI context generated.')
@@ -563,6 +600,33 @@ function validateAiSource() {
       assertExists(path.join(aiDir, rel), `${name} references missing AI source ${rel}`)
     }
   }
+
+  const rscRecipe = ai('recipes/rsc-plugin-host.md')
+  const requiredRscSections = [
+    '## Target Topology',
+    '## 5. Start The Plugin Microservice',
+    '## 6. Compose The Single Public Host',
+    '## 10. Development Mode',
+    '## Troubleshooting',
+    '## Completion Checklist For AI Agents',
+  ]
+  const missingRscSections = requiredRscSections.filter((heading) => !rscRecipe.includes(heading))
+  if (missingRscSections.length) {
+    throw new Error(`RSC Mintlify guide source is incomplete: ${missingRscSections.join(', ')}`)
+  }
+}
+
+function validateMintlifyNavigation() {
+  const config = JSON.parse(readFileSync(path.join(root, 'docs/docs.json'), 'utf8'))
+  const pages = new Set(
+    config.navigation.tabs.flatMap((tab) => tab.groups.flatMap((group) => group.pages)),
+  )
+  const generatedPages = [
+    ...Object.keys(topicPages),
+    ...Object.keys(docPackagePages),
+  ].map((rel) => rel.replace(/\.mdx$/, ''))
+  const missing = generatedPages.filter((page) => !pages.has(page))
+  if (missing.length) throw new Error(`Generated Mintlify pages missing from navigation: ${missing.join(', ')}`)
 }
 
 function syncReferences() {
@@ -858,6 +922,7 @@ function writeDocs() {
 }
 
 function packageMdxBody(packageName, config) {
+  if (packageName === '@hile/rsc') return rscPackageMdxBody(config)
   const primary = ai(config.cards[0])
   const rows = selectPackageMapRows(packageName)
   return [
@@ -896,6 +961,53 @@ function packageMdxBody(packageName, config) {
     '## Package-Local AI Guide',
     '',
     `This package also ships \`AI.md\` in npm so agents can read accurate examples after installation.`,
+  ].join('\n')
+}
+
+function rscPackageMdxBody(config) {
+  const primary = ai(config.cards[0])
+  return [
+    '# @hile/rsc',
+    '',
+    config.purpose,
+    '',
+    '> Start with the [complete RSC plugin platform guide](/techniques/rsc-plugins) when creating a Host or plugin project.',
+    '',
+    section(primary, '## Package Selection'),
+    '',
+    section(primary, '## Use When'),
+    '',
+    section(primary, '## Do Not Use When'),
+    '',
+    section(primary, '## Install'),
+    '',
+    section(primary, '## Imports'),
+    '',
+    '## Composition Skeleton',
+    '',
+    '> This excerpt shows ownership and lifecycle order. Its named values come from the generated `rsc-plugin` composition root; use the complete tutorial for a runnable project.',
+    '',
+    sectionBody(primary, '## Copy-Paste Example'),
+    '',
+    section(primary, '## More Examples'),
+    '',
+    section(primary, '## Incremental development'),
+    '',
+    section(primary, '## Server Functions'),
+    '',
+    section(primary, '## Directive And Styling Contract'),
+    '',
+    section(primary, '## Compose With'),
+    '',
+    section(primary, '## Runtime And Lifecycle Notes'),
+    '',
+    section(primary, '## Anti-Patterns'),
+    '',
+    section(primary, '## Verification Checklist'),
+    '',
+    '## Complete Tutorial',
+    '',
+    'Continue with the [single-Host RSC plugin end-to-end guide](/techniques/rsc-plugins) for the project tree, Registry, Host boot, plugin boot, Server Functions, CSS-in-JS, production, development, security, and troubleshooting.',
   ].join('\n')
 }
 
@@ -960,9 +1072,29 @@ function writeMdx(rel, title, description, body) {
     '',
     generatedMdx,
     '',
-    body,
+    mintlifyLinks(body),
   ].join('\n')
   write(path.join('docs', rel), content)
+}
+
+function markdownBody(markdown) {
+  const lines = markdown.split('\n')
+  const firstHeading = lines.findIndex((line) => line.startsWith('# '))
+  return (firstHeading === -1 ? lines : lines.slice(firstHeading + 1)).join('\n').trim()
+}
+
+function mintlifyLinks(markdown) {
+  let output = markdown
+  for (const [source, { route, label }] of mintlifySourceRoutes) {
+    output = output
+      .replaceAll(`\`docs/ai/${source}\``, `[${label}](${route})`)
+      .replaceAll(`\`${source}\``, `[${label}](${route})`)
+  }
+  const staleReference = output.match(/`(?:docs\/ai\/)?(?:packages|recipes)\/[^`\n]+\.md`/)
+  if (staleReference) {
+    throw new Error(`Mintlify content contains an unmapped AI source path: ${staleReference[0]}`)
+  }
+  return output
 }
 
 function mdxFromCard(title, rel, headings) {
@@ -987,14 +1119,14 @@ function relatedRecipes(recipes) {
 
 function bulletRecipeList() {
   return [
-    '- HTTP API + model + TypeORM: `docs/ai/recipes/http-api-model-typeorm.md`',
-    '- HttpNext fullstack app: `docs/ai/recipes/http-next-fullstack.md`',
-    '- Single-endpoint RSC plugin platform: `docs/ai/recipes/rsc-plugin-host.md`',
-    '- Redis cache with singleflight: `docs/ai/recipes/redis-cache-singleflight.md`',
-    '- Queue worker with idempotency: `docs/ai/recipes/queue-worker-idempotency.md`',
-    '- Micro RPC with message loader: `docs/ai/recipes/micro-rpc-message-loader.md`',
-    '- Runtime dynamic config: `docs/ai/recipes/runtime-config.md`',
-    '- New scaffolded project: `docs/ai/recipes/new-project-scaffold.md`',
+    '- [HTTP API + model + TypeORM](/techniques/database)',
+    '- [HttpNext fullstack app](/fundamentals/http-next-pipeline)',
+    '- [Single-listener RSC plugin platform](/techniques/rsc-plugins)',
+    '- [Redis cache with singleflight](/techniques/caching)',
+    '- [Queue worker with idempotency](/techniques/idempotency)',
+    '- [Micro RPC with message loader](/techniques/messaging)',
+    '- [Runtime dynamic config](/techniques/configuration)',
+    '- [New scaffolded project](/quickstart)',
   ].join('\n')
 }
 

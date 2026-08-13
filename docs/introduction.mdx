@@ -23,32 +23,32 @@ The docs in this repository are generated from the same AI context that powers `
 
 | User asks for | Use | Also read |
 |---|---|---|
-| Start an app, manage lifecycle, graceful shutdown | `@hile/core`, `@hile/cli`, `@hile/bootstrap` | `packages/core-lifecycle.md` |
-| Create an HTTP endpoint or Koa middleware | `@hile/http` | `packages/http.md`, `recipes/http-api-model-typeorm.md` |
-| Run Next.js and API controllers on one port | `@hile/http-next` | `packages/http-next.md`, `recipes/http-next-fullstack.md` |
-| Run independently built RSC plugins through one Host | `@hile/rsc` | `packages/rsc.md`, `recipes/rsc-plugin-host.md` |
-| Compile immutable production RSC plugin artifacts | `@hile/rsc-build` | `packages/rsc.md` |
-| Add incremental RSC development and hot reload | `@hile/rsc-development` | `packages/rsc.md` |
-| Decode plugin Flight inside a Next Host | `@hile/rsc-next` | `packages/rsc.md`, `recipes/rsc-plugin-host.md` |
-| Put business logic somewhere reusable | `@hile/model` | `packages/model-context.md` |
-| Propagate request id, tenant id, logger bindings, or micro context | `@hile/context` | `packages/model-context.md` |
-| Connect to SQL through TypeORM | `@hile/typeorm` | `packages/core-lifecycle.md`, `packages/infrastructure.md` |
-| Connect to Redis | `@hile/ioredis` | `packages/core-lifecycle.md`, `packages/infrastructure.md` |
-| Create structured logs | `@hile/logger` | `packages/core-lifecycle.md`, `packages/infrastructure.md` |
-| Add read-through Redis cache | `@hile/cache` | `packages/infrastructure.md`, `recipes/redis-cache-singleflight.md` |
-| Run cron or delayed jobs | `@hile/schedule` | `packages/infrastructure.md` |
-| Build a custom file loader or understand route mapping | `@hile/loader` | `packages/infrastructure.md` |
-| Add request/response messaging over WS/IPC/worker | `@hile/message-*` | `packages/messaging-micro.md` |
-| Load file-based message handlers | `@hile/message-loader` | `packages/messaging-micro.md`, `recipes/micro-rpc-message-loader.md` |
-| Build service discovery or RPC | `@hile/micro` | `packages/messaging-micro.md`, `recipes/micro-rpc-message-loader.md` |
-| Push runtime config without restarts | `@hile/micro-dynamic-configs` | `packages/messaging-micro.md`, `recipes/runtime-config.md` |
-| Stabilize config-driven runtime reloads | `@hile/reloader` | `packages/reloader.md`, `recipes/stable-runtime-reload.md` |
-| Compose topics, config, and reloader state as refs | `@hile/reactivity` | `packages/reactivity.md`, `recipes/stable-runtime-reload.md` |
-| Protect a critical section with a lease | `@hile/redis-lock` | `packages/redis-reliability.md` |
-| Stop duplicate retry side effects | `@hile/redis-idempotency` | `packages/redis-reliability.md`, `recipes/queue-worker-idempotency.md` |
-| Enforce shared quotas or 429s | `@hile/redis-rate-limit` | `packages/redis-reliability.md` |
-| Persist and retry background jobs | `@hile/redis-stream-queue` | `packages/redis-reliability.md`, `recipes/queue-worker-idempotency.md` |
-| Scaffold a new project | `create-hile` | `packages/create-hile.md`, `recipes/new-project-scaffold.md` |
+| Start an app, manage lifecycle, graceful shutdown | `@hile/core`, `@hile/cli`, `@hile/bootstrap` | [Core lifecycle](/packages/core) |
+| Create an HTTP endpoint or Koa middleware | `@hile/http` | [HTTP API](/packages/http), [HTTP, Model, and TypeORM](/techniques/database) |
+| Run Next.js and API controllers on one port | `@hile/http-next` | [HttpNext](/packages/http-next), [HttpNext fullstack](/fundamentals/http-next-pipeline) |
+| Run independently built RSC plugins through one Host | `@hile/rsc` | [RSC packages](/packages/rsc), [Complete RSC plugin guide](/techniques/rsc-plugins) |
+| Compile immutable production RSC plugin artifacts | `@hile/rsc-build` | [RSC packages](/packages/rsc) |
+| Add incremental RSC development and hot reload | `@hile/rsc-development` | [RSC packages](/packages/rsc) |
+| Decode plugin Flight inside a Next Host | `@hile/rsc-next` | [RSC packages](/packages/rsc), [Complete RSC plugin guide](/techniques/rsc-plugins) |
+| Put business logic somewhere reusable | `@hile/model` | [Model and context](/packages/model) |
+| Propagate request id, tenant id, logger bindings, or micro context | `@hile/context` | [Model and context](/packages/model) |
+| Connect to SQL through TypeORM | `@hile/typeorm` | [Core lifecycle](/packages/core), [Infrastructure architecture](/architecture) |
+| Connect to Redis | `@hile/ioredis` | [Core lifecycle](/packages/core), [Infrastructure architecture](/architecture) |
+| Create structured logs | `@hile/logger` | [Core lifecycle](/packages/core), [Infrastructure architecture](/architecture) |
+| Add read-through Redis cache | `@hile/cache` | [Infrastructure architecture](/architecture), [Redis cache](/techniques/caching) |
+| Run cron or delayed jobs | `@hile/schedule` | [Infrastructure architecture](/architecture) |
+| Build a custom file loader or understand route mapping | `@hile/loader` | [Infrastructure architecture](/architecture) |
+| Add request/response messaging over WS/IPC/worker | `@hile/message-*` | [Messaging and Micro](/packages/micro) |
+| Load file-based message handlers | `@hile/message-loader` | [Messaging and Micro](/packages/micro), [Micro RPC](/techniques/messaging) |
+| Build service discovery or RPC | `@hile/micro` | [Messaging and Micro](/packages/micro), [Micro RPC](/techniques/messaging) |
+| Push runtime config without restarts | `@hile/micro-dynamic-configs` | [Messaging and Micro](/packages/micro), [Runtime config](/techniques/configuration) |
+| Stabilize config-driven runtime reloads | `@hile/reloader` | [Reloader](/packages/reloader), [Stable runtime reload](/packages/reloader) |
+| Compose topics, config, and reloader state as refs | `@hile/reactivity` | [Reactivity](/packages/reactivity), [Stable runtime reload](/packages/reloader) |
+| Protect a critical section with a lease | `@hile/redis-lock` | [Redis reliability](/techniques/idempotency) |
+| Stop duplicate retry side effects | `@hile/redis-idempotency` | [Redis reliability](/techniques/idempotency), [Queue idempotency](/techniques/idempotency) |
+| Enforce shared quotas or 429s | `@hile/redis-rate-limit` | [Redis reliability](/techniques/idempotency) |
+| Persist and retry background jobs | `@hile/redis-stream-queue` | [Redis reliability](/techniques/idempotency), [Queue idempotency](/techniques/idempotency) |
+| Scaffold a new project | `create-hile` | [create-hile](/packages/create-hile), [Project scaffold](/quickstart) |
 
 ## Common Selection Rules
 
@@ -65,11 +65,11 @@ The docs in this repository are generated from the same AI context that powers `
 
 For implementation tasks, pick the package from the matrix and copy the closest recipe before writing custom abstractions.
 
-- HTTP API + model + TypeORM: `docs/ai/recipes/http-api-model-typeorm.md`
-- HttpNext fullstack app: `docs/ai/recipes/http-next-fullstack.md`
-- Single-endpoint RSC plugin platform: `docs/ai/recipes/rsc-plugin-host.md`
-- Redis cache with singleflight: `docs/ai/recipes/redis-cache-singleflight.md`
-- Queue worker with idempotency: `docs/ai/recipes/queue-worker-idempotency.md`
-- Micro RPC with message loader: `docs/ai/recipes/micro-rpc-message-loader.md`
-- Runtime dynamic config: `docs/ai/recipes/runtime-config.md`
-- New scaffolded project: `docs/ai/recipes/new-project-scaffold.md`
+- [HTTP API + model + TypeORM](/techniques/database)
+- [HttpNext fullstack app](/fundamentals/http-next-pipeline)
+- [Single-listener RSC plugin platform](/techniques/rsc-plugins)
+- [Redis cache with singleflight](/techniques/caching)
+- [Queue worker with idempotency](/techniques/idempotency)
+- [Micro RPC with message loader](/techniques/messaging)
+- [Runtime dynamic config](/techniques/configuration)
+- [New scaffolded project](/quickstart)
