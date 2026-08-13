@@ -1,8 +1,7 @@
 import type { Application } from '@hile/micro';
 import type { InMemoryRscDeploymentCatalog } from '@hile/rsc/host/catalog';
 import type { RscPluginLocator } from '@hile/rsc/transport';
-import type { DemoDeploymentController } from './demo-deployment-controller';
-import type { DemoDeploymentDefinition } from './demo-inventory';
+import type { HileRscDiscoveryHost } from '@hile/rsc-discovery-hile';
 
 export const DEMO_HOST_SERVICE_KEY = 'test.rsc.host.runtime';
 const compositionKey = Symbol.for('test-rsc-host/composition');
@@ -10,10 +9,9 @@ const compositionKey = Symbol.for('test-rsc-host/composition');
 export interface DemoHostComposition {
   application: Application;
   deployments: InMemoryRscDeploymentCatalog;
-  lifecycle: DemoDeploymentController;
+  discovery: HileRscDiscoveryHost;
   locator: RscPluginLocator;
   assetMountPath: string;
-  inventory: readonly DemoDeploymentDefinition[];
 }
 
 function globalStore(): Record<PropertyKey, unknown> {

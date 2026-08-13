@@ -23,6 +23,7 @@ function manifest(): RscPluginManifest {
       entry: 'server-rsc/index.js',
       integrity: 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
     },
+    serverFunctions: [],
     clients: [],
     styles: [],
     routes: [{ path: '/fixture', entry: 'default' }],
@@ -47,9 +48,15 @@ describe('RSC architecture composition', () => {
       describe: 'contract.describe',
       render: 'contract.render',
       action: 'contract.action',
+      serverFunction: 'contract.server-function',
     });
 
-    expect([...handlers.keys()]).toEqual(['contract.describe', 'contract.render', 'contract.action']);
+    expect([...handlers.keys()]).toEqual([
+      'contract.describe',
+      'contract.render',
+      'contract.action',
+      'contract.server-function',
+    ]);
     expect(await handlers.get('contract.describe')!({ data: null })).toMatchObject({ buildId: 'build-a' });
     const stream = handlers.get('contract.render')!({
       data: { buildId: 'build-a', path: '/fixture' },
@@ -78,6 +85,7 @@ describe('RSC architecture composition', () => {
 
     expect(() => attachRscPluginService(service, registrar, {
       describe: 'contract.describe', render: 'contract.render', action: 'contract.action',
+      serverFunction: 'contract.server-function',
     })).toThrow('operation conflict');
     expect(handlers.size).toBe(0);
   });
@@ -96,6 +104,7 @@ describe('RSC architecture composition', () => {
     const service = new RscPluginService({ manifest: manifest(), renderer: async function* () {} });
     const detach = attachRscPluginService(service, registrar, {
       describe: 'contract.describe', render: 'contract.render', action: 'contract.action',
+      serverFunction: 'contract.server-function',
     });
 
     expect(detach).toThrow('unregister');
@@ -130,6 +139,7 @@ describe('RSC architecture composition', () => {
       describe: 'manifest.read',
       render: 'tree.render',
       action: 'function.invoke',
+      serverFunction: 'server-function.invoke',
     });
     const signal = new AbortController().signal;
 
@@ -138,6 +148,10 @@ describe('RSC architecture composition', () => {
       .resolves.toBeInstanceOf(Readable);
     await expect(client.action({ buildId: 'build-a', actionId: 'fixture', input: {} }, { signal }))
       .resolves.toEqual({ accepted: true });
+    await expect(client.serverFunction({
+      buildId: 'build-a', referenceId: 'org.hile.fixture/build-a/src/actions#run',
+      args: { type: 'array', value: [] },
+    }, { signal })).resolves.toEqual({ accepted: true });
 
     expect(application.call).toHaveBeenNthCalledWith(
       1, 'plugin.runtime', 'manifest.read', {}, { signal },
@@ -150,6 +164,16 @@ describe('RSC architecture composition', () => {
       'plugin.runtime',
       'function.invoke',
       { buildId: 'build-a', actionId: 'fixture', input: {} },
+      { signal },
+    );
+    expect(application.call).toHaveBeenNthCalledWith(
+      3,
+      'plugin.runtime',
+      'server-function.invoke',
+      {
+        buildId: 'build-a', referenceId: 'org.hile.fixture/build-a/src/actions#run',
+        args: { type: 'array', value: [] },
+      },
       { signal },
     );
   });

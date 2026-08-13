@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
+import { AntdRegistry } from '@ant-design/nextjs-registry';
 import { RscDevelopmentReload } from '@hile/rsc-development/client';
 import type { ReactNode } from 'react';
+import HostShell from './host-shell';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -10,17 +12,14 @@ export const metadata: Metadata = {
 
 export default function Layout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="zh-CN">
       <body>
-        {process.env.NODE_ENV === 'development' ? <RscDevelopmentReload /> : null}
-        <div className="host-shell">
-          <nav className="host-nav">
-            <a href="/">Overview</a>
-            <a href="/plugins/demo.rsc.capabilities?label=from-host&count=3">Capabilities plugin</a>
-            <a href="/plugins/demo.rsc.isolation?marker=separate-state">Isolation plugin</a>
-          </nav>
-          {children}
-        </div>
+        <AntdRegistry>
+          <HostShell>
+            {process.env.NODE_ENV === 'development' ? <RscDevelopmentReload /> : null}
+            {children}
+          </HostShell>
+        </AntdRegistry>
       </body>
     </html>
   );

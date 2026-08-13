@@ -6,10 +6,11 @@ describe('mountRscHostAdapters', () => {
     const host = { use: vi.fn(function (this: unknown) { return this; }) };
     const asset = vi.fn();
     const action = vi.fn();
+    const serverFunction = vi.fn();
     const custom = vi.fn();
 
-    expect(mountRscHostAdapters(host, { asset, action, middleware: [custom] })).toBe(host);
-    expect(host.use.mock.calls.map(([middleware]) => middleware)).toEqual([asset, action, custom]);
+    expect(mountRscHostAdapters(host, { asset, action, serverFunction, middleware: [custom] })).toBe(host);
+    expect(host.use.mock.calls.map(([middleware]) => middleware)).toEqual([asset, action, serverFunction, custom]);
   });
 
   it('supports partial composition without manufacturing hidden middleware', () => {

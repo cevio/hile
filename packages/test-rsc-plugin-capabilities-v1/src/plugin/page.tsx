@@ -13,9 +13,10 @@ export async function CapabilitiesPage({ searchParams, rsc }: PluginProps) {
   const count = Number(first(searchParams.count, '2'));
   return (
     <article className="capability-shell" data-testid="plugin-capabilities" data-build="v1">
-      <p>Remote React Server Component</p>
+      <p className="capability-kicker">REMOTE REACT SERVER COMPONENT · BASELINE BUILD</p>
       <h1>Capabilities plugin · build v1</h1>
-      <p data-testid="server-query">Server received label: {queryLabel}</p>
+      <p>This server-rendered frame carries request data into a nested Ant Design client workspace.</p>
+      <p data-testid="server-query"><strong>Server received label:</strong> {queryLabel}</p>
       <CapabilityPanel
         rsc={rsc}
         initialCount={Number.isSafeInteger(count) ? count : 2}

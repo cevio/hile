@@ -50,6 +50,10 @@
       "types": "./dist/host/runtime.d.ts",
       "import": "./dist/host/runtime.js"
     },
+    "./host/server-functions": {
+      "types": "./dist/host/server-functions.d.ts",
+      "import": "./dist/host/server-functions.js"
+    },
     "./client": {
       "types": "./dist/client/index.d.ts",
       "import": "./dist/client/index.js"
@@ -61,6 +65,10 @@
     "./artifact": {
       "types": "./dist/artifact/index.d.ts",
       "import": "./dist/artifact/index.js"
+    },
+    "./server-functions": {
+      "types": "./dist/server-functions/index.d.ts",
+      "import": "./dist/server-functions/index.js"
     }
   },
   "scripts": {

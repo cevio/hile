@@ -108,6 +108,18 @@ export class InMemoryRscDeploymentCatalog {
     this.activeBuilds.set(target.pluginId, target.buildId);
   }
 
+  public rebind(
+    target: { pluginId: string; buildId: string },
+    namespace: string,
+  ): RscPluginDeployment {
+    if (typeof namespace !== 'string' || namespace.length === 0) {
+      throw new TypeError('RSC deployment namespace must not be empty');
+    }
+    const record = this.required(target);
+    record.deployment = { ...record.deployment, namespace };
+    return cloneDeployment(record.deployment);
+  }
+
   public deactivate(target: { pluginId: string; buildId: string }): void {
     const record = this.required(target);
     record.state = 'inactive';

@@ -23,6 +23,14 @@ function createManifest(): RscPluginManifest {
       entry: 'server-rsc/index.js',
       integrity: 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
     },
+    serverFunctions: [
+      {
+        id: 'com.example.analytics/2026-08-12.1/src/actions#save',
+        module: 'server-functions/src-actions.js',
+        exportName: 'save',
+        integrity: 'sha256-GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG=',
+      },
+    ],
     clients: [
       {
         id: 'counter#default',
@@ -214,6 +222,68 @@ describe('validateRscPluginManifest', () => {
     );
   });
 
+  it('accepts a missing serverFunctions collection as an empty additive capability', () => {
+    const manifest = createManifest() as RscPluginManifest & { serverFunctions?: unknown };
+    delete manifest.serverFunctions;
+
+    expect(validateRscPluginManifest(manifest, hostRuntime).serverFunctions).toEqual([]);
+  });
+
+  it('rejects duplicate server function reference ids', () => {
+    const manifest = createManifest();
+    manifest.serverFunctions.push({ ...manifest.serverFunctions[0] });
+
+    expectProtocolError(
+      () => validateRscPluginManifest(manifest, hostRuntime),
+      'ERR_RSC_DUPLICATE_SERVER_FUNCTION_REFERENCE',
+    );
+  });
+
+  it.each([null, {}, 'serverFunctions'])
+    ('rejects malformed server function collection %j', (serverFunctions) => {
+      const manifest = { ...createManifest(), serverFunctions };
+
+      expectProtocolError(
+        () => validateRscPluginManifest(manifest, hostRuntime),
+        'ERR_RSC_INVALID_MANIFEST',
+      );
+    });
+
+  it.each([
+    '',
+    'actions#save',
+    'com.example.analytics/build/src/actions',
+    'com.example.analytics/../src/actions#save',
+    'com.example.analytics/build/src/actions#not-valid!',
+  ])('rejects invalid server function reference id %j', (id) => {
+    const manifest = createManifest();
+    manifest.serverFunctions[0] = { ...manifest.serverFunctions[0], id };
+
+    expectProtocolError(
+      () => validateRscPluginManifest(manifest, hostRuntime),
+      'ERR_RSC_INVALID_MANIFEST',
+    );
+  });
+
+  it('validates server function artifact path and integrity', () => {
+    const unsafe = createManifest();
+    unsafe.serverFunctions[0] = { ...unsafe.serverFunctions[0], module: '../actions.js' };
+    expectProtocolError(
+      () => validateRscPluginManifest(unsafe, hostRuntime),
+      'ERR_RSC_UNSAFE_ARTIFACT_PATH',
+    );
+
+    const invalidIntegrity = createManifest();
+    invalidIntegrity.serverFunctions[0] = {
+      ...invalidIntegrity.serverFunctions[0],
+      integrity: 'sha256-invalid',
+    };
+    expectProtocolError(
+      () => validateRscPluginManifest(invalidIntegrity, hostRuntime),
+      'ERR_RSC_INVALID_MANIFEST',
+    );
+  });
+
   it.each([null, {}, 'clients'])('rejects malformed clients collection %j', (clients) => {
     const manifest = { ...createManifest(), clients };
 
@@ -295,6 +365,7 @@ describe('validateRscPluginManifest', () => {
   it('validates every artifact path location', () => {
     const mutations: Array<(manifest: RscPluginManifest) => void> = [
       (manifest) => { manifest.server.entry = '../server.js'; },
+      (manifest) => { manifest.serverFunctions[0].module = '../action.js'; },
       (manifest) => { manifest.clients[0].chunks[0].path = '../chunk.js'; },
       (manifest) => { manifest.styles[0].path = '../style.css'; },
     ];

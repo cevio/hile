@@ -5,18 +5,23 @@
 - `@hile/rsc`: stable protocol and runtime mechanisms only.
 - `@hile/rsc-build`: production artifact compiler and CLI; depends on core.
 - `@hile/rsc-development`: optional incremental compiler and reload coordination; depends on core and build.
+- `@hile/rsc-discovery`: transport-neutral discovery selection and lifecycle policy; depends only on discovery contracts.
+- `@hile/rsc-discovery-hile`: Registry and message-stream adapter; depends on discovery and core RSC contracts.
 - `@hile/rsc-next`: optional Next Flight decoder; depends on core.
 
-Core has no dependency on esbuild, TypeScript, filesystem watchers, EventSource development code, or Next. Removing all three optional packages must leave core production behavior unchanged.
+Core has no dependency on esbuild, TypeScript, filesystem watchers, EventSource development code, Registry, Hile transport, or Next. Removing all optional adapter/tooling packages must leave core production behavior unchanged.
 
 ## Invariants
 
 1. Exactly one public HTTP/Next runtime owns HTML, RSC navigation responses, `/_next`, plugin assets, and optional action endpoints.
 2. Plugin runtimes generate official React Flight internally and never create an HTTP listener.
-3. A plugin is compiled and installed independently of the host Next build.
+3. A plugin is compiled independently and its registered microservice is automatically enabled without rebuilding
+   the host Next build.
 4. Every request is pinned to one immutable `{ pluginId, buildId }` until the decoder consumes or closes the Flight stream.
 5. A `'use client'` directive defines a transitive client graph. The graph shares the host React singleton and hydrates from the same host origin.
-6. Production modules contain protocol and infrastructure behavior only. Domain routing, authorization decisions, and product state belong to composition roots or applications.
+6. A module-level `'use server'` directive defines build-scoped Server Functions. The Host authorizes one same-origin endpoint and forwards execution to the exact plugin microservice revision.
+7. Server Functions adapt UI intent to automatically loaded `defineActionModel()` methods; they do not replace or duplicate the model layer.
+8. Production modules contain protocol and infrastructure behavior only. Domain routing, authorization decisions, and product state belong to composition roots or applications.
 
 ## Dependency direction
 
@@ -46,7 +51,7 @@ artifact  transport contracts ← Hile adapter
 
 ```text
 plugin manifest
-  -> RscPluginService(renderer, actions)
+  -> RscPluginService(renderer, serverFunctions) + load(models)
   -> attachRscPluginService(registrar, operationMap)
   -> internal transport
   -> catalog-backed RscPluginLocator lease
@@ -56,6 +61,8 @@ plugin manifest
   -> RemoteClientBoundary
   -> host asset middleware
   -> plugin browser bundle hydration
+  -> Host Server Function gateway
+  -> internal transport -> exact plugin revision -> model registry
 ```
 
 Each arrow is an interface boundary. Applications may replace discovery, transport, catalogs, decoder, URL policy, action authorization, and storage independently.
@@ -82,7 +89,7 @@ Configurable policy:
 
 - internal operation names;
 - service namespace and discovery mechanism;
-- public asset/action mount paths;
+- public asset/action/Server Function mount paths;
 - deployment selection and retention;
 - action origin, CSRF, authentication, and authorization;
 - error-to-route/status mapping;
@@ -99,8 +106,9 @@ plugin source change
   -> persistent esbuild contexts rebuild one plugin
   -> successful immutable revision snapshot
   -> plugin microservice atomically activates renderer
-  -> Host verifies artifacts and waits for matching describe().buildId
-  -> Host activates catalog deployment
+  -> plugin updates its signed Registry announcement
+  -> Host downloads and verifies the new immutable artifact
+  -> Host activates catalog deployment automatically
   -> SSE revision event
   -> browser full-page refresh
 ```

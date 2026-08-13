@@ -12,6 +12,16 @@ describe('inspectModule', () => {
   });
 
   it.each([
+    [`'use server';\nexport async function save() {}`, ['save']],
+    [`"use server"\nexport const save = async () => 1`, ['save']],
+    [`// comment\n'use server';\nexport default async function save() {}`, ['default']],
+  ])('recognizes use server modules and their callable exports', (source, exports) => {
+    const inspection = inspectModule(source, 'actions.ts');
+    expect(inspection.useServer).toBe(true);
+    expect(inspection.exports).toEqual(exports);
+  });
+
+  it.each([
     `const value = 1;\n'use client';\nexport default value`,
     `function useClient() {}\nexport { useClient }`,
     `const text = 'use client';\nexport default text`,
@@ -19,6 +29,49 @@ describe('inspectModule', () => {
     `'use server';\nexport async function action() {}`,
   ])('does not treat non-directives as a client boundary', (source) => {
     expect(inspectModule(source, 'module.tsx').useClient).toBe(false);
+  });
+
+  it('rejects modules that declare both client and server boundaries', () => {
+    expect(() => inspectModule(
+      `'use client';\n'use server';\nexport async function save() {}`,
+      'mixed.ts',
+    )).toThrow('both');
+  });
+
+  it.each([
+    `'use server'; export function save() {}`,
+    `'use server'; export const save = () => 1`,
+    `'use server'; export class Save {}`,
+  ])('requires every use server export to be an async function', (source) => {
+    expect(() => inspectModule(source, 'actions.ts')).toThrow('async function');
+  });
+
+  it('rejects use server re-exports because the local callable cannot be verified', () => {
+    expect(() => inspectModule(
+      `'use server'; export { save } from './implementation'`,
+      'actions.ts',
+    )).toThrow('re-export');
+    expect(() => inspectModule(
+      `'use server'; export * from './implementation'`,
+      'actions.ts',
+    )).toThrow('export *');
+  });
+
+  it('rejects use server modules without callable exports', () => {
+    expect(() => inspectModule(`'use server'; const local = async () => 1`, 'actions.ts'))
+      .toThrow('must export');
+  });
+
+  it('rejects inline use server explicitly instead of silently bundling a closure', () => {
+    expect(() => inspectModule(`
+      export default function Page() {
+        async function save() {
+          'use server';
+          return 1;
+        }
+        return save;
+      }
+    `, 'page.tsx')).toThrow('inline');
   });
 
   it('collects default, named declarations, variable bindings, and export specifiers', () => {

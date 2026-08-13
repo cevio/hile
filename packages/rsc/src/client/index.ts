@@ -4,3 +4,4 @@ export type {
   RemoteClientBoundaryProps,
 } from './remote-client-boundary';
 export * from './runtime-provider';
+export * from './server-reference';

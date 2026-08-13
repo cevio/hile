@@ -1,39 +1,10 @@
-.capability-shell {
-  border: 2px solid #7c3aed;
-  border-radius: 18px;
-  padding: 24px;
-  background: linear-gradient(135deg, #f5f3ff, #ffffff);
-  color: #2e1065;
-}
-
-.capability-panel {
-  display: grid;
-  gap: 12px;
-  margin-top: 18px;
-  padding: 18px;
-  border-radius: 12px;
-  background: #ede9fe;
-}
-
-.capability-counter,
-.capability-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.capability-panel button {
-  border: 0;
-  border-radius: 8px;
-  padding: 9px 13px;
-  background: #6d28d9;
-  color: white;
-  cursor: pointer;
-}
-
-.capability-lazy {
-  padding: 12px;
-  border-left: 4px solid #7c3aed;
-  background: white;
-}
+.capability-shell { overflow: hidden; padding: clamp(24px, 4vw, 44px); border: 1px solid #c4b5fd; background: linear-gradient(145deg, #faf8ff, #f1edff); color: #2e1065; box-shadow: 0 20px 50px rgba(76, 29, 149, .09); }
+.capability-shell h1 { margin-block: 10px; color: #35126b; font-size: clamp(30px, 5vw, 52px); line-height: 1; letter-spacing: -.04em; }
+.capability-kicker { color: #7c3aed; font: 650 11px/1.2 "IBM Plex Mono", monospace; letter-spacing: .14em; }
+.capability-panel { display: grid; gap: 14px; margin-top: 24px; }
+.capability-runtime-line { display: flex; justify-content: space-between; gap: 12px; }
+.capability-control-card { height: 100%; }
+.capability-result { margin: 18px 0 0 !important; }
+.capability-lazy { display: grid; gap: 12px; padding: 14px; border-left: 4px solid #7c3aed; background: white; }
+.capability-visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+@media (max-width: 600px) { .capability-runtime-line { align-items: flex-start; flex-direction: column; } }

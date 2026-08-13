@@ -174,7 +174,7 @@ export abstract class MessageModem {
 
   protected _stream(data: any, options?: {
     signal?: AbortSignal,
-  }) {
+  }): Readable {
     const state = this.createPostData(MESSAGE_MODEM_TYPE.REQUEST, data, true, true);
     state.streamVersion = 1;
     let consumer!: StreamConsumerState;
@@ -390,10 +390,31 @@ export abstract class MessageModem {
   }
 
   private onStreamRequest<T = any>(msg: MessageTransferFormat<T>) {
+    if (msg.streamVersion !== 1) {
+      this.post<MessageStreamChunk>({
+        id: msg.id,
+        mode: MESSAGE_MODEM_TYPE.RESPONSE,
+        stream: true,
+        streamVersion: 1,
+        data: { status: 400, seq: 0, payload: 'Unsupported stream protocol', final: true },
+        twoway: false,
+      });
+      return;
+    }
+    if (this.streamProducers.has(msg.id) || this.streamProducers.size >= 128) {
+      this.post<MessageStreamChunk>({
+        id: msg.id,
+        mode: MESSAGE_MODEM_TYPE.RESPONSE,
+        stream: true,
+        streamVersion: 1,
+        data: { status: 429, seq: 0, payload: 'Stream capacity exceeded', final: true },
+        twoway: false,
+      });
+      return;
+    }
     const controller = new AbortController();
-    const usesCreditProtocol = msg.streamVersion === 1;
     const producer: StreamProducerState = {
-      credits: usesCreditProtocol ? 1 : Number.POSITIVE_INFINITY,
+      credits: 1,
       nextCreditSeq: 0,
     };
     let sequence = 0;

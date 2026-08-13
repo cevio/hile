@@ -989,6 +989,7 @@ function bulletRecipeList() {
   return [
     '- HTTP API + model + TypeORM: `docs/ai/recipes/http-api-model-typeorm.md`',
     '- HttpNext fullstack app: `docs/ai/recipes/http-next-fullstack.md`',
+    '- Single-endpoint RSC plugin platform: `docs/ai/recipes/rsc-plugin-host.md`',
     '- Redis cache with singleflight: `docs/ai/recipes/redis-cache-singleflight.md`',
     '- Queue worker with idempotency: `docs/ai/recipes/queue-worker-idempotency.md`',
     '- Micro RPC with message loader: `docs/ai/recipes/micro-rpc-message-loader.md`',

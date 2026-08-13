@@ -7,6 +7,7 @@ export interface RscMiddlewareHost<THost = unknown> {
 export interface RscHostAdapters {
   asset?: RscHostMiddleware;
   action?: RscHostMiddleware;
+  serverFunction?: RscHostMiddleware;
   middleware?: RscHostMiddleware[];
 }
 
@@ -16,6 +17,7 @@ export function mountRscHostAdapters<THost extends RscMiddlewareHost<THost>>(
 ): THost {
   if (adapters.asset) host.use(adapters.asset);
   if (adapters.action) host.use(adapters.action);
+  if (adapters.serverFunction) host.use(adapters.serverFunction);
   for (const middleware of adapters.middleware ?? []) host.use(middleware);
   return host;
 }

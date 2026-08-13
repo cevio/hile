@@ -9,10 +9,21 @@ It demonstrates:
 - immutable artifact registration and sanitized same-origin assets;
 - Flight streaming and decoding with request cancellation;
 - SSR and browser resolution of remote `'use client'` graphs;
-- authorized remote actions;
-- multiple plugins and runtime install/activate/deactivate/remove operations.
+- an authorized same-origin Server Function gateway that forwards to the exact plugin microservice build;
+- multiple plugins with Registry-driven automatic enable, upgrade, failover and removal;
+- no static plugin inventory and no manual install/activate endpoint.
 
 ```bash
-pnpm build
-pnpm dev
+pnpm --filter test-rsc-demo-suite dev
 ```
+
+Open `http://127.0.0.1:3200/`. Do not start this package alone unless Registry and the three demo plugin services are already running. The suite command owns/reuses Registry, starts every internal service, waits for readiness, and stops only its own processes.
+
+Key files:
+
+- `src/services/runtime.boot.ts`: catalogs, signed discovery, stream-to-disk deployment, asset and Server Function middleware, and the only `HttpNext` listener;
+- `src/app/plugins/[pluginId]/[[...path]]/page.tsx`: exact active-build lease, Flight decode, request cancellation, and client runtime providers;
+- `src/app/layout.tsx` and `src/app/host-shell.tsx`: Host-owned outer layout and Ant Design CSS-in-JS registry;
+- `src/app/page.tsx`: deployment status only; it is not a static plugin inventory.
+
+The canonical construction guide is [`docs/ai/recipes/rsc-plugin-host.md`](../../docs/ai/recipes/rsc-plugin-host.md).

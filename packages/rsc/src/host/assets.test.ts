@@ -19,6 +19,7 @@ function manifest(): RscPluginManifest {
     buildId: 'build-a',
     runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
     server: { entry: 'server-rsc/index.js', integrity: 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' },
+    serverFunctions: [],
     clients: [{
       id: 'src/interactive#default', module: 'client-browser/entry.js', ssrModule: 'client-ssr/entry.js',
       exportName: 'default', chunks: [{

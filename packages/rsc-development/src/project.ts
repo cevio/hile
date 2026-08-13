@@ -115,10 +115,13 @@ export async function createRscDevelopmentProject(
   let poller: ReturnType<typeof setInterval> | undefined;
   let observedRoots: RscDevelopmentChangeRoots | undefined;
   let sourceFingerprint = '';
+  let attemptedSourceFingerprint = '';
   let configFingerprint = '';
   let polling = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending: 'source' | 'config' | undefined;
+  let drainingScheduled = false;
+  let scheduledDrainPromise: Promise<void> | undefined;
   let disposed = false;
   let queue = Promise.resolve<RscDevelopmentRevision | undefined>(undefined);
 
@@ -157,6 +160,7 @@ export async function createRscDevelopmentProject(
     sourceWatcher = nextWatcher;
     observedRoots = roots;
     sourceFingerprint = nextSourceFingerprint;
+    attemptedSourceFingerprint = nextSourceFingerprint;
     configFingerprint = nextConfigFingerprint;
   };
 
@@ -196,6 +200,7 @@ export async function createRscDevelopmentProject(
     await publish(revision);
     latest = revision;
     if (observedRoots) sourceFingerprint = await scanSource(observedRoots.cwd, observedRoots);
+    attemptedSourceFingerprint = sourceFingerprint;
     await notify(revision);
     return revision;
   };
@@ -208,24 +213,63 @@ export async function createRscDevelopmentProject(
     return result;
   };
 
+  const drainScheduled = async () => {
+    if (drainingScheduled) return;
+    drainingScheduled = true;
+    try {
+      while (!disposed && pending) {
+        const next = pending;
+        pending = undefined;
+        if (next === 'source' && observedRoots) {
+          const fingerprint = await scanSource(observedRoots.cwd, observedRoots);
+          if (fingerprint === sourceFingerprint || fingerprint === attemptedSourceFingerprint) continue;
+          attemptedSourceFingerprint = fingerprint;
+        }
+        try { await enqueue(next); } catch (error) { options.onError?.(error); }
+      }
+    } finally {
+      drainingScheduled = false;
+      if (!disposed && pending && !scheduledDrainPromise) triggerScheduledDrain();
+    }
+  };
+
+  function triggerScheduledDrain() {
+    if (scheduledDrainPromise || disposed) return;
+    const operation = drainScheduled();
+    const tracked = operation.finally(() => {
+      if (scheduledDrainPromise === tracked) scheduledDrainPromise = undefined;
+      if (!disposed && pending) triggerScheduledDrain();
+    });
+    scheduledDrainPromise = tracked;
+    void scheduledDrainPromise.catch((error) => options.onError?.(error));
+  }
+
   function schedule(operation: 'source' | 'config') {
     if (disposed) return;
     if (operation === 'config' || !pending) pending = operation;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = undefined;
-      const next = pending;
-      pending = undefined;
-      if (next) void enqueue(next).catch((error) => options.onError?.(error));
+      triggerScheduledDrain();
     }, options.debounceMs ?? 75);
   }
 
+  // Establish the baseline before attaching the directory watcher; otherwise
+  // a delayed event for the pre-start config write can race initial configure.
+  configFingerprint = await readFile(configFile, 'utf8');
   const configWatcher = watch(path.dirname(configFile), (_event, changed) => {
     // Some platforms report an undefined filename for unrelated directory
     // changes. The content poller is the reliable fallback for that case;
     // treating it as a config edit would throw away warm esbuild contexts.
     if (!changed || changed.toString() !== path.basename(configFile)) return;
-    schedule('config');
+    // fs.watch can deliver a stale event for the config write that happened
+    // before this watcher was attached. Compare content so that event cannot
+    // discard warm compiler contexts or outrank a real source rebuild.
+    void readFile(configFile, 'utf8').then((nextConfigFingerprint) => {
+      if (nextConfigFingerprint === configFingerprint) return;
+      configFingerprint = nextConfigFingerprint;
+      schedule('config');
+    }).catch((error) => options.onError?.(error));
   });
   const pollMs = options.pollMs ?? 250;
   if (!Number.isFinite(pollMs) || pollMs < 25) {
@@ -243,7 +287,6 @@ export async function createRscDevelopmentProject(
       } else {
         const nextSourceFingerprint = await scanSource(observedRoots.cwd, observedRoots);
         if (nextSourceFingerprint !== sourceFingerprint) {
-          sourceFingerprint = nextSourceFingerprint;
           schedule('source');
         }
       }
@@ -276,9 +319,11 @@ export async function createRscDevelopmentProject(
       if (disposed) return;
       disposed = true;
       if (timer) clearTimeout(timer);
+      pending = undefined;
       configWatcher.close();
       sourceWatcher?.close();
       if (poller) clearInterval(poller);
+      await scheduledDrainPromise?.catch(() => undefined);
       await queue.catch(() => undefined);
       await compiler?.dispose();
     },

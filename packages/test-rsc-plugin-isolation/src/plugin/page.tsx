@@ -9,8 +9,11 @@ export function IsolationPage({ searchParams = {} }: PluginProps) {
   const marker = String(searchParams.marker ?? 'isolated');
   return (
     <article className="isolation-shell" data-testid="plugin-isolation" data-build="isolation-v1">
-      <h1>Independent plugin namespace</h1>
-      <p>This tree, client graph, CSS and microservice are isolated from the capabilities plugin.</p>
+      <header className="isolation-header">
+        <p>ISOLATED ARTIFACT · INDEPENDENT CLIENT GRAPH</p>
+        <h1>Independent plugin namespace</h1>
+        <span>This server tree, Ant Design theme, browser state, CSS and microservice are isolated from the capabilities plugin.</span>
+      </header>
       <IsolationWidget marker={marker} />
     </article>
   );

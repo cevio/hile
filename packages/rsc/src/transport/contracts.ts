@@ -1,17 +1,24 @@
 import type { ReactNode } from 'react';
-import type { RscActionRequest, RscRenderRequest } from '../plugin/types';
+import type {
+  RscActionRequest,
+  RscRenderRequest,
+  RscServerFunctionRequest,
+} from '../plugin/types';
+import type { RscServerFunctionWireValue } from '../server-functions/codec';
 import type { RscPluginManifest } from '../protocol';
 
 export interface RscOperationMap {
   describe: string;
   render: string;
   action: string;
+  serverFunction: string;
 }
 
 export const DEFAULT_RSC_OPERATIONS: Readonly<RscOperationMap> = Object.freeze({
   describe: '/-/rsc/describe',
   render: '/-/rsc/render',
   action: '/-/rsc/action',
+  serverFunction: '/-/rsc/server-function',
 });
 
 export interface RscCallOptions {
@@ -22,6 +29,10 @@ export interface RscPluginClient {
   describe(options?: RscCallOptions): Promise<RscPluginManifest>;
   render(request: RscRenderRequest, options?: RscCallOptions): Promise<AsyncIterable<Uint8Array>>;
   action(request: RscActionRequest, options?: RscCallOptions): Promise<unknown>;
+  serverFunction(
+    request: RscServerFunctionRequest,
+    options?: RscCallOptions,
+  ): Promise<RscServerFunctionWireValue>;
 }
 
 export interface RscPluginLocator {

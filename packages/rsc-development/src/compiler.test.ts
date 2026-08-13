@@ -1,4 +1,4 @@
-import { cp, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -63,7 +63,37 @@ describe('createRscDevelopmentCompiler', () => {
       .toContain(second.manifest.buildId);
     expect(await readFile(path.join(second.artifactRoot, second.manifest.clients[0].module), 'utf8'))
       .toContain('warm-change');
+    expect(second.manifest.serverFunctions.length).toBeGreaterThan(0);
+    const add = second.manifest.serverFunctions.find(({ exportName }) => exportName === 'add')!;
+    expect(add.id).toContain(`${second.manifest.buildId}/src/actions#add`);
+    expect(await exists(path.join(second.artifactRoot, add.module))).toBe(true);
+    expect(await readFile(path.join(second.artifactRoot, second.manifest.clients[0].module), 'utf8'))
+      .toContain(add.id);
 
+    await compiler.dispose();
+  });
+
+  it('reuses emitted client artifacts when only server source changes and no server references are embedded', async () => {
+    const { cwd, outdir } = await fixture();
+    const counter = path.join(cwd, 'src/counter.tsx');
+    await writeFile(counter, (await readFile(counter, 'utf8'))
+      .replace("import { add } from './actions';\n", '')
+      .replace("        void add(count).then(({ value }) => window.localStorage.setItem('server-function', String(value)));\n", ''));
+    const page = path.join(cwd, 'src/page.tsx');
+    const originalPage = await readFile(page, 'utf8');
+    await writeFile(page, originalPage
+      .replace("import { add } from './actions';\n", '')
+      .replace("    React.createElement('pre', null, String(typeof add)),\n", ''));
+    const compiler = await createRscDevelopmentCompiler(options(cwd, outdir));
+    const first = await compiler.rebuild();
+
+    await writeFile(page, (await readFile(page, 'utf8')).replace('Plugin server page', 'Edited server page'));
+    const second = await compiler.rebuild();
+
+    expect(second.contexts).toEqual({ server: 'reused', browser: 'cached', ssr: 'cached' });
+    expect(second.manifest.clients).toEqual(first.manifest.clients);
+    expect(await readFile(path.join(second.artifactRoot, second.manifest.server.entry), 'utf8'))
+      .toContain('Edited server page');
     await compiler.dispose();
   });
 
@@ -87,6 +117,21 @@ describe('createRscDevelopmentCompiler', () => {
     expect(result.clientGraphChanged).toBe(true);
     expect(result.contexts).toEqual({ server: 'reused', browser: 'created', ssr: 'created' });
     expect(result.manifest.clients.map((client) => client.id)).toContain('com.example.basic/src/second#default');
+    await compiler.dispose();
+  });
+
+  it('re-inspects edited directive modules instead of reusing stale export metadata', async () => {
+    const { cwd, outdir } = await fixture();
+    const compiler = await createRscDevelopmentCompiler(options(cwd, outdir));
+    await compiler.rebuild();
+    const boundary = path.join(cwd, 'src/counter.tsx');
+    await writeFile(boundary, `${await readFile(boundary, 'utf8')}\nexport function AddedBoundary() { return null; }\n`);
+
+    const result = await compiler.rebuild();
+
+    expect(result.clientGraphChanged).toBe(true);
+    expect(result.contexts).toEqual({ server: 'reused', browser: 'created', ssr: 'created' });
+    expect(result.manifest.clients.map(({ id }) => id)).toContain('com.example.basic/src/counter#AddedBoundary');
     await compiler.dispose();
   });
 
@@ -123,6 +168,26 @@ describe('createRscDevelopmentCompiler', () => {
     await compiler.dispose();
 
     await expect(compiler.rebuild()).rejects.toThrow('disposed');
+    await expect(stat(path.join(outdir, '.work/test-session'))).rejects.toThrow();
+  });
+
+  it('bounds immutable revisions and stale compiler sessions', async () => {
+    const { cwd, outdir } = await fixture();
+    for (const session of ['old-a', 'old-b', 'old-c']) {
+      await mkdir(path.join(outdir, 'revisions', session), { recursive: true });
+      await mkdir(path.join(outdir, '.work', session), { recursive: true });
+    }
+    const compiler = await createRscDevelopmentCompiler({
+      ...options(cwd, outdir), maxRevisions: 2, maxSessions: 2,
+    });
+    await compiler.rebuild();
+    await compiler.rebuild();
+    await compiler.rebuild();
+
+    expect((await readdir(path.join(outdir, 'revisions', 'test-session'))).sort()).toEqual(['r2', 'r3']);
+    expect((await readdir(path.join(outdir, 'revisions'))).length).toBeLessThanOrEqual(2);
+    expect((await readdir(path.join(outdir, '.work'))).length).toBeLessThanOrEqual(2);
+    await compiler.dispose();
   });
 
   it('rejects a development output symlink that resolves to an ancestor of plugin source', async () => {
@@ -151,5 +216,12 @@ describe('createRscDevelopmentCompiler', () => {
     await expect(createRscDevelopmentCompiler({
       ...options(cwd, outdir), initialRevision,
     })).rejects.toThrow('initialRevision');
+  });
+
+  it.each([0, 1, 1.5])('rejects invalid retention value %s', async (retention) => {
+    const { cwd, outdir } = await fixture();
+    await expect(createRscDevelopmentCompiler({
+      ...options(cwd, outdir), maxRevisions: retention,
+    })).rejects.toThrow('maxRevisions');
   });
 });

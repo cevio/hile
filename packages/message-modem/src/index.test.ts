@@ -624,7 +624,7 @@ describe('@hile/message-modem', () => {
       stream.destroy();
     });
 
-    it('uses the legacy uncredited stream path when an older peer does not negotiate version 1', async () => {
+    it('rejects legacy uncredited streams that do not negotiate version 1', async () => {
       const modem = new TestModem();
       modem['exec'] = async () => ({
         async *[Symbol.asyncIterator]() {
@@ -644,8 +644,10 @@ describe('@hile/message-modem', () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(modem.posted.filter(({ mode }) => mode === MESSAGE_MODEM_TYPE.RESPONSE))
-        .toHaveLength(4);
-      expect(modem.posted.every(({ streamVersion }) => streamVersion === undefined)).toBe(true);
+        .toEqual([expect.objectContaining({
+          streamVersion: 1,
+          data: expect.objectContaining({ status: 400, final: true }),
+        })]);
     });
 
     it('resumes the producer one credit at a time as chunks are consumed', async () => {

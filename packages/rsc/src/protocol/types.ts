@@ -32,6 +32,13 @@ export interface RscStyleAsset {
   integrity: string;
 }
 
+export interface RscServerFunctionReference {
+  id: string;
+  module: string;
+  exportName: string;
+  integrity: string;
+}
+
 export interface RscRouteDefinition {
   path: string;
   entry: string;
@@ -43,6 +50,7 @@ export interface RscPluginManifest {
   buildId: string;
   runtime: RscRuntimeCompatibility;
   server: RscArtifact;
+  serverFunctions: RscServerFunctionReference[];
   clients: RscClientReference[];
   styles: RscStyleAsset[];
   routes: RscRouteDefinition[];
@@ -53,6 +61,7 @@ export type RscProtocolErrorCode =
   | 'ERR_RSC_PROTOCOL_VERSION'
   | 'ERR_RSC_RUNTIME_MISMATCH'
   | 'ERR_RSC_DUPLICATE_CLIENT_REFERENCE'
+  | 'ERR_RSC_DUPLICATE_SERVER_FUNCTION_REFERENCE'
   | 'ERR_RSC_DUPLICATE_STYLE'
   | 'ERR_RSC_DUPLICATE_ROUTE'
   | 'ERR_RSC_UNSAFE_ARTIFACT_PATH'

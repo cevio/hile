@@ -71,8 +71,8 @@ export function watchRscDevelopmentState(
       if (closed) return;
       const source = await readFile(absoluteFile, 'utf8');
       if (!force && source === lastObservedSource) return;
-      lastObservedSource = source;
       await listener(parseRscDevelopmentState(absoluteFile, source));
+      lastObservedSource = source;
     };
     const result = queue.then(apply, apply);
     queue = result.catch((error) => options.onError?.(error));

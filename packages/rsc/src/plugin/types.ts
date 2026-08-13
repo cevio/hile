@@ -1,4 +1,8 @@
 import type { RscPluginManifest } from '../protocol';
+import type {
+  RscServerFunctionReference,
+} from '../protocol';
+import type { RscServerFunctionWireValue } from '../server-functions/codec';
 
 export interface RscRenderRequest {
   buildId: string;
@@ -26,6 +30,24 @@ export interface RscActionRequest {
   input: Record<string, unknown>;
 }
 
+export interface RscServerFunctionRequest {
+  buildId: string;
+  referenceId: string;
+  args: RscServerFunctionWireValue;
+}
+
+export interface RscServerFunctionInvocationContext {
+  manifest: RscPluginManifest;
+  reference: RscServerFunctionReference;
+  args: unknown[];
+  signal: AbortSignal;
+  invokeModel(id: string, input: unknown): Promise<unknown>;
+}
+
+export interface RscServerFunctionRuntime {
+  invoke(context: RscServerFunctionInvocationContext): Promise<unknown>;
+}
+
 export interface RscRenderContext {
   manifest: RscPluginManifest;
   routeEntry: string;
@@ -40,6 +62,7 @@ export type RscRenderer = (
 export interface RscPluginServiceOptions {
   manifest: RscPluginManifest;
   renderer: RscRenderer;
+  serverFunctions?: RscServerFunctionRuntime;
   /** Active plus previous immutable revisions accepted during topology hand-off. */
   retainedRevisions?: number;
 }

@@ -1,7 +1,6 @@
 import { defineService } from '@hile/core';
 import HttpNext from '@hile/http-next';
 import { Application } from '@hile/micro';
-import { verifyRscPluginArtifact } from '@hile/rsc/artifact';
 import {
   createRscActionMiddleware,
   createSameOriginCsrfAuthorizer,
@@ -9,8 +8,11 @@ import {
 } from '@hile/rsc/host/actions';
 import { createRscAssetMiddleware } from '@hile/rsc/host/assets';
 import {
+  createRscServerFunctionMiddleware,
+  RscServerFunctionGateway,
+} from '@hile/rsc/host/server-functions';
+import {
   RscDevelopmentEvents,
-  bindRscHostDevelopmentState,
   createRscDevelopmentEventMiddleware,
 } from '@hile/rsc-development/host';
 import {
@@ -29,8 +31,7 @@ import {
   attachRscDeploymentCatalog,
   createHileRscPluginClient,
 } from '@hile/rsc/transport';
-import { DemoDeploymentController } from './demo-deployment-controller';
-import { createDemoInventory } from './demo-inventory';
+import { createHmacRscDiscoveryAuthorizer, HileRscDiscoveryHost } from '@hile/rsc-discovery-hile';
 import {
   DEMO_HOST_SERVICE_KEY,
   installDemoHostComposition,
@@ -39,23 +40,8 @@ import {
 
 export default defineService<DemoHostComposition>(DEMO_HOST_SERVICE_KEY, async (shutdown) => {
   const hostRoot = process.cwd();
-  const inventory = createDemoInventory(hostRoot);
   const artifacts = new InMemoryRscArtifactCatalog();
-  const unregisterArtifacts: Array<() => void> = [];
-  for (const definition of inventory) {
-    const { manifest } = await verifyRscPluginArtifact(definition.artifactRoot, HILE_RSC_RUNTIME);
-    if (manifest.pluginId !== definition.pluginId || manifest.buildId !== definition.buildId) {
-      throw new Error(`Demo artifact identity mismatch: ${definition.pluginId}@${definition.buildId}`);
-    }
-    unregisterArtifacts.push(artifacts.register(definition.artifactRoot, manifest));
-  }
-
   const deployments = new InMemoryRscDeploymentCatalog();
-  const lifecycle = new DemoDeploymentController(deployments, inventory, {
-    mode: process.env.RSC_DEVELOPMENT_STATE ? 'development' : 'production',
-  });
-  lifecycle.initialize();
-
   const application = new Application({
     namespace: process.env.HOST_MICRO_NAMESPACE ?? 'demo.rsc.host',
     advertiseHost: process.env.HILE_ADVERTISE_HOST ?? '127.0.0.1',
@@ -70,6 +56,46 @@ export default defineService<DemoHostComposition>(DEMO_HOST_SERVICE_KEY, async (
     deployments,
     async (deployment) => createHileRscPluginClient(application, deployment.namespace),
   );
+  const developmentEvents = new RscDevelopmentEvents();
+  const developmentRevision = new Map<string, number>();
+  const discovery = new HileRscDiscoveryHost({
+    application,
+    artifacts,
+    deployments,
+    runtime: HILE_RSC_RUNTIME,
+    pollIntervalMs: Number(process.env.RSC_DISCOVERY_POLL_MS ?? 250),
+    missingReconciliations: Number(process.env.RSC_DISCOVERY_MISSING_RECONCILIATIONS ?? 3),
+    authorize: createHmacRscDiscoveryAuthorizer((keyId) => {
+      if (keyId === 'demo-capabilities') return {
+        secret: process.env.RSC_CAPABILITIES_DISCOVERY_SECRET ?? 'demo-capabilities-secret',
+        pluginIds: ['demo.rsc.capabilities'],
+      };
+      if (keyId === 'demo-isolation') return {
+        secret: process.env.RSC_ISOLATION_DISCOVERY_SECRET ?? 'demo-isolation-secret',
+        pluginIds: ['demo.rsc.isolation'],
+      };
+      return undefined;
+    }),
+    onRejected: (topic, error) => console.error(`Rejected RSC discovery topic ${topic}`, error),
+    onError: console.error,
+    onEnabled: (announcement) => {
+      const revision = (developmentRevision.get(announcement.pluginId) ?? 0) + 1;
+      developmentRevision.set(announcement.pluginId, revision);
+      developmentEvents.publish({
+        pluginId: announcement.pluginId,
+        buildId: announcement.buildId,
+        revision,
+      });
+    },
+  });
+  try {
+    await discovery.start();
+  } catch (error) {
+    await discovery.close().catch(() => undefined);
+    detachCatalog();
+    await stopMicro();
+    throw error;
+  }
 
   const assetMountPath = '/_hile/rsc/assets';
   const uninstallResolver = installRemoteClientResolver(
@@ -86,8 +112,16 @@ export default defineService<DemoHostComposition>(DEMO_HOST_SERVICE_KEY, async (
   });
   const actionGateway = new RscActionGateway({ locator, authorize });
   const actionMiddleware = createRscActionMiddleware({ gateway: actionGateway });
-  const developmentEvents = new RscDevelopmentEvents();
-
+  const serverFunctionGateway = new RscServerFunctionGateway({
+    locator,
+    authorize: (request, context) => authorize({
+      pluginId: request.pluginId,
+      buildId: request.buildId,
+      actionId: request.referenceId,
+      input: {},
+    }, context),
+  });
+  const serverFunctionMiddleware = createRscServerFunctionMiddleware({ gateway: serverFunctionGateway });
   const host = new HttpNext({
     port: Number(process.env.HTTP_PORT ?? 3200),
     cwd: hostRoot,
@@ -98,6 +132,10 @@ export default defineService<DemoHostComposition>(DEMO_HOST_SERVICE_KEY, async (
       context.requestContext = { headers: context.headers };
       return actionMiddleware(context, next);
     },
+    serverFunction: async (context, next) => {
+      context.requestContext = { headers: context.headers };
+      return serverFunctionMiddleware(context, next);
+    },
     middleware: process.env.RSC_DEVELOPMENT_STATE ? [
       createRscDevelopmentEventMiddleware({ events: developmentEvents }),
     ] : [],
@@ -105,43 +143,29 @@ export default defineService<DemoHostComposition>(DEMO_HOST_SERVICE_KEY, async (
   const composition: DemoHostComposition = {
     application,
     deployments,
-    lifecycle,
+    discovery,
     locator,
     assetMountPath,
-    inventory,
   };
   const uninstallComposition = installDemoHostComposition(composition);
-  const unbindDevelopment = process.env.RSC_DEVELOPMENT_STATE
-    ? await bindRscHostDevelopmentState({
-      file: process.env.RSC_DEVELOPMENT_STATE,
-      application,
-      artifacts,
-      deployments,
-      events: developmentEvents,
-      runtime: HILE_RSC_RUNTIME,
-      onError: console.error,
-    })
-    : () => undefined;
   let stopHttp: () => Promise<void>;
   try {
     stopHttp = await host.start();
   } catch (error) {
     uninstallComposition();
+    uninstallResolver();
+    await discovery.close();
+    detachCatalog();
+    await stopMicro();
     throw error;
   }
 
   shutdown(async () => {
-    await unbindDevelopment();
     uninstallComposition();
     uninstallResolver();
-    detachCatalog();
-    for (const snapshot of deployments.snapshot()) {
-      deployments.deactivate(snapshot);
-      await deployments.drain(snapshot);
-      deployments.remove(snapshot);
-    }
-    for (const unregister of unregisterArtifacts.reverse()) unregister();
     await stopHttp();
+    await discovery.close();
+    detachCatalog();
     await stopMicro();
   });
 

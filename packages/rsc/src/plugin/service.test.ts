@@ -5,6 +5,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RscPluginManifest } from '../protocol';
+import {
+  decodeRscServerFunctionValue,
+  encodeRscServerFunctionValue,
+} from '../server-functions/codec';
 import { attachRscPluginService } from '../transport/registrar';
 import { RscPluginService, RscPluginServiceError } from './service';
 
@@ -34,6 +38,12 @@ function manifest(): RscPluginManifest {
       entry: 'server-rsc/index.js',
       integrity: 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
     },
+    serverFunctions: [{
+      id: 'com.example.plugin/build-1/src/actions#save',
+      module: 'server-functions/actions.js',
+      exportName: 'save',
+      integrity: 'sha256-DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD=',
+    }],
     clients: [{
       id: 'com.example.plugin/src/counter#default',
       module: 'client-browser/counter.js',
@@ -283,6 +293,108 @@ describe('RscPluginService', () => {
     })).resolves.toEqual({ saved: { id: 1 }, aborted: false });
     await expect(service.action({ buildId: 'build-1', actionId: 'internal', input: {} }))
       .rejects.toMatchObject({ code: 'ERR_RSC_ACTION_NOT_FOUND' });
+  });
+
+  it('executes an allowlisted build-pinned server function through the loaded Model registry', async () => {
+    const runtime = {
+      invoke: vi.fn(async ({ args, invokeModel }: {
+        args: unknown[];
+        invokeModel: (id: string, input: unknown) => Promise<unknown>;
+      }) => invokeModel('save', { id: args[0] })),
+    };
+    const service = new RscPluginService({
+      manifest: manifest(),
+      renderer: async function* () {},
+      serverFunctions: runtime,
+    });
+    await service.load(modelsDirectory);
+
+    const response = await service.serverFunction({
+      buildId: 'build-1',
+      referenceId: 'com.example.plugin/build-1/src/actions#save',
+      args: await encodeRscServerFunctionValue([7]),
+    });
+
+    await expect(decodeRscServerFunctionValue(response)).resolves.toEqual({
+      saved: { id: 7 },
+      aborted: false,
+    });
+    expect(runtime.invoke).toHaveBeenCalledOnce();
+  });
+
+  it('rejects malformed, unknown, and wrong-build server function calls before execution', async () => {
+    const runtime = { invoke: vi.fn() };
+    const service = new RscPluginService({
+      manifest: manifest(),
+      renderer: async function* () {},
+      serverFunctions: runtime,
+    });
+    const args = await encodeRscServerFunctionValue([]);
+
+    await expect(service.serverFunction({
+      buildId: 'build-2',
+      referenceId: 'com.example.plugin/build-1/src/actions#save',
+      args,
+    })).rejects.toMatchObject({ code: 'ERR_RSC_BUILD_MISMATCH' });
+    await expect(service.serverFunction({
+      buildId: 'build-1',
+      referenceId: 'com.example.plugin/build-1/src/actions#missing',
+      args,
+    })).rejects.toMatchObject({ code: 'ERR_RSC_SERVER_FUNCTION_NOT_FOUND' });
+    await expect(service.serverFunction({
+      buildId: 'build-1', referenceId: '', args,
+    })).rejects.toMatchObject({ code: 'ERR_RSC_INVALID_REQUEST' });
+    expect(runtime.invoke).not.toHaveBeenCalled();
+  });
+
+  it('pins server function execution to the immutable revision runtime during upgrades', async () => {
+    const firstRuntime = { invoke: vi.fn(async () => 'first') };
+    const service = new RscPluginService({
+      manifest: manifest(), renderer: async function* () {}, serverFunctions: firstRuntime,
+    });
+    const next = manifest();
+    next.buildId = 'build-2';
+    next.serverFunctions[0] = {
+      ...next.serverFunctions[0],
+      id: 'com.example.plugin/build-2/src/actions#save',
+    };
+    const secondRuntime = { invoke: vi.fn(async () => 'second') };
+    service.activate({
+      manifest: next, renderer: async function* () {}, serverFunctions: secondRuntime,
+    });
+
+    const oldResult = await service.serverFunction({
+      buildId: 'build-1',
+      referenceId: 'com.example.plugin/build-1/src/actions#save',
+      args: await encodeRscServerFunctionValue([]),
+    });
+    const newResult = await service.serverFunction({
+      buildId: 'build-2',
+      referenceId: 'com.example.plugin/build-2/src/actions#save',
+      args: await encodeRscServerFunctionValue([]),
+    });
+
+    await expect(decodeRscServerFunctionValue(oldResult)).resolves.toBe('first');
+    await expect(decodeRscServerFunctionValue(newResult)).resolves.toBe('second');
+    expect(firstRuntime.invoke).toHaveBeenCalledOnce();
+    expect(secondRuntime.invoke).toHaveBeenCalledOnce();
+  });
+
+  it('does not execute a server function after shutdown wins the async decode race', async () => {
+    const runtime = { invoke: vi.fn(async () => 'late') };
+    const service = new RscPluginService({
+      manifest: manifest(), renderer: async function* () {}, serverFunctions: runtime,
+    });
+    const invocation = service.serverFunction({
+      buildId: 'build-1',
+      referenceId: 'com.example.plugin/build-1/src/actions#save',
+      args: await encodeRscServerFunctionValue([1]),
+    });
+    service.deactivate();
+
+    await expect(invocation).rejects.toBeDefined();
+    expect(runtime.invoke).not.toHaveBeenCalled();
+    await expect(service.drain()).resolves.toBeUndefined();
   });
 
   it('rejects unknown, malformed, and wrong-build actions', async () => {

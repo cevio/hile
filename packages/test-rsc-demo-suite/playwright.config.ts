@@ -2,8 +2,8 @@ import { defineConfig } from '@playwright/test';
 
 export default defineConfig({
   testDir: './src',
-  testMatch: 'demo.e2e.test.ts',
-  timeout: 30_000,
+  testMatch: process.env.RSC_DEV_E2E ? 'development.e2e.test.ts' : 'demo.e2e.test.ts',
+  timeout: process.env.RSC_DEV_E2E ? 60_000 : 30_000,
   fullyParallel: false,
   workers: 1,
   use: {

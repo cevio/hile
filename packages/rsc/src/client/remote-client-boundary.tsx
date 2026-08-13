@@ -1,6 +1,8 @@
 'use client';
 
 import React, { Suspense, lazy } from 'react';
+import * as ReactDom from 'react-dom';
+import * as ReactDomClient from 'react-dom/client';
 import * as JsxRuntime from 'react/jsx-runtime';
 import { useRscAssetMountPath } from './runtime-provider';
 
@@ -20,6 +22,8 @@ export interface RemoteClientAssetResolution {
 declare global {
   var __HILE_RSC_REACT__: typeof React | undefined;
   var __HILE_RSC_JSX_RUNTIME__: typeof JsxRuntime | undefined;
+  var __HILE_RSC_REACT_DOM__: typeof ReactDom | undefined;
+  var __HILE_RSC_REACT_DOM_CLIENT__: typeof ReactDomClient | undefined;
   var __HILE_RSC_RESOLVE_CLIENT__: ((
     descriptor: Omit<RemoteClientBoundaryProps, 'props'>,
     target: 'ssr' | 'browser',
@@ -28,6 +32,8 @@ declare global {
 
 globalThis.__HILE_RSC_REACT__ = React;
 globalThis.__HILE_RSC_JSX_RUNTIME__ = JsxRuntime;
+globalThis.__HILE_RSC_REACT_DOM__ = ReactDom;
+globalThis.__HILE_RSC_REACT_DOM_CLIENT__ = ReactDomClient;
 
 const components = new Map<string, ReturnType<typeof lazy>>();
 

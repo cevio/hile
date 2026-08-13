@@ -28,6 +28,7 @@
     "@types/react": "^19.2.14",
     "fix-esm-import-path": "^1.10.3",
     "react": "19.2.8",
+    "react-dom": "19.2.8",
     "vitest": "^4.0.18"
   }
 }

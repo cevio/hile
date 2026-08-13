@@ -3,6 +3,7 @@ import { getHttpNextRequestSignal } from '@hile/http-next';
 import { RscClientRuntimeProvider } from '@hile/rsc/client';
 import { RscHostRuntime } from '@hile/rsc/host/runtime';
 import { decodePluginFlight } from '@hile/rsc-next';
+import { RscNextClientRuntime } from '@hile/rsc-next/client';
 import { notFound } from 'next/navigation';
 import runtimeService from '../../../../services/runtime.boot';
 
@@ -39,9 +40,13 @@ export default async function PluginPage({
 
   return (
     <main data-rsc-host>
-      <RscClientRuntimeProvider assetMountPath={composition.assetMountPath}>
-        {tree}
-      </RscClientRuntimeProvider>
+      <RscNextClientRuntime serverFunctions={{
+        headers: { 'x-rsc-csrf-token': process.env.RSC_CSRF_TOKEN ?? '' },
+      }}>
+        <RscClientRuntimeProvider assetMountPath={composition.assetMountPath}>
+          {tree}
+        </RscClientRuntimeProvider>
+      </RscNextClientRuntime>
     </main>
   );
 }

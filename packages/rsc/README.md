@@ -22,24 +22,33 @@ pnpm add @hile/rsc
 ## Copy-Paste Example
 
 ```ts
-import { RscPluginService, createOfficialRscRenderer } from '@hile/rsc/plugin'
-import { attachRscPluginService } from '@hile/rsc/transport'
+import { RscArtifactServerFunctionRuntime, RscPluginService, createOfficialRscRenderer } from '@hile/rsc/plugin'
+import { HileRscPluginRuntime } from '@hile/rsc-discovery-hile'
 
 const service = new RscPluginService({
   manifest,
   renderer: createOfficialRscRenderer(artifactRoot),
+  serverFunctions: new RscArtifactServerFunctionRuntime(artifactRoot),
 })
 await service.load(fileURLToPath(new URL('../models', import.meta.url)))
 
-const detach = attachRscPluginService(service, internalRegistrar)
-shutdown(async () => {
-  service.deactivate()
-  await service.drain()
-  detach()
+const runtime = new HileRscPluginRuntime({
+  application,
+  service,
+  port: internalMicroPort,
+  discovery: {
+    namespace,
+    instanceId,
+    priority: 0,
+    artifactRoot,
+    authentication: { keyId, secret },
+  },
 })
+await runtime.start()
+shutdown(() => runtime.close())
 ```
 
-The registrar may be a Hile `Server`, an in-process adapter, or another transport implementation. The plugin service itself creates no HTTP listener.
+`HileRscPluginRuntime` is the recommended Hile composition root. Use the lower-level transport attachment APIs only when implementing a non-Hile adapter. The plugin service creates an internal Micro listener, never an HTTP listener.
 
 ## Boundaries
 
@@ -60,7 +69,7 @@ The registrar may be a Hile `Server`, an in-process adapter, or another transpor
 ## Verify
 
 - `plugin.json` passes protocol and exact runtime validation.
-- Every server, browser, SSR, chunk, and style artifact passes SHA-256 verification.
+- Every server, Server Function, browser, SSR, chunk, and style artifact passes SHA-256 verification.
 - Only the host owns a public TCP/HTTP listener.
 - Real Flight bytes cross the internal transport with abort and backpressure.
 - SSR HTML contains plugin client output before browser JavaScript runs.
@@ -68,6 +77,9 @@ The registrar may be a Hile `Server`, an in-process adapter, or another transpor
 - Disconnect aborts the internal renderer.
 - Old build requests finish during upgrade; new requests select the new build.
 - Deactivated builds reject new leases and host routes map that state explicitly.
+- A fresh reader can scaffold and start Registry, plugin, and Host using the recipe; no implicit static inventory or manual activation is required.
+- A Client Component can submit a module-level Server Function, which authorizes at the Host and executes a scanned action model in the exact plugin build.
+- Host CSS/layout remains outside the plugin tree while plugin CSS and component-library behavior render and hydrate inside it.
 
 ## More Context
 

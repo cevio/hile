@@ -20,6 +20,8 @@
     "@hile/rsc": "workspace:^",
     "@hile/rsc-build": "workspace:^",
     "@hile/rsc-development": "workspace:^",
+    "@hile/rsc-discovery-hile": "workspace:^",
+    "antd": "6.6.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-server-dom-webpack": "19.2.8"

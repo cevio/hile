@@ -3,11 +3,11 @@ import { fileURLToPath } from 'node:url';
 import { defineService } from '@hile/core';
 import { Application } from '@hile/micro';
 import { verifyRscPluginArtifact } from '@hile/rsc/artifact';
-import { createOfficialRscRenderer, RscPluginService } from '@hile/rsc/plugin';
+import { createOfficialRscRenderer, RscArtifactServerFunctionRuntime, RscPluginService } from '@hile/rsc/plugin';
 import { HILE_RSC_RUNTIME } from '@hile/rsc/protocol';
-import { attachRscPluginService } from '@hile/rsc/transport';
 import { readRscDevelopmentState } from '@hile/rsc-development/state';
 import { bindRscModelDevelopment, bindRscPluginDevelopmentState } from '@hile/rsc-development/plugin';
+import { HileRscPluginRuntime } from '@hile/rsc-discovery-hile';
 
 export default defineService('test.rsc.isolation.v1', async (shutdown) => {
   const namespace = process.env.MICRO_NAMESPACE ?? 'demo.rsc.isolation.v1';
@@ -28,26 +28,36 @@ export default defineService('test.rsc.isolation.v1', async (shutdown) => {
   const service = new RscPluginService({
     manifest,
     renderer: createOfficialRscRenderer(artifactRoot),
+    serverFunctions: new RscArtifactServerFunctionRuntime(artifactRoot),
   });
   const modelsDirectory = fileURLToPath(new URL('../models', import.meta.url));
   await service.load(modelsDirectory);
   const modelDevelopment = developmentFile
     ? bindRscModelDevelopment(service, modelsDirectory, { onError: console.error })
     : undefined;
-  const unbindDevelopment = developmentFile
-    ? await bindRscPluginDevelopmentState(service, {
-      file: developmentFile, namespace, runtime: HILE_RSC_RUNTIME, onError: console.error,
-    })
-    : () => undefined;
-  const detach = attachRscPluginService(service, application);
-  const stop = await application.listen(Number(process.env.PLUGIN_MICRO_PORT ?? 4213));
-  shutdown(async () => {
-    await unbindDevelopment();
-    await modelDevelopment?.close();
-    service.deactivate();
-    await service.drain();
-    detach();
-    await stop();
+  const runtime = new HileRscPluginRuntime({
+    application,
+    service,
+    port: Number(process.env.PLUGIN_MICRO_PORT ?? 4213),
+    discovery: {
+      namespace,
+      instanceId: process.env.RSC_INSTANCE_ID ?? namespace,
+      priority: Number(process.env.RSC_DISCOVERY_PRIORITY ?? 1),
+      artifactRoot,
+      authentication: {
+        keyId: process.env.RSC_DISCOVERY_KEY_ID ?? 'demo-isolation',
+        secret: process.env.RSC_DISCOVERY_SECRET ?? 'demo-isolation-secret',
+      },
+    },
+    resources: modelDevelopment ? [modelDevelopment] : [],
+    bindDevelopment: developmentFile
+      ? async (publishArtifact) => bindRscPluginDevelopmentState(service, {
+        file: developmentFile, namespace, runtime: HILE_RSC_RUNTIME, onError: console.error,
+        onActivated: async (record) => { await publishArtifact(record.artifactRoot); },
+      })
+      : undefined,
   });
+  await runtime.start();
+  shutdown(() => runtime.close());
   return { application, service, manifest };
 });

@@ -1,6 +1,11 @@
 import { Client } from './client';
 import { Server, type MicroServerProps } from './server';
-import { RegistryAddress } from './registry';
+import type {
+  RegistryAddress,
+  RegistryTopicSnapshot,
+  RegistryTopicSummary,
+  RegistryTopicsResult,
+} from './registry';
 
 enum RegistryLookupStatus {
   IDLE,
@@ -1008,6 +1013,39 @@ export class Application extends Server {
       }
     }
     return ref;
+  }
+
+  /** Reads Registry topic metadata without creating a pub/sub subscription. */
+  public async listRegistryTopics(prefix?: string): Promise<RegistryTopicSummary[]> {
+    const registry = this.registry;
+    if (!registry) {
+      this.ensureRegistryReconnectScheduled();
+      throw new Error('Registry is not connected');
+    }
+    const result = await registry.request<RegistryTopicsResult>(
+      '/-/topics',
+      prefix === undefined ? {} : { prefix },
+      this.registryRequestOptions(),
+    );
+    return structuredClone(result.topics);
+  }
+
+  /** Reads one retained/current Registry topic payload without subscribing to it. */
+  public async getRegistryTopic<T = unknown>(topic: string): Promise<RegistryTopicSnapshot & { payload: T } | undefined> {
+    if (typeof topic !== 'string' || topic.length === 0) {
+      throw new TypeError('Registry topic must not be empty');
+    }
+    const registry = this.registry;
+    if (!registry) {
+      this.ensureRegistryReconnectScheduled();
+      throw new Error('Registry is not connected');
+    }
+    const snapshot = await registry.request<RegistryTopicSnapshot & { payload: T } | undefined>(
+      '/-/topic/get',
+      { topic },
+      this.registryRequestOptions(),
+    );
+    return snapshot === undefined ? undefined : structuredClone(snapshot);
   }
 
   /**

@@ -28,6 +28,7 @@ function manifest(): RscPluginManifest {
     buildId: 'v1-dev-session-r2',
     runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
     server: { entry: 'server.mjs', integrity: 'sha256-fixture' },
+    serverFunctions: [],
     clients: [],
     styles: [],
     routes: [{ path: '/', entry: 'Page' }],

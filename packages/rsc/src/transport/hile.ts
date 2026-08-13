@@ -1,5 +1,10 @@
 import type { Readable } from 'node:stream';
-import type { RscActionRequest, RscRenderRequest } from '../plugin/types';
+import type {
+  RscActionRequest,
+  RscRenderRequest,
+  RscServerFunctionRequest,
+} from '../plugin/types';
+import type { RscServerFunctionWireValue } from '../server-functions/codec';
 import type { RscPluginManifest } from '../protocol';
 import {
   DEFAULT_RSC_OPERATIONS,
@@ -22,7 +27,6 @@ export interface HileRscApplication {
     options?: RscCallOptions,
   ): Promise<Readable>;
 }
-
 export function createHileRscPluginClient(
   application: HileRscApplication,
   namespace: string,
@@ -39,6 +43,13 @@ export function createHileRscPluginClient(
     action(request: RscActionRequest, options) {
       return application.call(namespace, operations.action, request, options);
     },
+    serverFunction(request: RscServerFunctionRequest, options) {
+      return application.call<RscServerFunctionWireValue>(
+        namespace,
+        operations.serverFunction,
+        request,
+        options,
+      );
+    },
   };
 }
-

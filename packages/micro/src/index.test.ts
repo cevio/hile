@@ -546,6 +546,48 @@ describe('@hile/micro registry read APIs', () => {
 });
 
 describe('@hile/micro application discovery', () => {
+  it('reads registry topic snapshots without becoming a subscriber', async () => {
+    const registryPort = await getAvailablePort();
+    const publisherPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+    const registry = new Registry(testAdvertise);
+    const publisher = new Application({
+      namespace: 'registry-reader-publisher',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const consumer = new Application({
+      namespace: 'registry-reader-consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const stopRegistry = await registry.listen(registryPort);
+    const stopPublisher = await publisher.listen(publisherPort);
+    const stopConsumer = await consumer.listen(consumerPort);
+    const published = await publisher.publish('@hile/rsc/discovery/v1/fixture', { buildId: 'build-1' });
+
+    try {
+      await expect(consumer.listRegistryTopics('@hile/rsc/discovery/v1/')).resolves.toEqual([
+        expect.objectContaining({
+          topic: '@hile/rsc/discovery/v1/fixture',
+          publisherCount: 1,
+          subscriberCount: 0,
+          hasData: true,
+        }),
+      ]);
+      await expect(consumer.getRegistryTopic('@hile/rsc/discovery/v1/fixture')).resolves.toMatchObject({
+        payload: { buildId: 'build-1' },
+        subscriberCount: 0,
+      });
+      await expect(consumer.getRegistryTopic('@hile/rsc/discovery/v1/missing')).resolves.toBeUndefined();
+    } finally {
+      await published.unpublish();
+      await stopConsumer();
+      await stopPublisher();
+      await stopRegistry();
+    }
+  });
+
   it('resolves a provider through the registry on first lookup', async () => {
     const registryPort = await getAvailablePort();
     const providerPort = await getAvailablePort();

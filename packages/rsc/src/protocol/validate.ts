@@ -74,6 +74,18 @@ function validateClientReferenceId(value: unknown, field: string): string {
   return id;
 }
 
+function validateServerFunctionReferenceId(value: unknown, field: string): string {
+  const id = requireString(value, field);
+  if (
+    !/^[a-z0-9]+(?:[.-][a-z0-9]+)+\/[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9@_./+-]+#[A-Za-z_$][A-Za-z0-9_$]*$/.test(id)
+    || id.includes('..')
+    || id.includes('//')
+  ) {
+    fail('ERR_RSC_INVALID_MANIFEST', `${field} must identify a plugin build, module, and export`);
+  }
+  return id;
+}
+
 function validateExportName(value: unknown, field: string): string {
   const exportName = requireString(value, field);
   if (!/^(?:default|[A-Za-z_$][A-Za-z0-9_$]*)$/.test(exportName)) {
@@ -169,6 +181,26 @@ export function validateRscPluginManifest(
     integrity: validateIntegrity(serverValue.integrity, 'server.integrity'),
   };
 
+  const serverFunctionIds = new Set<string>();
+  const serverFunctionsValue = manifest.serverFunctions === undefined ? [] : manifest.serverFunctions;
+  const serverFunctions = requireArray(serverFunctionsValue, 'serverFunctions').map((item, index) => {
+    const reference = requireRecord(item, `serverFunctions[${index}]`);
+    const id = validateServerFunctionReferenceId(reference.id, `serverFunctions[${index}].id`);
+    if (serverFunctionIds.has(id)) {
+      fail(
+        'ERR_RSC_DUPLICATE_SERVER_FUNCTION_REFERENCE',
+        `duplicate server function reference: ${id}`,
+      );
+    }
+    serverFunctionIds.add(id);
+    return {
+      id,
+      module: validateArtifactPath(reference.module, `serverFunctions[${index}].module`),
+      exportName: validateExportName(reference.exportName, `serverFunctions[${index}].exportName`),
+      integrity: validateIntegrity(reference.integrity, `serverFunctions[${index}].integrity`),
+    };
+  });
+
   const clientIds = new Set<string>();
   const clients = requireArray(manifest.clients, 'clients').map((item, index) => {
     const client = requireRecord(item, `clients[${index}]`);
@@ -245,6 +277,7 @@ export function validateRscPluginManifest(
     buildId,
     runtime,
     server,
+    serverFunctions,
     clients,
     styles,
     routes,

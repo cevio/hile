@@ -64,16 +64,22 @@ describe('RSC project templates', () => {
     expect(model).toContain('defineActionModel');
   });
 
-  it('ships the complete incremental development composition in both templates', () => {
+  it('ships Registry-driven discovery and incremental development composition in both templates', () => {
     const pluginBoot = readFileSync(path.join(templates, 'rsc-plugin/src/services/plugin.boot.ts'), 'utf8');
     const pluginPackage = JSON.parse(readFileSync(path.join(templates, 'rsc-plugin/package.json'), 'utf8'));
     const hostBoot = readFileSync(path.join(templates, 'rsc-host/src/services/runtime.boot.ts'), 'utf8');
     const hostLayout = readFileSync(path.join(templates, 'rsc-host/src/app/layout.tsx'), 'utf8');
     expect(pluginPackage.scripts['dev:rsc']).toContain('hile-rsc-dev');
+    expect(pluginPackage.dependencies['@hile/rsc-discovery-hile']).toBeDefined();
+    expect(pluginBoot).toContain('new HileRscPluginRuntime');
+    expect(pluginBoot).toContain('bindDevelopment:');
+    expect(pluginBoot).toContain('publishArtifact(record.artifactRoot)');
     expect(pluginBoot).toContain('bindRscPluginDevelopmentState');
     expect(pluginBoot).toContain('bindRscModelDevelopment');
-    expect(hostBoot).toContain('bindRscHostDevelopmentState');
+    expect(hostBoot).toContain('HileRscDiscoveryHost');
     expect(hostBoot).toContain('createRscDevelopmentEventMiddleware');
+    expect(hostBoot).not.toContain('RSC_ARTIFACT_ROOT');
+    expect(hostBoot).not.toContain('RSC_PLUGIN_NAMESPACE');
     expect(hostLayout).toContain('RscDevelopmentReload');
   });
 });

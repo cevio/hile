@@ -1,5 +1,5 @@
 node_modules
-packages/test-rsc-demo-suite/.hile-rsc-development.json
+packages/test-rsc-demo-suite/.hile-rsc-development*.json
 dist
 coverage
 *.tsbuildinfo

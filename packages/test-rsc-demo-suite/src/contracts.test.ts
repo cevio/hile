@@ -62,6 +62,40 @@ describe('private RSC demo package contracts', () => {
     }
   });
 
+  it('uses Ant Design in the host shell and every independently compiled plugin', () => {
+    const host = manifest('test-rsc-host');
+    expect(host.dependencies.antd).toBe('6.6.0');
+    expect(host.dependencies['@ant-design/nextjs-registry']).toBe('1.3.0');
+
+    const layout = read('packages/test-rsc-host/src/app/layout.tsx');
+    const shell = read('packages/test-rsc-host/src/app/host-shell.tsx');
+    expect(layout).toContain('AntdRegistry');
+    expect(shell.startsWith("'use client';")).toBe(true);
+    expect(shell).toContain('ConfigProvider');
+    expect(shell).toContain('AntdApp');
+    expect(shell).toContain('data-testid="host-application-shell"');
+    expect(shell).toContain('data-testid="host-plugin-content"');
+
+    for (const { packageName } of plugins) {
+      expect(manifest(packageName).dependencies.antd).toBe('6.6.0');
+      const pluginRoot = `packages/${packageName}/src/plugin`;
+      const clientEntry = packageName.endsWith('v1')
+        ? 'capability-panel.tsx'
+        : packageName.endsWith('v2')
+          ? 'update-panel.tsx'
+          : 'isolation-widget.tsx';
+      expect(read(`${pluginRoot}/${clientEntry}`)).toMatch(/from 'antd'/);
+    }
+  });
+
+  it('uses the current Ant Design Timeline item contract without runtime warnings', () => {
+    const panel = read('packages/test-rsc-plugin-capabilities-v2/src/plugin/update-panel.tsx');
+    const timeline = panel.match(/<Timeline items=\{\[([\s\S]*?)\]\} \/>/)?.[1];
+    expect(timeline).toBeTruthy();
+    expect(timeline).not.toMatch(/\bchildren\s*:/);
+    expect(timeline).toMatch(/\bcontent\s*:/);
+  });
+
   it('builds every plugin independently without Next or HTTP dependencies', () => {
     for (const expected of plugins) {
       const packageRoot = `packages/${expected.packageName}`;
@@ -109,9 +143,12 @@ describe('private RSC demo package contracts', () => {
     expect(supervisor).toContain('loadRscBuildConfig');
     expect(supervisor).toContain('developmentProjects.push(project)');
     expect(supervisor).toContain('writeDevelopmentState');
+    expect(supervisor).toContain("`.hile-rsc-development-${process.pid}.json`");
+    expect(supervisor).toContain("child.once('exit'");
     expect(supervisor).not.toContain('await stopAll();\n      await runDevelopmentBuild()');
     const host = read('packages/test-rsc-host/src/services/runtime.boot.ts');
-    expect(host).toContain('bindRscHostDevelopmentState');
+    expect(host).toContain('HileRscDiscoveryHost');
+    expect(host).not.toContain('bindRscHostDevelopmentState');
     expect(host).toContain('createRscDevelopmentEventMiddleware');
     for (const { packageName } of plugins) {
       const plugin = read(`packages/${packageName}/src/services/plugin.boot.ts`);
@@ -157,12 +194,31 @@ describe('private RSC demo package contracts', () => {
     }
   });
 
+  it('demonstrates module-level use server through the Host and the plugin model registry', () => {
+    const action = read('packages/test-rsc-plugin-capabilities-v2/src/plugin/actions.ts');
+    const client = read('packages/test-rsc-plugin-capabilities-v2/src/plugin/update-panel.tsx');
+    const pluginRuntime = read('packages/test-rsc-plugin-capabilities-v2/src/services/plugin.boot.ts');
+    const hostRuntime = read('packages/test-rsc-host/src/services/runtime.boot.ts');
+    const hostRoute = read('packages/test-rsc-host/src/app/plugins/[pluginId]/[[...path]]/page.tsx');
+
+    expect(action.startsWith("'use server';")).toBe(true);
+    expect(action).toContain("invokeRscModel('increment'");
+    expect(client).toContain('useActionState(incrementWithServerFunction');
+    expect(client).toContain('action={formAction}');
+    expect(client).not.toContain("fetch(");
+    expect(pluginRuntime).toContain('RscArtifactServerFunctionRuntime');
+    expect(hostRuntime).toContain('createRscServerFunctionMiddleware');
+    expect(hostRuntime).toContain('RscServerFunctionGateway');
+    expect(hostRoute).toContain('RscNextClientRuntime');
+  });
+
   it('composes all optional RSC adapters behind one HttpNext host', () => {
     const runtime = read('packages/test-rsc-host/src/services/runtime.boot.ts');
     const route = read('packages/test-rsc-host/src/app/plugins/[pluginId]/[[...path]]/page.tsx');
     expect(runtime.match(/new HttpNext/g)).toHaveLength(1);
     expect(runtime).toContain('createRscAssetMiddleware');
     expect(runtime).toContain('createRscActionMiddleware');
+    expect(runtime).toContain('createRscServerFunctionMiddleware');
     expect(runtime).toContain('createCatalogRscPluginLocator');
     expect(runtime).toContain('installRemoteClientResolver');
     expect(route).toContain('params: Promise<');

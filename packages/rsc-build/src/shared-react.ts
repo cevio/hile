@@ -12,6 +12,18 @@ export const HILE_RSC_SHARED_REACT_EXPORTS = [
   'useRef', 'useState', 'useSyncExternalStore', 'useTransition', 'version',
 ] as const;
 
+/** Public named exports provided by the pinned ReactDOM runtime. */
+export const HILE_RSC_SHARED_REACT_DOM_EXPORTS = [
+  'createPortal', 'flushSync', 'preconnect', 'prefetchDNS', 'preinit',
+  'preinitModule', 'preload', 'preloadModule', 'requestFormReset',
+  'unstable_batchedUpdates', 'useFormState', 'useFormStatus', 'version',
+] as const;
+
+/** Public named exports provided by the pinned ReactDOM client runtime. */
+export const HILE_RSC_SHARED_REACT_DOM_CLIENT_EXPORTS = [
+  'createRoot', 'hydrateRoot', 'version',
+] as const;
+
 export function createSharedReactPlugin(): Plugin {
   return {
     name: 'hile-rsc-shared-react',
@@ -20,6 +32,11 @@ export function createSharedReactPlugin(): Plugin {
       build.onResolve({ filter: /^react\/jsx-(?:runtime|dev-runtime)$/ }, (args) => ({
         path: args.path,
         namespace: 'hile-react-jsx',
+      }));
+      build.onResolve({ filter: /^react-dom$/ }, () => ({ path: 'react-dom', namespace: 'hile-react-dom' }));
+      build.onResolve({ filter: /^react-dom\/client$/ }, () => ({
+        path: 'react-dom/client',
+        namespace: 'hile-react-dom-client',
       }));
       build.onLoad({ filter: /.*/, namespace: 'hile-react' }, () => ({
         contents: [
@@ -39,6 +56,24 @@ export function createSharedReactPlugin(): Plugin {
           export const jsxs = Runtime.jsxs;
           export const jsxDEV = Runtime.jsxDEV;
         `,
+        loader: 'js',
+      }));
+      build.onLoad({ filter: /.*/, namespace: 'hile-react-dom' }, () => ({
+        contents: [
+          `const ReactDom = globalThis.__HILE_RSC_REACT_DOM__;`,
+          `if (!ReactDom) throw new Error('Hile RSC host did not install the shared ReactDOM runtime');`,
+          `export default ReactDom;`,
+          ...HILE_RSC_SHARED_REACT_DOM_EXPORTS.map((name) => `export const ${name} = ReactDom.${name};`),
+        ].join('\n'),
+        loader: 'js',
+      }));
+      build.onLoad({ filter: /.*/, namespace: 'hile-react-dom-client' }, () => ({
+        contents: [
+          `const ReactDomClient = globalThis.__HILE_RSC_REACT_DOM_CLIENT__;`,
+          `if (!ReactDomClient) throw new Error('Hile RSC host did not install the shared ReactDOM client runtime');`,
+          `export default ReactDomClient;`,
+          ...HILE_RSC_SHARED_REACT_DOM_CLIENT_EXPORTS.map((name) => `export const ${name} = ReactDomClient.${name};`),
+        ].join('\n'),
         loader: 'js',
       }));
     },

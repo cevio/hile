@@ -1,16 +1,27 @@
 import type { RscPluginManifest } from '../protocol';
 import {
+  decodeRscServerFunctionValue,
+  encodeRscServerFunctionValue,
+  type RscServerFunctionWireValue,
+} from '../server-functions/codec';
+import {
   ModelActionRegistry,
   ModelActionRegistryError,
   type ModelActionLoadOptions,
 } from '@hile/model';
-import type { RscActionRequest, RscPluginServiceOptions, RscRenderRequest } from './types';
+import type {
+  RscActionRequest,
+  RscPluginServiceOptions,
+  RscRenderRequest,
+  RscServerFunctionRequest,
+} from './types';
 
 export type RscPluginServiceErrorCode =
   | 'ERR_RSC_PLUGIN_INACTIVE'
   | 'ERR_RSC_BUILD_MISMATCH'
   | 'ERR_RSC_ROUTE_NOT_FOUND'
   | 'ERR_RSC_ACTION_NOT_FOUND'
+  | 'ERR_RSC_SERVER_FUNCTION_NOT_FOUND'
   | 'ERR_RSC_INVALID_REQUEST';
 
 export class RscPluginServiceError extends Error {
@@ -65,6 +76,7 @@ export class RscPluginService {
   private readonly revisions = new Map<string, {
     manifest: RscPluginManifest;
     renderer: RscPluginServiceOptions['renderer'];
+    serverFunctions?: RscPluginServiceOptions['serverFunctions'];
   }>();
   private actionModels = new ModelActionRegistry();
   private unloadActiveModels?: () => void;
@@ -83,7 +95,11 @@ export class RscPluginService {
     this.retainedRevisions = retainedRevisions;
     this.manifest = structuredClone(options.manifest);
     this.renderer = options.renderer;
-    this.revisions.set(this.manifest.buildId, { manifest: this.manifest, renderer: this.renderer });
+    this.revisions.set(this.manifest.buildId, {
+      manifest: this.manifest,
+      renderer: this.renderer,
+      serverFunctions: options.serverFunctions,
+    });
   }
 
   /** Scans domain-organized `*.model.*` files and mounts only defineActionModel exports. */
@@ -147,7 +163,11 @@ export class RscPluginService {
     }
     this.manifest = structuredClone(options.manifest);
     this.renderer = options.renderer;
-    this.revisions.set(this.manifest.buildId, { manifest: this.manifest, renderer: this.renderer });
+    this.revisions.set(this.manifest.buildId, {
+      manifest: this.manifest,
+      renderer: this.renderer,
+      serverFunctions: options.serverFunctions,
+    });
     while (this.revisions.size > this.retainedRevisions) {
       this.revisions.delete(this.revisions.keys().next().value!);
     }
@@ -255,6 +275,55 @@ export class RscPluginService {
         }
         throw error;
       }
+    } finally {
+      combined.cleanup();
+      leave();
+    }
+  }
+
+  public async serverFunction(
+    value: unknown,
+    remoteSignal?: AbortSignal,
+  ): Promise<RscServerFunctionWireValue> {
+    this.assertActive();
+    assertRecord(value, 'server function request');
+    assertBuildId(value.buildId);
+    if (typeof value.referenceId !== 'string' || value.referenceId.length === 0) {
+      throw new RscPluginServiceError(
+        'ERR_RSC_INVALID_REQUEST',
+        'server function referenceId is required',
+      );
+    }
+    const revision = this.requiredRevision(value.buildId);
+    const request = value as unknown as RscServerFunctionRequest;
+    const reference = (revision.manifest.serverFunctions ?? [])
+      .find(({ id }) => id === request.referenceId);
+    if (!reference || !revision.serverFunctions) {
+      throw new RscPluginServiceError(
+        'ERR_RSC_SERVER_FUNCTION_NOT_FOUND',
+        `unknown RSC server function: ${request.referenceId}`,
+      );
+    }
+    const leave = this.entered();
+    const combined = combineSignals(remoteSignal, this.shutdown.signal);
+    try {
+      const decoded = await decodeRscServerFunctionValue(request.args);
+      combined.signal.throwIfAborted();
+      if (!Array.isArray(decoded)) {
+        throw new RscPluginServiceError(
+          'ERR_RSC_INVALID_REQUEST',
+          'server function args must decode to an array',
+        );
+      }
+      const models = this.actionModels;
+      const result = await revision.serverFunctions.invoke({
+        manifest: revision.manifest,
+        reference,
+        args: decoded,
+        signal: combined.signal,
+        invokeModel: (id, input) => models.invoke(id, input, { signal: combined.signal }),
+      });
+      return encodeRscServerFunctionValue(result);
     } finally {
       combined.cleanup();
       leave();

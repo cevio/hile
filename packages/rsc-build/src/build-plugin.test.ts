@@ -71,6 +71,47 @@ describe('buildRscPlugin', () => {
       ]);
   });
 
+  it('emits immutable use server artifacts and stable build-scoped reference ids', async () => {
+    const { outdir, manifest } = await build();
+
+    expect(manifest.serverFunctions.map(({ id, exportName }) => ({ id, exportName })))
+      .toEqual([
+        {
+          id: 'com.example.basic/build-1/src/actions#default',
+          exportName: 'default',
+        },
+        {
+          id: 'com.example.basic/build-1/src/actions#add',
+          exportName: 'add',
+        },
+      ]);
+    for (const reference of manifest.serverFunctions) {
+      const artifact = await readFile(path.join(outdir, reference.module), 'utf8');
+      expect(artifact).toContain('server-function-implementation-marker');
+      expect(reference.integrity).toBe(sri(await readFile(path.join(outdir, reference.module))));
+    }
+  });
+
+  it('registers server references in the RSC graph with exact build identity', async () => {
+    const { outdir, manifest } = await build();
+    const server = await readFile(path.join(outdir, manifest.server.entry), 'utf8');
+
+    expect(server).toContain('registerServerReference');
+    expect(server).toContain('com.example.basic/build-1/src/actions#add');
+  });
+
+  it('replaces use server imports in browser and SSR client graphs with callable proxies', async () => {
+    const { outdir, manifest } = await build();
+    const browser = await readFile(path.join(outdir, manifest.clients[0].module), 'utf8');
+    const ssr = await readFile(path.join(outdir, manifest.clients[0].ssrModule), 'utf8');
+
+    for (const output of [browser, ssr]) {
+      expect(output).toContain('__HILE_RSC_CREATE_SERVER_REFERENCE__');
+      expect(output).toContain('com.example.basic/build-1/src/actions#add');
+      expect(output).not.toContain('server-function-implementation-marker');
+    }
+  });
+
   it('keeps the client dependency graph out of the RSC server bundle', async () => {
     const { outdir, manifest } = await build();
     const server = await readFile(path.join(outdir, manifest.server.entry), 'utf8');
@@ -187,6 +228,28 @@ describe('buildRscPlugin', () => {
     })).rejects.toThrow('must be empty');
   });
 
+  it('leaves the final directory empty after failure and permits the same buildId to retry', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'hile-rsc-retry-source-'));
+    const outdir = await mkdtemp(path.join(tmpdir(), 'hile-rsc-retry-build-'));
+    tempDirs.push(cwd, outdir);
+    await mkdir(path.join(cwd, 'src'), { recursive: true });
+    await writeFile(path.join(cwd, 'src/page.tsx'), `export default function Page() { return <div>server only</div>; }\n`);
+    const options = {
+      pluginId: 'org.hile.retry', buildId: 'immutable-build', cwd, entry: 'src/page.tsx', outdir,
+      routes: [{ path: '/retry', entry: 'default' }],
+      runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
+    } as const;
+
+    await expect(buildRscPlugin(options)).rejects.toThrow('use client');
+    expect(await import('node:fs/promises').then(({ readdir }) => readdir(outdir))).toEqual([]);
+
+    await writeFile(path.join(cwd, 'src/client.tsx'), `'use client'; export default function Client() { return <button>ready</button>; }\n`);
+    await writeFile(path.join(cwd, 'src/page.tsx'), `import Client from './client'; export default function Page() { return <Client />; }\n`);
+    const manifest = await buildRscPlugin(options);
+    expect(manifest.buildId).toBe('immutable-build');
+    expect(await exists(path.join(outdir, 'plugin.json'))).toBe(true);
+  });
+
   it('rejects a runtime declaration that does not match the compiler implementation', async () => {
     const outdir = await mkdtemp(path.join(tmpdir(), 'hile-rsc-build-'));
     tempDirs.push(outdir);
@@ -286,5 +349,35 @@ describe('buildRscPlugin', () => {
 
     expect(result.clients.map(({ id }) => id))
       .toEqual(['org.hile.dependency/@dependency/client-package#default']);
+  });
+
+  it('rejects external use server modules instead of bundling their implementation into browser code', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'hile-rsc-source-'));
+    const dependency = await mkdtemp(path.join(tmpdir(), 'hile-rsc-server-dependency-'));
+    const outdir = await mkdtemp(path.join(tmpdir(), 'hile-rsc-build-'));
+    tempDirs.push(cwd, dependency, outdir);
+    await mkdir(path.join(cwd, 'src'), { recursive: true });
+    await mkdir(path.join(cwd, 'node_modules'), { recursive: true });
+    await writeFile(path.join(dependency, 'package.json'), JSON.stringify({
+      name: 'server-package', type: 'module', exports: './index.js',
+    }));
+    await writeFile(path.join(dependency, 'index.js'),
+      `'use server'; export async function secret() { return 'must-not-reach-browser'; }\n`);
+    await symlink(dependency, path.join(cwd, 'node_modules/server-package'));
+    await writeFile(path.join(cwd, 'src/client.tsx'), `
+      'use client';
+      import { secret } from 'server-package';
+      export default function Client() { return <button onClick={() => secret()}>run</button>; }
+    `);
+    await writeFile(path.join(cwd, 'src/page.tsx'), `
+      import Client from './client';
+      export default function Page() { return <Client />; }
+    `);
+
+    await expect(buildRscPlugin({
+      pluginId: 'org.hile.external', buildId: 'build-a', cwd, entry: 'src/page.tsx', outdir,
+      routes: [{ path: '/', entry: 'default' }],
+      runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
+    })).rejects.toThrow('External use server');
   });
 });

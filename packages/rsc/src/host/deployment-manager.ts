@@ -56,8 +56,8 @@ export interface RscStagedPluginArtifact {
 interface ManagedDeployment {
   deployment: RscPluginDeployment;
   runtime?: RscManagedPluginRuntime;
-  unregisterArtifacts: () => void;
-  cleanupArtifacts: () => void | Promise<void>;
+  unregisterArtifacts?: () => void;
+  cleanupArtifacts?: () => void | Promise<void>;
 }
 
 export async function stageRscPluginArtifact(
@@ -171,10 +171,11 @@ export class RscDeploymentManager {
           await staged.cleanup();
           throw new Error('RSC staged artifact identity changed during installation');
         }
-        const unregisterArtifacts = this.artifacts.register(staged.artifactRoot, stagedManifest);
+        let unregisterArtifacts: (() => void) | undefined;
         let managedRuntime: RscManagedPluginRuntime | undefined;
         let catalogInstalled = false;
         try {
+          unregisterArtifacts = this.artifacts.register(staged.artifactRoot, stagedManifest);
           managedRuntime = await this.start({
             artifactRoot: staged.artifactRoot,
             manifest: stagedManifest,
@@ -200,10 +201,12 @@ export class RscDeploymentManager {
               cleanupErrors.push(caught);
             }
           }
-          try {
-            unregisterArtifacts();
-          } catch (caught) {
-            cleanupErrors.push(caught);
+          if (unregisterArtifacts) {
+            try {
+              unregisterArtifacts();
+            } catch (caught) {
+              cleanupErrors.push(caught);
+            }
           }
           try {
             await staged.cleanup();
@@ -235,6 +238,19 @@ export class RscDeploymentManager {
     this.deployments.activate(target);
   }
 
+  public rebind(
+    target: { pluginId: string; buildId: string },
+    namespace: string,
+  ): Promise<RscPluginDeployment> {
+    return this.enqueue(target, async () => {
+      const managed = this.managed.get(key(target));
+      if (!managed) throw new Error(`RSC deployment is not managed: ${target.pluginId}@${target.buildId}`);
+      const deployment = this.deployments.rebind(target, namespace);
+      managed.deployment = deployment;
+      return { ...deployment };
+    });
+  }
+
   public async deactivate(target: { pluginId: string; buildId: string }): Promise<void> {
     if (this.shuttingDown) throw new Error('RSC deployment manager is shutting down');
     if (this.lifecycle.has(key(target))) throw new Error('RSC deployment is retiring');
@@ -262,18 +278,42 @@ export class RscDeploymentManager {
       if (!managed) return;
       const snapshot = this.deployments.snapshot().find((entry) =>
         entry.pluginId === target.pluginId && entry.buildId === target.buildId);
-      if (snapshot?.state === 'active') this.deployments.deactivate(target);
+      const errors: unknown[] = [];
+      if (snapshot?.state === 'active') {
+        try { this.deployments.deactivate(target); } catch (error) { errors.push(error); }
+      }
+      if (errors.length) throw new AggregateError(errors, 'RSC deployment retirement failed');
       if (snapshot) {
-        await this.deployments.drain(target);
-        if (managed.runtime) await stopManagedRuntime(managed.runtime);
-        managed.runtime = undefined;
-        this.deployments.remove(target);
+        try { await this.deployments.drain(target); } catch (error) { errors.push(error); }
       }
+      if (errors.length) throw new AggregateError(errors, 'RSC deployment retirement failed');
+      if (managed.runtime) {
+        try {
+          await stopManagedRuntime(managed.runtime);
+          managed.runtime = undefined;
+        } catch (error) { errors.push(error); }
+      }
+      if (errors.length) throw new AggregateError(errors, 'RSC deployment retirement failed');
+      if (snapshot) {
+        try { this.deployments.remove(target); } catch (error) { errors.push(error); }
+      }
+      if (errors.length) throw new AggregateError(errors, 'RSC deployment retirement failed');
       if (options.removeArtifacts ?? true) {
-        managed.unregisterArtifacts();
-        await managed.cleanupArtifacts();
-        this.managed.delete(deploymentKey);
+        if (managed.unregisterArtifacts) {
+          try {
+            managed.unregisterArtifacts();
+            managed.unregisterArtifacts = undefined;
+          } catch (error) { errors.push(error); }
+        }
+        if (managed.cleanupArtifacts) {
+          try {
+            await managed.cleanupArtifacts();
+            managed.cleanupArtifacts = undefined;
+          } catch (error) { errors.push(error); }
+        }
+        if (!managed.unregisterArtifacts && !managed.cleanupArtifacts) this.managed.delete(deploymentKey);
       }
+      if (errors.length) throw new AggregateError(errors, 'RSC deployment retirement failed');
     });
   }
 
@@ -281,8 +321,8 @@ export class RscDeploymentManager {
     const deploymentKey = key(target);
     const managed = this.managed.get(deploymentKey);
     if (!managed || managed.runtime) return false;
-    managed.unregisterArtifacts();
-    await managed.cleanupArtifacts();
+    managed.unregisterArtifacts?.();
+    await managed.cleanupArtifacts?.();
     this.managed.delete(deploymentKey);
     return true;
   }
@@ -290,12 +330,19 @@ export class RscDeploymentManager {
   public shutdown(): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise;
     this.shuttingDown = true;
-    this.shutdownPromise = (async () => {
+    const operation = (async () => {
       await Promise.all([...this.pendingInstalls]);
+      const errors: unknown[] = [];
       for (const managed of [...this.managed.values()]) {
-        await this.retire(managed.deployment, { removeArtifacts: true });
+        try { await this.retire(managed.deployment, { removeArtifacts: true }); }
+        catch (error) { errors.push(error); }
       }
+      if (errors.length) throw new AggregateError(errors, 'RSC deployment shutdown failed');
     })();
+    this.shutdownPromise = operation.catch((error) => {
+      this.shutdownPromise = undefined;
+      throw error;
+    });
     return this.shutdownPromise;
   }
 }

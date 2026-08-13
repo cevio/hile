@@ -74,7 +74,7 @@ export async function inspectRscPluginArtifact(input: string): Promise<RscPlugin
   return validateRscPluginManifest(raw, raw.runtime);
 }
 
-function expectedFiles(manifest: RscPluginManifest): Map<string, string> {
+export function getRscPluginArtifactFiles(manifest: RscPluginManifest): Map<string, string> {
   const files = new Map<string, string>();
   const add = (artifactPath: string, integrity: string) => {
     const previous = files.get(artifactPath);
@@ -84,6 +84,9 @@ function expectedFiles(manifest: RscPluginManifest): Map<string, string> {
     files.set(artifactPath, integrity);
   };
   add(manifest.server.entry, manifest.server.integrity);
+  for (const serverFunction of manifest.serverFunctions) {
+    add(serverFunction.module, serverFunction.integrity);
+  }
   for (const client of manifest.clients) {
     add(client.module, client.integrity);
     add(client.ssrModule, client.ssrIntegrity);
@@ -101,7 +104,7 @@ export async function verifyRscPluginArtifact(
   const { root, manifestPath } = await resolveManifestPath(input);
   const raw = JSON.parse(await readFile(manifestPath, 'utf8'));
   const manifest = validateRscPluginManifest(raw, hostRuntime);
-  const files = expectedFiles(manifest);
+  const files = getRscPluginArtifactFiles(manifest);
   for (const [artifactPath, expectedIntegrity] of files) {
     const absolute = path.resolve(root, artifactPath);
     if (!absolute.startsWith(`${root}${path.sep}`)) {

@@ -1,26 +1,18 @@
-.capability-v2 {
-  border: 2px solid #0f766e;
-  border-radius: 18px;
-  padding: 24px;
-  background: linear-gradient(135deg, #ccfbf1, #ffffff);
-  color: #134e4a;
-}
-
-.update-panel {
-  display: grid;
-  gap: 12px;
-  margin-top: 18px;
-  padding: 18px;
-  border-radius: 12px;
-  background: #99f6e4;
-}
-
-.update-panel button {
-  width: max-content;
-  border: 0;
-  border-radius: 8px;
-  padding: 9px 13px;
-  color: white;
-  background: #0f766e;
-  cursor: pointer;
-}
+.capability-v2 { overflow: hidden; border: 1px solid #a9c9c0; background: #f7fbfa; color: #153b32; box-shadow: 0 20px 55px rgba(29, 78, 65, .1); }
+.capability-v2-header { position: relative; padding: clamp(24px, 4vw, 46px); background: #0b3b31; color: #d9fff3; }
+.capability-v2-header::after { position: absolute; right: 4%; bottom: -34px; width: 150px; height: 68px; border: 1px solid #34d399; content: ''; transform: skewX(-22deg); opacity: .45; }
+.capability-v2-kicker { margin: 0 0 12px; color: #6ee7b7; font: 650 11px/1.2 "IBM Plex Mono", monospace; letter-spacing: .16em; }
+.capability-v2-header h1 { margin: 0; color: #fff; font-size: clamp(30px, 5vw, 54px); line-height: 1; letter-spacing: -.04em; }
+.capability-v2-header > p:not(.capability-v2-kicker) { max-width: 750px; color: #b7d8ce; font-size: 15px; }
+.capability-v2-metadata { display: flex; flex-wrap: wrap; gap: 10px 28px; margin: 26px 0 0; }
+.capability-v2-metadata div { min-width: 150px; }
+.capability-v2-metadata dt { color: #70a99a; font: 10px/1.4 "IBM Plex Mono", monospace; letter-spacing: .12em; text-transform: uppercase; }
+.capability-v2-metadata dd { margin: 4px 0 0; color: #ecfdf5; font: 600 12px/1.4 "IBM Plex Mono", monospace; }
+.update-panel { padding: clamp(18px, 3vw, 30px); }
+.update-status-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.update-action-card, .update-result-card { height: 100%; border-radius: 0 !important; }
+.update-form { margin-top: 20px; }
+.update-result-output { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.update-result-card .ant-progress { margin-top: 28px; }
+.update-modal-note { margin-top: 16px; }
+@media (max-width: 640px) { .update-status-line { align-items: flex-start; flex-direction: column; } }

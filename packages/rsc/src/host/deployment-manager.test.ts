@@ -21,6 +21,7 @@ function manifest(buildId: string): RscPluginManifest {
     buildId,
     runtime,
     server: { entry: 'server-rsc/index.js', integrity: 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' },
+    serverFunctions: [],
     clients: [], styles: [], routes: [{ path: '/fixture', entry: 'default' }],
   };
 }
@@ -102,6 +103,24 @@ describe('RscDeploymentManager', () => {
     expect(deployments.snapshot().map(({ buildId }) => buildId)).toEqual(['build-a']);
   });
 
+  it('cleans the staged artifact when artifact registration fails', async () => {
+    const artifacts = new InMemoryRscArtifactCatalog();
+    const deployments = new InMemoryRscDeploymentCatalog();
+    artifacts.register('/existing', manifest('build-a'));
+    const cleanup = vi.fn();
+    const manager = new RscDeploymentManager({
+      artifacts,
+      deployments,
+      runtime,
+      verify: async () => ({ manifest: manifest('build-a'), files: [] }),
+      stage: async (artifactRoot, verification) => ({ artifactRoot, verification, cleanup }),
+      start: async () => managedRuntime(),
+    });
+    await expect(manager.install({ artifactRoot: '/artifact-a', namespace: 'runtime.a' }))
+      .rejects.toThrow('already registered');
+    expect(cleanup).toHaveBeenCalledOnce();
+  });
+
   it('continues installation rollback when a runtime cleanup step fails', async () => {
     const artifacts = new InMemoryRscArtifactCatalog();
     const deployments = new InMemoryRscDeploymentCatalog();
@@ -175,6 +194,21 @@ describe('RscDeploymentManager', () => {
     await manager.shutdown();
     expect(deployments.snapshot()).toEqual([]);
     for (const value of runtimes.values()) expect(value.stop).toHaveBeenCalledOnce();
+  });
+
+  it('continues shutdown after one runtime cleanup reports an error and permits retry', async () => {
+    const { manager, deployments, runtimes } = setup();
+    await manager.install({ artifactRoot: '/artifact-a', namespace: 'runtime.a', activate: true });
+    await manager.install({ artifactRoot: '/artifact-b', namespace: 'runtime.b' });
+    vi.mocked(runtimes.get('build-a')!.stop).mockRejectedValueOnce(new Error('stop failed'));
+    await expect(manager.shutdown()).rejects.toThrow('shutdown failed');
+    expect(runtimes.get('build-b')!.stop).toHaveBeenCalledOnce();
+    expect(deployments.snapshot()).toEqual([
+      expect.objectContaining({ buildId: 'build-a', state: 'inactive' }),
+    ]);
+    await expect(manager.shutdown()).resolves.toBeUndefined();
+    expect(runtimes.get('build-a')!.stop).toHaveBeenCalledTimes(2);
+    expect(deployments.snapshot()).toEqual([]);
   });
 
   it('serializes concurrent retirement and stops a runtime only once', async () => {

@@ -1,6 +1,7 @@
 import { getHttpNextRequestSignal } from '@hile/http-next';
 import { RscClientRuntimeProvider } from '@hile/rsc/client';
 import { decodePluginFlight } from '@hile/rsc-next';
+import { RscNextClientRuntime } from '@hile/rsc-next/client';
 import { RscHostRuntime } from '@hile/rsc/host/runtime';
 import { notFound } from 'next/navigation';
 import { getDemoHostComposition } from '../../../../services/runtime-reference';
@@ -39,9 +40,11 @@ export default async function PluginPage({
   return (
     <main className="host-plugin-frame" data-rsc-host data-plugin-id={pluginId} data-build-id={active.buildId}>
       <p className="host-badge">Host frame · active {active.buildId}</p>
-      <RscClientRuntimeProvider assetMountPath={composition.assetMountPath}>
-        {tree}
-      </RscClientRuntimeProvider>
+      <RscNextClientRuntime serverFunctions={{ headers: { 'x-rsc-demo-token': 'demo-token' } }}>
+        <RscClientRuntimeProvider assetMountPath={composition.assetMountPath}>
+          {tree}
+        </RscClientRuntimeProvider>
+      </RscNextClientRuntime>
     </main>
   );
 }

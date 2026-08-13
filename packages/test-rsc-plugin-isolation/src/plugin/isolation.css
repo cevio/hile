@@ -1,20 +1,10 @@
-.isolation-shell {
-  border: 2px solid #c2410c;
-  border-radius: 18px;
-  padding: 24px;
-  color: #7c2d12;
-  background: #fff7ed;
-}
-
-.isolation-widget {
-  display: grid;
-  gap: 8px;
-  margin-top: 16px;
-}
-
-.isolation-widget input {
-  max-width: 360px;
-  padding: 8px;
-  border: 1px solid #fdba74;
-  border-radius: 6px;
-}
+.isolation-shell { overflow: hidden; border: 2px solid #c2410c; background: #fffaf5; color: #5c2b16; box-shadow: 0 20px 50px rgba(124, 45, 18, .12); }
+.isolation-header { padding: clamp(24px, 4vw, 44px); border-bottom: 1px solid #fed7aa; background: repeating-linear-gradient(-45deg, #fff7ed, #fff7ed 10px, #ffedd5 10px, #ffedd5 11px); }
+.isolation-header p { color: #c2410c; font: 650 11px/1.2 "IBM Plex Mono", monospace; letter-spacing: .15em; }
+.isolation-header h1 { margin-block: 10px; color: #7c2d12; font-size: clamp(30px, 5vw, 50px); line-height: 1; letter-spacing: -.04em; }
+.isolation-header span { display: block; max-width: 750px; color: #7d5545; }
+.isolation-widget { display: grid; gap: 16px; padding: clamp(18px, 3vw, 30px); }
+.isolation-controls { width: 100%; }
+.isolation-controls > label { color: #7c2d12; font-weight: 650; }
+.isolation-probe { height: 100%; border-radius: 0 !important; }
+.isolation-probe h4 { overflow-wrap: anywhere; }

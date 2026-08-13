@@ -2,13 +2,22 @@ import { watch } from 'node:fs';
 import { watchRscDevelopmentState } from './state';
 import { verifyRscPluginArtifact } from '@hile/rsc/artifact';
 import type { RscRuntimeCompatibility } from '@hile/rsc/protocol';
-import { createOfficialRscRenderer, type RscPluginService } from '@hile/rsc/plugin';
+import {
+  createOfficialRscRenderer,
+  RscArtifactServerFunctionRuntime,
+  type RscPluginService,
+} from '@hile/rsc/plugin';
 
 export interface RscPluginDevelopmentBindingOptions {
   file: string;
   namespace: string;
   runtime: RscRuntimeCompatibility;
   onError?: (error: unknown) => void;
+  pollMs?: number;
+  verify?: typeof verifyRscPluginArtifact;
+  createRenderer?: typeof createOfficialRscRenderer;
+  createServerFunctions?: (artifactRoot: string) => RscArtifactServerFunctionRuntime;
+  onActivated?: (record: import('./state').RscDevelopmentRevisionRecord) => void | Promise<void>;
 }
 
 /** Keeps one plugin microservice alive while atomically switching its RSC renderer revision. */
@@ -17,16 +26,33 @@ export async function bindRscPluginDevelopmentState(
   options: RscPluginDevelopmentBindingOptions,
 ): Promise<() => Promise<void>> {
   let activeBuildId = service.describe().buildId;
+  let announcedBuildId = activeBuildId;
+  const verify = options.verify ?? verifyRscPluginArtifact;
+  const createRenderer = options.createRenderer ?? createOfficialRscRenderer;
+  const createServerFunctions = options.createServerFunctions
+    ?? ((artifactRoot: string) => new RscArtifactServerFunctionRuntime(artifactRoot));
   const watcher = watchRscDevelopmentState(options.file, async (state) => {
     const record = state.revisions.find(({ namespace }) => namespace === options.namespace);
-    if (!record || record.buildId === activeBuildId) return;
-    const { manifest } = await verifyRscPluginArtifact(record.artifactRoot, options.runtime);
-    if (manifest.pluginId !== record.pluginId || manifest.buildId !== record.buildId) {
-      throw new Error(`RSC development artifact identity mismatch: ${record.pluginId}@${record.buildId}`);
+    if (!record) return;
+    if (record.buildId !== activeBuildId) {
+      const { manifest } = await verify(record.artifactRoot, options.runtime);
+      if (manifest.pluginId !== record.pluginId || manifest.buildId !== record.buildId) {
+        throw new Error(`RSC development artifact identity mismatch: ${record.pluginId}@${record.buildId}`);
+      }
+      service.activate({
+        manifest,
+        renderer: createRenderer(record.artifactRoot),
+        serverFunctions: (manifest.serverFunctions?.length ?? 0) > 0
+          ? createServerFunctions(record.artifactRoot)
+          : undefined,
+      });
+      activeBuildId = record.buildId;
     }
-    service.activate({ manifest, renderer: createOfficialRscRenderer(record.artifactRoot) });
-    activeBuildId = record.buildId;
-  }, { onError: options.onError });
+    if (record.buildId !== announcedBuildId) {
+      await options.onActivated?.({ ...record });
+      announcedBuildId = record.buildId;
+    }
+  }, { onError: options.onError, pollMs: options.pollMs });
   try {
     await watcher.refresh();
   } catch (error) {

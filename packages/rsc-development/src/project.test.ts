@@ -94,4 +94,60 @@ describe('RSC development project', () => {
     await expect(project.rebuild()).resolves.toMatchObject({ revision: 2 });
     await project.dispose();
   });
+
+  it('coalesces duplicate watcher events, does not spin on a failed fingerprint, and recovers on the next edit', async () => {
+    const value = await setup();
+    const errors: unknown[] = [];
+    const revisions: number[] = [];
+    const project = await createRscDevelopmentProject({
+      configFile: value.configFile,
+      stateFile: value.stateFile,
+      outdir: value.outdir,
+      namespace: 'fixture.dev',
+      sessionId: 'project-recovery',
+      debounceMs: 25,
+      pollMs: 50,
+      loadConfig: value.loadConfig,
+      onError: (error) => { errors.push(error); },
+      onRevision: ({ revision }) => { revisions.push(revision); },
+    });
+    const helper = path.join(value.cwd, 'src/helper.ts');
+    await writeFile(helper, 'export const helperText = ;\n');
+    await vi.waitFor(() => expect(errors.length).toBeGreaterThanOrEqual(1), { timeout: 5_000 });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    const settledErrorCount = errors.length;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(errors).toHaveLength(settledErrorCount);
+    expect(project.current().revision).toBe(1);
+
+    await writeFile(helper, "export const helperText = 'recovered';\n");
+    await vi.waitFor(() => expect(project.current().revision).toBe(2), { timeout: 5_000 });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(revisions).toEqual([1, 2]);
+    await project.dispose();
+  }, 20_000);
+
+  it('rebuilds after a failed edit is restored exactly to the last successful source', async () => {
+    const value = await setup();
+    const errors: unknown[] = [];
+    const project = await createRscDevelopmentProject({
+      configFile: value.configFile,
+      stateFile: value.stateFile,
+      outdir: value.outdir,
+      namespace: 'fixture.dev',
+      sessionId: 'project-exact-restore',
+      debounceMs: 25,
+      pollMs: 50,
+      loadConfig: value.loadConfig,
+      onError: (error) => { errors.push(error); },
+    });
+    const page = path.join(value.cwd, 'src/page.tsx');
+    const original = await readFile(page, 'utf8');
+    await writeFile(page, `${original}\nconst broken = ;\n`);
+    await vi.waitFor(() => expect(errors.length).toBeGreaterThanOrEqual(1), { timeout: 5_000 });
+
+    await writeFile(page, original);
+    await vi.waitFor(() => expect(project.current().revision).toBe(2), { timeout: 5_000 });
+    await project.dispose();
+  }, 20_000);
 });

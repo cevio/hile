@@ -1,0 +1,24 @@
+{
+  "name": "@hile/rsc-discovery",
+  "description": "Transport-neutral automatic discovery lifecycle for Hile RSC plugin deployments",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+  },
+  "scripts": {
+    "build": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
+    "dev": "tsc -b --watch",
+    "test": "vitest run"
+  },
+  "files": ["dist", "README.md"],
+  "license": "MIT",
+  "publishConfig": { "access": "public" },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "fix-esm-import-path": "^1.10.3",
+    "vitest": "^4.0.18"
+  }
+}

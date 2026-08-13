@@ -1,26 +1,30 @@
-import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { access, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { access, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import {
   context,
   type BuildContext,
   type BuildOptions,
   type BuildResult,
-  type Metafile,
-  type Plugin,
 } from 'esbuild';
 import {
-  HILE_REMOTE_CLIENT_REFERENCE,
   HILE_RSC_RUNTIME,
   HILE_RSC_PROTOCOL_VERSION,
   validateRscPluginManifest,
-  type RscClientReference,
   type RscPluginManifest,
   type RscRouteDefinition,
   type RscRuntimeCompatibility,
 } from '@hile/rsc/protocol';
-import { inspectModule, createSharedReactPlugin } from '@hile/rsc-build';
+import {
+  assembleRscClientArtifacts,
+  buildRscServerFunctionArtifacts,
+  createRscClientBuildOptions,
+  isPathInside,
+  RSC_BUILD_EXTERNALS,
+  rscArtifactIntegrity,
+  RscModuleGraph,
+  toRscArtifactPath,
+} from '@hile/rsc-build';
 
 export interface RscDevelopmentCompilerOptions {
   pluginId: string;
@@ -32,9 +36,13 @@ export interface RscDevelopmentCompilerOptions {
   runtime: RscRuntimeCompatibility;
   sessionId?: string;
   initialRevision?: number;
+  /** Immutable revisions retained for this compiler session. Must be at least 2. */
+  maxRevisions?: number;
+  /** Compiler-session artifact directories retained across process restarts. Must be at least 2. */
+  maxSessions?: number;
 }
 
-export type RscDevelopmentContextState = 'created' | 'reused';
+export type RscDevelopmentContextState = 'created' | 'reused' | 'cached';
 
 export interface RscDevelopmentRevision {
   revision: number;
@@ -54,104 +62,30 @@ export interface RscDevelopmentCompiler {
   dispose(): Promise<void>;
 }
 
-interface ClientEntry {
-  pluginId: string;
-  buildId: string;
-  absolutePath: string;
-  referenceBase: string;
-  exports: string[];
-  entryName: string;
-}
-
 interface ContextSlot {
   signature: string;
   context: BuildContext;
+  result: BuildResult;
 }
 
-const SOURCE_EXTENSIONS = ['.tsx', '.ts', '.jsx', '.js', '.mjs', '.mts'];
-const EXTERNAL = [
-  'react', 'react/*', 'react-dom', 'react-dom/*',
-  'react-server-dom-webpack', 'react-server-dom-webpack/*',
-];
+const EXTERNAL = [...RSC_BUILD_EXTERNALS];
 
-function isInside(root: string, target: string): boolean {
-  const relative = path.relative(root, target);
-  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+async function buildInputFingerprint(results: readonly BuildResult[]): Promise<string> {
+  const inputs = new Set(results.flatMap((result) => Object.keys(result.metafile?.inputs ?? {})));
+  const fingerprints = await Promise.all([...inputs].sort().map(async (input) => {
+    try {
+      const metadata = await stat(path.resolve(input), { bigint: true });
+      return `${input}\0${metadata.size}\0${metadata.mtimeNs}`;
+    } catch {
+      return `${input}\0virtual`;
+    }
+  }));
+  return fingerprints.join('\n');
 }
 
 function safeSegment(value: string, label: string): string {
   if (!/^[A-Za-z0-9._-]+$/.test(value)) throw new Error(`${label} contains unsupported path characters`);
   return value;
-}
-
-function sanitizeEntryName(relativePath: string): string {
-  const readable = relativePath.replace(/\.[^.]+$/, '').replace(/[^A-Za-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'client';
-  return `${readable}-${createHash('sha256').update(relativePath).digest('hex').slice(0, 10)}`;
-}
-
-function registerSource(entry: ClientEntry): string {
-  const lines = [
-    `import React from 'react';`,
-    `import { registerClientReference as __hileRegisterClientReference } from 'react-server-dom-webpack/server.node';`,
-    `const __hileRemoteClientBoundary = __hileRegisterClientReference(function () {`,
-    `  throw new Error('RemoteClientBoundary cannot execute on the plugin RSC server');`,
-    `}, ${JSON.stringify(HILE_REMOTE_CLIENT_REFERENCE)}, 'default');`,
-  ];
-  for (const exportName of entry.exports) {
-    const local = exportName === 'default' ? '__hileDefault' : `__hile_${exportName}`;
-    lines.push(
-      `function ${local}(props) {`,
-      `  return React.createElement(__hileRemoteClientBoundary, {`,
-      `    pluginId: ${JSON.stringify(entry.pluginId)},`,
-      `    buildId: ${JSON.stringify(entry.buildId)},`,
-      `    referenceId: ${JSON.stringify(`${entry.referenceBase}#${exportName}`)},`,
-      `    exportName: ${JSON.stringify(exportName)},`,
-      `    props,`,
-      `  });`,
-      `}`,
-      exportName === 'default' ? `export default ${local};` : `export { ${local} as ${exportName} };`,
-    );
-  }
-  return lines.join('\n');
-}
-
-function toRelative(outdir: string, output: string): string {
-  return path.relative(outdir, path.resolve(output)).split(path.sep).join('/');
-}
-
-function outputForEntry(metafile: Metafile, absoluteEntry: string): string {
-  const normalized = realpathSync(path.resolve(absoluteEntry));
-  const match = Object.entries(metafile.outputs).find(([, value]) =>
-    value.entryPoint && realpathSync(path.resolve(value.entryPoint)) === normalized);
-  if (!match) throw new Error(`No output was generated for client entry ${absoluteEntry}`);
-  return match[0];
-}
-
-async function integrity(file: string): Promise<string> {
-  return `sha256-${createHash('sha256').update(await readFile(file)).digest('base64')}`;
-}
-
-function clientOptions(entries: ClientEntry[], outdir: string, target: 'browser' | 'ssr'): BuildOptions {
-  return {
-    absWorkingDir: process.cwd(),
-    entryPoints: Object.fromEntries(entries.map((entry) => [entry.entryName, entry.absolutePath])),
-    outdir,
-    bundle: true,
-    splitting: true,
-    format: 'esm',
-    platform: target === 'browser' ? 'browser' : 'node',
-    target: 'es2022',
-    jsx: 'automatic',
-    entryNames: '[name]-[hash]',
-    chunkNames: 'chunks/[name]-[hash]',
-    assetNames: 'assets/[name]-[hash]',
-    external: EXTERNAL.filter((specifier) => !specifier.startsWith('react')),
-    plugins: [createSharedReactPlugin()],
-    metafile: true,
-    write: true,
-    sourcemap: false,
-    logLevel: 'silent',
-  };
 }
 
 async function copyRevision(workdir: string, target: string, manifest: RscPluginManifest) {
@@ -166,14 +100,36 @@ async function copyRevision(workdir: string, target: string, manifest: RscPlugin
     client.ssrChunks.forEach((chunk) => files.add(chunk.path));
   }
   manifest.styles.forEach((style) => files.add(style.path));
+  manifest.serverFunctions.forEach((reference) => files.add(reference.module));
   for (const relative of files) {
     const source = path.resolve(workdir, relative);
     const destination = path.resolve(temporary, relative);
-    if (!isInside(workdir, source) || !isInside(temporary, destination)) throw new Error('RSC artifact path escaped revision root');
+    if (!isPathInside(workdir, source) || !isPathInside(temporary, destination)) throw new Error('RSC artifact path escaped revision root');
     await mkdir(path.dirname(destination), { recursive: true });
     await writeFile(destination, await readFile(source));
   }
   await rename(temporary, target);
+}
+
+async function pruneRevisionDirectories(revisionsDir: string, retain: number): Promise<void> {
+  const revisions = (await readdir(revisionsDir, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory() && /^r\d+$/.test(entry.name))
+    .map((entry) => ({ name: entry.name, revision: Number(entry.name.slice(1)) }))
+    .sort((left, right) => right.revision - left.revision);
+  await Promise.all(revisions.slice(retain).map(({ name }) =>
+    rm(path.join(revisionsDir, name), { recursive: true, force: true })));
+}
+
+async function pruneSessionDirectories(root: string, current: string, retain: number): Promise<void> {
+  const sessions = (await readdir(root, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory() && entry.name !== current);
+  const dated = await Promise.all(sessions.map(async (entry) => ({
+    name: entry.name,
+    mtimeMs: (await stat(path.join(root, entry.name))).mtimeMs,
+  })));
+  dated.sort((left, right) => right.mtimeMs - left.mtimeMs);
+  await Promise.all(dated.slice(Math.max(0, retain - 1)).map(({ name }) =>
+    rm(path.join(root, name), { recursive: true, force: true })));
 }
 
 export async function createRscDevelopmentCompiler(
@@ -187,64 +143,44 @@ export async function createRscDevelopmentCompiler(
   const cwd = realpathSync(path.resolve(options.cwd));
   const entryInput = path.resolve(cwd, options.entry);
   const requestedOutdir = path.resolve(options.outdir);
-  if (!isInside(cwd, entryInput) || entryInput === cwd) throw new Error('RSC plugin entry must be a file inside cwd');
-  if (isInside(requestedOutdir, cwd)) throw new Error('RSC plugin outdir must not contain or overwrite cwd');
+  if (!isPathInside(cwd, entryInput) || entryInput === cwd) throw new Error('RSC plugin entry must be a file inside cwd');
+  if (isPathInside(requestedOutdir, cwd)) throw new Error('RSC plugin outdir must not contain or overwrite cwd');
   await access(entryInput);
   const entry = realpathSync(entryInput);
-  if (!isInside(cwd, entry) || entry === cwd) throw new Error('RSC plugin entry must not escape cwd through a symbolic link');
+  if (!isPathInside(cwd, entry) || entry === cwd) throw new Error('RSC plugin entry must not escape cwd through a symbolic link');
   await mkdir(requestedOutdir, { recursive: true });
   const outdir = realpathSync(requestedOutdir);
-  if (isInside(outdir, cwd)) {
+  if (isPathInside(outdir, cwd)) {
     throw new Error('RSC plugin outdir must not contain or overwrite cwd through a symbolic link');
   }
   const sessionId = safeSegment(options.sessionId ?? `${process.pid}`, 'RSC development sessionId');
   if (!Number.isSafeInteger(options.initialRevision ?? 0) || (options.initialRevision ?? 0) < 0) {
     throw new TypeError('RSC development initialRevision must be a non-negative safe integer');
   }
+  const maxRevisions = options.maxRevisions ?? 5;
+  const maxSessions = options.maxSessions ?? 3;
+  if (!Number.isSafeInteger(maxRevisions) || maxRevisions < 2) {
+    throw new TypeError('RSC development maxRevisions must be a safe integer of at least 2');
+  }
+  if (!Number.isSafeInteger(maxSessions) || maxSessions < 2) {
+    throw new TypeError('RSC development maxSessions must be a safe integer of at least 2');
+  }
   const workdir = path.join(outdir, '.work', sessionId);
   const revisionsDir = path.join(outdir, 'revisions', sessionId);
   await mkdir(workdir, { recursive: true });
   await mkdir(revisionsDir, { recursive: true });
+  await Promise.all([
+    pruneSessionDirectories(path.join(outdir, '.work'), sessionId, maxSessions),
+    pruneSessionDirectories(path.join(outdir, 'revisions'), sessionId, maxSessions),
+  ]);
 
   let activeBuildId = options.buildId;
-  const clientEntries = new Map<string, ClientEntry>();
-  const boundaryPlugin: Plugin = {
-    name: 'hile-rsc-client-boundary',
-    setup(build) {
-      build.onStart(() => { clientEntries.clear(); });
-      build.onResolve({ filter: /.*/ }, async (args) => {
-        if (args.kind === 'entry-point' || (args.pluginData as { hileRscResolved?: boolean } | undefined)?.hileRscResolved) return undefined;
-        const resolved = await build.resolve(args.path, {
-          importer: args.importer, kind: args.kind, namespace: args.namespace, resolveDir: args.resolveDir,
-          pluginData: { hileRscResolved: true }, with: args.with,
-        });
-        if (resolved.errors.length > 0 || resolved.external || resolved.namespace !== 'file') return resolved;
-        const canonical = realpathSync(resolved.path);
-        if (!SOURCE_EXTENSIONS.includes(path.extname(canonical))) return resolved;
-        const insidePlugin = isInside(cwd, canonical);
-        const bareSpecifier = !args.path.startsWith('.') && !path.isAbsolute(args.path);
-        if (!insidePlugin && !bareSpecifier) throw new Error(`Plugin source escapes cwd through a relative import: ${resolved.path}`);
-        const inspection = inspectModule(await readFile(canonical, 'utf8'), canonical);
-        if (!inspection.useClient) return resolved;
-        const logicalPath = insidePlugin ? path.relative(cwd, canonical).split(path.sep).join('/') : `@dependency/${args.path}`;
-        const existing = clientEntries.get(canonical);
-        if (existing) return { path: canonical, namespace: 'hile-rsc-client-reference', pluginData: existing };
-        const value: ClientEntry = {
-          pluginId: options.pluginId,
-          buildId: activeBuildId,
-          absolutePath: canonical,
-          referenceBase: `${options.pluginId}/${logicalPath.replace(/\.[^.]+$/, '')}`,
-          exports: [...inspection.exports].sort((a, b) => a === 'default' ? -1 : b === 'default' ? 1 : a.localeCompare(b)),
-          entryName: sanitizeEntryName(logicalPath),
-        };
-        clientEntries.set(canonical, value);
-        return { path: canonical, namespace: 'hile-rsc-client-reference', pluginData: value };
-      });
-      build.onLoad({ filter: /.*/, namespace: 'hile-rsc-client-reference' }, (args) => ({
-        contents: registerSource(args.pluginData as ClientEntry), loader: 'js', resolveDir: path.dirname(args.path),
-      }));
-    },
-  };
+  const graph = new RscModuleGraph({
+    pluginId: options.pluginId,
+    cwd,
+    buildId: () => activeBuildId,
+    clearOnServerBuild: true,
+  });
 
   const serverFile = path.join(workdir, 'server-rsc/index.js');
   await mkdir(path.dirname(serverFile), { recursive: true });
@@ -253,12 +189,16 @@ export async function createRscDevelopmentCompiler(
     key: 'server' | 'browser' | 'ssr', signature: string, buildOptions: BuildOptions,
   ): Promise<{ result: BuildResult; state: RscDevelopmentContextState }> => {
     const existing = slots.get(key);
-    if (existing?.signature === signature) return { result: await existing.context.rebuild(), state: 'reused' };
+    if (existing?.signature === signature) {
+      const result = await existing.context.rebuild();
+      existing.result = result;
+      return { result, state: 'reused' };
+    }
     const next = await context(buildOptions);
     try {
       const result = await next.rebuild();
       await existing?.context.dispose();
-      slots.set(key, { signature, context: next });
+      slots.set(key, { signature, context: next, result });
       return { result, state: 'created' };
     } catch (error) {
       await next.dispose();
@@ -268,6 +208,7 @@ export async function createRscDevelopmentCompiler(
 
   let latest: RscDevelopmentRevision | undefined;
   let latestGraphSignature: string | undefined;
+  let latestClientInputFingerprint: string | undefined;
   let successfulRevision = options.initialRevision ?? 0;
   let disposed = false;
   let queue = Promise.resolve<RscDevelopmentRevision | undefined>(undefined);
@@ -277,52 +218,64 @@ export async function createRscDevelopmentCompiler(
     activeBuildId = `${options.buildId}-dev-${sessionId}-r${revision}`;
     const server = await execute('server', 'server', {
       absWorkingDir: cwd, entryPoints: [entry], outfile: serverFile, bundle: true, format: 'esm', platform: 'node',
-      target: 'node20', jsx: 'automatic', external: EXTERNAL, plugins: [boundaryPlugin], logLevel: 'silent',
+      target: 'node20', jsx: 'automatic', external: EXTERNAL, plugins: [graph.boundaryPlugin('server')], logLevel: 'silent',
     });
-    const entries = [...clientEntries.values()].sort((a, b) => a.referenceBase.localeCompare(b.referenceBase));
+    const entries = graph.clientEntries();
     if (entries.length === 0) throw new Error('RSC plugin must expose at least one use client boundary');
     const graphSignature = JSON.stringify(entries.map(({ absolutePath, entryName, exports: names }) => [absolutePath, entryName, names]));
     const clientGraphChanged = latestGraphSignature !== undefined && latestGraphSignature !== graphSignature;
-    const browser = await execute('browser', graphSignature, clientOptions(entries, path.join(workdir, 'client-browser'), 'browser'));
-    const ssr = await execute('ssr', graphSignature, clientOptions(entries, path.join(workdir, 'client-ssr'), 'ssr'));
+    const serverReferenceSignature = JSON.stringify(graph.serverFunctionEntries()
+      .map(({ absolutePath, exports: names }) => [absolutePath, names]));
+    const clientContextSignature = `${graphSignature}:${serverReferenceSignature}`;
+    const browserOptions = createRscClientBuildOptions(
+      entries,
+      path.join(workdir, 'client-browser'),
+      'browser',
+      [graph.boundaryPlugin('client')],
+    );
+    const ssrOptions = createRscClientBuildOptions(
+      entries,
+      path.join(workdir, 'client-ssr'),
+      'ssr',
+      [graph.boundaryPlugin('client')],
+    );
+    const browserSlot = slots.get('browser');
+    const ssrSlot = slots.get('ssr');
+    const currentClientInputFingerprint = browserSlot && ssrSlot
+      ? await buildInputFingerprint([browserSlot.result, ssrSlot.result])
+      : undefined;
+    const mayReuseClientArtifacts = latestGraphSignature === graphSignature
+      && graph.serverFunctionEntries().length === 0
+      && currentClientInputFingerprint === latestClientInputFingerprint
+      && browserSlot?.signature === clientContextSignature
+      && ssrSlot?.signature === clientContextSignature;
+    const [browser, ssr] = mayReuseClientArtifacts
+      ? [
+          { result: browserSlot.result, state: 'cached' as const },
+          { result: ssrSlot.result, state: 'cached' as const },
+        ]
+      : await Promise.all([
+          execute('browser', clientContextSignature, browserOptions),
+          execute('ssr', clientContextSignature, ssrOptions),
+        ]);
     const browserMeta = browser.result.metafile!;
     const ssrMeta = ssr.result.metafile!;
-    await Promise.all(Object.keys(ssrMeta.outputs).filter((output) => output.endsWith('.css'))
-      .map((output) => rm(path.resolve(output), { force: true })));
-
-    const primaryBrowser = new Set(entries.map((value) => outputForEntry(browserMeta, value.absolutePath)));
-    const browserChunks = await Promise.all(Object.entries(browserMeta.outputs)
-      .filter(([output]) => output.endsWith('.js') && !primaryBrowser.has(output))
-      .map(async ([output]) => ({ path: toRelative(workdir, output), integrity: await integrity(path.resolve(output)) })));
-    browserChunks.sort((a, b) => a.path.localeCompare(b.path));
-    const primarySsr = new Set(entries.map((value) => outputForEntry(ssrMeta, value.absolutePath)));
-    const ssrChunks = await Promise.all(Object.entries(ssrMeta.outputs)
-      .filter(([output]) => output.endsWith('.js') && !primarySsr.has(output))
-      .map(async ([output]) => ({ path: toRelative(workdir, output), integrity: await integrity(path.resolve(output)) })));
-    ssrChunks.sort((a, b) => a.path.localeCompare(b.path));
-    const clients: RscClientReference[] = [];
-    for (const value of entries) {
-      const browserModule = toRelative(workdir, outputForEntry(browserMeta, value.absolutePath));
-      const ssrModule = toRelative(workdir, outputForEntry(ssrMeta, value.absolutePath));
-      for (const exportName of value.exports) clients.push({
-        id: `${value.referenceBase}#${exportName}`,
-        module: browserModule,
-        ssrModule,
-        exportName,
-        chunks: browserChunks.map((chunk) => ({ ...chunk })),
-        ssrChunks: ssrChunks.map((chunk) => ({ ...chunk })),
-        integrity: await integrity(path.join(workdir, browserModule)),
-        ssrIntegrity: await integrity(path.join(workdir, ssrModule)),
-      });
-    }
-    const styles = await Promise.all(Object.keys(browserMeta.outputs).filter((output) => output.endsWith('.css')).sort()
-      .map(async (output) => ({ path: toRelative(workdir, output), integrity: await integrity(path.resolve(output)) })));
+    const { clients, styles } = await assembleRscClientArtifacts(workdir, entries, browserMeta, ssrMeta);
+    const serverFunctions = await buildRscServerFunctionArtifacts({
+      cwd,
+      root: workdir,
+      entries: graph.serverFunctionEntries(),
+    });
     const manifest = validateRscPluginManifest({
       protocolVersion: HILE_RSC_PROTOCOL_VERSION,
       pluginId: options.pluginId,
       buildId: activeBuildId,
       runtime: options.runtime,
-      server: { entry: toRelative(workdir, serverFile), integrity: await integrity(serverFile) },
+      server: {
+        entry: toRscArtifactPath(workdir, serverFile),
+        integrity: await rscArtifactIntegrity(serverFile),
+      },
+      serverFunctions,
       clients,
       styles,
       routes: [...options.routes],
@@ -340,7 +293,9 @@ export async function createRscDevelopmentCompiler(
     };
     latest = result;
     latestGraphSignature = graphSignature;
+    latestClientInputFingerprint = await buildInputFingerprint([browser.result, ssr.result]);
     successfulRevision = revision;
+    await pruneRevisionDirectories(revisionsDir, maxRevisions);
     return result;
   };
 
@@ -358,6 +313,7 @@ export async function createRscDevelopmentCompiler(
       await queue.catch(() => undefined);
       await Promise.all([...slots.values()].map((slot) => slot.context.dispose()));
       slots.clear();
+      await rm(workdir, { recursive: true, force: true });
     },
   };
 }

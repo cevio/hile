@@ -61,6 +61,7 @@ export function attachRscPluginService(
     [operations.describe, () => service.describe()],
     [operations.render, ({ data, signal }) => service.render(data, signal)],
     [operations.action, ({ data, signal }) => service.action(data, signal)],
+    [operations.serverFunction, ({ data, signal }) => service.serverFunction(data, signal)],
   ]);
   let detached = false;
   let unsubscribe: () => void = () => undefined;

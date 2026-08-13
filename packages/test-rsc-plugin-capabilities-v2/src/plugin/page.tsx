@@ -7,9 +7,19 @@ export async function CapabilitiesPage({ searchParams, rsc }: PluginProps) {
   await Promise.resolve();
   return (
     <article className="capability-v2" data-testid="plugin-capabilities" data-build="v2">
-      <p>Remote React Server Component switched at runtime</p>
-      <h1>Capabilities plugin · build v2</h1>
-      <p data-testid="server-query">Server received label: {String(searchParams.label ?? 'default-label')}</p>
+      <header className="capability-v2-header">
+        <p className="capability-v2-kicker">REMOTE SERVER COMPONENT · LIVE BUILD</p>
+        <h1>Capabilities plugin · build v2</h1>
+        <p>
+          This heading and request metadata were rendered inside the plugin service. The interactive Ant Design
+          workspace below crosses into an independently compiled Client Component graph.
+        </p>
+        <dl className="capability-v2-metadata">
+          <div><dt>Query label</dt><dd data-testid="server-query">{String(searchParams.label ?? 'default-label')}</dd></div>
+          <div><dt>Resolved build</dt><dd>{rsc.buildId}</dd></div>
+          <div><dt>Transport</dt><dd>React Flight stream</dd></div>
+        </dl>
+      </header>
       <UpdatePanel initialValue={10} rsc={rsc} />
     </article>
   );

@@ -1,81 +1,787 @@
-# Single-Host RSC Plugin Recipe
+# Single-Host RSC Plugin: End-to-End Guide
 
-Use this recipe to assemble a domain-free RSC plugin platform. Application routes and authorization decisions remain outside `@hile/rsc`.
+This is the canonical implementation guide for independently compiled React Server Component plugins behind one public Next.js listener and origin. Pages, assets, Server Functions, and development SSE use different paths on that same listener. It is intentionally domain-free and detailed enough for an AI agent with no repository history to scaffold, customize, run, and verify the topology.
+
+Also read `packages/rsc.md` for package boundaries and API contracts. The supported quick start is scaffold-first: generate the maintained `create-hile` templates and customize them. The snippets below explain and extend those complete files; they are not a request to reimplement lifecycle plumbing from a blank directory.
+
+## Target Topology
+
+```text
+Browser
+  -> one public HttpNext listener/origin
+       -> Host Next layout and route
+       -> plugin browser assets and CSS
+       -> Server Function POST
+       -> Host RSC runtime and exact build lease
+            -> internal @hile/micro stream -> plugin RSC service
+            -> internal @hile/micro request -> plugin Server Function -> @hile/model
+
+Registry
+  <- signed plugin announcement
+  -> Host discovers, authorizes, streams to disk, verifies, and activates
+```
+
+The plugin has an internal Micro TCP listener because it is a microservice. It has no public HTTP listener. The Host is the only process that owns public HTTP. Registry presence plus a trusted signed announcement causes automatic installation and activation; there is no static plugin list or manual activation call.
 
 ## Complete Example
 
+The smallest complete composition has three parts:
+
 ```ts
+// Plugin: verified artifact + scanned models + one internal Micro runtime.
 const service = new RscPluginService({
   manifest,
   renderer: createOfficialRscRenderer(artifactRoot),
+  serverFunctions: new RscArtifactServerFunctionRuntime(artifactRoot),
 })
-const detach = attachRscPluginService(service, pluginRegistrar)
+await service.load(modelsDirectory)
+const pluginRuntime = new HileRscPluginRuntime({
+  application: pluginApplication,
+  service,
+  port: pluginMicroPort,
+  discovery: { namespace, instanceId, priority: 0, artifactRoot, authentication },
+})
+await pluginRuntime.start()
 
-const locator = createCatalogRscPluginLocator(deploymentCatalog, async (deployment) =>
+// Host service: automatic trusted discovery + catalog-backed internal client.
+const locator = createCatalogRscPluginLocator(deployments, (deployment) =>
   createHileRscPluginClient(hostApplication, deployment.namespace))
-const hostRuntime = new RscHostRuntime({ locator, decoder })
+const discovery = new HileRscDiscoveryHost({
+  application: hostApplication,
+  artifacts,
+  deployments,
+  runtime: HILE_RSC_RUNTIME,
+  authorize: discoveryAuthorizer,
+})
+await discovery.start()
 
-const tree = await hostRuntime.render({
+// Dynamic Next page: exact active build + Flight decode + request cancellation.
+const tree = await new RscHostRuntime({
+  locator,
+  decoder: { decode: decodePluginFlight },
+}).render({
   pluginId,
-  request: { buildId, path },
-  signal: requestSignal,
+  request: { buildId: active.buildId, path, searchParams },
+  signal: getHttpNextRequestSignal(),
 })
 ```
 
-The plugin registrar and host application are internal transports. Only the separately composed `HttpNext` host owns public HTTP.
+This summary omits startup rollback, middleware mounting, provider wrapping, credentials, and shutdown. The generated template files supply those required pieces and the following sections explain their customization points; do not deploy the summary by itself.
 
-## Plugin build
+## AI Implementation Rules
 
-Create a config with `pluginId`, immutable `buildId`, source root, entry, output directory, route exports, and the exact React/RSC runtime tuple. Run `hile-rsc build`, then `hile-rsc verify` before installation.
+Before writing code, preserve these invariants:
 
-The build emits:
+1. Use `HileRscPluginRuntime` as the plugin lifecycle composition root.
+2. Use `HileRscDiscoveryHost` for automatic Host deployment.
+3. Use `RscHostRuntime` plus `decodePluginFlight()` inside a dynamic Next route.
+4. Use a module-level `'use server'` file for React Server Functions and call scanned `defineActionModel()` definitions through `invokeRscModel()`.
+5. Keep exact React/RSC versions identical across Host, plugin, and build config.
+6. Treat `buildId` and artifact directories as immutable. A changed artifact requires a new build ID or development revision.
+7. Bind every discovery `keyId` to an explicit plugin-ID allowlist in the Host. Registry discovery alone is not authorization.
+8. Mount plugin assets, Server Functions, and optional development SSE on the same Host listener/origin.
+9. Pass the request abort signal into `RscHostRuntime.render()`.
+10. Do not expose server bundles, artifact paths, namespaces, or internal message addresses to the browser.
 
-- `server-rsc`: Server Component bundle;
-- `client-ssr`: host-React-compatible SSR bundles and integrity-declared lazy chunks;
-- `client-browser`: host-React-compatible browser bundles and lazy chunks;
-- CSS assets and SHA-256 integrity;
-- `plugin.json` protocol manifest.
+## Recommended Project Layout
 
-## Internal plugin runtime
+```text
+rsc-plugin/
+  .env
+  .env.prod
+  hile-rsc.json
+  package.json
+  scripts/dev.mjs
+  src/
+    models/example/increment.model.ts
+    plugin/actions.ts
+    plugin/interactive.tsx
+    plugin/page.tsx
+    plugin/plugin.css
+    services/plugin.boot.ts
+
+rsc-host/
+  .env
+  .env.prod
+  next.config.ts
+  package.json
+  src/
+    app/layout.tsx
+    app/page.tsx
+    app/plugins/[pluginId]/[[...path]]/page.tsx
+    services/runtime.boot.ts
+```
+
+Inside a `create-hile` template source, `_env` and `_env.prod` are generator placeholders. The generated project contains `.env` and `.env.prod`; do not create runtime files literally named `_env`.
+
+The fastest supported start is to scaffold twice and select the indicated template in the interactive prompt:
+
+```bash
+npx create-hile create rsc-plugin
+# select: rsc-plugin
+npx create-hile create rsc-host
+# select: rsc-host
+```
+
+The generated projects already contain the lifecycle composition described below. Rename plugin identity, namespaces, ports, credentials, Host allowlist, and package names together before running them.
+
+## 1. Install Exact Dependencies
+
+Plugin runtime and compiler:
+
+```bash
+pnpm add @hile/cli @hile/core @hile/micro @hile/model @hile/rsc @hile/rsc-discovery-hile react@19.2.8 react-dom@19.2.8 react-server-dom-webpack@19.2.8
+pnpm add -D @hile/rsc-build @hile/rsc-development @types/node @types/react @types/react-dom fix-esm-import-path typescript
+```
+
+Host runtime:
+
+```bash
+pnpm add @hile/cli @hile/core @hile/http-next @hile/micro @hile/rsc @hile/rsc-discovery-hile @hile/rsc-next next@16.3.0 react@19.2.8 react-dom@19.2.8
+pnpm add -D @hile/rsc-development @types/node @types/react @types/react-dom fix-esm-import-path typescript
+```
+
+The runtime versions above are the repository's validated compatibility tuple. For `@hile/*` packages, use the mutually compatible versions already written by the generated templates; when copying commands outside this monorepo, do not combine an older RSC core with newer build/discovery adapters. Do not use ranges for React, React DOM, `react-server-dom-webpack`, or Next without running the complete compatibility suite.
+
+The Host does not directly install `react-server-dom-webpack`: `@hile/rsc-next` uses the compatible RSC implementation compiled into the pinned Next version. The plugin compiler/runtime pins the standalone package explicitly.
+
+Use these Host scripts from the generated template:
+
+```json
+{
+  "scripts": {
+    "build:runtime": "tsc -p tsconfig.runtime.json && fix-esm-import-path --preserve-import-type ./dist",
+    "build:next": "next build",
+    "build": "pnpm build:runtime && pnpm build:next",
+    "dev": "hile start --dev --env-file .env",
+    "start": "hile start --env-file .env.prod"
+  }
+}
+```
+
+The templates also provide `tsconfig.json`, `tsconfig.runtime.json`, and `next.config.ts`. Keep runtime boot files in the runtime TypeScript build and Next app files in the Next build. Do not move the Hile boot service into the App Router compiler.
+
+## 2. Configure The Immutable Plugin Build
+
+Create `hile-rsc.json`:
+
+```json
+{
+  "pluginId": "org.example.rsc-plugin",
+  "buildId": "build-a",
+  "cwd": ".",
+  "entry": "src/plugin/page.tsx",
+  "outdir": ".hile-rsc/build-a",
+    "routes": [{ "path": "/page", "entry": "default" }],
+  "runtime": {
+    "react": "19.2.8",
+    "reactDom": "19.2.8",
+    "rsc": "19.2.8"
+  }
+}
+```
+
+`pluginId` is the stable logical plugin identity. `buildId` identifies exact immutable bytes. `routes` maps plugin-internal paths to exports from the server entry. The Host URL prefix is Host policy and is not configured here.
+
+With the example Host catch-all, this route is opened at `/plugins/org.example.rsc-plugin/page`. The later `/plugins/demo.rsc.capabilities` and `/details` URLs belong to the richer private test suite, whose build config declares those routes; they are not routes from this minimal config.
+
+Useful scripts:
+
+```json
+{
+  "scripts": {
+    "build:rsc": "hile-rsc build --config hile-rsc.json",
+    "build:runtime": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
+    "build": "pnpm build:rsc && pnpm build:runtime",
+    "verify": "hile-rsc verify .hile-rsc/build-a --react 19.2.8 --react-dom 19.2.8 --rsc 19.2.8",
+    "dev:rsc": "hile-rsc-dev --config hile-rsc.json --state .hile-rsc/development.json --namespace org.example.rsc-plugin.dev --outdir .hile-rsc/development",
+    "dev:service": "NODE_OPTIONS=--conditions=react-server RSC_DEVELOPMENT_STATE=.hile-rsc/development.json hile start --dev --env-file .env",
+    "start": "NODE_OPTIONS=--conditions=react-server hile start --env-file .env.prod"
+  }
+}
+```
+
+The plugin process must use `NODE_OPTIONS=--conditions=react-server` so React resolves its server exports.
+
+## 3. Write Server And Client Components
+
+Server entry `src/plugin/page.tsx`:
+
+```tsx
+import type { RscRouteProps } from '@hile/rsc/plugin'
+import InteractiveBoundary from './interactive'
+
+export default async function PluginPage({ rsc, searchParams }: RscRouteProps) {
+  const initialValue = Number(searchParams?.count ?? 0)
+  return (
+    <section data-rsc-plugin={rsc.pluginId}>
+      <h1>Independent RSC plugin</h1>
+      <InteractiveBoundary initialValue={initialValue} rsc={rsc} />
+    </section>
+  )
+}
+```
+
+The default is already a Server Component. Do not add `'use server'` to mark it as one. `rsc` contains the exact selected `{ pluginId, buildId }`, including development revision suffixes. Pass this identity into interactive boundaries instead of copying the base build ID from config.
+
+Client boundary `src/plugin/interactive.tsx`:
+
+```tsx
+'use client'
+
+import { useActionState, useState } from 'react'
+import { increment } from './actions'
+import './plugin.css'
+
+type Identity = { pluginId: string; buildId: string }
+type State = { value: number; invoked: boolean }
+
+export default function InteractiveBoundary(props: { initialValue: number; rsc: Identity }) {
+  const [local, setLocal] = useState(props.initialValue)
+  const [state, formAction, pending] = useActionState(increment, {
+    value: props.initialValue,
+    invoked: false,
+  } satisfies State)
+
+  return (
+    <div data-build-id={props.rsc.buildId}>
+      <button type="button" onClick={() => setLocal((value) => value + 1)}>
+        local {local}
+      </button>
+      <form action={formAction}>
+        <input name="value" type="number" defaultValue={props.initialValue} />
+        <button disabled={pending}>run model</button>
+      </form>
+      <output>{state.invoked ? state.value : 'not invoked'}</output>
+    </div>
+  )
+}
+```
+
+The custom directive graph recognizes the directive prologue, builds browser and SSR graphs with esbuild, externalizes the shared React runtime, emits imported CSS and lazy chunks, and records integrity in `plugin.json`.
+
+Minimal `src/plugin/plugin.css` for proving style delivery:
+
+```css
+[data-rsc-plugin] {
+  padding: 1rem;
+  border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 0.5rem;
+}
+```
+
+## 4. Add A Model And A Server Function
+
+Create `src/models/example/increment.model.ts`:
+
+```ts
+import { defineActionModel, getModelExecutionContext } from '@hile/model'
+
+export default defineActionModel(async (input: { value: number }) => {
+  const signal = getModelExecutionContext()?.signal
+  if (signal?.aborted) throw signal.reason
+  if (!Number.isFinite(input.value)) throw new TypeError('value must be finite')
+  return { value: input.value + 1 }
+})
+```
+
+Create `src/plugin/actions.ts`:
+
+```ts
+'use server'
+
+import { invokeRscModel } from '@hile/rsc/plugin'
+
+export async function increment(
+  _previous: { value: number; invoked: boolean },
+  formData: FormData,
+) {
+  const raw = formData.get('value')
+  if (typeof raw !== 'string' || raw.trim() === '') throw new TypeError('value is required')
+  const value = Number(raw)
+  if (!Number.isFinite(value)) throw new TypeError('value must be finite')
+  const result = await invokeRscModel('example/increment', { value }) as { value: number }
+  return { ...result, invoked: true }
+}
+```
+
+This follows the React/Next module-level Server Function shape: the client imports an async export and `useActionState` adds previous state as the first argument. Hile compiles a build-scoped reference instead of using Next's application compiler. The request still enters the one public Host, is authorized there, acquires the exact build lease, runs in the plugin microservice, then invokes the Model.
+
+The Client Component does not manually append `buildId` to the Server Function arguments. The compiled Server Function reference and `RscNextClientRuntime` carry the exact plugin/build identity to the Host gateway. Passing `rsc` into the Client Boundary remains useful for display, cache keys, diagnostics, and any lower-level direct Action request; it must match the active deployment and must never be replaced with the base config build ID.
+
+Model rules:
+
+- `RscPluginService.load(modelsDirectory)` scans `*.model.*` through `@hile/loader`.
+- Only default-exported `defineActionModel()` definitions are externally callable.
+- `defineModel()` remains internal.
+- The action ID is the relative path without `.model` and extension.
+- Model pipelines and services remain supported because execution uses `@hile/model`.
+- Keep authentication/authorization in the Host policy and application layer; validate action input again in the Server Function or Model.
+
+Supported Hile Server Function syntax is deliberately narrower than Next: use a plugin-owned module-level `'use server'` file whose exports are async functions. Inline closure-capturing directives, re-exports, synchronous exports, mixed client/server directives, and dependency-owned directives fail during compilation.
+
+## 5. Start The Plugin Microservice
+
+The complete maintained implementation is `packages/create-hile/templates/rsc-plugin/src/services/plugin.boot.ts`. Its required sequence is:
+
+1. Resolve the production artifact or current development revision.
+2. Verify the entire artifact against `HILE_RSC_RUNTIME`.
+3. Create one internal `Application` namespace.
+4. Construct `RscPluginService` with the renderer and `RscArtifactServerFunctionRuntime`.
+5. Call `service.load(modelsDirectory)`.
+6. Optionally bind model and artifact development state.
+7. Construct and start `HileRscPluginRuntime`.
+8. Register `runtime.close()` with the Hile shutdown callback.
+
+Essential composition:
 
 ```ts
 const service = new RscPluginService({
   manifest,
   renderer: createOfficialRscRenderer(artifactRoot),
+  serverFunctions: new RscArtifactServerFunctionRuntime(artifactRoot),
 })
-await service.load(fileURLToPath(new URL('../models', import.meta.url)))
+await service.load(modelsDirectory)
 
-const detach = attachRscPluginService(service, microServer, operationMap)
+const runtime = new HileRscPluginRuntime({
+  application,
+  service,
+  port: Number(process.env.PLUGIN_MICRO_PORT),
+  discovery: {
+    namespace,
+    instanceId: process.env.RSC_INSTANCE_ID ?? namespace,
+    priority: Number(process.env.RSC_DISCOVERY_PRIORITY ?? 0),
+    artifactRoot,
+    authentication: {
+      keyId: process.env.RSC_DISCOVERY_KEY_ID ?? '',
+      secret: process.env.RSC_DISCOVERY_SECRET ?? '',
+    },
+  },
+})
+await runtime.start()
+shutdown(() => runtime.close())
 ```
 
-`operationMap` is optional and configurable. No plugin code creates HTTP.
+Do not duplicate attach/listen/publish/drain/rollback order in every plugin. The class owns that lifecycle.
 
-## Host composition
+Validate required production environment values before constructing the runtime. In particular, reject an empty discovery key/secret, a non-integer port outside `1..65535`, an empty namespace, and a missing artifact directory. The `?? ''` expressions in small snippets only preserve type shape; they are not permission to start with empty credentials.
 
-1. Verify and register immutable artifacts in an `RscArtifactCatalog`.
-2. Install `{ pluginId, buildId, namespace }` in an `RscDeploymentCatalog`.
-3. Create a catalog-backed locator whose connector returns an `RscPluginClient`.
-4. Create `RscHostRuntime` with that locator and a request-scoped Next decoder.
-5. Wrap decoded trees with `RscClientRuntimeProvider` using the same asset mount configured on `createRscAssetMiddleware`.
-6. Forward `getHttpNextRequestSignal()` so client disconnect aborts the internal stream.
+Plugin environment:
 
-## Upgrade
+```dotenv
+REGISTRY_HOST=127.0.0.1
+REGISTRY_PORT=9876
+MICRO_NAMESPACE=org.example.rsc-plugin.dev
+PLUGIN_MICRO_PORT=4101
+RSC_ARTIFACT_ROOT=.hile-rsc/build-a
+RSC_INSTANCE_ID=org.example.rsc-plugin.dev
+RSC_DISCOVERY_PRIORITY=0
+RSC_DISCOVERY_KEY_ID=local-development
+RSC_DISCOVERY_SECRET=replace-this-shared-secret
+```
 
-1. Verify and install the new immutable build without replacing old files.
-2. Activate the new deployment; the previous one becomes `draining`.
-3. New page renders acquire the new build.
-4. Existing renders retain the old lease until the decoder consumes or closes the Flight stream.
-5. After `catalog.drain(oldBuild)` and `service.drain()`, stop the old runtime.
-6. Retain old browser assets according to host cache policy before removal.
+Every concurrently running plugin instance needs a unique internal namespace and port. Multiple builds may share a `pluginId`; priority and compatibility select the active candidate.
 
-## Actions
+Identity meanings:
 
-Use `RscActionGateway` with a required application-supplied authorizer. `createSameOriginCsrfAuthorizer` composes origin and token validation, but the application still owns authentication, token issuance, and permission decisions.
+- `pluginId`: stable logical UI plugin identity and Host route key;
+- `buildId`: immutable artifact identity selected under that plugin ID;
+- `MICRO_NAMESPACE` / discovery `namespace`: routable internal service instance that serves the selected artifact;
+- `RSC_INSTANCE_ID`: unique publisher instance identity used to distinguish announcements;
+- `hile-rsc-dev --namespace`: the internal namespace recorded in development state; it must match the service namespace that will publish that revision.
 
-Define browser-callable behavior with `defineActionModel()` anywhere in the domain-organized `src/models` tree. `ModelActionRegistry` scans every `*.model.*` file, validates its default export, and mounts only action-marked models. An action id is the relative model path (`account/update.model.ts` becomes `account/update`). Ordinary `defineModel()` exports remain internal.
+When `RSC_DEVELOPMENT_STATE` is set, the plugin boot resolves the matching development record and uses its `artifactRoot`; otherwise it uses `RSC_ARTIFACT_ROOT`. Production must not set `RSC_DEVELOPMENT_STATE`.
 
-Action bodies use `{ input: object }`, matching the model input contract. Never accept a namespace, internal message URL, metadata, retry policy, or module path from the browser. `/-/rsc/action` is infrastructure transport only; service-to-service behavior remains under `messages/**`.
+## 6. Compose The Single Public Host
 
-## Shutdown
+The complete maintained implementation is `packages/create-hile/templates/rsc-host/src/services/runtime.boot.ts`. The Host must create:
 
-Deactivate deployments, abort in-flight work, await runtime and catalog drains, detach internal operations, unregister artifacts after retention permits, then stop the single `HttpNext` server.
+- `InMemoryRscArtifactCatalog` and `InMemoryRscDeploymentCatalog`;
+- an internal Host `Application` and catalog-backed plugin locator;
+- the remote client resolver and asset URLs;
+- `HileRscDiscoveryHost` with a fail-closed authorizer;
+- `RscServerFunctionGateway` with application authentication/authorization;
+- asset, Server Function, and optional development middleware;
+- exactly one `HttpNext` instance.
+
+Trust configuration must bind publisher identity to plugin ownership:
+
+```ts
+authorize: createHmacRscDiscoveryAuthorizer((keyId) => {
+  if (keyId !== process.env.RSC_DISCOVERY_KEY_ID) return undefined
+  if (!process.env.RSC_DISCOVERY_SECRET) return undefined
+  const pluginIds = (process.env.RSC_DISCOVERY_PLUGIN_IDS ?? '')
+    .split(',').map((value) => value.trim()).filter(Boolean)
+  if (pluginIds.length === 0) return undefined
+  return { secret: process.env.RSC_DISCOVERY_SECRET, pluginIds }
+})
+```
+
+Never return a secret without a non-empty, explicit `pluginIds` allowlist. An arbitrary Registry client can announce a topic; signatures and ownership policy establish trust.
+
+Set transfer bounds on `HileRscDiscoveryHost` when application quotas differ from the safe defaults:
+
+```ts
+const discovery = new HileRscDiscoveryHost({
+  // application, artifacts, deployments, runtime, authorize, ...
+  maxManifestBytes: 1024 * 1024,
+  maxFileBytes: 64 * 1024 * 1024,
+  maxTotalBytes: 256 * 1024 * 1024,
+  maxArtifactFiles: 4096,
+  maxPathBytes: 1024,
+  maxPathDepth: 32,
+  operationTimeoutMs: 30_000,
+})
+```
+
+Downloaded bytes first enter an isolated OS temporary directory. Verification and deployment staging create the Host-managed immutable copy; temporary download files are removed on success or failure. Retired artifacts are removed according to deployment drain and asset retention lifecycle. The byte limits are per artifact operation, not tenant storage quotas; add disk/quota monitoring at the Host deployment layer.
+
+Mount the Host adapters:
+
+```ts
+const serverFunctions = createRscServerFunctionMiddleware({ gateway })
+
+mountRscHostAdapters(host, {
+  asset: createRscAssetMiddleware({ catalog: artifacts, mountPath: assetMountPath }),
+  serverFunction: async (context, next) => {
+    context.requestContext = { headers: context.headers }
+    return serverFunctions(context, next)
+  },
+  middleware: developmentEvents
+    ? [createRscDevelopmentEventMiddleware({ events: developmentEvents })]
+    : [],
+})
+```
+
+The application-supplied Server Function authorizer must authenticate the user, verify same-origin/CSRF policy, and authorize `{ pluginId, buildId, referenceId }`. Do not trust a client-provided namespace or internal address. The default Server Function route is `/_hile/rsc/server-functions`.
+
+The generated development example composes `createSameOriginCsrfAuthorizer()` and passes request headers through `context.requestContext`. In a real application, construct the gateway with a policy that first authenticates the request context, then checks user access to the plugin/build/reference, and only then applies same-origin/CSRF verification:
+
+```ts
+import { createSameOriginCsrfAuthorizer, RscServerFunctionGateway } from '@hile/rsc/host'
+
+const sameOriginCsrf = createSameOriginCsrfAuthorizer({
+  expectedOrigin: process.env.RSC_HOST_ORIGIN ?? 'http://127.0.0.1:3000',
+  readToken: (context) => {
+    const value = context.headers?.['x-rsc-csrf-token']
+    return Array.isArray(value) ? value[0] : value
+  },
+  verifyToken: (token) => token === process.env.RSC_CSRF_TOKEN,
+})
+
+const gateway = new RscServerFunctionGateway({
+  locator,
+  authorize: async (request, context) => {
+    const session = await authenticate(context)
+    if (!session) return false
+    if (!await canInvoke(session, request.pluginId, request.buildId, request.referenceId)) return false
+    return sameOriginCsrf({
+      pluginId: request.pluginId,
+      buildId: request.buildId,
+      actionId: request.referenceId,
+      input: {},
+    }, context)
+  },
+})
+```
+
+`authenticate()` and `canInvoke()` are application ports, not `@hile/rsc` APIs. Apply equivalent authentication/authorization to the dynamic page GET before rendering a plugin. The example `RSC_CSRF_TOKEN` is deliberately only a local pairing value: it reaches browser JavaScript and is not a production secret or user/session authorization mechanism.
+
+Host environment:
+
+```dotenv
+HTTP_PORT=3000
+REGISTRY_HOST=127.0.0.1
+REGISTRY_PORT=9876
+HOST_MICRO_NAMESPACE=com.hile.rsc.host
+HOST_MICRO_PORT=4103
+RSC_ASSET_MOUNT=/_hile/rsc/assets
+RSC_HOST_ORIGIN=http://127.0.0.1:3000
+RSC_CSRF_TOKEN=replace-this-development-token
+RSC_DISCOVERY_POLL_MS=500
+RSC_DISCOVERY_MISSING_RECONCILIATIONS=3
+RSC_DISCOVERY_KEY_ID=local-development
+RSC_DISCOVERY_SECRET=replace-this-shared-secret
+RSC_DISCOVERY_PLUGIN_IDS=org.example.rsc-plugin
+```
+
+Production should source secrets from a secret manager, use real authentication, and normally use a less frequent discovery poll. The example token is not production security.
+
+## 7. Render Through A Dynamic Next Route
+
+Create `src/app/plugins/[pluginId]/[[...path]]/page.tsx`:
+
+```tsx
+import { loadService } from '@hile/core'
+import { getHttpNextRequestSignal } from '@hile/http-next'
+import { RscClientRuntimeProvider } from '@hile/rsc/client'
+import { RscHostRuntime } from '@hile/rsc/host/runtime'
+import { decodePluginFlight } from '@hile/rsc-next'
+import { RscNextClientRuntime } from '@hile/rsc-next/client'
+import { notFound } from 'next/navigation'
+import runtimeService from '../../../../services/runtime.boot'
+
+export const dynamic = 'force-dynamic'
+
+export default async function PluginPage({ params, searchParams }: {
+  params: Promise<{ pluginId: string; path?: string[] }>
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
+  const [{ pluginId, path = [] }, query] = await Promise.all([params, searchParams])
+  const composition = await loadService(runtimeService)
+  const active = composition.deployments.getActive(pluginId)
+  if (!active) notFound()
+
+  const runtime = new RscHostRuntime({
+    locator: composition.locator,
+    decoder: { decode: (flight) => decodePluginFlight(flight) },
+  })
+  const tree = await runtime.render({
+    pluginId,
+    request: {
+      buildId: active.buildId,
+      path: `/${path.join('/')}`,
+      searchParams: Object.fromEntries(Object.entries(query).filter(([, value]) => value !== undefined)),
+    },
+    signal: getHttpNextRequestSignal(),
+  })
+
+  return (
+    <RscNextClientRuntime serverFunctions={{
+      headers: { 'x-rsc-csrf-token': process.env.RSC_CSRF_TOKEN ?? '' },
+    }}>
+      <RscClientRuntimeProvider assetMountPath={composition.assetMountPath}>
+        {tree}
+      </RscClientRuntimeProvider>
+    </RscNextClientRuntime>
+  )
+}
+```
+
+`force-dynamic` prevents a build-time snapshot of a runtime deployment. The active build is resolved first and the same exact ID is sent to the plugin. The lease remains valid until Flight decode finishes or is aborted. Never request a base config ID after development has activated a revision-suffixed ID.
+
+The `/plugins` prefix is only this Host route's policy. You may choose another catch-all route without changing the RSC core.
+
+The minimal route maps “no active deployment” to 404 and lets the Host error boundary handle unexpected runtime failures. A product Host should explicitly map authorization denial, deployment still downloading, incompatible build, drained/stale build, upstream unavailable, and request cancellation according to its HTTP/UI policy. Do not put those product decisions into `@hile/rsc`.
+
+## 8. Keep The Outer Layout In The Host
+
+The Host owns `<html>`, `<body>`, navigation, authentication shell, global theme, metadata, and application-level error boundaries. The plugin tree is rendered inside that shell.
+
+There is currently no core API that lets arbitrary plugin code mutate the Host document head. If plugins need titles or metadata, define an application-owned, validated metadata capability in the Host (for example trusted installation metadata keyed by plugin ID) and render it through Next's Host metadata APIs. Do not execute plugin-provided head code.
+
+```tsx
+import type { ReactNode } from 'react'
+import { RscDevelopmentReload } from '@hile/rsc-development/client'
+
+export default function Layout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        <header>Host navigation</header>
+        {process.env.NODE_ENV === 'development' ? <RscDevelopmentReload /> : null}
+        <main>{children}</main>
+      </body>
+    </html>
+  )
+}
+```
+
+For Ant Design or another CSS-in-JS library:
+
+- place the Host library's Next SSR registry/collector around `children` in the Host layout;
+- place plugin `ConfigProvider`, `App`, theme, and plugin-only providers inside the plugin client boundary;
+- bundle plugin-imported static CSS as plugin assets;
+- keep React external/shared so Host and plugin do not create incompatible contexts;
+- test raw HTML and hydrated behavior. A visually correct client-only render is not sufficient SSR evidence.
+
+The validated Ant Design Host setup installs `antd@6.6.0` and `@ant-design/nextjs-registry@1.3.0`, then composes:
+
+```tsx
+import { AntdRegistry } from '@ant-design/nextjs-registry'
+import HostShell from './host-shell'
+
+export default function Layout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        <AntdRegistry>
+          <HostShell>{children}</HostShell>
+        </AntdRegistry>
+      </body>
+    </html>
+  )
+}
+```
+
+`HostShell` may be a Host Client Component containing `ConfigProvider`, `App`, navigation, and layout state. A plugin using Ant Design places its own `ConfigProvider`/`App` inside its remote Client Boundary; that provider does not replace or escape the Host collector. Re-run compatibility tests when changing Ant Design or its Next registry version.
+
+The executable Ant Design reference is `packages/test-rsc-plugin-capabilities-v2`; the outer shell reference is `packages/test-rsc-host/src/app/layout.tsx` and `host-shell.tsx`.
+
+## 9. Production Build And Startup
+
+Start Registry in its own process:
+
+```bash
+pnpm exec hile registry --host 127.0.0.1 --port 9876 --pretty
+```
+
+Readiness is the `registry started on port 9876` log plus a successful plugin/Host Registry connection; merely having a process with that PID is not readiness. In production, supervise Registry separately and bind it to the intended private interface.
+
+Then build both generated projects. These commands assume the two projects are siblings, not members of a pnpm workspace:
+
+```bash
+(cd rsc-plugin && pnpm build && pnpm verify)
+(cd rsc-host && pnpm build)
+```
+
+Keep Registry running. Start the foreground services in separate terminals:
+
+```bash
+# terminal 2
+cd rsc-plugin && pnpm start
+
+# terminal 3
+cd rsc-host && pnpm start
+```
+
+Ordering between plugin and Host startup is flexible after Registry exists: discovery reconciles later arrivals. Readiness means the plugin internal listener is ready and its signed announcement is visible; a process merely existing is not sufficient.
+
+On first reconciliation the Host:
+
+1. reads Registry candidates;
+2. authenticates publisher ownership;
+3. selects a compatible candidate;
+4. streams `plugin.json` and every declared artifact directly into isolated temporary files with credit/backpressure and hard limits;
+5. verifies paths, sizes, runtime tuple, and SHA-256 integrity;
+6. atomically installs and activates the deployment;
+7. keeps old builds available while existing leases drain.
+
+## 10. Development Mode
+
+Use `hile-rsc-dev` plus the plugin service. For deterministic cold startup, run `pnpm dev:rsc`, wait until `.hile-rsc/development.json` contains a revision for the configured namespace, then run `pnpm dev:service` in a second terminal. The current template `scripts/dev.mjs` is a convenience process owner that starts both children and propagates exit/signals; if a cold machine exposes a first-state race, use the deterministic two-terminal order or replace the supervisor with an explicit state-readiness gate.
+
+Development binding belongs in the generated plugin boot: `bindRscModelDevelopment()` watches the models directory, while `bindRscPluginDevelopmentState()` activates a verified revision and calls the runtime-supplied publisher only after activation. The Host `onEnabled` observer publishes `RscDevelopmentEvents`, its middleware serves SSE, and the Host root layout renders `RscDevelopmentReload` only in development.
+
+Complete cold-start order for sibling generated projects:
+
+```bash
+# terminal 1
+cd rsc-host && pnpm exec hile registry --host 127.0.0.1 --port 9876 --pretty
+
+# terminal 2: wait for .hile-rsc/development.json to contain the configured namespace
+cd rsc-plugin && pnpm dev:rsc
+
+# terminal 3
+cd rsc-plugin && pnpm dev:service
+
+# terminal 4
+cd rsc-host && pnpm dev
+```
+
+After the first successful cold start, `cd rsc-plugin && pnpm dev` may be used as the two-child convenience command. Keep the Registry and Host terminals running.
+
+Development behavior:
+
+- server, browser, and SSR esbuild contexts persist across rebuilds;
+- server-only edits reuse browser/SSR outputs when client inputs and Server Function graph are unchanged;
+- Client Boundary, transitive client input, CSS, exported boundary, or Server Function graph changes rebuild affected client artifacts;
+- every successful revision is immutable and receives an exact revision build ID;
+- a failed build keeps the previous deployment serving and the watcher alive;
+- model changes atomically reload models without compiling RSC assets;
+- after the plugin activates and republishes, the Host downloads/verifies/enables it, then emits SSE and `RscDevelopmentReload` refreshes the page;
+- this is full-page refresh after safe activation, not cross-plugin React Fast Refresh state preservation.
+
+Use at least two retained revisions. Size `maxRevisions` for the maximum build-download-activation overlap, and keep `maxSessions` bounded so stale sessions cannot grow indefinitely.
+
+## 11. Upgrade, Removal, And Failure Semantics
+
+- A new build is downloaded and verified before activation.
+- New renders select the new build; in-flight renders keep their captured old lease.
+- The old runtime/artifact retires only after drain and retention policy allow it.
+- A failed candidate does not replace the working build.
+- A missing announcement is tolerated for `missingReconciliations`; after that grace, the deployment retires automatically.
+- Stopping or uninstalling a plugin therefore disables it without a manual Host activation API.
+- `RscPluginService.activate()` is an internal lifecycle primitive used by verified runtime/development orchestration. “No manual activation” means application users and Host routes do not call it as an install workflow.
+- Never mutate bytes under an already published build ID. It breaks cache and deployment identity.
+
+## 12. Verification
+
+First verify the generated pair itself:
+
+```bash
+# artifact and compile checks
+(cd rsc-plugin && pnpm build && pnpm verify)
+(cd rsc-host && pnpm build)
+
+# with Registry and both production services running
+curl --fail http://127.0.0.1:3000/plugins/org.example.rsc-plugin/page
+```
+
+The response must contain the plugin's server-rendered heading. In a browser, open the same URL, increment local client state, submit the Server Function form added in sections 3–4, and confirm the Model result appears without a page error. Inspect Network to confirm plugin JS/CSS and the Server Function POST use `127.0.0.1:3000`; no browser request may target the plugin Micro port. Stop the plugin and wait past the configured missing-announcement grace to verify automatic removal, then restart it to verify automatic reinstallation. Edit a Server Component in the four-terminal development topology and verify a new immutable build ID appears only after a successful rebuild; introduce and repair a syntax error to verify last-good behavior.
+
+The repository's exhaustive architecture acceptance suite adds negative, boundary, upgrade, and isolation coverage:
+
+```bash
+pnpm --filter test-rsc-demo-suite test:contracts
+pnpm --filter test-rsc-demo-suite test:e2e
+pnpm --filter test-rsc-demo-suite test:e2e:dev
+```
+
+Interactive reference:
+
+```bash
+pnpm --filter test-rsc-demo-suite dev
+```
+
+Then open:
+
+- `http://127.0.0.1:3200/` for discovery and deployment state;
+- `http://127.0.0.1:3200/plugins/demo.rsc.capabilities?label=review&count=3` for Server/Client/CSS/lazy/action coverage;
+- `http://127.0.0.1:3200/plugins/demo.rsc.capabilities/details?source=review` for a server-only plugin route;
+- `http://127.0.0.1:3200/plugins/demo.rsc.isolation?marker=review` for independent plugin isolation.
+
+An implementation is not complete until tests prove:
+
+- only the Host accepts public HTTP;
+- raw HTML contains plugin SSR output;
+- hydration, hooks, context, effects, CSS, library components, and lazy chunks work without console errors;
+- a module-level Server Function works through `useActionState` and executes the expected scanned Model in the plugin process;
+- wrong origin/token, unknown reference, stale build, invalid input, excessive body, and aborted requests fail safely;
+- server/SSR artifacts cannot be fetched from the public asset route;
+- discovery rejects wrong signatures and publisher/plugin ownership mismatches;
+- artifact transfer is streamed to disk with bounded size/count/path constraints;
+- upgrade preserves in-flight old-build requests and failed rebuilds preserve the last good revision.
+
+## Troubleshooting
+
+| Symptom | Likely cause | Check/fix |
+|---|---|---|
+| Plugin never appears | Registry, namespace, signature, ownership, or internal listener mismatch | Confirm Registry address, unique Micro port, readiness log, matching key/secret, and Host allowlisted plugin ID |
+| `RSC plugin build mismatch` | Host requested a base/stale ID after a revision activated | Always resolve `deployments.getActive(pluginId)` and pass that exact ID; never hardcode `buildId` in the Host page |
+| Browser asset 403 | Host origin/asset middleware mismatch or stale build URL | Use the same `assetMountPath` for middleware and `RscClientRuntimeProvider`; verify active build and origin |
+| Server Function 403 | Same-origin, CSRF, authentication, or permission policy rejected it | Pair `RscNextClientRuntime` headers with Host authorization; do not bypass policy |
+| Unknown Model action | Wrong relative ID, missing default export, or `defineModel()` used | Verify `service.load()`, filename, `defineActionModel()`, and path-derived ID |
+| Client import fails to compile | Unsupported directive shape or dependency uses its own React/directives | Use module-level directives in plugin-owned code and keep React external |
+| CSS flashes or is absent | Asset mount mismatch or CSS-in-JS collector is at the wrong owner | Verify emitted style manifest; put Host collector in layout and plugin providers inside client boundary |
+| Edit requires full rebuild | Production CLI used instead of persistent development compiler | Run `hile-rsc-dev` and bind the emitted state to the plugin service |
+| Previous revision disappears during refresh | Retention lower than deployment overlap | Increase `maxRevisions`; minimum is two |
+| Host can render but shutdown hangs | In-flight Flight/Server Function did not receive cancellation | Pass `getHttpNextRequestSignal()` and retain transport abort propagation |
+
+## Completion Checklist For AI Agents
+
+- [ ] I used the current templates or explained every deviation.
+- [ ] Plugin and Host runtime pins exactly match `hile-rsc.json`.
+- [ ] Plugin process uses `--conditions=react-server` and creates no HTTP server.
+- [ ] Models load before `HileRscPluginRuntime.start()`.
+- [ ] New UI behavior uses module-level `'use server'` → `invokeRscModel()` → `defineActionModel()`.
+- [ ] Host discovery authorization binds `keyId` to explicit plugin IDs.
+- [ ] Host mounts assets, Server Functions, and development SSE on its one HTTP server.
+- [ ] Dynamic Next route resolves and passes the exact active build ID and abort signal.
+- [ ] Outer layout remains Host-owned; plugin providers/styles remain plugin-owned.
+- [ ] Development keeps the last good immutable revision and reloads after verified activation.
+- [ ] Contract, production E2E, and development E2E checks pass.
+
+## Lower-Level Extension Points
+
+Use `attachRscPluginService`, `registerHileRscPluginDiscovery`, `RscDiscoveryManager`, custom locators, or custom artifact catalogs only when building an adapter or persistence implementation. They are not the default application integration path. Keep transport, trust, storage, lifecycle, Next decoding, and business behavior in separate modules.
