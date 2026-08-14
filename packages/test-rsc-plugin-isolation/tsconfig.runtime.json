@@ -9,6 +9,6 @@
     "skipLibCheck": true,
     "esModuleInterop": true
   },
-  "include": ["src/services/**/*", "src/models/**/*"],
+  "include": ["src/services/**/*", "src/models/**/*", "src/mcps/**/*"],
   "exclude": ["node_modules", "dist", ".hile-rsc"]
 }

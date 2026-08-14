@@ -74,6 +74,7 @@ Use this map to decide what to read.
 | Add request/response messaging over WS/IPC/worker | `@hile/message-*` | `packages/messaging-micro.md` |
 | Load file-based message handlers | `@hile/message-loader` | `packages/messaging-micro.md`, `recipes/micro-rpc-message-loader.md` |
 | Build service discovery or RPC | `@hile/micro` | `packages/messaging-micro.md`, `recipes/micro-rpc-message-loader.md` |
+| Expose distributed microservice capabilities through one MCP server | `@hile/mcp` | `packages/mcp.md`, `recipes/mcp-distributed-gateway.md` |
 | Push runtime config without restarts | `@hile/micro-dynamic-configs` | `packages/messaging-micro.md`, `recipes/runtime-config.md` |
 | Stabilize config-driven runtime reloads | `@hile/reloader` | `packages/reloader.md`, `recipes/stable-runtime-reload.md` |
 | Compose topics, config, and reloader state as refs | `@hile/reactivity` | `packages/reactivity.md`, `recipes/stable-runtime-reload.md` |
@@ -93,6 +94,7 @@ Use this map to decide what to read.
 - If the task is "prevent too many attempts", use `@hile/redis-rate-limit`; do not confuse it with authentication or idempotency.
 - If config changes can arrive in bursts, use `@hile/reloader` around the runtime; do not reload directly inside every subscribe callback.
 - If service code needs refs or async watch strategies for topics/config/reloader state, use `@hile/reactivity`.
+- If tools, resources, and prompts belong to different microservices, use `@hile/mcp`; do not centralize their handlers in the gateway.
 
 ## Project Startup And Lifecycle
 
@@ -181,6 +183,18 @@ Read `packages/messaging-micro.md` when the task mentions:
 
 Packages: `@hile/message-modem`, `@hile/message-ws`, `@hile/message-ipc`, `@hile/message-worker-thread`, `@hile/message-loader`, `@hile/micro`, `@hile/micro-dynamic-configs`, `@hile/reloader`.
 
+## Distributed MCP Capabilities
+
+Read `packages/mcp.md` when the task mentions:
+
+- Model Context Protocol or MCP
+- tools, resources, prompts, progress, logging, or input-required flows
+- one public MCP endpoint backed by multiple microservices
+- MCP provider discovery, replicas, conflict detection, or failover
+- Streamable HTTP or stdio MCP transport
+
+Package: `@hile/mcp`. Compose it with `@hile/micro`, an existing `@hile/http` server for remote access, and `@hile/core` for lifecycle management.
+
 ## Runtime Reload And Config Aggregation
 
 Read `packages/reloader.md` when the task mentions:
@@ -238,6 +252,7 @@ Package: `create-hile`.
 - Redis cache with singleflight: `recipes/redis-cache-singleflight.md`
 - Queue worker with idempotency: `recipes/queue-worker-idempotency.md`
 - Micro RPC with message loader: `recipes/micro-rpc-message-loader.md`
+- Distributed MCP providers and unified gateway: `recipes/mcp-distributed-gateway.md`
 - Runtime dynamic config: `recipes/runtime-config.md`
 - Stable runtime reload: `recipes/stable-runtime-reload.md`
 - New scaffolded project: `recipes/new-project-scaffold.md`
@@ -922,6 +937,317 @@ scheduler.add('daily-report', '0 8 * * *', async () => {
 - Manual TypeORM data sources call `destroy()` during cleanup.
 - Cache keys include app/tenant prefixes when shared Redis is used.
 - Scheduled jobs have clear duplicate-run policy.
+
+---
+
+# Distributed MCP Providers And Gateway
+
+Package: `@hile/mcp`.
+
+`@hile/mcp` turns independently deployed Hile microservices into MCP capability providers and projects them through one public MCP server. It uses the official TypeScript SDK v2 and serves the stable MCP `2026-07-28` protocol over Streamable HTTP, with stdio available for process-local integrations.
+
+## Copy-Paste Example
+
+Create one default-exported capability per `mcps/**/*.mcp.ts` file:
+
+```ts
+// src/mcps/orders/lookup.mcp.ts
+import { defineMcpTool } from '@hile/mcp'
+import { z } from 'zod'
+
+export default defineMcpTool(
+  {
+    name: 'lookup',
+    title: 'Look up an order',
+    description: 'Returns the current order status.',
+    inputSchema: z.object({ id: z.string().min(1) }),
+    outputSchema: z.object({ id: z.string(), status: z.string() }),
+    annotations: { readOnlyHint: true, idempotentHint: true },
+    access: { scopes: ['orders:read'] },
+    execution: { timeoutMs: 10_000, retry: 'idempotent-failover' },
+  },
+  async ({ id }, context) => {
+    await context.emit.progress(1, 2, 'Loading order')
+    await context.emit.log('info', { event: 'order.lookup', id })
+    const order = { id, status: 'ready' }
+    return {
+      content: [{ type: 'text', text: `${order.id}: ${order.status}` }],
+      structuredContent: order,
+    }
+  },
+)
+```
+
+Attach the provider only after its `Application` is listening:
+
+```ts
+import { createMcpHmacInvocationCredentialCodec } from '@hile/mcp'
+import { attachMcpProvider } from '@hile/mcp/micro'
+
+const credentials = createMcpHmacInvocationCredentialCodec({
+  secret: process.env.ORDERS_MCP_KEY!,
+})
+
+const attachment = await attachMcpProvider(
+  application,
+  {
+    id: 'orders',
+    displayName: 'Orders',
+    directory: new URL('../mcps', import.meta.url),
+  },
+  {
+    invocationSecurity: { mode: 'credential', credentials },
+  },
+)
+
+shutdown(() => attachment.close())
+```
+
+The loader accepts `*.mcp.ts`, `*.mcp.js`, `*.mcp.tsx`, `*.mcp.jsx`, and `*.mcp.mjs`. Every matched file must default-export one value created by `defineMcpTool`, `defineMcpResource`, or `defineMcpPrompt`. A load or registration failure rolls back the whole provider batch.
+
+## More Examples
+
+Public entry points:
+
+| Import | Responsibility |
+|---|---|
+| `@hile/mcp` | Definitions, public types, errors, and invocation credential codecs |
+| `@hile/mcp/micro` | Provider attachment and Registry-backed provider source |
+| `@hile/mcp/gateway` | Unified catalog, naming, visibility, instance selection, and inspection |
+| `@hile/mcp/http` | Streamable HTTP middleware for an existing Hile HTTP server |
+| `@hile/mcp/stdio` | Process-local stdio serving |
+| `@hile/mcp/testing` | In-memory provider source for gateway and adapter tests |
+
+Static resource:
+
+```ts
+// src/mcps/orders/help.mcp.ts
+import { defineMcpResource } from '@hile/mcp'
+
+export default defineMcpResource(
+  {
+    kind: 'static',
+    name: 'help',
+    uri: 'hile://orders/help',
+    mimeType: 'text/markdown',
+  },
+  async (uri) => ({
+    contents: [{ uri: uri.toString(), mimeType: 'text/markdown', text: '# Orders\nUse `orders.lookup`.' }],
+  }),
+)
+```
+
+RFC 6570 resource template:
+
+```ts
+// src/mcps/orders/detail.mcp.ts
+import { defineMcpResource } from '@hile/mcp'
+
+export default defineMcpResource(
+  {
+    kind: 'template',
+    name: 'detail',
+    uriTemplate: 'hile://orders/{id}',
+    mimeType: 'application/json',
+    access: { scopes: ['orders:read'] },
+  },
+  async ({ id }) => ({
+    contents: [{
+      uri: `hile://orders/${encodeURIComponent(String(id))}`,
+      mimeType: 'application/json',
+      text: JSON.stringify({ id, status: 'ready' }),
+    }],
+  }),
+)
+```
+
+Prompt:
+
+```ts
+// src/mcps/orders/summarize.mcp.ts
+import { defineMcpPrompt } from '@hile/mcp'
+import { z } from 'zod'
+
+export default defineMcpPrompt(
+  {
+    name: 'summarize',
+    description: 'Build an order-summary prompt.',
+    argsSchema: z.object({ id: z.string().min(1) }),
+    access: { scopes: ['orders:read'] },
+  },
+  async ({ id }) => ({
+    messages: [{
+      role: 'user',
+      content: { type: 'text', text: `Summarize order ${id}.` },
+    }],
+  }),
+)
+```
+
+Unified gateway and Streamable HTTP adapter:
+
+```ts
+import {
+  createMcpHmacInvocationCredentialCodec,
+  createMcpInvocationCredentialKeyring,
+} from '@hile/mcp'
+import { createMcpGateway } from '@hile/mcp/gateway'
+import { createMcpHttpEndpoint } from '@hile/mcp/http'
+import { createHileMcpProviderSource } from '@hile/mcp/micro'
+
+const source = createHileMcpProviderSource(application, {
+  pollIntervalMs: 2_000,
+  onError: (error) => logger.error(error),
+})
+
+const gateway = await createMcpGateway({
+  source,
+  info: { name: 'company-mcp', version: '1.0.0' },
+  startup: 'require-provider',
+  invocationSecurity: {
+    mode: 'credential',
+    credentials: createMcpInvocationCredentialKeyring({
+      orders: createMcpHmacInvocationCredentialCodec({
+        secret: process.env.ORDERS_MCP_KEY!,
+      }),
+    }),
+  },
+  onError: (error) => logger.error(error),
+})
+
+const endpoint = createMcpHttpEndpoint(gateway, {
+  path: '/mcp',
+  security: {
+    allowedHostnames: ['mcp.example.com'],
+    allowedOriginHostnames: ['app.example.com'],
+    authentication: {
+      mode: 'required',
+      authenticate: (request) => authenticateMcpRequest(request),
+    },
+  },
+  legacy: 'reject',
+})
+
+http.use(endpoint.middleware)
+shutdown(async () => {
+  await endpoint.close()
+  await gateway.close()
+})
+```
+
+Process-local stdio adapter:
+
+```ts
+import { serveMcpStdio } from '@hile/mcp/stdio'
+
+const handle = serveMcpStdio(gateway, {
+  authInfo: {
+    token: 'process-owned',
+    clientId: 'local-agent',
+    scopes: ['orders:read'],
+  },
+  onError: (error) => logger.error(error),
+})
+
+shutdown(async () => {
+  await handle.close()
+  await gateway.close()
+})
+```
+
+Use `gateway.inspect()` for health endpoints and diagnostics. It returns each provider's `ready` or `conflict` state, instance count, fingerprints, conflict reasons, and the currently exposed public names.
+
+## Use When
+
+- Different microservices own different MCP tools, resources, and prompts.
+- One MCP endpoint must expose a unified, dynamically discovered catalog.
+- Providers need independent deployments, replicas, scopes, and failure isolation.
+- Existing `Application.stream()` semantics such as cancellation and backpressure must carry MCP execution frames.
+- Remote clients use Streamable HTTP or a local MCP host launches a stdio process.
+
+## Do Not Use When
+
+- One process owns a small static MCP server and does not need Hile discovery or distributed routing.
+- Work must survive process crashes or be retried later; use a durable queue rather than an MCP invocation stream.
+- The Micro network is untrusted and no gateway-to-provider credential verifier is configured.
+- A resource should be renamed by the gateway. Resource URIs are provider-owned identities and are never rewritten.
+
+## Install
+
+```bash
+pnpm add @hile/mcp @hile/micro zod
+```
+
+Node.js `20.12.0` or newer is required. `@hile/mcp` uses the official `@modelcontextprotocol/server` and `@modelcontextprotocol/node` v2 packages internally; applications do not need to register protocol handlers by hand.
+
+## Imports
+
+```ts
+import {
+  defineMcpPrompt,
+  defineMcpProvider,
+  defineMcpResource,
+  defineMcpTool,
+  createMcpHmacInvocationCredentialCodec,
+  createMcpInvocationCredentialKeyring,
+} from '@hile/mcp'
+import { attachMcpProvider, createHileMcpProviderSource } from '@hile/mcp/micro'
+import { createMcpGateway } from '@hile/mcp/gateway'
+import { createMcpHttpEndpoint } from '@hile/mcp/http'
+import { serveMcpStdio } from '@hile/mcp/stdio'
+import { InMemoryMcpProviderSource } from '@hile/mcp/testing'
+```
+
+## Compose With
+
+- `@hile/micro` supplies Registry snapshots, retained provider manifests, exact-peer routing, cancellation, and streaming.
+- `@hile/http` mounts the Streamable HTTP middleware without creating a second public listener.
+- `@hile/core` owns startup and reverse-order cleanup.
+- Standard Schema implementations such as Zod provide tool and prompt schemas.
+- `@hile/redis-idempotency` can protect side effects inside tools; MCP retry annotations are not a business idempotency guarantee.
+
+## Runtime And Lifecycle Notes
+
+- Provider files are immutable definitions. Runtime instance IDs, fingerprints, Registry topics, and message routes are owned by the attachment.
+- One `Application` may attach multiple providers. A shared application-scoped dispatcher routes by provider instance and remains registered until the last attachment closes.
+- Every provider instance publishes a retained manifest. Discovery retrieves all matching manifests and their Registry-observed publisher addresses in one batched snapshot.
+- A provider is exposed only when every live instance for its provider ID has the same fingerprint. Mixed rolling deployments are reported as conflicts and fail closed.
+- Public tool and prompt names default to `providerId.localName`. Configure `naming.aliases` and the `.`, `-`, or `_` separator when required. Resource URIs remain unchanged.
+- Compatible instances are selected round-robin. Invocation is bound to the selected instance ID, fingerprint, and publisher address so a stale catalog cannot execute a replacement implementation.
+- `idempotent-failover` performs at most one alternate-instance retry and is legal only for tools annotated both read-only and idempotent. A completed result, client cancellation, or downstream notification failure is never retried.
+- Provider execution emits progress, log, and one terminal-result frame through a bounded internal channel. Producer emits await capacity, and request cancellation reaches validation, authorization, handlers, connection establishment, and streaming.
+- Concurrent cold calls to one provider address share connection establishment. Registry discovery is polled into a cached catalog instead of queried per MCP request.
+- Long-lived stdio and subscription-capable servers receive catalog diffs and `list_changed` notifications. Stateless HTTP requests use the cached current projection.
+- HTTP authentication determines the external principal and scopes. Capability `access.scopes`, `access.authorize`, and gateway `isCapabilityExposed` are separate defense layers.
+- Credential mode signs a short-lived, replay-protected envelope bound to the provider, instance, fingerprint, capability, input, and principal. Use a different HMAC key for each provider or trust domain and a gateway keyring. A symmetric key holder can mint credentials for its own trust domain.
+- `trusted-internal` is explicit, propagates an unsigned principal, and is appropriate only when every peer able to reach the Micro operation is trusted.
+- Client-echoed `requestState` stays `unknown` unless `requestState.verify` is configured on the gateway.
+- Close the external transport first, then the gateway, then provider attachments, and finally the underlying Micro applications. Close operations are serialized; provider teardown withdraws discovery before removing handlers.
+
+## Anti-Patterns
+
+- Writing MCP capabilities in arbitrary boot files instead of default-exported `mcps/**/*.mcp.*` files.
+- Omitting explicit HTTP authentication mode or gateway-to-provider invocation security.
+- Reusing one HMAC secret across unrelated providers or security domains.
+- Setting `idempotent-failover` on a write tool or treating a retry annotation as exactly-once execution.
+- Querying the Registry for every tool call instead of using `createHileMcpProviderSource()`.
+- Routing by namespace after selecting an instance; use the built-in exact-peer source.
+- Trusting `requestState`, client claims, resource variables, or handler input before validation.
+- Creating a second HTTP listener only for MCP when an existing Hile HTTP server can mount the middleware.
+
+## Verification Checklist
+
+- Every `*.mcp.*` file has one default export created by the matching `defineMcp*` function.
+- Tool `inputSchema`, optional `outputSchema`, prompt `argsSchema`, and resource URIs/templates compile successfully.
+- The provider application is listening before `attachMcpProvider()` runs.
+- Provider and gateway use matching credential configuration, with distinct secrets per provider.
+- Host, Origin, and authentication policies are explicit on the HTTP adapter.
+- `gateway.inspect()` reports `ready` and the expected tool, resource, and prompt names.
+- Two compatible replicas appear under one provider ID and receive calls; a mixed-fingerprint rollout produces a conflict instead of routing.
+- Progress/log delivery, client cancellation, timeout, and bounded backpressure are exercised.
+- Scoped capabilities are hidden without the scope and callable with it over both HTTP and configured stdio.
+- Adding or removing a provider updates a long-lived client's catalog notification.
+- Transport, gateway, attachments, and applications close without retained manifests, live handlers, sockets, or timers.
 
 ---
 
@@ -2243,6 +2569,316 @@ Use this recipe when the user wants Next.js pages and Hile API controllers on on
 - API route is under `/-` by default.
 - `cwd` points to the project root.
 - Production runs TypeScript build and Next build before `hile start`.
+
+---
+
+# Distributed MCP Gateway
+
+## Complete Example
+
+This recipe composes independent Hile microservices into one MCP server. Each provider owns its capability files and deployment lifecycle. The gateway discovers compatible replicas, applies public naming and authorization, and exposes the cached catalog over the official Streamable HTTP or stdio adapter.
+
+```text
+MCP client
+  -> Streamable HTTP or stdio
+       -> @hile/mcp gateway
+            -> Registry-backed provider source
+                 -> orders instance A: tools + resources + prompts
+                 -> orders instance B: the same fingerprint
+                 -> inventory instance A: independent capabilities
+```
+
+The gateway is a projection, not the owner of provider business logic. Providers remain deployable and scalable without changing the public MCP endpoint.
+
+### 1. Define capabilities under `mcps`
+
+```text
+orders-service/
+  src/
+    mcps/
+      lookup.mcp.ts
+      detail.mcp.ts
+      summarize.mcp.ts
+    services/
+      application.boot.ts
+      mcp.boot.ts
+
+mcp-gateway/
+  src/services/
+    application.boot.ts
+    mcp-gateway.boot.ts
+```
+
+```ts
+// orders-service/src/mcps/lookup.mcp.ts
+import { defineMcpTool } from '@hile/mcp'
+import { z } from 'zod'
+
+export default defineMcpTool(
+  {
+    name: 'lookup',
+    inputSchema: z.object({ id: z.string().min(1) }),
+    outputSchema: z.object({ id: z.string(), status: z.string() }),
+    annotations: { readOnlyHint: true, idempotentHint: true },
+    access: { scopes: ['orders:read'] },
+    execution: { timeoutMs: 10_000, retry: 'idempotent-failover' },
+  },
+  async ({ id }, context) => {
+    await context.emit.progress(1, 2, 'Loading')
+    const output = { id, status: 'ready' }
+    await context.emit.log('info', { event: 'orders.lookup', id })
+    return {
+      content: [{ type: 'text', text: `${id}: ${output.status}` }],
+      structuredContent: output,
+    }
+  },
+)
+```
+
+Use `defineMcpResource()` for static or RFC 6570 template resources and `defineMcpPrompt()` for prompts. The package API page contains complete examples for all three capability kinds.
+
+### 2. Attach each provider after Micro listen
+
+```ts
+import { defineService, loadService } from '@hile/core'
+import { createMcpHmacInvocationCredentialCodec } from '@hile/mcp'
+import { attachMcpProvider } from '@hile/mcp/micro'
+import applicationService from './application.boot.js'
+
+export default defineService('orders.mcp', async (shutdown) => {
+  const application = await loadService(applicationService)
+  const credentials = createMcpHmacInvocationCredentialCodec({
+    secret: process.env.ORDERS_MCP_KEY!,
+  })
+  const attachment = await attachMcpProvider(
+    application,
+    {
+      id: 'orders',
+      displayName: 'Orders',
+      directory: new URL('../mcps', import.meta.url),
+    },
+    { invocationSecurity: { mode: 'credential', credentials } },
+  )
+  shutdown(() => attachment.close())
+  return attachment
+})
+```
+
+Run another process with the same provider ID and capability files to add a replica. Its instance ID and publisher address are unique, while its deterministic fingerprint is identical.
+
+### 3. Create the unified gateway
+
+```ts
+import { defineService, loadService } from '@hile/core'
+import {
+  createMcpHmacInvocationCredentialCodec,
+  createMcpInvocationCredentialKeyring,
+} from '@hile/mcp'
+import { createMcpGateway } from '@hile/mcp/gateway'
+import { createHileMcpProviderSource } from '@hile/mcp/micro'
+import applicationService from './application.boot.js'
+
+export default defineService('mcp.gateway', async (shutdown) => {
+  const application = await loadService(applicationService)
+  const source = createHileMcpProviderSource(application, {
+    pollIntervalMs: 2_000,
+    onError: reportError,
+  })
+  const gateway = await createMcpGateway({
+    source,
+    info: { name: 'company-mcp', version: '1.0.0' },
+    instructions: 'Use provider-prefixed names and request confirmation before writes.',
+    startup: 'require-provider',
+    naming: {
+      separator: '.',
+      aliases: { inventory: 'stock' },
+    },
+    invocationSecurity: {
+      mode: 'credential',
+      credentials: createMcpInvocationCredentialKeyring({
+        orders: createMcpHmacInvocationCredentialCodec({ secret: process.env.ORDERS_MCP_KEY! }),
+        inventory: createMcpHmacInvocationCredentialCodec({ secret: process.env.INVENTORY_MCP_KEY! }),
+      }),
+    },
+    isCapabilityExposed: (capability, principal) => {
+      if (capability.providerId === 'inventory' && principal?.tenantId === 'blocked') return false
+      return true
+    },
+    onError: reportError,
+  })
+  shutdown(() => gateway.close())
+  return gateway
+})
+```
+
+Use `startup: 'allow-empty'` when the gateway may start before providers. Use `require-provider` when an empty initial catalog is a deployment error.
+
+### 4. Mount Streamable HTTP on the existing server
+
+```ts
+import { defineService, loadService } from '@hile/core'
+import { createMcpHttpEndpoint } from '@hile/mcp/http'
+import httpService from './http.boot.js'
+import gatewayService from './mcp-gateway.boot.js'
+
+export default defineService('mcp.http', async (shutdown) => {
+  const [http, gateway] = await Promise.all([
+    loadService(httpService),
+    loadService(gatewayService),
+  ])
+  const endpoint = createMcpHttpEndpoint(gateway, {
+    path: '/mcp',
+    security: {
+      allowedHostnames: ['mcp.example.com'],
+      allowedOriginHostnames: ['app.example.com'],
+      authentication: {
+        mode: 'required',
+        authenticate: async (request) => authenticateMcpRequest(request),
+      },
+    },
+    legacy: 'reject',
+    onError: reportError,
+  })
+  http.use(endpoint.middleware)
+  shutdown(() => endpoint.close())
+  return endpoint
+})
+```
+
+The adapter does not create or own a port. Host and Origin validation protect the HTTP boundary, while `authenticate` supplies the external MCP identity and scopes. The invocation credential independently authenticates the gateway to each provider.
+
+For a public endpoint, choose `{ authentication: { mode: 'public' } }` explicitly and expose only capabilities designed for anonymous use. An omitted authentication policy is rejected.
+
+### 5. Inspect discovery and multi-instance state
+
+```ts
+const inspection = gateway.inspect()
+
+// {
+//   providers: [{
+//     providerId: 'orders',
+//     status: 'ready',
+//     instanceCount: 2,
+//     fingerprints: ['...'],
+//     conflicts: [],
+//   }],
+//   tools: ['orders.lookup'],
+//   resources: ['orders.detail'],
+//   prompts: ['orders.summarize'],
+// }
+```
+
+Expose this data through an authenticated operational endpoint or metrics, not through MCP capability handlers. A provider in `conflict` is omitted from the public catalog until all live replicas converge on one fingerprint.
+
+### 6. Use stdio for a process-local MCP host
+
+```ts
+import { serveMcpStdio } from '@hile/mcp/stdio'
+
+const handle = serveMcpStdio(gateway, {
+  authInfo: {
+    token: 'process-owned',
+    clientId: 'desktop-agent',
+    scopes: ['orders:read'],
+  },
+  onError: reportError,
+})
+
+process.once('SIGTERM', async () => {
+  await handle.close()
+  await gateway.close()
+})
+```
+
+`authInfo` is process-level policy. Without it, scoped capabilities are hidden. Do not write application logs to stdout in a stdio server because stdout belongs to the MCP transport.
+
+## Capability Behavior
+
+| Capability | Definition | Public identity | Handler result |
+|---|---|---|---|
+| Tool | `defineMcpTool` | `providerId.localName` by default | `CallToolResult` or `InputRequiredResult` |
+| Static resource | `defineMcpResource` with `kind: 'static'` | Provider URI | `ReadResourceResult` or `InputRequiredResult` |
+| Template resource | `defineMcpResource` with `kind: 'template'` | RFC 6570 URI template | `ReadResourceResult` or `InputRequiredResult` |
+| Prompt | `defineMcpPrompt` | `providerId.localName` by default | `GetPromptResult` or `InputRequiredResult` |
+
+All capability handlers receive `signal`, verified `principal`, optional `inputResponses`, untrusted-or-verified `requestState`, and awaited `emit.progress()` / `emit.log()` methods.
+
+## Discovery And Routing
+
+1. Each attachment publishes one instance-scoped retained manifest.
+2. The source retrieves matching manifests and Registry-observed publisher addresses in one snapshot call.
+3. The gateway validates schemas and metadata, groups instances by provider ID, and rejects fingerprint or public-name conflicts.
+4. Compatible instances are selected round-robin from the cached catalog.
+5. Invocation carries the expected provider ID, instance ID, fingerprint, capability, input, and credential.
+6. The source streams to the selected publisher address. The provider verifies identity and credential before validation, authorization, and handler execution.
+7. Progress and log frames are forwarded; one terminal result completes the MCP call.
+
+Catalog updates re-project connected MCP servers and emit list-change notifications. Discovery polling never runs in the invocation hot path.
+
+## Security Boundaries
+
+- HTTP authentication and Host/Origin allowlists protect the public transport.
+- Gateway catalog visibility checks required scopes before registration and can apply `isCapabilityExposed` policy.
+- Provider authorization repeats scope checks and optional capability-local `authorize()` after schema validation.
+- Credential mode proves that the invocation was minted for the exact provider instance, fingerprint, capability, and input. Nonces are replay-protected and expire.
+- Configure a separate HMAC secret for each provider or trust domain. Because HMAC is symmetric, a holder can mint credentials within that domain.
+- `trusted-internal` sends an unsigned principal. Use it only on a Micro mesh where every reachable peer is trusted to impersonate the gateway.
+- `requestState` is client-echoed state. Treat it as `unknown` unless the gateway is configured with the official SDK request-state verifier.
+
+## Performance And Failure Semantics
+
+- Registry discovery is one batched snapshot per poll, not one query per provider or request.
+- Catalog parsing and public projection happen only when the snapshot changes.
+- Cold concurrent calls to one address share connection establishment; established Micro clients are reused.
+- The execution channel is bounded. `emit.progress()` and `emit.log()` await capacity so a slow MCP client cannot create an unbounded provider buffer.
+- Abort signals and the tool timeout cover connect, validation, authorization, handler execution, notification delivery, and stream consumption.
+- Only read-only and idempotent tools may request one alternate-instance failover attempt. Mid-stream failure before a terminal result is eligible; cancellation and completed results are not.
+- Closing the gateway rejects new work, aborts active streams, waits for them to settle, then closes discovery.
+
+## User Intent
+
+Use this recipe when the user asks for MCP capability decoupling, unified MCP output, automatic discovery, multiple providers, or multiple replicas in a Hile microservice architecture.
+
+## Packages To Use
+
+- `@hile/mcp`
+- `@hile/micro`
+- `@hile/http` when exposing Streamable HTTP on a Hile server
+- `@hile/core` for lifecycle composition
+- A Standard Schema implementation such as Zod
+- `@hile/redis-idempotency` inside side-effecting tools when retries must not duplicate business effects
+
+## Implementation Steps
+
+1. Define each capability as a default export under the owning service's `mcps` directory.
+2. Start the provider `Application`, then attach the directory with explicit invocation security.
+3. Give compatible replicas the same provider ID and immutable definitions.
+4. Start a gateway-side `Application`, provider source, keyring, and gateway.
+5. Mount Streamable HTTP on the existing public server or serve stdio for a local process integration.
+6. Configure external authentication, scopes, aliases, startup policy, diagnostics, and lifecycle cleanup.
+7. Verify discovery, capability behavior, replica routing, conflict handling, streaming, cancellation, security, and dynamic list changes.
+
+## Failure And Cleanup Behavior
+
+- Invalid local definitions fail before publication; a partial loader registration is rolled back.
+- Invalid or spoofed network manifests are omitted from discovery.
+- Mixed fingerprints, duplicate public names, and duplicate resource identities fail closed at catalog construction.
+- The selected provider verifies the expected instance and fingerprint, so a process replacement at the same address cannot execute against a stale catalog.
+- Provider close withdraws the retained manifest before unregistering the dispatcher and unloading definitions. If withdrawal fails, the callable state remains available for a retry.
+- Gateway close is an active invocation barrier. HTTP and stdio handles still have their own lifecycle and should be closed first.
+
+## Verification Checklist
+
+- The official MCP client can list and invoke tools, read both resource forms, and get prompts.
+- Structured tool output satisfies `outputSchema`.
+- Progress, logging, and an `InputRequiredResult` multi-round-trip flow reach the client.
+- An unauthenticated or under-scoped client cannot discover or call protected capabilities.
+- A direct Micro caller cannot forge a privileged principal in credential mode.
+- Two matching replicas route successfully and appear as one public provider.
+- A mismatched replica changes the provider to `conflict` without affecting unrelated providers.
+- Adding, removing, or changing a provider updates a long-lived client's catalog notification.
+- Cancelling a call stops connection or handler work and does not trigger failover.
+- Shutdown leaves no provider publication, operation handler, active stream, connection waiter, interval, or owned HTTP listener.
 
 ---
 

@@ -146,6 +146,16 @@ const packageConfigs = {
       { rel: 'recipes/micro-registry-read-apis.md', heading: '## Registry Read APIs' },
     ],
   },
+  '@hile/mcp': {
+    dir: 'mcp',
+    purpose: 'Expose tools, resources, and prompts from independently deployed Hile microservices through one discovered, multi-instance MCP gateway.',
+    cards: ['packages/mcp.md'],
+    recipes: ['recipes/mcp-distributed-gateway.md'],
+    readmeSections: ['## More Examples'],
+    readmeLinks: [
+      '- `ARCHITECTURE.md` in this package: discovery, routing, trust, streaming, performance, and lifecycle design.',
+    ],
+  },
   '@hile/model': {
     dir: 'model',
     purpose: 'Put reusable business logic behind typed models with services and pipeline middleware.',
@@ -221,6 +231,7 @@ const docPackagePages = {
   'packages/message-ws.mdx': '@hile/message-ws',
   'packages/micro-dynamic-configs.mdx': '@hile/micro-dynamic-configs',
   'packages/micro.mdx': '@hile/micro',
+  'packages/mcp.mdx': '@hile/mcp',
   'packages/model.mdx': '@hile/model',
   'packages/redis-idempotency.mdx': '@hile/redis-idempotency',
   'packages/reloader.mdx': '@hile/reloader',
@@ -241,6 +252,7 @@ const mintlifySourceRoutes = new Map([
   ['packages/model-context.md', { route: '/packages/model', label: 'Model and context' }],
   ['packages/infrastructure.md', { route: '/architecture', label: 'Infrastructure architecture' }],
   ['packages/messaging-micro.md', { route: '/packages/micro', label: 'Messaging and Micro' }],
+  ['packages/mcp.md', { route: '/packages/mcp', label: 'MCP API' }],
   ['packages/reloader.md', { route: '/packages/reloader', label: 'Reloader' }],
   ['packages/reactivity.md', { route: '/packages/reactivity', label: 'Reactivity' }],
   ['packages/redis-reliability.md', { route: '/techniques/idempotency', label: 'Redis reliability' }],
@@ -251,6 +263,7 @@ const mintlifySourceRoutes = new Map([
   ['recipes/redis-cache-singleflight.md', { route: '/techniques/caching', label: 'Redis cache' }],
   ['recipes/queue-worker-idempotency.md', { route: '/techniques/idempotency', label: 'Queue idempotency' }],
   ['recipes/micro-rpc-message-loader.md', { route: '/techniques/messaging', label: 'Micro RPC' }],
+  ['recipes/mcp-distributed-gateway.md', { route: '/techniques/mcp-gateway', label: 'Distributed MCP gateway' }],
   ['recipes/runtime-config.md', { route: '/techniques/configuration', label: 'Runtime config' }],
   ['recipes/stable-runtime-reload.md', { route: '/packages/reloader', label: 'Stable runtime reload' }],
 ])
@@ -436,6 +449,19 @@ const topicPages = {
       section(ai('recipes/micro-rpc-message-loader.md'), '## Complete Example'),
       '',
       section(ai('packages/messaging-micro.md'), '## Anti-Patterns'),
+    ].join('\n'),
+  },
+  'techniques/mcp-gateway.mdx': {
+    title: 'Distributed MCP Gateway',
+    description: 'Expose tools, resources, and prompts from independent Hile microservices through one discovered MCP endpoint.',
+    body: () => [
+      '# Distributed MCP Gateway',
+      '',
+      'Use this guide to build independent MCP providers, automatic Registry discovery, compatible replicas, and one secured Streamable HTTP or stdio gateway.',
+      '',
+      '> API details: [`@hile/mcp`](/packages/mcp). Protocol baseline: [MCP 2026-07-28](https://blog.modelcontextprotocol.io/posts/2026-07-28/).',
+      '',
+      markdownBody(ai('recipes/mcp-distributed-gateway.md')),
     ].join('\n'),
   },
   'techniques/rsc-plugins.mdx': {
@@ -842,6 +868,12 @@ function writePackageReadme(packageName, config) {
     '',
     sectionBody(primary, '## Copy-Paste Example'),
     '',
+    ...(config.readmeSections ?? []).flatMap((heading) => [
+      heading,
+      '',
+      sectionBody(primary, heading),
+      '',
+    ]),
     '## Boundaries',
     '',
     sectionBody(primary, '## Do Not Use When'),
@@ -857,6 +889,7 @@ function writePackageReadme(packageName, config) {
     '- `AI.md` in this package: full package-local AI guide.',
     '- Root `llms-full.txt`: full monorepo AI context.',
     '- Root `references/`: source files copied from `docs/ai`.',
+    ...(config.readmeLinks ?? []),
   ].join('\n')
 
   write(path.join('packages', config.dir, 'README.md'), body)
@@ -923,6 +956,7 @@ function writeDocs() {
 
 function packageMdxBody(packageName, config) {
   if (packageName === '@hile/rsc') return rscPackageMdxBody(config)
+  if (packageName === '@hile/mcp') return mcpPackageMdxBody(config)
   const primary = ai(config.cards[0])
   const rows = selectPackageMapRows(packageName)
   return [
@@ -961,6 +995,45 @@ function packageMdxBody(packageName, config) {
     '## Package-Local AI Guide',
     '',
     `This package also ships \`AI.md\` in npm so agents can read accurate examples after installation.`,
+  ].join('\n')
+}
+
+function mcpPackageMdxBody(config) {
+  const primary = ai(config.cards[0])
+  return [
+    '# @hile/mcp',
+    '',
+    config.purpose,
+    '',
+    '> Start with the [distributed MCP gateway guide](/techniques/mcp-gateway) for an end-to-end multi-service composition.',
+    '',
+    section(primary, '## Use When'),
+    '',
+    section(primary, '## Do Not Use When'),
+    '',
+    section(primary, '## Install'),
+    '',
+    section(primary, '## Imports'),
+    '',
+    section(primary, '## Copy-Paste Example'),
+    '',
+    section(primary, '## More Examples'),
+    '',
+    section(primary, '## Compose With'),
+    '',
+    section(primary, '## Runtime And Lifecycle Notes'),
+    '',
+    section(primary, '## Anti-Patterns'),
+    '',
+    section(primary, '## Verification Checklist'),
+    '',
+    '## Complete Tutorial',
+    '',
+    'Continue with the [distributed MCP gateway guide](/techniques/mcp-gateway) for provider layout, gateway boot, HTTP and stdio transports, multi-instance routing, security boundaries, performance, failure semantics, and verification.',
+    '',
+    '## Package-Local References',
+    '',
+    'The npm package ships `README.md`, `AI.md`, and `ARCHITECTURE.md` alongside its runtime entry points.',
   ].join('\n')
 }
 
@@ -1125,6 +1198,7 @@ function bulletRecipeList() {
     '- [Redis cache with singleflight](/techniques/caching)',
     '- [Queue worker with idempotency](/techniques/idempotency)',
     '- [Micro RPC with message loader](/techniques/messaging)',
+    '- [Distributed MCP providers and gateway](/techniques/mcp-gateway)',
     '- [Runtime dynamic config](/techniques/configuration)',
     '- [New scaffolded project](/quickstart)',
   ].join('\n')

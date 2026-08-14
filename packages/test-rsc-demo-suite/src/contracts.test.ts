@@ -240,4 +240,18 @@ describe('private RSC demo package contracts', () => {
     expect(runtime).toContain('requireGeneration: true');
     expect(runtime).toContain('generationHighWater: discoveryGenerationHighWater');
   });
+
+  it('distributes MCP providers across existing test services and exposes one Host gateway', () => {
+    const host = read('packages/test-rsc-host/src/services/runtime.boot.ts');
+    const catalog = read('packages/test-rsc-plugin-capabilities-v1/src/services/plugin.boot.ts');
+    const orders = read('packages/test-rsc-plugin-isolation/src/services/plugin.boot.ts');
+    expect(host).toContain('createMcpGateway');
+    expect(host).toContain('createMcpHttpEndpoint');
+    expect(host).toContain("path: '/mcp'");
+    expect(catalog).toContain('attachMcpProvider');
+    expect(catalog).toContain("id: 'catalog'");
+    expect(orders).toContain('attachMcpProvider');
+    expect(orders).toContain("id: 'orders'");
+    expect(read('packages/test-rsc-demo-suite/scripts/demo.mjs')).toContain('capabilities-v1-replica');
+  });
 });

@@ -29,6 +29,11 @@ export class Server extends MessageLoader {
   public readonly logger: Logger | Console;
   public readonly clients = new Map<string, Client>();
   private readonly clientExtras = new Map<string, string[]>();
+  private readonly pendingConnections = new Map<string, {
+    promise: Promise<Client>;
+    controller: AbortController;
+    waiters: number;
+  }>();
   private readonly announceHost: string;
   public readonly events = new EventEmitter();
 
@@ -101,30 +106,51 @@ export class Server extends MessageLoader {
     return client;
   }
 
-  protected async connect(host: string, port: number, timeout = DEFAULT_CONNECT_TIMEOUT) {
+  protected async connect(host: string, port: number, timeout = DEFAULT_CONNECT_TIMEOUT, signal?: AbortSignal) {
     const key = `${host}:${port}`;
     if (this.clients.has(key)) {
       return this.clients.get(key)!;
     }
     if (!this.port) throw new Error('You can not connect to a server without a local port, please use `.setPort(port)` for local port.');
-    const ws = await new Promise<WebSocket>((resolve, reject) => {
+    let pending = this.pendingConnections.get(key);
+    if (!pending) {
+      const controller = new AbortController();
+      const promise = this.openConnection(host, port, controller.signal)
+        .then(ws => this.createClient(ws, host, port))
+        .finally(() => { this.pendingConnections.delete(key); });
+      promise.catch(() => undefined);
+      pending = { promise, controller, waiters: 0 };
+      this.pendingConnections.set(key, pending);
+    }
+    pending.waiters++;
+    try {
+      return await this.waitForConnection(pending.promise, timeout, signal);
+    } finally {
+      pending.waiters--;
+      if (pending.waiters === 0 && this.pendingConnections.get(key) === pending) pending.controller.abort();
+    }
+  }
+
+  private openConnection(host: string, port: number, signal: AbortSignal) {
+    return new Promise<WebSocket>((resolve, reject) => {
       const ws = new WebSocket(`ws://${host}:${port}/${this.announceHost}/${this.port}/${this.namespace}`);
-      const timer = setTimeout(() => {
-        clear();
-        ws.on('error', () => { });
-        try {
-          ws.terminate();
-        } catch { }
-        reject(new Error('Connection timeout'));
-      }, timeout).unref();
       const clear = () => {
-        clearTimeout(timer);
         ws.off('open', onopen);
         ws.off('error', onerror);
+        signal.removeEventListener('abort', onabort);
+      };
+      const terminate = () => {
+        clear();
+        ws.on('error', () => { });
+        try { ws.terminate(); } catch { }
       }
       const onerror = (err: Error) => {
         clear();
         reject(err);
+      };
+      const onabort = () => {
+        reject(signal.reason ?? new Error('Connection aborted'));
+        terminate();
       };
       const onopen = () => {
         clear();
@@ -132,8 +158,25 @@ export class Server extends MessageLoader {
       };
       ws.on('open', onopen);
       ws.on('error', onerror);
-    })
-    return this.createClient(ws, host, port);
+      signal.addEventListener('abort', onabort, { once: true });
+    });
+  }
+
+  private waitForConnection(promise: Promise<Client>, timeout: number, signal?: AbortSignal): Promise<Client> {
+    if (signal?.aborted) return Promise.reject(signal.reason ?? new Error('Connection aborted'));
+    return new Promise<Client>((resolve, reject) => {
+      const timer = Number.isFinite(timeout) && timeout > 0
+        ? setTimeout(() => finish(reject, new Error('Connection timeout')), timeout).unref()
+        : undefined;
+      const onabort = () => finish(reject, signal?.reason ?? new Error('Connection aborted'));
+      const finish = (settle: (value: any) => void, value: any) => {
+        if (timer) clearTimeout(timer);
+        signal?.removeEventListener('abort', onabort);
+        settle(value);
+      };
+      signal?.addEventListener('abort', onabort, { once: true });
+      promise.then(client => finish(resolve, client), error => finish(reject, error));
+    });
   }
 
   public async listen(port: number = 0) {
@@ -162,6 +205,9 @@ export class Server extends MessageLoader {
     }
 
     return async () => {
+      for (const pending of this.pendingConnections.values()) pending.controller.abort();
+      await Promise.allSettled([...this.pendingConnections.values()].map(item => item.promise));
+      this.pendingConnections.clear();
       if (this.wss) {
         // terminate 立即销毁 socket，不等待对端 close frame
         // 避免 graceful close 时对端无响应导致 HTTP server 无法关闭

@@ -1,0 +1,67 @@
+{
+  "name": "@hile/mcp",
+  "description": "Distributed MCP capability providers and unified gateway for Hile",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./micro": {
+      "types": "./dist/micro/index.d.ts",
+      "import": "./dist/micro/index.js"
+    },
+    "./gateway": {
+      "types": "./dist/gateway/index.d.ts",
+      "import": "./dist/gateway/index.js"
+    },
+    "./http": {
+      "types": "./dist/http/index.d.ts",
+      "import": "./dist/http/index.js"
+    },
+    "./stdio": {
+      "types": "./dist/stdio/index.d.ts",
+      "import": "./dist/stdio/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
+    "dev": "tsc -b --watch",
+    "test": "vitest run"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.*",
+    "README.md",
+    "AI.md",
+    "ARCHITECTURE.md"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.12.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@hile/loader": "workspace:^",
+    "@modelcontextprotocol/node": "^2.0.0",
+    "@modelcontextprotocol/server": "^2.0.0",
+    "@standard-schema/spec": "^1.0.0"
+  },
+  "devDependencies": {
+    "@hile/http": "workspace:^",
+    "@modelcontextprotocol/client": "^2.0.0",
+    "@types/node": "^26.2.0",
+    "fix-esm-import-path": "^1.10.3",
+    "vitest": "^4.0.18",
+    "zod": "^4.3.6"
+  }
+}

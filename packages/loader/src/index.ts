@@ -13,6 +13,8 @@ export interface ScanOptions {
   suffix?: string
   prefix?: string
   defaultSuffix?: string
+  /** Reject matched modules that do not provide a default export. */
+  requireDefault?: boolean
 }
 
 /**

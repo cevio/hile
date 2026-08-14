@@ -508,6 +508,20 @@ describe('@hile/micro registry read APIs', () => {
     });
   });
 
+  it('lists topic payloads and publisher addresses in one snapshot request', async () => {
+    const registry = new Registry(testAdvertise);
+    const publisher = { host: '127.0.0.1', port: 3551 };
+    await registry.dispatch('/-/declare', { topic: 'mcp.orders', payload: { providerId: 'orders' } }, { client: publisher });
+
+    await expect(registry.dispatch('/-/topic/snapshots', { prefix: 'mcp.' })).resolves.toEqual({
+      topics: [expect.objectContaining({
+        topic: 'mcp.orders',
+        payload: { providerId: 'orders' },
+        publishers: [publisher],
+      })],
+    });
+  });
+
   it('returns a topic snapshot without subscribing the caller', async () => {
     const registry = new Registry(testAdvertise);
     const publisher = { host: '127.0.0.1', port: 3601 };
@@ -2074,6 +2088,46 @@ describe('@hile/micro stream', () => {
       unregister();
       await disposeConsumer();
       await disposeProvider();
+      await disposeRegistry();
+    }
+  });
+
+  it('streams from an exact provider instance', async () => {
+    const registryPort = await getAvailablePort();
+    const providerAPort = await getAvailablePort();
+    const providerBPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+    const registry = new Registry(testAdvertise);
+    const providerA = new Application({ namespace: 'peer-stream-svc', registry: { host: '127.0.0.1', port: registryPort }, ...testAdvertise });
+    const providerB = new Application({ namespace: 'peer-stream-svc', registry: { host: '127.0.0.1', port: registryPort }, ...testAdvertise });
+    const consumer = new Application({ namespace: 'peer-stream-consumer', registry: { host: '127.0.0.1', port: registryPort }, ...testAdvertise });
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeA = await providerA.listen(providerAPort);
+    const disposeB = await providerB.listen(providerBPort);
+    const disposeConsumer = await consumer.listen(consumerPort);
+    const unregisterA = providerA.register('/stream', async function* () { yield 'A'; });
+    const unregisterB = providerB.register('/stream', async function* () { yield 'B'; });
+
+    try {
+      let connections = 0;
+      consumer.events.on('connect', () => { connections++; });
+      const streams = await Promise.all([
+        consumer.streamPeer({ host: '127.0.0.1', port: providerBPort }, '/stream', {}),
+        consumer.streamPeer({ host: '127.0.0.1', port: providerBPort }, '/stream', {}),
+      ]);
+      const chunks = await Promise.all(streams.map(async stream => {
+        const values: any[] = [];
+        for await (const chunk of stream) values.push(chunk);
+        return values;
+      }));
+      expect(chunks).toEqual([['B'], ['B']]);
+      expect(connections).toBe(1);
+    } finally {
+      unregisterA();
+      unregisterB();
+      await disposeConsumer();
+      await disposeB();
+      await disposeA();
       await disposeRegistry();
     }
   });

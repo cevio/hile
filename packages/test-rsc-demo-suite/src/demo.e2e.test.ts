@@ -1,6 +1,70 @@
 import { expect, test } from '@playwright/test';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 
 test.describe.serial('Registry-driven single HTTP RSC topology', () => {
+  test('lets a reviewer exercise every MCP surface from the existing Host page', async ({ page }) => {
+    await page.goto('/');
+    const workbench = page.getByTestId('mcp-workbench');
+    await expect(workbench).toBeVisible();
+
+    await workbench.getByRole('button', { name: 'Discover capabilities' }).click();
+    await expect(workbench.getByTestId('mcp-tools')).toContainText('catalog.search_products');
+    await expect(workbench.getByTestId('mcp-tools')).toContainText('orders.confirm_order');
+
+    await workbench.getByRole('button', { name: 'Search twice' }).click();
+    await expect(workbench.getByTestId('mcp-instance-history')).toContainText(/4211 → 4214|4214 → 4211/);
+    await expect(workbench.getByTestId('mcp-progress')).toHaveAttribute('aria-valuenow', '100');
+    await expect(workbench.getByTestId('mcp-log')).toContainText('Complete');
+
+    await workbench.getByRole('button', { name: 'Read resources' }).click();
+    await expect(workbench.getByTestId('mcp-output')).toContainText('Standing Desk');
+    await workbench.getByRole('button', { name: 'Generate prompt' }).click();
+    await expect(workbench.getByTestId('mcp-output')).toContainText('home office');
+    await workbench.getByRole('button', { name: 'Create order' }).click();
+    await expect(workbench.getByTestId('mcp-output')).toContainText('order-p-100-2');
+
+    page.once('dialog', dialog => dialog.accept());
+    await workbench.getByRole('button', { name: 'Confirm order' }).click();
+    await expect(workbench.getByTestId('mcp-output')).toContainText('confirmed');
+  });
+
+  test('exposes distributed MCP capabilities through the existing Host', async () => {
+    const client = new Client({ name: 'test-rsc-demo-suite', version: '1.0.0' }, {
+      capabilities: { elicitation: { form: {} } },
+      versionNegotiation: { mode: { pin: '2026-07-28' } },
+    });
+    client.setRequestHandler('elicitation/create', async () => ({ action: 'accept', content: { confirmed: true } }));
+    await client.connect(new StreamableHTTPClientTransport(new URL('http://127.0.0.1:3200/mcp'), {
+      requestInit: { headers: { Authorization: 'Bearer demo-mcp-token', Origin: 'http://127.0.0.1:3200' } },
+    }));
+    try {
+      expect((await client.listTools()).tools.map(({ name }) => name)).toEqual([
+        'catalog.search_products',
+        'orders.confirm_order',
+        'orders.create_order',
+      ]);
+      expect((await client.listResources()).resources.map(({ uri }) => uri)).toContain('demo://catalog/about');
+      expect((await client.listResourceTemplates()).resourceTemplates.map(({ uriTemplate }) => uriTemplate))
+        .toContain('demo://catalog/products/{id}');
+      expect((await client.listPrompts()).prompts.map(({ name }) => name)).toContain('catalog.recommend_products');
+      const progress: number[] = [];
+      const instances = new Set<string>();
+      for (let index = 0; index < 2; index++) {
+        const search = await client.callTool({
+          name: 'catalog.search_products', arguments: { query: 'desk', limit: 2 },
+        }, { onprogress: ({ progress: value }) => progress.push(value) });
+        expect(search.structuredContent).toEqual(expect.objectContaining({ count: 2 }));
+        instances.add((search.structuredContent as { instance: string }).instance);
+      }
+      expect(instances).toEqual(new Set(['4211', '4214']));
+      expect(progress).toContain(1);
+      expect(await client.callTool({ name: 'orders.confirm_order', arguments: { order_id: 'order-demo' } }))
+        .toEqual(expect.objectContaining({ content: [expect.objectContaining({ text: expect.stringContaining('confirmed') })] }));
+    } finally {
+      await client.close();
+    }
+  });
+
   test('automatically discovers the selected build and hydrates its client graph', async ({ page, request }) => {
     const deployments = await request.get('/api/demo/deployments');
     expect(deployments.status()).toBe(200);

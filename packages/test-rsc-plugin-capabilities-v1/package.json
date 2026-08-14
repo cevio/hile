@@ -16,6 +16,7 @@
     "@hile/cli": "workspace:^",
     "@hile/core": "workspace:^",
     "@hile/micro": "workspace:^",
+    "@hile/mcp": "workspace:^",
     "@hile/model": "workspace:^",
     "@hile/rsc": "workspace:^",
     "@hile/rsc-build": "workspace:^",
@@ -24,7 +25,8 @@
     "antd": "6.6.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
-    "react-server-dom-webpack": "19.2.8"
+    "react-server-dom-webpack": "19.2.8",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^26.2.0",

@@ -24,6 +24,7 @@ Use this map to decide what to read.
 | Add request/response messaging over WS/IPC/worker | `@hile/message-*` | `packages/messaging-micro.md` |
 | Load file-based message handlers | `@hile/message-loader` | `packages/messaging-micro.md`, `recipes/micro-rpc-message-loader.md` |
 | Build service discovery or RPC | `@hile/micro` | `packages/messaging-micro.md`, `recipes/micro-rpc-message-loader.md` |
+| Expose distributed microservice capabilities through one MCP server | `@hile/mcp` | `packages/mcp.md`, `recipes/mcp-distributed-gateway.md` |
 | Push runtime config without restarts | `@hile/micro-dynamic-configs` | `packages/messaging-micro.md`, `recipes/runtime-config.md` |
 | Stabilize config-driven runtime reloads | `@hile/reloader` | `packages/reloader.md`, `recipes/stable-runtime-reload.md` |
 | Compose topics, config, and reloader state as refs | `@hile/reactivity` | `packages/reactivity.md`, `recipes/stable-runtime-reload.md` |
@@ -43,6 +44,7 @@ Use this map to decide what to read.
 - If the task is "prevent too many attempts", use `@hile/redis-rate-limit`; do not confuse it with authentication or idempotency.
 - If config changes can arrive in bursts, use `@hile/reloader` around the runtime; do not reload directly inside every subscribe callback.
 - If service code needs refs or async watch strategies for topics/config/reloader state, use `@hile/reactivity`.
+- If tools, resources, and prompts belong to different microservices, use `@hile/mcp`; do not centralize their handlers in the gateway.
 
 ## Project Startup And Lifecycle
 
@@ -131,6 +133,18 @@ Read `packages/messaging-micro.md` when the task mentions:
 
 Packages: `@hile/message-modem`, `@hile/message-ws`, `@hile/message-ipc`, `@hile/message-worker-thread`, `@hile/message-loader`, `@hile/micro`, `@hile/micro-dynamic-configs`, `@hile/reloader`.
 
+## Distributed MCP Capabilities
+
+Read `packages/mcp.md` when the task mentions:
+
+- Model Context Protocol or MCP
+- tools, resources, prompts, progress, logging, or input-required flows
+- one public MCP endpoint backed by multiple microservices
+- MCP provider discovery, replicas, conflict detection, or failover
+- Streamable HTTP or stdio MCP transport
+
+Package: `@hile/mcp`. Compose it with `@hile/micro`, an existing `@hile/http` server for remote access, and `@hile/core` for lifecycle management.
+
 ## Runtime Reload And Config Aggregation
 
 Read `packages/reloader.md` when the task mentions:
@@ -188,6 +202,7 @@ Package: `create-hile`.
 - Redis cache with singleflight: `recipes/redis-cache-singleflight.md`
 - Queue worker with idempotency: `recipes/queue-worker-idempotency.md`
 - Micro RPC with message loader: `recipes/micro-rpc-message-loader.md`
+- Distributed MCP providers and unified gateway: `recipes/mcp-distributed-gateway.md`
 - Runtime dynamic config: `recipes/runtime-config.md`
 - Stable runtime reload: `recipes/stable-runtime-reload.md`
 - New scaffolded project: `recipes/new-project-scaffold.md`

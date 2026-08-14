@@ -22,7 +22,10 @@ export abstract class Loader<TFile, TOptions extends ScanOptions = ScanOptions> 
         const url = new URL(pathToFileURL(file.absolute))
         if (options.cacheBust !== undefined) url.searchParams.set('v', String(options.cacheBust))
         const mod: { default?: TFile } = await import(url.href)
-        if (mod.default == null) continue
+        if (mod.default == null) {
+          if (this.options.requireDefault) throw new TypeError(`${file.relative} must have a default export`)
+          continue
+        }
 
         const unregister = this.bind(file, mod.default)
         if (unregister) {

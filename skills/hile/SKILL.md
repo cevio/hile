@@ -55,6 +55,7 @@ Then load the relevant package card or recipe:
 - `references/packages/http-next.md`
 - `references/packages/http.md`
 - `references/packages/infrastructure.md`
+- `references/packages/mcp.md`
 - `references/packages/messaging-micro.md`
 - `references/packages/model-context.md`
 - `references/packages/reactivity.md`
@@ -63,6 +64,7 @@ Then load the relevant package card or recipe:
 - `references/packages/rsc.md`
 - `references/recipes/http-api-model-typeorm.md`
 - `references/recipes/http-next-fullstack.md`
+- `references/recipes/mcp-distributed-gateway.md`
 - `references/recipes/micro-registry-read-apis.md`
 - `references/recipes/micro-rpc-message-loader.md`
 - `references/recipes/new-project-scaffold.md`

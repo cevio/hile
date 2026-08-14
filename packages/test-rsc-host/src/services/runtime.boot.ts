@@ -1,5 +1,12 @@
 import { defineService } from '@hile/core';
 import HttpNext from '@hile/http-next';
+import {
+  createMcpHmacInvocationCredentialCodec,
+  createMcpInvocationCredentialKeyring,
+} from '@hile/mcp';
+import { createMcpGateway } from '@hile/mcp/gateway';
+import { createMcpHttpEndpoint } from '@hile/mcp/http';
+import { createHileMcpProviderSource } from '@hile/mcp/micro';
 import { Application } from '@hile/micro';
 import {
   createRscActionMiddleware,
@@ -54,6 +61,30 @@ export default defineService<DemoHostComposition>(DEMO_HOST_SERVICE_KEY, async (
   });
   const detachCatalog = attachRscDeploymentCatalog(deployments, application);
   const stopMicro = await application.listen(Number(process.env.HOST_MICRO_PORT ?? 4210));
+  const mcpSource = createHileMcpProviderSource(application, {
+    pollIntervalMs: Number(process.env.MCP_DISCOVERY_POLL_MS ?? 250),
+    onError: console.error,
+  });
+  const mcpGateway = await createMcpGateway({
+    source: mcpSource,
+    info: { name: 'test-rsc-host', version: '1.0.0' },
+    instructions: 'Use catalog resources for grounding. Order tools are provided by the isolated plugin service.',
+    startup: 'allow-empty',
+    invocationSecurity: {
+      mode: 'credential',
+      credentials: createMcpInvocationCredentialKeyring({
+        catalog: createMcpHmacInvocationCredentialCodec({
+          issuer: 'test-rsc-host',
+          secret: process.env.MCP_CATALOG_SECRET ?? 'test-rsc-catalog-provider-secret-32-bytes',
+        }),
+        orders: createMcpHmacInvocationCredentialCodec({
+          issuer: 'test-rsc-host',
+          secret: process.env.MCP_ORDERS_SECRET ?? 'test-rsc-orders-provider-secret-32-bytes!',
+        }),
+      }),
+    },
+    onError: console.error,
+  });
   const locator = createCatalogRscPluginLocator(
     deployments,
     async (deployment) => createHileRscPluginClient(application, deployment.namespace),
@@ -98,6 +129,7 @@ export default defineService<DemoHostComposition>(DEMO_HOST_SERVICE_KEY, async (
     await discovery.start();
   } catch (error) {
     await discovery.close().catch(() => undefined);
+    await mcpGateway.close().catch(() => undefined);
     detachCatalog();
     await stopMicro();
     throw error;
@@ -132,6 +164,27 @@ export default defineService<DemoHostComposition>(DEMO_HOST_SERVICE_KEY, async (
     port: Number(process.env.HTTP_PORT ?? 3200),
     cwd: hostRoot,
   });
+  const mcpEndpoint = createMcpHttpEndpoint(mcpGateway, {
+    path: '/mcp',
+    security: {
+      allowedHostnames: ['127.0.0.1', 'localhost'],
+      allowedOriginHostnames: ['127.0.0.1', 'localhost'],
+      authentication: {
+        mode: 'required',
+        authenticate: request => request.headers.get('authorization') === 'Bearer demo-mcp-token'
+          ? {
+            token: 'demo-mcp-token',
+            clientId: 'test-rsc-demo-suite',
+            scopes: ['catalog:read', 'orders:write'],
+          }
+          : new Response('Use Authorization: Bearer demo-mcp-token', { status: 401 }),
+      },
+    },
+    legacy: 'reject',
+    keepAliveMs: 5_000,
+    onError: console.error,
+  });
+  host.use(mcpEndpoint.middleware);
   mountRscHostAdapters(host, {
     asset: createRscAssetMiddleware({ catalog: artifacts, mountPath: assetMountPath }),
     action: async (context, next) => {
@@ -160,6 +213,8 @@ export default defineService<DemoHostComposition>(DEMO_HOST_SERVICE_KEY, async (
   } catch (error) {
     uninstallComposition();
     uninstallResolver();
+    await mcpEndpoint.close().catch(() => undefined);
+    await mcpGateway.close().catch(() => undefined);
     await discovery.close();
     detachCatalog();
     await stopMicro();
@@ -170,6 +225,8 @@ export default defineService<DemoHostComposition>(DEMO_HOST_SERVICE_KEY, async (
     uninstallComposition();
     uninstallResolver();
     await stopHttp();
+    await mcpEndpoint.close();
+    await mcpGateway.close();
     await discovery.close();
     detachCatalog();
     await stopMicro();

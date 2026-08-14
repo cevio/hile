@@ -3,6 +3,7 @@ import { Server, type MicroServerProps } from './server';
 import type {
   RegistryAddress,
   RegistryTopicSnapshot,
+  RegistryTopicSnapshotsResult,
   RegistryTopicSummary,
   RegistryTopicsResult,
 } from './registry';
@@ -229,6 +230,7 @@ export class Application extends Server {
   private readonly publishedTopicDirty = new Set<string>();
   private readonly publishedTopicVersions = new Map<string, number>();
   private readonly publishedTopicSignatures = new Map<string, string>();
+  private readonly pendingUnpublishes = new Set<string>();
   private readonly topicSyncs = new Map<string, Promise<void>>();
   private readonly topicUpdateVersions = new Map<string, number>();
   private publishIntentVersion = 0;
@@ -367,6 +369,7 @@ export class Application extends Server {
   }
 
   private recordPublishedTopic(topic: string, payload: any) {
+    this.pendingUnpublishes.delete(topic);
     const signature = stablePayloadSignature(payload);
     const previousSignature = this.publishedTopicSignatures.get(topic);
     const version = this.publishedTopics.has(topic) && previousSignature === signature
@@ -523,6 +526,10 @@ export class Application extends Server {
         });
       });
       this.registry = registry;
+      for (const topic of [...this.pendingUnpublishes]) {
+        await this.syncUnpublishedTopic(topic, { propagateError: true });
+        if (!this.publishedTopics.has(topic)) this.pendingUnpublishes.delete(topic);
+      }
       // 重新声明所有仍处于发布状态的 topic
       for (const topic of [...this.publishedTopics.keys()]) {
         if (this.stopped || this.listenGeneration !== generation) {
@@ -981,6 +988,25 @@ export class Application extends Server {
     }
   }
 
+  /** Opens a stream against one exact service instance without registry selection. */
+  public async streamPeer(
+    address: RegistryAddress,
+    url: string,
+    data: any,
+    options?: ClientStreamOptions,
+  ): Promise<import('stream').Readable> {
+    assertValidRegistrySocket('peer address', address.host, address.port);
+    if (options?.timeout !== undefined && (!Number.isSafeInteger(options.timeout) || options.timeout < 1 || options.timeout > 2_147_483_647)) {
+      throw new TypeError('Stream timeout must be a positive safe integer not exceeding 2147483647');
+    }
+    const startedAt = Date.now();
+    const client = await this.connect(address.host, address.port, options?.timeout, options?.signal);
+    const timeout = options?.timeout === undefined
+      ? undefined
+      : Math.max(1, options.timeout - (Date.now() - startedAt));
+    return client.stream(url, data, { ...options, timeout });
+  }
+
   public async publish<T = any>(topic: string, data: T) {
     this.assertCanUsePubSub();
     const snapshot = createPubSubPayloadSnapshot(topic, data);
@@ -998,18 +1024,36 @@ export class Application extends Server {
         return ref;
       },
       unpublish: async () => {
-        this.assertCanUsePubSub();
-        if (this.publishedTopicVersions.get(topic) !== refVersion) return ref;
-        this.publishedTopics.delete(topic);
-        this.publishedTopicRevisions.delete(topic);
-        this.publishedTopicDirty.delete(topic);
-        this.publishedTopicVersions.delete(topic);
-        this.publishedTopicSignatures.delete(topic);
-        await this.syncUnpublishedTopic(topic);
+        await this.unpublish(topic, refVersion);
         return ref;
       }
     }
     return ref;
+  }
+
+  /** Removes a publication intent and retries its Registry tombstone until acknowledged. */
+  public async unpublish(topic: string, expectedVersion?: number) {
+    const currentVersion = this.publishedTopicVersions.get(topic);
+    if (expectedVersion !== undefined && currentVersion !== expectedVersion && !this.pendingUnpublishes.has(topic)) return;
+    if (expectedVersion === undefined || currentVersion === expectedVersion) {
+      this.publishedTopics.delete(topic);
+      this.publishedTopicRevisions.delete(topic);
+      this.publishedTopicDirty.delete(topic);
+      this.publishedTopicVersions.delete(topic);
+      this.publishedTopicSignatures.delete(topic);
+      this.pendingUnpublishes.add(topic);
+    }
+    if (!this.canUsePubSub()) {
+      this.pendingUnpublishes.delete(topic);
+      return;
+    }
+    if (!this.registry) {
+      this.ensureRegistryReconnectScheduled();
+      return;
+    }
+    if (!this.pendingUnpublishes.has(topic)) return;
+    await this.syncUnpublishedTopic(topic, { propagateError: true });
+    if (!this.publishedTopics.has(topic)) this.pendingUnpublishes.delete(topic);
   }
 
   /** Reads Registry topic metadata without creating a pub/sub subscription. */
@@ -1021,6 +1065,21 @@ export class Application extends Server {
     }
     const result = await registry.request<RegistryTopicsResult>(
       '/-/topics',
+      prefix === undefined ? {} : { prefix },
+      { ...this.registryRequestOptions(), signal: options?.signal },
+    );
+    return structuredClone(result.topics);
+  }
+
+  /** Reads current topic payloads in one Registry round trip. */
+  public async listRegistryTopicSnapshots(prefix?: string, options?: { signal?: AbortSignal }): Promise<RegistryTopicSnapshotsResult['topics']> {
+    const registry = this.registry;
+    if (!registry) {
+      this.ensureRegistryReconnectScheduled();
+      throw new Error('Registry is not connected');
+    }
+    const result = await registry.request<RegistryTopicSnapshotsResult>(
+      '/-/topic/snapshots',
       prefix === undefined ? {} : { prefix },
       { ...this.registryRequestOptions(), signal: options?.signal },
     );

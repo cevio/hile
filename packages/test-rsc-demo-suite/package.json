@@ -6,14 +6,15 @@
   "scripts": {
     "test": "vitest run src/contracts.test.ts src/development-lifecycle.test.ts",
     "test:contracts": "vitest run src/contracts.test.ts",
-    "build:demo": "pnpm --filter @hile/rsc build && pnpm --filter @hile/rsc-build build && pnpm --filter @hile/rsc-development build && pnpm --filter @hile/rsc-discovery build && pnpm --filter @hile/rsc-discovery-hile build && pnpm --filter @hile/rsc-next build && pnpm --filter test-rsc-plugin-capabilities-v1 build && pnpm --filter test-rsc-plugin-capabilities-v2 build && pnpm --filter test-rsc-plugin-isolation build && pnpm --filter test-rsc-host build",
-    "build:dev": "pnpm --filter @hile/rsc build && pnpm --filter @hile/rsc-build build && pnpm --filter @hile/rsc-development build && pnpm --filter @hile/rsc-discovery build && pnpm --filter @hile/rsc-discovery-hile build && pnpm --filter @hile/rsc-next build && pnpm --filter test-rsc-plugin-capabilities-v1 build && pnpm --filter test-rsc-plugin-capabilities-v2 build && pnpm --filter test-rsc-plugin-isolation build && pnpm --filter test-rsc-host build:runtime",
+    "build:demo": "pnpm --filter @hile/micro build && pnpm --filter @hile/mcp build && pnpm --filter @hile/cli build && pnpm --filter @hile/rsc build && pnpm --filter @hile/rsc-build build && pnpm --filter @hile/rsc-development build && pnpm --filter @hile/rsc-discovery build && pnpm --filter @hile/rsc-discovery-hile build && pnpm --filter @hile/rsc-next build && pnpm --filter test-rsc-plugin-capabilities-v1 build && pnpm --filter test-rsc-plugin-capabilities-v2 build && pnpm --filter test-rsc-plugin-isolation build && pnpm --filter test-rsc-host build",
+    "build:dev": "pnpm --filter @hile/micro build && pnpm --filter @hile/mcp build && pnpm --filter @hile/cli build && pnpm --filter @hile/rsc build && pnpm --filter @hile/rsc-build build && pnpm --filter @hile/rsc-development build && pnpm --filter @hile/rsc-discovery build && pnpm --filter @hile/rsc-discovery-hile build && pnpm --filter @hile/rsc-next build && pnpm --filter test-rsc-plugin-capabilities-v1 build && pnpm --filter test-rsc-plugin-capabilities-v2 build && pnpm --filter test-rsc-plugin-isolation build && pnpm --filter test-rsc-host build:runtime",
     "demo": "pnpm build:demo && node scripts/demo.mjs start",
     "dev": "pnpm build:dev && node scripts/demo.mjs dev",
     "test:e2e": "pnpm build:demo && node scripts/demo.mjs test",
     "test:e2e:dev": "pnpm build:dev && node scripts/demo.mjs test-dev"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.0.0",
     "@types/node": "^26.2.0",
     "@hile/rsc": "workspace:^",
     "@hile/rsc-build": "workspace:^",

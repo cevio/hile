@@ -15,6 +15,16 @@ const developmentMode = mode === 'dev' || mode === 'test-dev';
 
 const services = [
   { name: 'test-rsc-plugin-capabilities-v1', ports: [4211], namespace: 'demo.rsc.capabilities.v1' },
+  {
+    name: 'test-rsc-plugin-capabilities-v1',
+    label: 'capabilities-v1-replica',
+    ports: [4214],
+    env: {
+      MICRO_NAMESPACE: 'demo.rsc.capabilities.v1',
+      PLUGIN_MICRO_PORT: '4214',
+      RSC_INSTANCE_ID: 'demo.rsc.capabilities.v1.replica',
+    },
+  },
   { name: 'test-rsc-plugin-capabilities-v2', ports: [4212], namespace: 'demo.rsc.capabilities.v2' },
   { name: 'test-rsc-plugin-isolation', ports: [4213], namespace: 'demo.rsc.isolation.v1' },
   { name: 'test-rsc-host', ports: [4210, 3200] },
@@ -69,6 +79,7 @@ function startService(service) {
   const environment = {
     ...process.env,
     ...(developmentMode ? { RSC_DEVELOPMENT_STATE: developmentStateFile } : {}),
+    ...service.env,
   };
   delete environment.FORCE_COLOR;
   const child = spawn('pnpm', ['--filter', service.name, developmentMode ? 'dev' : 'start'], {
@@ -77,8 +88,8 @@ function startService(service) {
     detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  prefix(child.stdout, service.name, process.stdout);
-  prefix(child.stderr, service.name, process.stderr);
+  prefix(child.stdout, service.label ?? service.name, process.stdout);
+  prefix(child.stderr, service.label ?? service.name, process.stderr);
   children.push(child);
   child.once('exit', () => {
     if (!stopping) void shutdown(1);
@@ -96,8 +107,9 @@ async function startRegistryIfNeeded() {
   }
   const environment = { ...process.env };
   delete environment.FORCE_COLOR;
-  const child = spawn('pnpm', [
-    '--filter', '@hile/cli', 'exec', 'hile', 'registry', '--port', '9876', '--host', '127.0.0.1', '--pretty',
+  const child = spawn(process.execPath, [
+    path.join(workspaceRoot, 'packages/cli/dist/index.js'),
+    'registry', '--port', '9876', '--host', '127.0.0.1', '--pretty',
   ], {
     cwd: workspaceRoot,
     env: environment,
@@ -127,7 +139,7 @@ async function waitForService(service, child) {
   const deadline = Date.now() + 45_000;
   for (;;) {
     if (child.exitCode !== null || child.signalCode !== null) {
-      throw new Error(`${service.name} exited before readiness: ${child.exitCode ?? child.signalCode}`);
+      throw new Error(`${service.label ?? service.name} exited before readiness: ${child.exitCode ?? child.signalCode}`);
     }
     const ready = await Promise.all(service.ports.map(async (port) => {
       try {
@@ -138,7 +150,7 @@ async function waitForService(service, child) {
       }
     }));
     if (ready.every(Boolean)) return;
-    if (Date.now() >= deadline) throw new Error(`${service.name} readiness timed out`);
+    if (Date.now() >= deadline) throw new Error(`${service.label ?? service.name} readiness timed out`);
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
 }
@@ -272,7 +284,8 @@ try {
   if (developmentMode) await initializeDevelopmentCompilers();
   await startAll();
   console.log('RSC Demo ready: http://127.0.0.1:3200');
-  console.log('Internal micro ports: 4210, 4211, 4212, 4213; registry: 9876');
+  console.log('MCP endpoint: http://127.0.0.1:3200/mcp; bearer token: demo-mcp-token');
+  console.log('Internal micro ports: 4210, 4211, 4212, 4213, 4214; registry: 9876');
 
   if (mode === 'test') {
     await runPlaywright();

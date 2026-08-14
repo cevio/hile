@@ -1,6 +1,8 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineService } from '@hile/core';
+import { createMcpHmacInvocationCredentialCodec } from '@hile/mcp';
+import { attachMcpProvider } from '@hile/mcp/micro';
 import { Application } from '@hile/micro';
 import { verifyRscPluginArtifact } from '@hile/rsc/artifact';
 import { createOfficialRscRenderer, RscArtifactServerFunctionRuntime, RscPluginService } from '@hile/rsc/plugin';
@@ -59,6 +61,22 @@ export default defineService('test.rsc.capabilities.v1', async (shutdown) => {
       : undefined,
   });
   await runtime.start();
-  shutdown(() => runtime.close());
+  const mcp = await attachMcpProvider(application, {
+    id: 'catalog',
+    displayName: 'RSC Demo Catalog',
+    directory: fileURLToPath(new URL('../mcps', import.meta.url)),
+  }, {
+    invocationSecurity: {
+      mode: 'credential',
+      credentials: createMcpHmacInvocationCredentialCodec({
+        issuer: 'test-rsc-host',
+        secret: process.env.MCP_CATALOG_SECRET ?? 'test-rsc-catalog-provider-secret-32-bytes',
+      }),
+    },
+  });
+  shutdown(async () => {
+    await mcp.close();
+    await runtime.close();
+  });
   return { application, service, manifest };
 });

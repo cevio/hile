@@ -41,6 +41,7 @@ The docs in this repository are generated from the same AI context that powers `
 | Add request/response messaging over WS/IPC/worker | `@hile/message-*` | [Messaging and Micro](/packages/micro) |
 | Load file-based message handlers | `@hile/message-loader` | [Messaging and Micro](/packages/micro), [Micro RPC](/techniques/messaging) |
 | Build service discovery or RPC | `@hile/micro` | [Messaging and Micro](/packages/micro), [Micro RPC](/techniques/messaging) |
+| Expose distributed microservice capabilities through one MCP server | `@hile/mcp` | [MCP API](/packages/mcp), [Distributed MCP gateway](/techniques/mcp-gateway) |
 | Push runtime config without restarts | `@hile/micro-dynamic-configs` | [Messaging and Micro](/packages/micro), [Runtime config](/techniques/configuration) |
 | Stabilize config-driven runtime reloads | `@hile/reloader` | [Reloader](/packages/reloader), [Stable runtime reload](/packages/reloader) |
 | Compose topics, config, and reloader state as refs | `@hile/reactivity` | [Reactivity](/packages/reactivity), [Stable runtime reload](/packages/reloader) |
@@ -60,6 +61,7 @@ The docs in this repository are generated from the same AI context that powers `
 - If the task is "prevent too many attempts", use `@hile/redis-rate-limit`; do not confuse it with authentication or idempotency.
 - If config changes can arrive in bursts, use `@hile/reloader` around the runtime; do not reload directly inside every subscribe callback.
 - If service code needs refs or async watch strategies for topics/config/reloader state, use `@hile/reactivity`.
+- If tools, resources, and prompts belong to different microservices, use `@hile/mcp`; do not centralize their handlers in the gateway.
 
 ## Start With Examples
 
@@ -71,5 +73,6 @@ For implementation tasks, pick the package from the matrix and copy the closest 
 - [Redis cache with singleflight](/techniques/caching)
 - [Queue worker with idempotency](/techniques/idempotency)
 - [Micro RPC with message loader](/techniques/messaging)
+- [Distributed MCP providers and gateway](/techniques/mcp-gateway)
 - [Runtime dynamic config](/techniques/configuration)
 - [New scaffolded project](/quickstart)

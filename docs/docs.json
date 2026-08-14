@@ -42,6 +42,12 @@
             ]
           },
           {
+            "group": "MCP 能力网关",
+            "pages": [
+              "techniques/mcp-gateway"
+            ]
+          },
+          {
             "group": "实用技巧",
             "pages": [
               "techniques/configuration",
@@ -116,7 +122,8 @@
             "group": "微服务",
             "pages": [
               "packages/micro",
-              "packages/micro-dynamic-configs"
+              "packages/micro-dynamic-configs",
+              "packages/mcp"
             ]
           },
           {

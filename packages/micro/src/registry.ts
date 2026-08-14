@@ -57,6 +57,10 @@ export interface RegistryTopicsResult {
   topics: RegistryTopicSummary[];
 }
 
+export interface RegistryTopicSnapshotsResult {
+  topics: Array<RegistryTopicSnapshot & { publishers: RegistryAddress[] }>;
+}
+
 export interface RegistryTopicGetData {
   topic: string;
 }
@@ -292,11 +296,14 @@ export class Registry extends Server {
   }
 
   private listTopicSummaries(prefix?: string) {
+    return this.listTopicEntries(prefix).map(([topic, entry]) => this.createTopicSummary(topic, entry));
+  }
+
+  private listTopicEntries(prefix?: string) {
     const hasPrefix = typeof prefix === 'string' && prefix.length > 0;
     return [...this.topics.entries()]
       .filter(([topic]) => !hasPrefix || topic.startsWith(prefix!))
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([topic, entry]) => this.createTopicSummary(topic, entry));
+      .sort(([a], [b]) => a.localeCompare(b));
   }
 
   private registerReadApis() {
@@ -325,6 +332,12 @@ export class Registry extends Server {
     })));
     this.fallbacks.add(this.register<RegistryTopicsData, {}>('/-/topics', async ({ data }): Promise<RegistryTopicsResult> => ({
       topics: this.listTopicSummaries(data?.prefix),
+    })));
+    this.fallbacks.add(this.register<RegistryTopicsData, {}>('/-/topic/snapshots', async ({ data }): Promise<RegistryTopicSnapshotsResult> => ({
+      topics: this.listTopicEntries(data?.prefix).map(([topic, entry]) => ({
+        ...this.createTopicSnapshot(topic, entry),
+        publishers: registryAddressesFromKeys(entry.publishers),
+      })),
     })));
     this.fallbacks.add(this.register<RegistryTopicGetData, {}>('/-/topic/get', async ({ data }) => {
       if (typeof data?.topic !== 'string') return;
