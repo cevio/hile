@@ -1,7 +1,10 @@
 import type { StandardJSONSchemaV1, StandardSchemaV1 } from '@standard-schema/spec';
 import type {
+  Annotations,
+  CacheHint,
   CallToolResult,
   GetPromptResult,
+  Icon,
   InputRequiredResult,
   ReadResourceResult,
   ToolAnnotations,
@@ -55,10 +58,30 @@ export interface McpToolExecution {
   retry?: 'never' | 'idempotent-failover';
 }
 
-export interface McpToolConfig<Input = unknown, Output = Input> {
-  name: string;
+export interface McpCapabilityMetadata {
   title?: string;
   description?: string;
+  icons?: readonly Icon[];
+  _meta?: Readonly<Record<string, unknown>>;
+}
+
+export interface McpCompletionContext {
+  signal: AbortSignal;
+  principal?: McpPrincipal;
+  arguments?: Readonly<Record<string, string>>;
+}
+
+export type McpCompletionHandler = (
+  value: string,
+  context: McpCompletionContext,
+) => MaybePromise<readonly string[]>;
+
+export interface McpCompletions {
+  completions?: Readonly<Record<string, McpCompletionHandler>>;
+}
+
+export interface McpToolConfig<Input = unknown, Output = Input> extends McpCapabilityMetadata {
+  name: string;
   inputSchema: McpSchema<Input, Output>;
   outputSchema?: McpSchema;
   annotations?: ToolAnnotations;
@@ -72,23 +95,24 @@ export interface McpToolDefinition<Input = unknown, Output = Input> {
   readonly handler: (input: Output, context: McpInvocationContext) => MaybePromise<CallToolResult | InputRequiredResult>;
 }
 
-export interface McpStaticResourceConfig {
+export interface McpResourceMetadata extends McpCapabilityMetadata {
+  mimeType?: string;
+  size?: number;
+  annotations?: Annotations;
+  cacheHint?: CacheHint;
+}
+
+export interface McpStaticResourceConfig extends McpResourceMetadata {
   kind: 'static';
   name: string;
-  title?: string;
-  description?: string;
   uri: string;
-  mimeType?: string;
   access?: McpCapabilityAccess<URL>;
 }
 
-export interface McpTemplateResourceConfig {
+export interface McpTemplateResourceConfig extends McpResourceMetadata, McpCompletions {
   kind: 'template';
   name: string;
-  title?: string;
-  description?: string;
   uriTemplate: string;
-  mimeType?: string;
   access?: McpCapabilityAccess<Variables>;
 }
 
@@ -102,10 +126,8 @@ export interface McpResourceDefinition<Config extends McpResourceConfig = McpRes
   ) => MaybePromise<ReadResourceResult | InputRequiredResult>;
 }
 
-export interface McpPromptConfig<Input = unknown, Output = Input> {
+export interface McpPromptConfig<Input = unknown, Output = Input> extends McpCapabilityMetadata, McpCompletions {
   name: string;
-  title?: string;
-  description?: string;
   argsSchema: McpSchema<Input, Output>;
   access?: McpCapabilityAccess<Output>;
 }

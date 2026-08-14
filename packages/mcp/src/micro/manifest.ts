@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { UriTemplate, fromJsonSchema } from '@modelcontextprotocol/server';
+import { UriTemplate, fromJsonSchema, specTypeSchemas } from '@modelcontextprotocol/server';
 import type { StandardSchemaV1 } from '@standard-schema/spec';
 import { HileMcpError } from '../errors.js';
 import { MAX_TIMER_MS } from '../limits.js';
@@ -46,6 +46,12 @@ function validCommonCapability(value: unknown) {
   if (value.description !== undefined && typeof value.description !== 'string') return false;
   if (value.mimeType !== undefined && typeof value.mimeType !== 'string') return false;
   if (value.annotations !== undefined && !isRecord(value.annotations)) return false;
+  if (value.icons !== undefined && (!Array.isArray(value.icons)
+    || value.icons.some(icon => !!specTypeSchemas.Icon['~standard'].validate(icon).issues))) return false;
+  if (value._meta !== undefined && !isRecord(value._meta)) return false;
+  if (value.completionArguments !== undefined && (!Array.isArray(value.completionArguments)
+    || value.completionArguments.some(argument => typeof argument !== 'string' || !argument)
+    || new Set(value.completionArguments).size !== value.completionArguments.length)) return false;
   if (value.scopes !== undefined && (!Array.isArray(value.scopes) || value.scopes.some(scope => typeof scope !== 'string' || !/^[\x21\x23-\x5B\x5D-\x7E]+$/.test(scope)))) return false;
   return true;
 }
@@ -79,6 +85,8 @@ function validCapabilities(value: unknown): value is McpProviderManifest['capabi
   })) return false;
   if (!value.prompts.every(prompt => {
     if (!validCommonCapability(prompt) || !isRecord(prompt.inputSchema)) return false;
+    if (prompt.completionArguments?.some((argument: string) => !isRecord(prompt.inputSchema.properties)
+      || !(argument in prompt.inputSchema.properties))) return false;
     try { fromJsonSchema(prompt.inputSchema); return true; } catch { return false; }
   })) return false;
   if (!value.resources.every(resource => {
@@ -86,9 +94,18 @@ function validCapabilities(value: unknown): value is McpProviderManifest['capabi
     const hasUri = typeof resource.uri === 'string';
     const hasTemplate = typeof resource.uriTemplate === 'string';
     if (hasUri === hasTemplate) return false;
+    if (resource.size !== undefined && (!Number.isSafeInteger(resource.size) || Number(resource.size) < 0)) return false;
+    if (resource.annotations !== undefined
+      && specTypeSchemas.Annotations['~standard'].validate(resource.annotations).issues) return false;
+    if (resource.cacheHint !== undefined && (!isRecord(resource.cacheHint)
+      || (resource.cacheHint.ttlMs !== undefined && (!Number.isSafeInteger(resource.cacheHint.ttlMs) || Number(resource.cacheHint.ttlMs) < 0))
+      || (resource.cacheHint.cacheScope !== undefined && !['public', 'private'].includes(String(resource.cacheHint.cacheScope))))) return false;
     try {
       if (hasUri) new URL(resource.uri as string);
-      else new UriTemplate(resource.uriTemplate as string);
+      else {
+        const template = new UriTemplate(resource.uriTemplate as string);
+        if (resource.completionArguments?.some((argument: string) => !template.variableNames.includes(argument))) return false;
+      }
       return true;
     } catch { return false; }
   })) return false;
@@ -131,6 +148,7 @@ export function createMcpProviderManifest(
 ): McpProviderManifest {
   const tools: McpManifestCapability[] = Object.values(provider.tools).map(({ config }) => ({
     name: config.name, title: config.title, description: config.description,
+    icons: config.icons, _meta: config._meta,
     inputSchema: jsonSchema(config.inputSchema, 'input'),
     outputSchema: jsonSchema(config.outputSchema, 'output'),
     annotations: config.annotations,
@@ -139,12 +157,18 @@ export function createMcpProviderManifest(
   }));
   const resources: McpManifestCapability[] = Object.values(provider.resources).map(({ config }) => ({
     name: config.name, title: config.title, description: config.description,
+    icons: config.icons, size: config.size, annotations: config.annotations,
+    cacheHint: config.cacheHint, _meta: config._meta,
+    completionArguments: config.kind === 'template' && config.completions
+      ? Object.keys(config.completions).sort(compareText) : undefined,
     uri: config.kind === 'static' ? config.uri : undefined,
     uriTemplate: config.kind === 'template' ? config.uriTemplate : undefined,
     mimeType: config.mimeType, scopes: config.access?.scopes,
   }));
   const prompts: McpManifestCapability[] = Object.values(provider.prompts).map(({ config }) => ({
     name: config.name, title: config.title, description: config.description,
+    icons: config.icons, _meta: config._meta,
+    completionArguments: config.completions ? Object.keys(config.completions).sort(compareText) : undefined,
     inputSchema: jsonSchema(config.argsSchema, 'input'), scopes: config.access?.scopes,
   }));
   const capabilities = {

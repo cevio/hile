@@ -2,7 +2,7 @@
 
 Package: `@hile/mcp`.
 
-`@hile/mcp` turns independently deployed Hile microservices into MCP capability providers and projects them through one public MCP server. It uses the official TypeScript SDK v2 and serves the stable MCP `2026-07-28` protocol over Streamable HTTP, with stdio available for process-local integrations.
+`@hile/mcp` turns independently deployed Hile microservices into MCP capability providers and projects them through one public MCP server. It uses the official TypeScript SDK v2 and serves the stable MCP `2026-07-28` protocol over Streamable HTTP, with stdio available for process-local integrations. WebSocket is used only by the internal Hile Micro transport; it is not exposed as an MCP transport.
 
 ## Copy-Paste Example
 
@@ -107,6 +107,11 @@ export default defineMcpResource(
     name: 'detail',
     uriTemplate: 'hile://orders/{id}',
     mimeType: 'application/json',
+    icons: [{ src: 'https://example.com/orders.svg', mimeType: 'image/svg+xml' }],
+    cacheHint: { ttlMs: 30_000, cacheScope: 'private' },
+    completions: {
+      id: async (value) => searchOrderIds(value),
+    },
     access: { scopes: ['orders:read'] },
   },
   async ({ id }) => ({
@@ -130,7 +135,10 @@ export default defineMcpPrompt(
   {
     name: 'summarize',
     description: 'Build an order-summary prompt.',
-    argsSchema: z.object({ id: z.string().min(1) }),
+    argsSchema: z.object({ id: z.string().min(1), language: z.string().optional() }),
+    completions: {
+      language: async (value) => ['en', 'zh-CN'].filter(item => item.startsWith(value)),
+    },
     access: { scopes: ['orders:read'] },
   },
   async ({ id }) => ({
@@ -141,6 +149,17 @@ export default defineMcpPrompt(
   }),
 )
 ```
+
+`completions` is supported only for declared prompt arguments and RFC 6570 template variables. The gateway routes completion requests to the selected provider instance; static resources do not have completion arguments.
+
+After mutable resource data changes, publish the official resource-updated notification through the attachment. Template variables are expanded with the SDK's RFC 6570 implementation:
+
+```ts
+await attachment.notifyResourceUpdated('help')
+await attachment.notifyResourceUpdated('detail', { id: order.id })
+```
+
+The provider uses one shared update publication per Micro `Application`. The source validates provider ID, instance ID, fingerprint, and URI before the gateway notifies subscribed MCP clients. Sessionful stdio connections keep a per-connection resource subscription set; the Streamable HTTP adapter publishes through the official endpoint notifier and subscription event bus. Stateless HTTP requests do not retain subscriptions across requests.
 
 Unified gateway and Streamable HTTP adapter:
 
@@ -161,6 +180,10 @@ const source = createHileMcpProviderSource(application, {
 const gateway = await createMcpGateway({
   source,
   info: { name: 'company-mcp', version: '1.0.0' },
+  cacheHints: {
+    'tools/list': { ttlMs: 30_000, cacheScope: 'public' },
+    'resources/read': { ttlMs: 5_000, cacheScope: 'private' },
+  },
   startup: 'require-provider',
   invocationSecurity: {
     mode: 'credential',
@@ -193,6 +216,30 @@ shutdown(async () => {
 })
 ```
 
+For an OAuth 2.0 protected resource, use the SDK-backed OAuth mode. It validates Bearer tokens and serves the RFC 9728 and RFC 8414 discovery documents on the same existing HTTP server:
+
+```ts
+const endpoint = createMcpHttpEndpoint(gateway, {
+  path: '/mcp',
+  security: {
+    allowedHostnames: ['mcp.example.com'],
+    allowedOriginHostnames: ['app.example.com'],
+    authentication: {
+      mode: 'oauth',
+      verifier: accessTokenVerifier,
+      requiredScopes: ['mcp:read'],
+      metadata: {
+        resourceServerUrl: new URL('https://mcp.example.com/mcp'),
+        oauthMetadata: authorizationServerMetadata,
+      },
+    },
+  },
+  legacy: 'reject',
+})
+```
+
+`@hile/mcp` acts only as the OAuth Resource Server. Token issuance, client registration, consent, and authorization-server persistence remain owned by your identity platform.
+
 Process-local stdio adapter:
 
 ```ts
@@ -220,7 +267,7 @@ Use `gateway.inspect()` for health endpoints and diagnostics. It returns each pr
 - Different microservices own different MCP tools, resources, and prompts.
 - One MCP endpoint must expose a unified, dynamically discovered catalog.
 - Providers need independent deployments, replicas, scopes, and failure isolation.
-- Existing `Application.stream()` semantics such as cancellation and backpressure must carry MCP execution frames.
+- Existing exact-peer `Application.streamPeer()` semantics such as cancellation and backpressure must carry MCP execution frames.
 - Remote clients use Streamable HTTP or a local MCP host launches a stdio process.
 
 ## Do Not Use When
@@ -264,6 +311,19 @@ import { InMemoryMcpProviderSource } from '@hile/mcp/testing'
 - Standard Schema implementations such as Zod provide tool and prompt schemas.
 - `@hile/redis-idempotency` can protect side effects inside tools; MCP retry annotations are not a business idempotency guarantee.
 
+## Official Capability Coverage
+
+| MCP surface | `@hile/mcp` support |
+|---|---|
+| Tools | Discovery, schemas, annotations, structured results, progress, input-required round trips, cancellation, timeout, and guarded idempotent failover |
+| Resources | Static URIs, RFC 6570 templates, metadata, cache hints, template completion, subscriptions, and updated notifications |
+| Prompts | Argument schemas, metadata, completion, and prompt results |
+| Dynamic catalogs | Tool, resource, and prompt list-change notifications for connected clients |
+| Transports | Official Streamable HTTP and stdio only |
+| HTTP authorization | Explicit public/custom authentication or official SDK OAuth Resource Server helpers |
+
+Client-owned roots and server-to-client sampling are not provider definitions in this package. Durable MCP Tasks are also not projected; use a durable application job system when work must survive process failure. The package does not add WebSocket, custom pagination, or another protocol extension that the selected official server SDK does not expose through these surfaces.
+
 ## Runtime And Lifecycle Notes
 
 - Provider files are immutable definitions. Runtime instance IDs, fingerprints, Registry topics, and message routes are owned by the attachment.
@@ -276,6 +336,9 @@ import { InMemoryMcpProviderSource } from '@hile/mcp/testing'
 - Provider execution emits progress, log, and one terminal-result frame through a bounded internal channel. Producer emits await capacity, and request cancellation reaches validation, authorization, handlers, connection establishment, and streaming.
 - Concurrent cold calls to one provider address share connection establishment. Registry discovery is polled into a cached catalog instead of queried per MCP request.
 - Long-lived stdio and subscription-capable servers receive catalog diffs and `list_changed` notifications. Stateless HTTP requests use the cached current projection.
+- Prompt and resource-template completion uses the official SDK completion API and executes on the owning provider. Resource updates use official subscription notifications, are delivered only to matching subscriptions, and are accepted from every currently discovered compatible instance fingerprint.
+- Capability metadata supports official titles, descriptions, icons, annotations, `_meta`, resource size, and cache hints. Gateway-level list/read cache hints are configured with `cacheHints`.
+- OAuth mode delegates Bearer verification, challenges, and metadata documents to official SDK helpers; the package does not implement an authorization server.
 - HTTP authentication determines the external principal and scopes. Capability `access.scopes`, `access.authorize`, and gateway `isCapabilityExposed` are separate defense layers.
 - Credential mode signs a short-lived, replay-protected envelope bound to the provider, instance, fingerprint, capability, input, and principal. Use a different HMAC key for each provider or trust domain and a gateway keyring. A symmetric key holder can mint credentials for its own trust domain.
 - `trusted-internal` is explicit, propagates an unsigned principal, and is appropriate only when every peer able to reach the Micro operation is trusted.
@@ -300,9 +363,11 @@ import { InMemoryMcpProviderSource } from '@hile/mcp/testing'
 - The provider application is listening before `attachMcpProvider()` runs.
 - Provider and gateway use matching credential configuration, with distinct secrets per provider.
 - Host, Origin, and authentication policies are explicit on the HTTP adapter.
+- OAuth deployments return protected-resource metadata and a Bearer challenge that points to it.
 - `gateway.inspect()` reports `ready` and the expected tool, resource, and prompt names.
 - Two compatible replicas appear under one provider ID and receive calls; a mixed-fingerprint rollout produces a conflict instead of routing.
 - Progress/log delivery, client cancellation, timeout, and bounded backpressure are exercised.
 - Scoped capabilities are hidden without the scope and callable with it over both HTTP and configured stdio.
 - Adding or removing a provider updates a long-lived client's catalog notification.
+- Prompt and resource-template completion returns provider-owned suggestions, and a subscribed resource receives `notifications/resources/updated` after `notifyResourceUpdated()`.
 - Transport, gateway, attachments, and applications close without retained manifests, live handlers, sockets, or timers.

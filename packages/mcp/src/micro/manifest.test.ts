@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { createMcpProviderFingerprint, parseMcpProviderManifest } from './manifest.js';
+import { z } from 'zod';
+import { defineMcpPrompt, defineMcpProvider, defineMcpResource, defineMcpTool } from '../definitions.js';
+import { createMcpProviderFingerprint, createMcpProviderManifest, parseMcpProviderManifest } from './manifest.js';
 
 describe('MCP provider manifests', () => {
   it('uses locale-independent canonical key ordering', () => {
@@ -25,5 +27,42 @@ describe('MCP provider manifests', () => {
     const identity = { providerId: 'unsafe', capabilities: { tools: [{ name: 'lookup', ...tool }], resources: [], prompts: [] } };
     const manifest = { protocol: 1, ...identity, instanceId: 'a', namespace: 'unsafe', address: { host: '127.0.0.1', port: 4100 }, fingerprint: createMcpProviderFingerprint(identity as any) };
     expect(parseMcpProviderManifest(manifest)).toBeUndefined();
+  });
+
+  it('publishes official metadata and resource cache hints', () => {
+    const metadata = {
+      icons: [{ src: 'https://example.com/icon.svg', mimeType: 'image/svg+xml', sizes: ['any'], theme: 'dark' as const }],
+      _meta: { 'io.example/ui': { entry: 'view.html' } },
+    };
+    const provider = defineMcpProvider({
+      id: 'catalog',
+      tools: {
+        lookup: defineMcpTool({ name: 'lookup', inputSchema: z.object({}), ...metadata }, async () => ({ content: [] })),
+      },
+      resources: {
+        manual: defineMcpResource({
+          kind: 'static', name: 'manual', uri: 'hile://catalog/manual', ...metadata,
+          size: 42,
+          annotations: { audience: ['assistant'], priority: 0.8 },
+          cacheHint: { ttlMs: 60_000, cacheScope: 'public' },
+        }, async uri => ({ contents: [{ uri: uri.toString(), text: 'manual' }] })),
+      },
+      prompts: {
+        summarize: defineMcpPrompt({ name: 'summarize', argsSchema: z.object({}), ...metadata }, async () => ({ messages: [] })),
+      },
+    });
+
+    const manifest = createMcpProviderManifest(provider, {
+      instanceId: 'a', namespace: 'catalog', address: { host: '127.0.0.1', port: 4100 },
+    });
+
+    expect(manifest.capabilities.tools[0]).toMatchObject(metadata);
+    expect(manifest.capabilities.resources[0]).toMatchObject({
+      ...metadata,
+      size: 42,
+      annotations: { audience: ['assistant'], priority: 0.8 },
+      cacheHint: { ttlMs: 60_000, cacheScope: 'public' },
+    });
+    expect(manifest.capabilities.prompts[0]).toMatchObject(metadata);
   });
 });

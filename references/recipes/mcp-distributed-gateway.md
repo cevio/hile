@@ -14,7 +14,7 @@ MCP client
                  -> inventory instance A: independent capabilities
 ```
 
-The gateway is a projection, not the owner of provider business logic. Providers remain deployable and scalable without changing the public MCP endpoint.
+The gateway is a projection, not the owner of provider business logic. Providers remain deployable and scalable without changing the public MCP endpoint. External MCP uses Streamable HTTP or stdio; the Hile WebSocket connection is an internal Micro transport detail, not an MCP WebSocket transport.
 
 ### 1. Define capabilities under `mcps`
 
@@ -62,6 +62,8 @@ export default defineMcpTool(
 ```
 
 Use `defineMcpResource()` for static or RFC 6570 template resources and `defineMcpPrompt()` for prompts. The package API page contains complete examples for all three capability kinds.
+
+Prompt arguments and RFC 6570 template variables may declare `completions`. Tools and static resources cannot. Official metadata fields such as `title`, `description`, `icons`, `_meta`, tool/resource annotations, resource `size`, and `cacheHint` are preserved across discovery.
 
 ### 2. Attach each provider after Micro listen
 
@@ -114,6 +116,10 @@ export default defineService('mcp.gateway', async (shutdown) => {
     source,
     info: { name: 'company-mcp', version: '1.0.0' },
     instructions: 'Use provider-prefixed names and request confirmation before writes.',
+    cacheHints: {
+      'tools/list': { ttlMs: 30_000, cacheScope: 'public' },
+      'resources/read': { ttlMs: 5_000, cacheScope: 'private' },
+    },
     startup: 'require-provider',
     naming: {
       separator: '.',
@@ -127,7 +133,7 @@ export default defineService('mcp.gateway', async (shutdown) => {
       }),
     },
     isCapabilityExposed: (capability, principal) => {
-      if (capability.providerId === 'inventory' && principal?.tenantId === 'blocked') return false
+      if (capability.providerId === 'inventory' && principal?.claims?.tenantId === 'blocked') return false
       return true
     },
     onError: reportError,
@@ -174,6 +180,8 @@ export default defineService('mcp.http', async (shutdown) => {
 The adapter does not create or own a port. Host and Origin validation protect the HTTP boundary, while `authenticate` supplies the external MCP identity and scopes. The invocation credential independently authenticates the gateway to each provider.
 
 For a public endpoint, choose `{ authentication: { mode: 'public' } }` explicitly and expose only capabilities designed for anonymous use. An omitted authentication policy is rejected.
+
+For OAuth, select `mode: 'oauth'` with an official `OAuthTokenVerifier`, required scopes, and metadata containing the public MCP resource URL plus Authorization Server metadata. The middleware serves `/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-authorization-server`, and emits an RFC-compliant Bearer challenge. Authorization Server behavior is intentionally outside this package.
 
 ### 5. Inspect discovery and multi-instance state
 
@@ -229,6 +237,10 @@ process.once('SIGTERM', async () => {
 
 All capability handlers receive `signal`, verified `principal`, optional `inputResponses`, untrusted-or-verified `requestState`, and awaited `emit.progress()` / `emit.log()` methods.
 
+This gateway projects server-owned tools, resources, and prompts. Roots and sampling belong to the connected client/server session rather than a discovered provider definition, and durable Tasks belong in an application job system. No MCP-over-WebSocket or custom pagination protocol is added.
+
+Completion callbacks receive the partial value, cancellation signal, verified principal, and already supplied string arguments. When mutable resource data changes, call `attachment.notifyResourceUpdated(resourceName, variables?)`; connected clients subscribed to the expanded URI receive `notifications/resources/updated`. Sessionful stdio connections track subscriptions per connection. Streamable HTTP uses the official endpoint notifier and subscription event bus; stateless HTTP requests cannot retain a subscription across requests.
+
 ## Discovery And Routing
 
 1. Each attachment publishes one instance-scoped retained manifest.
@@ -239,7 +251,7 @@ All capability handlers receive `signal`, verified `principal`, optional `inputR
 6. The source streams to the selected publisher address. The provider verifies identity and credential before validation, authorization, and handler execution.
 7. Progress and log frames are forwarded; one terminal result completes the MCP call.
 
-Catalog updates re-project connected MCP servers and emit list-change notifications. Discovery polling never runs in the invocation hot path.
+Catalog updates re-project connected MCP servers and emit list-change notifications. Resource update events are instance/fingerprint validated for every compatible replica, deduplicated, and delivered only to matching subscriptions. Discovery polling never runs in the invocation hot path.
 
 ## Security Boundaries
 
@@ -255,6 +267,7 @@ Catalog updates re-project connected MCP servers and emit list-change notificati
 
 - Registry discovery is one batched snapshot per poll, not one query per provider or request.
 - Catalog parsing and public projection happen only when the snapshot changes.
+- One shared resource-update publication is reused per provider `Application`; consumers do not create one subscription per provider instance.
 - Cold concurrent calls to one address share connection establishment; established Micro clients are reused.
 - The execution channel is bounded. `emit.progress()` and `emit.log()` await capacity so a slow MCP client cannot create an unbounded provider buffer.
 - Abort signals and the tool timeout cover connect, validation, authorization, handler execution, notification delivery, and stream consumption.
@@ -296,6 +309,9 @@ Use this recipe when the user asks for MCP capability decoupling, unified MCP ou
 ## Verification Checklist
 
 - The official MCP client can list and invoke tools, read both resource forms, and get prompts.
+- The official MCP client can complete prompt arguments and resource-template variables.
+- A subscribed resource receives an updated notification after the provider calls `notifyResourceUpdated()`.
+- OAuth mode serves discovery metadata and rejects missing, expired, or under-scoped Bearer tokens with official SDK responses.
 - Structured tool output satisfies `outputSchema`.
 - Progress, logging, and an `InputRequiredResult` multi-round-trip flow reach the client.
 - An unauthenticated or under-scoped client cannot discover or call protected capabilities.

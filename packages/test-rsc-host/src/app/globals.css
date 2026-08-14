@@ -78,6 +78,12 @@ button, input { font: inherit; }
 .mcp-stream-log code { overflow: hidden; color: #a7f3d0; font-size: 11px; letter-spacing: 0; text-overflow: ellipsis; white-space: nowrap; }
 .mcp-catalog-block { display: grid; grid-template-columns: 82px minmax(0, 1fr); gap: 12px; min-height: 42px; padding: 9px 0; border-bottom: 1px solid #234654; }
 .mcp-catalog-block > span { color: #6d929f; font: 650 10px/1.8 "IBM Plex Mono", monospace; letter-spacing: .12em; }
+.mcp-proof-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+.mcp-proof-grid > div { display: grid; min-height: 72px; align-content: space-between; gap: 8px; padding: 11px 12px; border: 1px solid #264d5b; background: #061820; }
+.mcp-proof-grid span { color: #6d929f; font: 650 9px/1.4 "IBM Plex Mono", monospace; letter-spacing: .12em; }
+.mcp-proof-grid strong { overflow-wrap: anywhere; color: #a7f3d0; font: 600 11px/1.45 "IBM Plex Mono", monospace; }
+.mcp-proof-grid b { color: #fbbf24; font-size: 18px; }
+.mcp-proof-grid .mcp-proof-wide { grid-column: 1 / -1; min-height: 58px; }
 .mcp-output { margin-top: 16px; border-radius: 0 !important; background: #e6f7fa !important; }
 .mcp-output pre { max-height: 210px; margin: 8px 0 0; overflow: auto; white-space: pre-wrap; color: #12333e; font: 12px/1.55 "IBM Plex Mono", monospace; }
 
@@ -91,4 +97,6 @@ button, input { font: inherit; }
   .mcp-workbench-heading { flex-direction: column; }
   .mcp-query-row { grid-template-columns: 1fr; }
   .mcp-instance-route { flex-direction: column; }
+  .mcp-proof-grid { grid-template-columns: 1fr; }
+  .mcp-proof-grid .mcp-proof-wide { grid-column: auto; }
 }

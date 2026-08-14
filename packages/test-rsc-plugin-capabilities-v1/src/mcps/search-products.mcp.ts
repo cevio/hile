@@ -5,6 +5,8 @@ import { products } from './data';
 export default defineMcpTool({
   name: 'search_products', title: 'Search demo products',
   description: 'Searches the capability plugin catalog with streamed progress, logs, pagination and structured output.',
+  icons: [{ src: 'https://example.com/icons/catalog-search.svg', mimeType: 'image/svg+xml' }],
+  _meta: { 'demo.hile.dev/tier': 'interactive' },
   inputSchema: z.object({ query: z.string().min(1), limit: z.number().int().min(1).max(20).default(3), offset: z.number().int().min(0).default(0) }).strict(),
   outputSchema: z.object({ instance: z.string(), count: z.number().int(), total: z.number().int(), has_more: z.boolean(), products: z.array(z.object({ id: z.string(), name: z.string(), price: z.number() })) }),
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },

@@ -254,4 +254,25 @@ describe('private RSC demo package contracts', () => {
     expect(orders).toContain("id: 'orders'");
     expect(read('packages/test-rsc-demo-suite/scripts/demo.mjs')).toContain('capabilities-v1-replica');
   });
+
+  it('makes the new MCP SDK capabilities observable from the existing workbench', () => {
+    const host = read('packages/test-rsc-host/src/services/runtime.boot.ts');
+    const workbench = read('packages/test-rsc-host/src/app/mcp-workbench.tsx');
+    const catalog = read('packages/test-rsc-plugin-capabilities-v1/src/services/plugin.boot.ts');
+    const product = read('packages/test-rsc-plugin-capabilities-v1/src/mcps/product.mcp.ts');
+    const prompt = read('packages/test-rsc-plugin-capabilities-v1/src/mcps/recommend-products.mcp.ts');
+    const orders = read('packages/test-rsc-plugin-isolation/src/services/plugin.boot.ts');
+
+    expect(host).toContain("mode: 'oauth'");
+    expect(host).toContain('cacheHints:');
+    expect(workbench).toContain('Complete arguments');
+    expect(workbench).toContain('Subscribe &amp; mutate');
+    expect(workbench).toContain('Toggle live provider');
+    expect(workbench).toContain('Inspect OAuth');
+    expect(workbench).toContain("notifications/resources/updated");
+    expect(product).toContain('completions:');
+    expect(prompt).toContain('completions:');
+    expect(catalog).toContain('notifyResourceUpdated');
+    expect(orders).toContain("id: 'labs'");
+  });
 });

@@ -6,8 +6,12 @@ import {
   DatabaseOutlined,
   ExperimentOutlined,
   FileSearchOutlined,
+  NodeIndexOutlined,
+  NotificationOutlined,
   PlayCircleOutlined,
+  SafetyCertificateOutlined,
   SyncOutlined,
+  TagsOutlined,
 } from '@ant-design/icons';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { Alert, Button, Card, Col, Input, Progress, Row, Space, Tag, Typography } from 'antd';
@@ -26,11 +30,17 @@ function textContent(value: unknown): string {
 
 export default function McpWorkbench() {
   const clientPromise = useRef<Promise<Client> | undefined>(undefined);
+  const resourceSubscription = useRef<{ close(): Promise<void> } | undefined>(undefined);
   const [catalog, setCatalog] = useState<Catalog>({ tools: [], resources: [], prompts: [] });
   const [query, setQuery] = useState('desk');
   const [progress, setProgress] = useState(0);
   const [instances, setInstances] = useState<string[]>([]);
   const [logs, setLogs] = useState<string[]>([]);
+  const [completions, setCompletions] = useState<string[]>([]);
+  const [resourceUpdate, setResourceUpdate] = useState('waiting for subscription');
+  const [catalogEvents, setCatalogEvents] = useState(0);
+  const [metadataProof, setMetadataProof] = useState('discover to inspect metadata');
+  const [oauthProof, setOauthProof] = useState('inspect the OAuth boundary');
   const [output, setOutput] = useState('Choose an operation to inspect the protocol result.');
   const [status, setStatus] = useState<'offline' | 'connecting' | 'ready' | 'error'>('offline');
   const [busy, setBusy] = useState('');
@@ -42,11 +52,42 @@ export default function McpWorkbench() {
       const client = new Client({ name: 'test-rsc-browser-workbench', version: '1.0.0' }, {
         capabilities: { elicitation: { form: {} } },
         versionNegotiation: { mode: { pin: '2026-07-28' } },
+        listChanged: {
+          tools: {
+            debounceMs: 50,
+            onChanged(error, tools) {
+              if (error || !tools) return;
+              setCatalog(current => ({ ...current, tools: tools.map(item => item.name) }));
+              setCatalogEvents(value => value + 1);
+              setLogs(current => [...current.slice(-4), `[list_changed] ${tools.length} tools projected`]);
+            },
+          },
+          resources: {
+            debounceMs: 50,
+            onChanged(error, resources) {
+              if (error || !resources) return;
+              setCatalog(current => ({ ...current, resources: resources.map(item => item.uri) }));
+              setCatalogEvents(value => value + 1);
+            },
+          },
+          prompts: {
+            debounceMs: 50,
+            onChanged(error, prompts) {
+              if (error || !prompts) return;
+              setCatalog(current => ({ ...current, prompts: prompts.map(item => item.name) }));
+              setCatalogEvents(value => value + 1);
+            },
+          },
+        },
       });
       client.setRequestHandler('elicitation/create', async request => ({
         action: window.confirm(request.params.message) ? 'accept' : 'decline',
         content: { confirmed: true },
       }));
+      client.setNotificationHandler('notifications/resources/updated', notification => {
+        setResourceUpdate(notification.params.uri);
+        setLogs(current => [...current.slice(-4), `[resource_updated] ${notification.params.uri}`]);
+      });
       await client.connect(new StreamableHTTPClientTransport(new URL('/mcp', window.location.origin), {
         requestInit: { headers: { Authorization: 'Bearer demo-mcp-token' } },
       }));
@@ -60,7 +101,10 @@ export default function McpWorkbench() {
     return clientPromise.current;
   };
 
-  useEffect(() => () => { void clientPromise.current?.then(client => client.close()).catch(() => undefined); }, []);
+  useEffect(() => () => {
+    void resourceSubscription.current?.close().catch(() => undefined);
+    void clientPromise.current?.then(client => client.close()).catch(() => undefined);
+  }, []);
 
   const run = async (name: string, operation: (client: Client) => Promise<void>) => {
     setBusy(name);
@@ -75,15 +119,59 @@ export default function McpWorkbench() {
   };
 
   const discover = () => run('discover', async client => {
-    const [tools, resources, templates, prompts] = await Promise.all([
+    const [tools, resources, templates, prompts, product] = await Promise.all([
       client.listTools(), client.listResources(), client.listResourceTemplates(), client.listPrompts(),
+      client.readResource({ uri: 'demo://catalog/products/p-100' }),
     ]);
     setCatalog({
       tools: tools.tools.map(item => item.name),
       resources: [...resources.resources.map(item => item.uri), ...templates.resourceTemplates.map(item => item.uriTemplate)],
       prompts: prompts.prompts.map(item => item.name),
     });
+    const template = templates.resourceTemplates.find(item => item.uriTemplate === 'demo://catalog/products/{id}');
+    const about = resources.resources.find(item => item.uri === 'demo://catalog/about');
+    setMetadataProof(`${product.cacheScope ?? 'none'} · ${product.ttlMs ?? 0}ms · ${template?.icons?.length ?? 0} icon · size ${about?.size ?? 0}`);
     setOutput(`Discovered ${tools.tools.length} tools, ${resources.resources.length + templates.resourceTemplates.length} resources and ${prompts.prompts.length} prompt.`);
+  });
+
+  const completeArguments = () => run('complete', async client => {
+    const [resource, prompt] = await Promise.all([
+      client.complete({
+        ref: { type: 'ref/resource', uri: 'demo://catalog/products/{id}' },
+        argument: { name: 'id', value: 'p-1' },
+      }),
+      client.complete({
+        ref: { type: 'ref/prompt', name: 'catalog.recommend_products' },
+        argument: { name: 'need', value: 'ho' },
+      }),
+    ]);
+    const values = [...resource.completion.values, ...prompt.completion.values];
+    setCompletions(values);
+    setOutput(`Official completion returned ${values.join(', ')}`);
+  });
+
+  const subscribeAndMutate = () => run('subscribe', async client => {
+    resourceSubscription.current ??= await client.listen({
+      resourceSubscriptions: ['demo://catalog/products/p-100'],
+    });
+    const result = await client.callTool({ name: 'catalog.touch_product', arguments: { id: 'p-100' } });
+    setOutput(textContent(result));
+  });
+
+  const toggleLiveProvider = () => run('toggle', async client => {
+    setOutput(textContent(await client.callTool({ name: 'orders.toggle_labs', arguments: {} })));
+  });
+
+  const inspectOauth = () => run('oauth', async () => {
+    const [resourceMetadata, authorizationMetadata, challenge] = await Promise.all([
+      fetch('/.well-known/oauth-protected-resource/mcp').then(response => response.json()),
+      fetch('/.well-known/oauth-authorization-server').then(response => response.json()),
+      fetch('/mcp', { method: 'POST', headers: { Origin: window.location.origin } }),
+    ]);
+    const challengeType = challenge.headers.get('www-authenticate')?.split(' ')[0] ?? 'missing';
+    const proof = `${challenge.status} ${challengeType} · ${authorizationMetadata.issuer}`;
+    setOauthProof(proof);
+    setOutput(JSON.stringify({ protectedResource: resourceMetadata.resource, authorizationServer: authorizationMetadata.issuer }, null, 2));
   });
 
   const searchTwice = () => run('search', async client => {
@@ -156,6 +244,10 @@ export default function McpWorkbench() {
                 <strong data-testid="mcp-instance-history">{instances.length ? instances.join(' → ') : 'waiting for two calls'}</strong>
               </div>
               <Space wrap>
+                <Button icon={<TagsOutlined />} loading={busy === 'complete'} onClick={completeArguments}>Complete arguments</Button>
+                <Button icon={<NotificationOutlined />} loading={busy === 'subscribe'} onClick={subscribeAndMutate}>Subscribe &amp; mutate</Button>
+                <Button icon={<NodeIndexOutlined />} loading={busy === 'toggle'} onClick={toggleLiveProvider}>Toggle live provider</Button>
+                <Button icon={<SafetyCertificateOutlined />} loading={busy === 'oauth'} onClick={inspectOauth}>Inspect OAuth</Button>
                 <Button icon={<DatabaseOutlined />} loading={busy === 'resources'} onClick={readResources}>Read resources</Button>
                 <Button icon={<FileSearchOutlined />} loading={busy === 'prompt'} onClick={getPrompt}>Generate prompt</Button>
                 <Button loading={busy === 'create'} onClick={createOrder}>Create order</Button>
@@ -169,6 +261,13 @@ export default function McpWorkbench() {
             <div className="mcp-catalog-block"><span>TOOLS</span><Space wrap data-testid="mcp-tools">{catalog.tools.map(item => <Tag key={item}>{item}</Tag>)}</Space></div>
             <div className="mcp-catalog-block"><span>RESOURCES</span><Space wrap>{catalog.resources.map(item => <Tag key={item}>{item}</Tag>)}</Space></div>
             <div className="mcp-catalog-block"><span>PROMPTS</span><Space wrap>{catalog.prompts.map(item => <Tag key={item}>{item}</Tag>)}</Space></div>
+            <div className="mcp-proof-grid">
+              <div><span>COMPLETION</span><strong data-testid="mcp-completions">{completions.length ? completions.join(' · ') : 'waiting'}</strong></div>
+              <div><span>RESOURCE UPDATED</span><strong data-testid="mcp-resource-update">{resourceUpdate}</strong></div>
+              <div><span>LIST CHANGED</span><strong><b data-testid="mcp-catalog-events">{catalogEvents}</b> catalog events</strong></div>
+              <div><span>METADATA / CACHE</span><strong data-testid="mcp-metadata-proof">{metadataProof}</strong></div>
+              <div className="mcp-proof-wide"><span>OAUTH RESOURCE SERVER</span><strong data-testid="mcp-oauth-proof">{oauthProof}</strong></div>
+            </div>
             <Alert className="mcp-output" type={status === 'error' ? 'error' : 'info'} showIcon message="Latest protocol result" description={<pre data-testid="mcp-output">{output}</pre>} />
           </Card>
         </Col>

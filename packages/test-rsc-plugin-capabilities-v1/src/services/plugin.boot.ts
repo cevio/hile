@@ -10,6 +10,7 @@ import { HILE_RSC_RUNTIME } from '@hile/rsc/protocol';
 import { readRscDevelopmentState } from '@hile/rsc-development/state';
 import { bindRscModelDevelopment, bindRscPluginDevelopmentState } from '@hile/rsc-development/plugin';
 import { HileRscPluginRuntime } from '@hile/rsc-discovery-hile';
+import { bindProductResourceUpdates } from '../mcps/resource-updates';
 
 export default defineService('test.rsc.capabilities.v1', async (shutdown) => {
   const namespace = process.env.MICRO_NAMESPACE ?? 'demo.rsc.capabilities.v1';
@@ -74,7 +75,9 @@ export default defineService('test.rsc.capabilities.v1', async (shutdown) => {
       }),
     },
   });
+  const unbindProductUpdates = bindProductResourceUpdates(id => mcp.notifyResourceUpdated('product', { id }));
   shutdown(async () => {
+    unbindProductUpdates();
     await mcp.close();
     await runtime.close();
   });

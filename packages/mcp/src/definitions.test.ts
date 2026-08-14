@@ -27,6 +27,64 @@ describe('MCP capability definitions', () => {
     expect(Object.isFrozen(tool.config.execution)).toBe(true);
   });
 
+  it('preserves and freezes official capability metadata', () => {
+    const icons = [{ src: 'https://example.com/tool.svg', mimeType: 'image/svg+xml', sizes: ['any'] }];
+    const meta = { 'io.example/ui': { entry: 'tool.html' } };
+    const tool = defineMcpTool({
+      name: 'lookup',
+      inputSchema: z.object({}),
+      icons,
+      _meta: meta,
+    } as any, async () => ({ content: [] }));
+    const resource = defineMcpResource({
+      kind: 'static',
+      name: 'manual',
+      uri: 'hile://manual',
+      icons,
+      size: 42,
+      annotations: { audience: ['assistant'], priority: 0.8 },
+      _meta: meta,
+      cacheHint: { ttlMs: 60_000, cacheScope: 'public' },
+    } as any, async uri => ({ contents: [{ uri: uri.toString(), text: 'manual' }] }));
+
+    icons[0].src = 'https://attacker.example/icon.svg';
+    meta['io.example/ui'].entry = 'attacker.html';
+
+    expect((tool.config as any).icons).toEqual([{ src: 'https://example.com/tool.svg', mimeType: 'image/svg+xml', sizes: ['any'] }]);
+    expect((tool.config as any)._meta).toEqual({ 'io.example/ui': { entry: 'tool.html' } });
+    expect((resource.config as any)).toMatchObject({
+      size: 42,
+      annotations: { audience: ['assistant'], priority: 0.8 },
+      cacheHint: { ttlMs: 60_000, cacheScope: 'public' },
+    });
+    expect(Object.isFrozen((resource.config as any).annotations.audience)).toBe(true);
+    expect(Object.isFrozen((tool.config as any)._meta['io.example/ui'])).toBe(true);
+  });
+
+  it('defines completion handlers only for declared prompt and template arguments', () => {
+    const complete = async () => ['typescript'];
+    const prompt = defineMcpPrompt({
+      name: 'review',
+      argsSchema: z.object({ language: z.string() }),
+      completions: { language: complete },
+    }, async () => ({ messages: [] }));
+    const resource = defineMcpResource({
+      kind: 'template',
+      name: 'manual',
+      uriTemplate: 'hile://manual/{language}',
+      completions: { language: complete },
+    }, async uri => ({ contents: [{ uri: String(uri), text: 'manual' }] }));
+
+    expect(prompt.config.completions).toEqual({ language: complete });
+    expect(resource.config.completions).toEqual({ language: complete });
+    expect(Object.isFrozen(prompt.config.completions)).toBe(true);
+    expect(() => defineMcpPrompt({
+      name: 'invalid',
+      argsSchema: z.object({ language: z.string() }),
+      completions: { framework: complete },
+    }, async () => ({ messages: [] }))).toThrow(/completion.*framework/i);
+  });
+
   it('freezes copied access scopes instead of retaining a mutable caller array', () => {
     const scopes = ['orders:read'];
     const tool = defineMcpTool({ name: 'lookup', inputSchema: z.object({}), access: { scopes } }, async () => ({ content: [] }));
@@ -47,6 +105,28 @@ describe('MCP capability definitions', () => {
       inputSchema: z.object({}),
       execution: { retry: 'idempotent-failover' },
     }, async () => ({ content: [] }))).toThrowError(/read-only and idempotent/i);
+  });
+
+  it('rejects malformed tool annotations and execution policy at definition time', () => {
+    expect(() => defineMcpTool({
+      name: 'lookup',
+      inputSchema: z.object({}),
+      annotations: { readOnlyHint: 'yes' },
+    } as any, async () => ({ content: [] }))).toThrowError(/annotations/i);
+    expect(() => defineMcpTool({
+      name: 'lookup',
+      inputSchema: z.object({}),
+      execution: { retry: 'sometimes' },
+    } as any, async () => ({ content: [] }))).toThrowError(/execution/i);
+  });
+
+  it('rejects malformed access and cache metadata records at definition time', () => {
+    expect(() => defineMcpTool({
+      name: 'lookup', inputSchema: z.object({}), access: 'public',
+    } as any, async () => ({ content: [] }))).toThrowError(/access/i);
+    expect(() => defineMcpResource({
+      kind: 'static', name: 'manual', uri: 'hile://docs/manual', cacheHint: [],
+    } as any, async () => ({ contents: [] }))).toThrowError(/cacheHint/i);
   });
 
   it('uses an explicit static/template resource discriminant', () => {

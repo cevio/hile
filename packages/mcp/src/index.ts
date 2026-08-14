@@ -10,6 +10,10 @@ export {
 export type { McpHmacInvocationCredentialOptions } from './security.js';
 export type {
   McpCapabilityAccess,
+  McpCapabilityMetadata,
+  McpCompletionContext,
+  McpCompletionHandler,
+  McpCompletions,
   McpInvocationContext,
   McpInvocationCredentialCodec,
   McpInvocationDescriptor,
@@ -20,6 +24,7 @@ export type {
   McpProviderDefinition,
   McpResourceConfig,
   McpResourceDefinition,
+  McpResourceMetadata,
   McpSchema,
   McpStaticResourceConfig,
   McpTemplateResourceConfig,

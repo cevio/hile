@@ -15,17 +15,22 @@ const manifest = (instanceId: string): McpProviderManifest => {
   };
 };
 
+const subscribedApplication = <T extends object>(application: T) => ({
+  subscribe: vi.fn(async () => vi.fn(async () => undefined)),
+  ...application,
+});
+
 describe('Hile MCP provider source', () => {
   it('discovers every retained instance topic and removes disappeared instances', async () => {
     let topics = ['@hile/mcp/providers/orders/a', '@hile/mcp/providers/orders/b'];
     const payloads = new Map(topics.map((topic, index) => [topic, manifest(index ? 'b' : 'a')]));
-    const application = {
+    const application = subscribedApplication({
       listRegistryTopicSnapshots: vi.fn(async () => topics.map(topic => {
         const payload = payloads.get(topic)!;
         return { topic, payload, publishers: [payload.address] };
       })),
       streamPeer: vi.fn(),
-    };
+    });
     const source = createHileMcpProviderSource(application, { pollIntervalMs: 60_000 });
 
     await source.start();
@@ -39,14 +44,14 @@ describe('Hile MCP provider source', () => {
 
   it('rejects a manifest whose address differs from its Registry publisher', async () => {
     const item = manifest('a');
-    const application = {
+    const application = subscribedApplication({
       listRegistryTopicSnapshots: vi.fn(async () => [{
         topic: '@hile/mcp/providers/orders/a',
         payload: item,
         publishers: [{ host: '127.0.0.1', port: 9999 }],
       }]),
       streamPeer: vi.fn(),
-    };
+    });
     const source = createHileMcpProviderSource(application, { pollIntervalMs: 60_000 });
     await source.start();
     expect(source.snapshot()).toEqual([]);
@@ -56,13 +61,13 @@ describe('Hile MCP provider source', () => {
   it('aborts an in-flight discovery read during close without failing teardown', async () => {
     let started!: () => void;
     const reading = new Promise<void>(resolve => { started = resolve; });
-    const application = {
+    const application = subscribedApplication({
       listRegistryTopicSnapshots: vi.fn((_prefix, options?: { signal?: AbortSignal }) => new Promise<never>((_resolve, reject) => {
         started();
         options?.signal?.addEventListener('abort', () => reject(Object.assign(new Error('Abort'), { status: 'ECONNABORTED' })), { once: true });
       })),
       streamPeer: vi.fn(),
-    };
+    });
     const source = createHileMcpProviderSource(application, { pollIntervalMs: 60_000 });
     const starting = source.start();
     await reading;
@@ -70,13 +75,84 @@ describe('Hile MCP provider source', () => {
     await expect(starting).rejects.toMatchObject({ status: 'ECONNABORTED' });
   });
 
+  it('serializes concurrent starts into one resource-update subscription', async () => {
+    const application = subscribedApplication({
+      listRegistryTopicSnapshots: vi.fn(async () => []),
+      streamPeer: vi.fn(),
+    });
+    const source = createHileMcpProviderSource(application, { pollIntervalMs: 60_000 });
+
+    await Promise.all([source.start(), source.start()]);
+
+    expect(application.subscribe).toHaveBeenCalledOnce();
+    await source.close();
+  });
+
+  it('waits for and releases a subscription that resolves during close', async () => {
+    let resolveSubscribe!: (unsubscribe: () => Promise<void>) => void;
+    const unsubscribe = vi.fn(async () => undefined);
+    const application = {
+      listRegistryTopicSnapshots: vi.fn(async () => []),
+      streamPeer: vi.fn(),
+      subscribe: vi.fn(() => new Promise<() => Promise<void>>(resolve => { resolveSubscribe = resolve; })),
+    };
+    const source = createHileMcpProviderSource(application, { pollIntervalMs: 60_000 });
+    const starting = source.start();
+    const closing = source.close();
+
+    resolveSubscribe(unsubscribe);
+
+    await expect(closing).resolves.toBeUndefined();
+    await expect(starting).rejects.toThrow(/closed/i);
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it('retries resource-update unsubscription after a teardown failure', async () => {
+    const unsubscribe = vi.fn()
+      .mockRejectedValueOnce(new Error('registry unavailable'))
+      .mockResolvedValueOnce(undefined);
+    const application = {
+      listRegistryTopicSnapshots: vi.fn(async () => []),
+      streamPeer: vi.fn(),
+      subscribe: vi.fn(async () => unsubscribe),
+    };
+    const source = createHileMcpProviderSource(application, { pollIntervalMs: 60_000 });
+    await source.start();
+
+    await expect(source.close()).rejects.toThrow(/registry unavailable/i);
+    await expect(source.close()).resolves.toBeUndefined();
+    expect(unsubscribe).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains a late subscription cleanup handle when close must retry it', async () => {
+    let resolveSubscribe!: (unsubscribe: () => Promise<void>) => void;
+    const unsubscribe = vi.fn()
+      .mockRejectedValueOnce(new Error('registry unavailable'))
+      .mockResolvedValueOnce(undefined);
+    const application = {
+      listRegistryTopicSnapshots: vi.fn(async () => []),
+      streamPeer: vi.fn(),
+      subscribe: vi.fn(() => new Promise<() => Promise<void>>(resolve => { resolveSubscribe = resolve; })),
+    };
+    const source = createHileMcpProviderSource(application, { pollIntervalMs: 60_000 });
+    const starting = source.start();
+    const closing = source.close();
+
+    resolveSubscribe(unsubscribe);
+
+    await expect(starting).rejects.toThrow(/closed/i);
+    await expect(closing).rejects.toThrow(/registry unavailable/i);
+    await expect(source.close()).resolves.toBeUndefined();
+    expect(unsubscribe).toHaveBeenCalledTimes(2);
+  });
+
   it('isolates listener failures and still notifies later subscribers', async () => {
     let snapshots: any[] = [];
     const errors: unknown[] = [];
-    const application = {
+    const application = subscribedApplication({
       listRegistryTopicSnapshots: vi.fn(async () => [] as Array<{ topic: string; payload: unknown; publishers: Array<{ host: string; port: number }> }>),
       streamPeer: vi.fn(),
-    };
+    });
     const source = createHileMcpProviderSource(application, { pollIntervalMs: 60_000, onError: error => errors.push(error) });
     await source.start();
     source.subscribe(() => { throw new Error('listener failed'); });
@@ -94,10 +170,10 @@ describe('Hile MCP provider source', () => {
 
   it('rejects malformed or topic-spoofed retained manifests', async () => {
     const topic = '@hile/mcp/providers/orders/a';
-    const application = {
+    const application = subscribedApplication({
       listRegistryTopicSnapshots: vi.fn(async () => [{ topic, payload: { ...manifest('a'), providerId: 'payments' }, publishers: [manifest('a').address] }]),
       streamPeer: vi.fn(),
-    };
+    });
     const source = createHileMcpProviderSource(application, { pollIntervalMs: 60_000 });
 
     await source.start();
@@ -107,10 +183,10 @@ describe('Hile MCP provider source', () => {
 
   it('targets the exact discovered provider instance when streaming', async () => {
     const stream = (async function* () {})();
-    const application = {
+    const application = subscribedApplication({
       listRegistryTopicSnapshots: vi.fn(async () => []),
       streamPeer: vi.fn(async () => stream),
-    };
+    });
     const source = createHileMcpProviderSource(application, { pollIntervalMs: 60_000 });
     const instance = manifest('a');
 
@@ -124,11 +200,76 @@ describe('Hile MCP provider source', () => {
     await source.close();
   });
 
-  it('does not retain subscriptions after close', async () => {
+  it('validates and deduplicates resource update events from the shared topic', async () => {
+    const item = manifest('a');
+    let receive!: (payload: unknown) => void;
+    const unsubscribe = vi.fn(async () => undefined);
     const application = {
+      listRegistryTopicSnapshots: vi.fn(async () => [{
+        topic: '@hile/mcp/providers/orders/a', payload: item, publishers: [item.address],
+      }]),
+      streamPeer: vi.fn(),
+      subscribe: vi.fn(async (_topic: string, listener: (payload: unknown) => void) => {
+        receive = listener;
+        return unsubscribe;
+      }),
+    };
+    const source = createHileMcpProviderSource(application, { pollIntervalMs: 60_000 });
+    const updates: unknown[] = [];
+    source.subscribeResourceUpdates(update => updates.push(update));
+    await source.start();
+
+    const update = {
+      eventId: 'event-1', providerId: 'orders', instanceId: 'a', fingerprint: item.fingerprint, uri: 'hile://orders/manual',
+    };
+    receive(update);
+    receive(update);
+    receive({ ...update, eventId: 'event-2', fingerprint: 'spoofed' });
+
+    expect(application.subscribe).toHaveBeenCalledWith('@hile/mcp/resource-updates', expect.any(Function));
+    expect(updates).toEqual([update]);
+    await source.close();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+  });
+
+  it('accepts resource updates from every compatible discovered replica', async () => {
+    let receive!: (payload: unknown) => void;
+    const first = manifest('replica-a');
+    const second = { ...manifest('replica-b'), fingerprint: first.fingerprint };
+    const application = {
+      listRegistryTopicSnapshots: vi.fn(async () => [first, second].map(item => ({
+        topic: `@hile/mcp/providers/${item.providerId}/${item.instanceId}`,
+        payload: item,
+        publishers: [item.address],
+      }))),
+      streamPeer: vi.fn(),
+      subscribe: vi.fn(async (_topic: string, listener: (payload: unknown) => void) => {
+        receive = listener;
+        return vi.fn(async () => undefined);
+      }),
+    };
+    const source = createHileMcpProviderSource(application, { pollIntervalMs: 1_000 });
+    const updates: unknown[] = [];
+    source.subscribeResourceUpdates(update => updates.push(update));
+    await source.start();
+
+    receive({
+      eventId: 'replica-b-update',
+      providerId: second.providerId,
+      instanceId: second.instanceId,
+      fingerprint: second.fingerprint,
+      uri: 'hile://orders/manual',
+    });
+
+    expect(updates).toEqual([expect.objectContaining({ instanceId: 'replica-b', uri: 'hile://orders/manual' })]);
+    await source.close();
+  });
+
+  it('does not retain subscriptions after close', async () => {
+    const application = subscribedApplication({
       listRegistryTopicSnapshots: vi.fn(async () => []),
       streamPeer: vi.fn(),
-    };
+    });
     const source = createHileMcpProviderSource(application, { pollIntervalMs: 60_000 });
     await source.close();
 

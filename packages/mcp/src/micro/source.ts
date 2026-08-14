@@ -4,16 +4,23 @@ import { compareText } from '../ordering.js';
 import { parseMcpProviderManifest } from './manifest.js';
 import {
   MCP_PROVIDER_TOPIC_PREFIX,
+  MCP_RESOURCE_UPDATE_TOPIC,
   type HileMcpDiscoveryApplication,
   type McpProviderManifest,
   type McpProviderSnapshotListener,
   type McpProviderSource,
+  type McpResourceUpdate,
+  type McpResourceUpdateListener,
 } from './types.js';
 
 export class HileMcpProviderSource implements McpProviderSource {
   private readonly instances = new Map<string, McpProviderManifest>();
   private readonly listeners = new Set<McpProviderSnapshotListener>();
+  private readonly resourceUpdateListeners = new Set<McpResourceUpdateListener>();
+  private readonly seenResourceUpdates = new Set<string>();
+  private resourceUnsubscribe?: () => Promise<void>;
   private timer?: NodeJS.Timeout;
+  private starting?: Promise<void>;
   private refreshPromise?: Promise<void>;
   private closed = false;
   private readonly lifecycle = new AbortController();
@@ -29,9 +36,28 @@ export class HileMcpProviderSource implements McpProviderSource {
     private readonly onError: (error: unknown) => void,
   ) {}
 
-  async start() {
+  start() {
     if (this.closed) throw new HileMcpError('PROVIDER_UNAVAILABLE', 'MCP provider source is closed');
+    if (!this.starting) this.starting = this.performStart().finally(() => { this.starting = undefined; });
+    return this.starting;
+  }
+
+  private async performStart() {
+    if (!this.resourceUnsubscribe) {
+      const unsubscribe = await this.application.subscribe<unknown>(MCP_RESOURCE_UPDATE_TOPIC, payload => {
+        const update = this.parseResourceUpdate(payload);
+        if (!update || this.seenResourceUpdates.has(update.eventId)) return;
+        this.seenResourceUpdates.add(update.eventId);
+        if (this.seenResourceUpdates.size > 1_024) this.seenResourceUpdates.delete(this.seenResourceUpdates.values().next().value!);
+        for (const listener of this.resourceUpdateListeners) {
+          try { listener(update); } catch (error) { this.report(error); }
+        }
+      });
+      this.resourceUnsubscribe = unsubscribe;
+      if (this.closed) throw new HileMcpError('PROVIDER_UNAVAILABLE', 'MCP provider source is closed');
+    }
     await this.refresh();
+    if (this.closed) throw new HileMcpError('PROVIDER_UNAVAILABLE', 'MCP provider source is closed');
     if (!this.timer) {
       this.timer = setInterval(() => { void this.refresh().catch(error => this.report(error)); }, this.pollIntervalMs);
       this.timer.unref();
@@ -46,6 +72,28 @@ export class HileMcpProviderSource implements McpProviderSource {
     if (this.closed) throw new HileMcpError('PROVIDER_UNAVAILABLE', 'MCP provider source is closed');
     this.listeners.add(listener);
     return () => { this.listeners.delete(listener); };
+  }
+
+  subscribeResourceUpdates(listener: McpResourceUpdateListener) {
+    if (this.closed) throw new HileMcpError('PROVIDER_UNAVAILABLE', 'MCP provider source is closed');
+    this.resourceUpdateListeners.add(listener);
+    return () => { this.resourceUpdateListeners.delete(listener); };
+  }
+
+  private parseResourceUpdate(value: unknown): McpResourceUpdate | undefined {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const update = value as Record<string, unknown>;
+    if (typeof update.eventId !== 'string' || !update.eventId || typeof update.providerId !== 'string'
+      || typeof update.instanceId !== 'string' || typeof update.fingerprint !== 'string' || typeof update.uri !== 'string') return undefined;
+    try { new URL(update.uri); } catch { return undefined; }
+    const manifest = this.instances.get(`${update.providerId}/${update.instanceId}`);
+    return manifest?.fingerprint === update.fingerprint ? Object.freeze({
+      eventId: update.eventId,
+      providerId: update.providerId,
+      instanceId: update.instanceId,
+      fingerprint: update.fingerprint,
+      uri: update.uri,
+    }) : undefined;
   }
 
   refresh(): Promise<void> {
@@ -91,11 +139,20 @@ export class HileMcpProviderSource implements McpProviderSource {
       if (this.timer) clearInterval(this.timer);
       this.timer = undefined;
       this.listeners.clear();
+      this.resourceUpdateListeners.clear();
+    }
+    try { await this.starting; } catch {
+      // A concurrent start owns its own error; close only waits for its cleanup boundary.
     }
     try { await this.refreshPromise; } catch (error) {
       const cancellation = error === this.lifecycle.signal.reason
         || (!!error && typeof error === 'object' && ((error as any).status === 'ECONNABORTED' || (error as any).name === 'AbortError'));
       if (!this.lifecycle.signal.aborted || !cancellation) throw error;
+    }
+    if (this.resourceUnsubscribe) {
+      const unsubscribe = this.resourceUnsubscribe;
+      await unsubscribe();
+      if (this.resourceUnsubscribe === unsubscribe) this.resourceUnsubscribe = undefined;
     }
   }
 

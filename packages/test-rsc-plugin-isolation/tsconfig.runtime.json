@@ -9,6 +9,6 @@
     "skipLibCheck": true,
     "esModuleInterop": true
   },
-  "include": ["src/services/**/*", "src/models/**/*", "src/mcps/**/*"],
+  "include": ["src/services/**/*", "src/models/**/*", "src/mcps/**/*", "src/mcps-labs/**/*"],
   "exclude": ["node_modules", "dist", ".hile-rsc"]
 }

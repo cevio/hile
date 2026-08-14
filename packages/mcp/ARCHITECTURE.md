@@ -2,7 +2,7 @@
 
 `@hile/mcp` is a distributed capability layer, not a monolithic MCP service. Each microservice owns and deploys its tools, resources, prompts, schemas, authorization, and handlers. A separate gateway discovers those providers and projects one MCP server to external clients.
 
-The package targets the stable MCP `2026-07-28` protocol through the official TypeScript SDK v2. Streamable HTTP is the remote transport; stdio is the process-local transport.
+The package targets the stable MCP `2026-07-28` protocol through the official TypeScript SDK v2. Streamable HTTP is the remote transport; stdio is the process-local transport. Hile may use WebSocket internally between microservices, but the package does not expose a non-standard MCP WebSocket transport.
 
 ## Dependency Direction
 
@@ -73,6 +73,8 @@ The source commits a complete next snapshot atomically. Listener failures are re
 
 Discovery is not in the invocation hot path. The gateway builds and caches a catalog only when the source snapshot changes.
 
+Resource changes use a separate application-scoped retained topic. The event is bound to provider ID, instance ID, fingerprint, event ID, and expanded URI. Sources validate and deduplicate it against the committed discovery snapshot. One publisher/subscriber pair is reused per Application rather than multiplying pub/sub work by provider instance.
+
 ## Catalog And Naming
 
 The gateway groups instances by provider ID. A group is ready only when every live instance has the same fingerprint. During a mixed rolling deployment, the entire provider is marked `conflict` and omitted until replicas converge. Unrelated providers remain available.
@@ -95,6 +97,8 @@ Each connected MCP server receives a principal-specific projection of the cached
 When discovery changes, the gateway calculates the new projection before mutating live server registrations. It then replaces handles and sends the appropriate tool, resource, or prompt `list_changed` notification. Projection errors are isolated per connection and sent to `onError`; one client policy cannot block catalog updates for another client.
 
 Stateless Streamable HTTP requests project the current cached catalog. Pinned stdio and subscription-capable connections remain synchronized without reconnecting.
+
+The same projection carries official capability metadata, cache hints, prompt/resource-template completion, and resource update subscriptions. Completion runs on the owning provider rather than being synthesized in the gateway. Sessionful stdio projections track resource subscriptions per connection and notify only matching URIs. Streamable HTTP resource updates flow through the official endpoint notifier and subscription event bus; stateless requests do not retain subscription state.
 
 ## Invocation Plane
 
@@ -135,7 +139,7 @@ External transport security and internal invocation security are separate.
 
 ### External MCP boundary
 
-The HTTP adapter requires explicit non-empty Host and Origin hostname allowlists and an explicit authentication mode. Required authentication produces SDK `AuthInfo`; the gateway converts it to a normalized principal, filters the catalog, and forwards only the normalized identity. Public access must be selected explicitly.
+The HTTP adapter requires explicit non-empty Host and Origin hostname allowlists and an explicit authentication mode. Required authentication produces SDK `AuthInfo`; the gateway converts it to a normalized principal, filters the catalog, and forwards only the normalized identity. Public access must be selected explicitly. OAuth mode uses the official SDK's Bearer verifier, challenge response, and RFC 9728/8414 metadata helpers; authorization-server behavior remains external.
 
 stdio may supply one process-level `authInfo`. Without it, scoped capabilities are not exposed.
 

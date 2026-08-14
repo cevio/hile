@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { createMcpHmacInvocationCredentialCodec, defineMcpProvider, defineMcpTool } from '../index.js';
+import { createMcpHmacInvocationCredentialCodec, defineMcpPrompt, defineMcpProvider, defineMcpResource, defineMcpTool } from '../index.js';
 import { attachMcpProvider } from './provider.js';
 
 const trustedInvocation = { invocationSecurity: { mode: 'trusted-internal' as const } };
@@ -65,8 +65,86 @@ describe('attachMcpProvider', () => {
     await attachment.close();
   });
 
+  it('executes declared completion handlers with the verified principal', async () => {
+    const handlers = new Map<string, (input: any) => unknown>();
+    const application = {
+      namespace: 'catalog-service', host: '127.0.0.1', port: 4100,
+      register: vi.fn((operation: string, handler: (input: any) => unknown) => {
+        handlers.set(operation, handler);
+        return () => { handlers.delete(operation); };
+      }),
+      publish: vi.fn(async () => ({ unpublish: async () => undefined })),
+      unpublish: vi.fn(async () => undefined),
+    };
+    const complete = vi.fn(async (_value, context) => [`${context.principal?.subject}:typescript`]);
+    const attachment = await attachMcpProvider(application, defineMcpProvider({
+      id: 'catalog',
+      prompts: {
+        review: defineMcpPrompt({
+          name: 'review',
+          argsSchema: z.object({ language: z.string() }),
+          completions: { language: complete },
+          access: { scopes: ['catalog:read'] },
+        }, async () => ({ messages: [] })),
+      },
+    }), trustedInvocation);
+    const iterable = await handlers.get('/-/mcp/complete')!({ data: {
+      providerId: attachment.manifest.providerId,
+      instanceId: attachment.manifest.instanceId,
+      fingerprint: attachment.manifest.fingerprint,
+      principal: { subject: 'user-1', scopes: ['catalog:read'] },
+      kind: 'prompt',
+      name: 'review',
+      input: { argument: 'language', value: 'ty', context: { arguments: { framework: 'node' } } },
+    }, signal: new AbortController().signal }) as AsyncIterable<any>;
+    const frames = [];
+    for await (const frame of iterable) frames.push(frame);
+
+    expect(frames).toEqual([{ type: 'result', result: ['user-1:typescript'] }]);
+    expect(complete).toHaveBeenCalledWith('ty', expect.objectContaining({
+      principal: { subject: 'user-1', scopes: ['catalog:read'] },
+      arguments: { framework: 'node' },
+    }));
+    await attachment.close();
+  });
+
+  it('publishes resource update events with provider identity and expanded URIs', async () => {
+    const update = vi.fn(async () => undefined);
+    const unpublishManifest = vi.fn(async () => undefined);
+    const unpublishUpdates = vi.fn(async () => undefined);
+    const publish = vi.fn(async (topic: string) => topic === '@hile/mcp/resource-updates'
+      ? { update, unpublish: unpublishUpdates }
+      : { update: vi.fn(), unpublish: unpublishManifest });
+    const application = {
+      namespace: 'docs-service', host: '127.0.0.1', port: 4100,
+      register: vi.fn(() => vi.fn()), publish, unpublish: vi.fn(async () => undefined),
+    };
+    const attachment = await attachMcpProvider(application, defineMcpProvider({
+      id: 'docs',
+      resources: {
+        manual: defineMcpResource({ kind: 'static', name: 'manual', uri: 'hile://docs/manual' }, async uri => ({ contents: [{ uri: uri.toString(), text: 'manual' }] })),
+        locale: defineMcpResource({ kind: 'template', name: 'locale', uriTemplate: 'hile://docs/{language}' }, async uri => ({ contents: [{ uri: String(uri), text: 'manual' }] })),
+      },
+    }), trustedInvocation);
+
+    await attachment.notifyResourceUpdated('manual');
+    await attachment.notifyResourceUpdated('locale', { language: 'zh-CN' });
+
+    expect(publish).toHaveBeenCalledWith('@hile/mcp/resource-updates', expect.objectContaining({
+      eventId: expect.any(String),
+      providerId: 'docs',
+      instanceId: attachment.manifest.instanceId,
+      fingerprint: attachment.manifest.fingerprint,
+      uri: 'hile://docs/manual',
+    }));
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ uri: 'hile://docs/zh-CN' }));
+    await attachment.close();
+    expect(unpublishManifest).toHaveBeenCalledOnce();
+    expect(unpublishUpdates).toHaveBeenCalledOnce();
+  });
+
   it('registers one reusable operation set, publishes an instance manifest, and closes idempotently', async () => {
-    const removers = [vi.fn()];
+    const removers = [vi.fn(), vi.fn()];
     const register = vi.fn((_operation, _handler) => removers[register.mock.calls.length - 1]);
     const unpublish = vi.fn(async () => undefined);
     const publish = vi.fn(async () => ({ update: vi.fn(), unpublish }));
@@ -81,7 +159,7 @@ describe('attachMcpProvider', () => {
     });
 
     const attachment = await attachMcpProvider(application, provider, trustedInvocation);
-    expect(register.mock.calls.map(([operation]) => operation)).toEqual(['/-/mcp/invoke']);
+    expect(register.mock.calls.map(([operation]) => operation)).toEqual(['/-/mcp/invoke', '/-/mcp/complete']);
     expect(publish).toHaveBeenCalledWith(
       expect.stringMatching(/^@hile\/mcp\/providers\/orders\//),
       expect.objectContaining({ providerId: 'orders', instanceId: expect.any(String), namespace: 'orders-service' }),
@@ -94,7 +172,7 @@ describe('attachMcpProvider', () => {
   });
 
   it('rolls registrations back when publication fails', async () => {
-    const removers = [vi.fn()];
+    const removers = [vi.fn(), vi.fn()];
     let index = 0;
     const application = {
       namespace: 'orders-service', host: '127.0.0.1', port: 4100,
@@ -132,7 +210,7 @@ describe('attachMcpProvider', () => {
 
     await attachment.close();
     expect(unpublish).toHaveBeenCalledTimes(2);
-    expect(unregister).toHaveBeenCalledTimes(1);
+    expect(unregister).toHaveBeenCalledTimes(2);
   });
 
   it('dispatches multiple attachments by exact instance and keeps the shared route until the last close', async () => {
@@ -152,7 +230,7 @@ describe('attachMcpProvider', () => {
     });
     const orders = await attachMcpProvider(application, makeProvider('orders'), trustedInvocation);
     const payments = await attachMcpProvider(application, makeProvider('payments'), trustedInvocation);
-    expect(application.register).toHaveBeenCalledTimes(1);
+    expect(application.register).toHaveBeenCalledTimes(2);
 
     const invoke = async (attachment: typeof orders) => {
       const iterable = await handlers.get('/-/mcp/invoke')!({ data: {
@@ -172,11 +250,15 @@ describe('attachMcpProvider', () => {
     await expect(invoke(payments)).resolves.toEqual({ content: [{ type: 'text', text: 'payments' }] });
     await payments.close();
     expect(handlers.has('/-/mcp/invoke')).toBe(false);
+    expect(handlers.has('/-/mcp/complete')).toBe(false);
   });
 
   it('rejects a forged direct principal and accepts only a bound invocation credential', async () => {
     const handlers = new Map<string, (input: any) => unknown>();
     const codec = createMcpHmacInvocationCredentialCodec({ secret: 'provider-isolated-secret-at-least-32-bytes' });
+    const invocationSecurity: { mode: 'credential' | 'trusted-internal'; credentials: typeof codec } = {
+      mode: 'credential', credentials: codec,
+    };
     const handler = vi.fn(async () => ({ content: [{ type: 'text' as const, text: 'authorized' }] }));
     const application = {
       namespace: 'orders-service', host: '127.0.0.1', port: 4100,
@@ -190,7 +272,8 @@ describe('attachMcpProvider', () => {
     const attachment = await attachMcpProvider(application, defineMcpProvider({
       id: 'orders',
       tools: { lookup: defineMcpTool({ name: 'lookup', inputSchema: z.object({}), access: { scopes: ['orders:read'] } }, handler) },
-    }), { invocationSecurity: { mode: 'credential', credentials: codec } });
+    }), { invocationSecurity: invocationSecurity as { mode: 'credential'; credentials: typeof codec } });
+    invocationSecurity.mode = 'trusted-internal';
     const descriptor = {
       providerId: attachment.manifest.providerId,
       instanceId: attachment.manifest.instanceId,

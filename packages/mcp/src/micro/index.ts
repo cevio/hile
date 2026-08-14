@@ -8,4 +8,7 @@ export type {
   McpProviderDirectoryConfig,
   McpProviderManifest,
   McpProviderSource,
+  McpResourceUpdate,
+  McpResourceUpdateListener,
+  McpResourceVariables,
 } from './types.js';

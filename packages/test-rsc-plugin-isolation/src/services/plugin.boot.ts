@@ -10,6 +10,7 @@ import { HILE_RSC_RUNTIME } from '@hile/rsc/protocol';
 import { readRscDevelopmentState } from '@hile/rsc-development/state';
 import { bindRscModelDevelopment, bindRscPluginDevelopmentState } from '@hile/rsc-development/plugin';
 import { HileRscPluginRuntime } from '@hile/rsc-discovery-hile';
+import { bindLabsToggle } from '../mcps/labs-toggle';
 
 export default defineService('test.rsc.isolation.v1', async (shutdown) => {
   const namespace = process.env.MICRO_NAMESPACE ?? 'demo.rsc.isolation.v1';
@@ -61,6 +62,10 @@ export default defineService('test.rsc.isolation.v1', async (shutdown) => {
       : undefined,
   });
   await runtime.start();
+  const credentials = createMcpHmacInvocationCredentialCodec({
+    issuer: 'test-rsc-host',
+    secret: process.env.MCP_ORDERS_SECRET ?? 'test-rsc-orders-provider-secret-32-bytes!',
+  });
   const mcp = await attachMcpProvider(application, {
     id: 'orders',
     displayName: 'RSC Demo Orders',
@@ -68,13 +73,32 @@ export default defineService('test.rsc.isolation.v1', async (shutdown) => {
   }, {
     invocationSecurity: {
       mode: 'credential',
-      credentials: createMcpHmacInvocationCredentialCodec({
-        issuer: 'test-rsc-host',
-        secret: process.env.MCP_ORDERS_SECRET ?? 'test-rsc-orders-provider-secret-32-bytes!',
-      }),
+      credentials,
     },
   });
+  let labs: Awaited<ReturnType<typeof attachMcpProvider>> | undefined;
+  let transition = Promise.resolve<boolean>(false);
+  const unbindLabs = bindLabsToggle(() => {
+    const run = transition.then(async () => {
+      if (labs) {
+        await labs.close();
+        labs = undefined;
+        return false;
+      }
+      labs = await attachMcpProvider(application, {
+        id: 'labs',
+        displayName: 'Dynamic MCP Labs',
+        directory: fileURLToPath(new URL('../mcps-labs', import.meta.url)),
+      }, { invocationSecurity: { mode: 'credential', credentials } });
+      return true;
+    });
+    transition = run.catch(() => false);
+    return run;
+  });
   shutdown(async () => {
+    unbindLabs();
+    await transition.catch(() => undefined);
+    await labs?.close();
     await mcp.close();
     await runtime.close();
   });

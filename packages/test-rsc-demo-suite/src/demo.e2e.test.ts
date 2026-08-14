@@ -16,6 +16,24 @@ test.describe.serial('Registry-driven single HTTP RSC topology', () => {
     await expect(workbench.getByTestId('mcp-progress')).toHaveAttribute('aria-valuenow', '100');
     await expect(workbench.getByTestId('mcp-log')).toContainText('Complete');
 
+    await workbench.getByRole('button', { name: 'Complete arguments' }).click();
+    await expect(workbench.getByTestId('mcp-completions')).toContainText('p-100');
+    await expect(workbench.getByTestId('mcp-completions')).toContainText('home office');
+
+    await workbench.getByRole('button', { name: 'Subscribe & mutate' }).click();
+    await expect(workbench.getByTestId('mcp-resource-update')).toContainText('demo://catalog/products/p-100');
+
+    await workbench.getByRole('button', { name: 'Toggle live provider' }).click();
+    await expect(workbench.getByTestId('mcp-tools')).toContainText('labs.ping');
+    await expect(workbench.getByTestId('mcp-catalog-events')).not.toHaveText('0');
+    await workbench.getByRole('button', { name: 'Toggle live provider' }).click();
+    await expect(workbench.getByTestId('mcp-tools')).not.toContainText('labs.ping');
+
+    await workbench.getByRole('button', { name: 'Inspect OAuth' }).click();
+    await expect(workbench.getByTestId('mcp-oauth-proof')).toContainText('401 Bearer');
+    await expect(workbench.getByTestId('mcp-oauth-proof')).toContainText('auth.demo.invalid');
+    await expect(workbench.getByTestId('mcp-metadata-proof')).toContainText('private · 15000ms');
+
     await workbench.getByRole('button', { name: 'Read resources' }).click();
     await expect(workbench.getByTestId('mcp-output')).toContainText('Standing Desk');
     await workbench.getByRole('button', { name: 'Generate prompt' }).click();
@@ -40,13 +58,19 @@ test.describe.serial('Registry-driven single HTTP RSC topology', () => {
     try {
       expect((await client.listTools()).tools.map(({ name }) => name)).toEqual([
         'catalog.search_products',
+        'catalog.touch_product',
         'orders.confirm_order',
         'orders.create_order',
+        'orders.toggle_labs',
       ]);
       expect((await client.listResources()).resources.map(({ uri }) => uri)).toContain('demo://catalog/about');
       expect((await client.listResourceTemplates()).resourceTemplates.map(({ uriTemplate }) => uriTemplate))
         .toContain('demo://catalog/products/{id}');
       expect((await client.listPrompts()).prompts.map(({ name }) => name)).toContain('catalog.recommend_products');
+      expect(await client.complete({
+        ref: { type: 'ref/resource', uri: 'demo://catalog/products/{id}' },
+        argument: { name: 'id', value: 'p-1' },
+      })).toEqual(expect.objectContaining({ completion: { values: ['p-100', 'p-101', 'p-102'], total: 3, hasMore: false } }));
       const progress: number[] = [];
       const instances = new Set<string>();
       for (let index = 0; index < 2; index++) {

@@ -7,6 +7,7 @@ import {
 import { createMcpGateway } from '@hile/mcp/gateway';
 import { createMcpHttpEndpoint } from '@hile/mcp/http';
 import { createHileMcpProviderSource } from '@hile/mcp/micro';
+import { OAuthError, OAuthErrorCode } from '@modelcontextprotocol/server';
 import { Application } from '@hile/micro';
 import {
   createRscActionMiddleware,
@@ -69,6 +70,10 @@ export default defineService<DemoHostComposition>(DEMO_HOST_SERVICE_KEY, async (
     source: mcpSource,
     info: { name: 'test-rsc-host', version: '1.0.0' },
     instructions: 'Use catalog resources for grounding. Order tools are provided by the isolated plugin service.',
+    cacheHints: {
+      'tools/list': { ttlMs: 30_000, cacheScope: 'public' },
+      'resources/read': { ttlMs: 15_000, cacheScope: 'private' },
+    },
     startup: 'allow-empty',
     invocationSecurity: {
       mode: 'credential',
@@ -78,6 +83,10 @@ export default defineService<DemoHostComposition>(DEMO_HOST_SERVICE_KEY, async (
           secret: process.env.MCP_CATALOG_SECRET ?? 'test-rsc-catalog-provider-secret-32-bytes',
         }),
         orders: createMcpHmacInvocationCredentialCodec({
+          issuer: 'test-rsc-host',
+          secret: process.env.MCP_ORDERS_SECRET ?? 'test-rsc-orders-provider-secret-32-bytes!',
+        }),
+        labs: createMcpHmacInvocationCredentialCodec({
           issuer: 'test-rsc-host',
           secret: process.env.MCP_ORDERS_SECRET ?? 'test-rsc-orders-provider-secret-32-bytes!',
         }),
@@ -170,14 +179,30 @@ export default defineService<DemoHostComposition>(DEMO_HOST_SERVICE_KEY, async (
       allowedHostnames: ['127.0.0.1', 'localhost'],
       allowedOriginHostnames: ['127.0.0.1', 'localhost'],
       authentication: {
-        mode: 'required',
-        authenticate: request => request.headers.get('authorization') === 'Bearer demo-mcp-token'
-          ? {
-            token: 'demo-mcp-token',
-            clientId: 'test-rsc-demo-suite',
-            scopes: ['catalog:read', 'orders:write'],
-          }
-          : new Response('Use Authorization: Bearer demo-mcp-token', { status: 401 }),
+        mode: 'oauth',
+        verifier: {
+          async verifyAccessToken(token) {
+            if (token !== 'demo-mcp-token') throw new OAuthError(OAuthErrorCode.InvalidToken, 'Invalid demo MCP token');
+            return {
+              token,
+              clientId: 'test-rsc-demo-suite',
+              scopes: ['mcp:access', 'catalog:read', 'orders:write'],
+              expiresAt: Math.floor(Date.now() / 1_000) + 3_600,
+            };
+          },
+        },
+        requiredScopes: ['mcp:access'],
+        metadata: {
+          resourceServerUrl: new URL(process.env.MCP_PUBLIC_URL ?? 'http://127.0.0.1:3200/mcp'),
+          resourceName: 'Hile MCP interactive demo',
+          scopesSupported: ['mcp:access', 'catalog:read', 'orders:write'],
+          oauthMetadata: {
+            issuer: 'https://auth.demo.invalid',
+            authorization_endpoint: 'https://auth.demo.invalid/authorize',
+            token_endpoint: 'https://auth.demo.invalid/token',
+            response_types_supported: ['code'],
+          },
+        },
       },
     },
     legacy: 'reject',

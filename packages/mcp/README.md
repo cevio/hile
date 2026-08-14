@@ -11,7 +11,7 @@ This README is intentionally short and example-first. The complete AI-facing gui
 - Different microservices own different MCP tools, resources, and prompts.
 - One MCP endpoint must expose a unified, dynamically discovered catalog.
 - Providers need independent deployments, replicas, scopes, and failure isolation.
-- Existing `Application.stream()` semantics such as cancellation and backpressure must carry MCP execution frames.
+- Existing exact-peer `Application.streamPeer()` semantics such as cancellation and backpressure must carry MCP execution frames.
 - Remote clients use Streamable HTTP or a local MCP host launches a stdio process.
 
 ## Install
@@ -123,6 +123,11 @@ export default defineMcpResource(
     name: 'detail',
     uriTemplate: 'hile://orders/{id}',
     mimeType: 'application/json',
+    icons: [{ src: 'https://example.com/orders.svg', mimeType: 'image/svg+xml' }],
+    cacheHint: { ttlMs: 30_000, cacheScope: 'private' },
+    completions: {
+      id: async (value) => searchOrderIds(value),
+    },
     access: { scopes: ['orders:read'] },
   },
   async ({ id }) => ({
@@ -146,7 +151,10 @@ export default defineMcpPrompt(
   {
     name: 'summarize',
     description: 'Build an order-summary prompt.',
-    argsSchema: z.object({ id: z.string().min(1) }),
+    argsSchema: z.object({ id: z.string().min(1), language: z.string().optional() }),
+    completions: {
+      language: async (value) => ['en', 'zh-CN'].filter(item => item.startsWith(value)),
+    },
     access: { scopes: ['orders:read'] },
   },
   async ({ id }) => ({
@@ -157,6 +165,17 @@ export default defineMcpPrompt(
   }),
 )
 ```
+
+`completions` is supported only for declared prompt arguments and RFC 6570 template variables. The gateway routes completion requests to the selected provider instance; static resources do not have completion arguments.
+
+After mutable resource data changes, publish the official resource-updated notification through the attachment. Template variables are expanded with the SDK's RFC 6570 implementation:
+
+```ts
+await attachment.notifyResourceUpdated('help')
+await attachment.notifyResourceUpdated('detail', { id: order.id })
+```
+
+The provider uses one shared update publication per Micro `Application`. The source validates provider ID, instance ID, fingerprint, and URI before the gateway notifies subscribed MCP clients. Sessionful stdio connections keep a per-connection resource subscription set; the Streamable HTTP adapter publishes through the official endpoint notifier and subscription event bus. Stateless HTTP requests do not retain subscriptions across requests.
 
 Unified gateway and Streamable HTTP adapter:
 
@@ -177,6 +196,10 @@ const source = createHileMcpProviderSource(application, {
 const gateway = await createMcpGateway({
   source,
   info: { name: 'company-mcp', version: '1.0.0' },
+  cacheHints: {
+    'tools/list': { ttlMs: 30_000, cacheScope: 'public' },
+    'resources/read': { ttlMs: 5_000, cacheScope: 'private' },
+  },
   startup: 'require-provider',
   invocationSecurity: {
     mode: 'credential',
@@ -208,6 +231,30 @@ shutdown(async () => {
   await gateway.close()
 })
 ```
+
+For an OAuth 2.0 protected resource, use the SDK-backed OAuth mode. It validates Bearer tokens and serves the RFC 9728 and RFC 8414 discovery documents on the same existing HTTP server:
+
+```ts
+const endpoint = createMcpHttpEndpoint(gateway, {
+  path: '/mcp',
+  security: {
+    allowedHostnames: ['mcp.example.com'],
+    allowedOriginHostnames: ['app.example.com'],
+    authentication: {
+      mode: 'oauth',
+      verifier: accessTokenVerifier,
+      requiredScopes: ['mcp:read'],
+      metadata: {
+        resourceServerUrl: new URL('https://mcp.example.com/mcp'),
+        oauthMetadata: authorizationServerMetadata,
+      },
+    },
+  },
+  legacy: 'reject',
+})
+```
+
+`@hile/mcp` acts only as the OAuth Resource Server. Token issuance, client registration, consent, and authorization-server persistence remain owned by your identity platform.
 
 Process-local stdio adapter:
 
@@ -254,11 +301,13 @@ Use `gateway.inspect()` for health endpoints and diagnostics. It returns each pr
 - The provider application is listening before `attachMcpProvider()` runs.
 - Provider and gateway use matching credential configuration, with distinct secrets per provider.
 - Host, Origin, and authentication policies are explicit on the HTTP adapter.
+- OAuth deployments return protected-resource metadata and a Bearer challenge that points to it.
 - `gateway.inspect()` reports `ready` and the expected tool, resource, and prompt names.
 - Two compatible replicas appear under one provider ID and receive calls; a mixed-fingerprint rollout produces a conflict instead of routing.
 - Progress/log delivery, client cancellation, timeout, and bounded backpressure are exercised.
 - Scoped capabilities are hidden without the scope and callable with it over both HTTP and configured stdio.
 - Adding or removing a provider updates a long-lived client's catalog notification.
+- Prompt and resource-template completion returns provider-owned suggestions, and a subscribed resource receives `notifications/resources/updated` after `notifyResourceUpdated()`.
 - Transport, gateway, attachments, and applications close without retained manifests, live handlers, sockets, or timers.
 
 ## More Context
