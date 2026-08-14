@@ -1,6 +1,6 @@
 {
   "name": "@hile/redis-rate-limit",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "description": "Redis-backed rate limiting primitives and Hile adapters",
   "type": "module",
   "main": "./dist/index.js",

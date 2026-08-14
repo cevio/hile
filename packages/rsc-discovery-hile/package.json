@@ -1,7 +1,7 @@
 {
   "name": "@hile/rsc-discovery-hile",
   "description": "Hile Registry and message transport adapter for automatic RSC discovery",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
