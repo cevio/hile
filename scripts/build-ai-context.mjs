@@ -151,7 +151,7 @@ const packageConfigs = {
     purpose: 'Expose tools, resources, and prompts from independently deployed Hile microservices through one discovered, multi-instance MCP gateway.',
     cards: ['packages/mcp.md'],
     recipes: ['recipes/mcp-distributed-gateway.md'],
-    readmeSections: ['## More Examples'],
+    readmeSections: ['## More Examples', '## Public API Reference'],
     readmeLinks: [
       '- `ARCHITECTURE.md` in this package: discovery, routing, trust, streaming, performance, and lifecycle design.',
     ],
@@ -1018,6 +1018,8 @@ function mcpPackageMdxBody(config) {
     section(primary, '## Copy-Paste Example'),
     '',
     section(primary, '## More Examples'),
+    '',
+    section(primary, '## Public API Reference'),
     '',
     section(primary, '## Compose With'),
     '',

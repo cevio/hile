@@ -183,8 +183,23 @@ import { InMemoryMcpProviderSource } from '@hile/mcp/testing'
 
 Consumers should not import internal manifest, loader, stream, provider-host, or gateway-projection modules. Those are implementation details that can evolve without widening the public architecture.
 
+The six public entry points are the complete supported boundary:
+
+| Entry point | Public construction APIs |
+|---|---|
+| `@hile/mcp` | Four definition factories, HMAC codec, provider keyring, custom credential types, principals, handler contexts, definitions, and `HileMcpError` |
+| `@hile/mcp/micro` | Provider attachment, concrete/factory discovery source, provider/source contracts, manifests, and resource-update types |
+| `@hile/mcp/gateway` | Gateway factory plus gateway option, inspection, and capability types |
+| `@hile/mcp/http` | Streamable HTTP endpoint factory and option/handle types |
+| `@hile/mcp/stdio` | stdio server factory and option type |
+| `@hile/mcp/testing` | In-memory provider source |
+
+Factories snapshot security-sensitive mode and callback configuration at construction time. Mutating the caller's option object after creation cannot change an authenticated endpoint into a public endpoint or switch a credential-verified provider to trusted mode.
+
 ## Further Reading
 
 - [Package README](./README.md)
+- [Mintlify package API](https://pulian.mintlify.app/packages/mcp)
+- [Distributed gateway guide](https://pulian.mintlify.app/techniques/mcp-gateway)
 - [MCP `2026-07-28` release](https://blog.modelcontextprotocol.io/posts/2026-07-28/)
 - [Official TypeScript SDK server guide](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/server.md)

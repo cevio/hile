@@ -180,6 +180,9 @@ export default defineService('mcp.http', async (shutdown) => {
       },
     },
     legacy: 'reject',
+    responseMode: 'sse',
+    keepAliveMs: 15_000,
+    maxSubscriptions: 1_000,
     onError: reportError,
   })
   http.use(endpoint.middleware)
@@ -188,7 +191,7 @@ export default defineService('mcp.http', async (shutdown) => {
 })
 ```
 
-The adapter does not create or own a port. Host and Origin validation protect the HTTP boundary, while `authenticate` supplies the external MCP identity and scopes. The invocation credential independently authenticates the gateway to each provider.
+The adapter does not create or own a port. Host and Origin validation protect the HTTP boundary, while `authenticate` supplies the external MCP identity and scopes. The invocation credential independently authenticates the gateway to each provider. `responseMode` passes through to the official SDK, `keepAliveMs` controls stream keepalives, and `maxSubscriptions` bounds HTTP subscription listeners.
 
 For a public endpoint, choose `{ authentication: { mode: 'public' } }` explicitly and expose only capabilities designed for anonymous use. An omitted authentication policy is rejected.
 

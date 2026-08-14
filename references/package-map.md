@@ -141,6 +141,7 @@ Read `packages/mcp.md` when the task mentions:
 - tools, resources, prompts, progress, logging, or input-required flows
 - one public MCP endpoint backed by multiple microservices
 - MCP provider discovery, replicas, conflict detection, or failover
+- MCP completion, resource subscriptions, list-change notifications, or OAuth Resource Server behavior
 - Streamable HTTP or stdio MCP transport
 
 Package: `@hile/mcp`. Compose it with `@hile/micro`, an existing `@hile/http` server for remote access, and `@hile/core` for lifecycle management.

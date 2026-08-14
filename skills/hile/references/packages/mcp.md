@@ -63,6 +63,26 @@ shutdown(() => attachment.close())
 
 The loader accepts `*.mcp.ts`, `*.mcp.js`, `*.mcp.tsx`, `*.mcp.jsx`, and `*.mcp.mjs`. Every matched file must default-export one value created by `defineMcpTool`, `defineMcpResource`, or `defineMcpPrompt`. A load or registration failure rolls back the whole provider batch.
 
+For a programmatic provider, compose already-defined capabilities with `defineMcpProvider()` and pass the immutable result directly to `attachMcpProvider()`:
+
+```ts
+import { defineMcpProvider } from '@hile/mcp'
+
+const provider = defineMcpProvider({
+  id: 'orders',
+  displayName: 'Orders',
+  tools: { lookup },
+  resources: { help, detail },
+  prompts: { summarize },
+})
+
+const attachment = await attachMcpProvider(application, provider, {
+  invocationSecurity: { mode: 'credential', credentials },
+})
+```
+
+Record keys must equal the capability's local `name`. A tool, resource, or prompt cannot be placed in the wrong record.
+
 ## More Examples
 
 Public entry points:
@@ -302,6 +322,80 @@ import { createMcpHttpEndpoint } from '@hile/mcp/http'
 import { serveMcpStdio } from '@hile/mcp/stdio'
 import { InMemoryMcpProviderSource } from '@hile/mcp/testing'
 ```
+
+## Public API Reference
+
+### Definitions and handler context
+
+| API | Required configuration | Optional configuration | Result |
+|---|---|---|---|
+| `defineMcpTool(config, handler)` | `name`, Standard Schema `inputSchema` | `title`, `description`, `icons`, `_meta`, `outputSchema`, official tool `annotations`, `access`, `execution` | Immutable `McpToolDefinition` |
+| `defineMcpResource(config, handler)` | `kind`, `name`, and either absolute `uri` or RFC 6570 `uriTemplate` | `mimeType`, `icons`, `_meta`, `size`, resource `annotations`, `cacheHint`, template `completions`, `access` | Immutable `McpResourceDefinition` |
+| `defineMcpPrompt(config, handler)` | `name`, Standard Schema `argsSchema` | `title`, `description`, `icons`, `_meta`, argument `completions`, `access` | Immutable `McpPromptDefinition` |
+| `defineMcpProvider(config)` | `id` | `displayName`, named `tools`, `resources`, `prompts` records | Immutable `McpProviderDefinition` for programmatic attachment |
+
+Names must match `[A-Za-z0-9._-]{1,128}`. Metadata is cloned and frozen when the definition is created. Invalid schemas, annotations, cache hints, completion keys, access policies, timer values, URIs, or retry combinations fail before publication.
+
+Every handler receives `McpInvocationContext`: an abort `signal`, a verified or explicitly trusted `principal`, optional `inputResponses`, `requestState`, and awaited `emit.progress()` / `emit.log()` methods. Treat `requestState` as untrusted unless the gateway configures the official SDK verifier. Template resource variables use the SDK `Variables` shape, so a variable may be a string or string array.
+
+### Provider and discovery APIs
+
+| API | Configuration | Lifecycle and result |
+|---|---|---|
+| `attachMcpProvider(application, input, options)` | `input` is a `McpProviderDefinition` or `{ id, displayName?, directory }`; `invocationSecurity` must be explicit | Requires a listening Micro Application. Returns `{ provider, manifest, notifyResourceUpdated(), close() }` |
+| `createHileMcpProviderSource(application, options?)` | `pollIntervalMs` defaults to `2000` and must be between `100` and `2147483647`; `onError` receives background failures | Returns a source with `start()`, `refresh()`, `snapshot()`, catalog/resource subscriptions, exact-peer `stream()`, and `close()` |
+| `HileMcpProviderSource` | Class form of the factory result | Useful when the concrete source type is needed; prefer the factory for normal construction |
+
+One Application may attach multiple providers. The provider host shares one dispatcher and resource-update publication per Application, while manifests and attachment cleanup remain instance-scoped.
+
+### Gateway API
+
+`createMcpGateway(options)` starts the source, builds the initial catalog, and returns `McpGateway` with `inspect()` and `close()`.
+
+| Option | Meaning |
+|---|---|
+| `source` | Required `McpProviderSource`; production normally uses `createHileMcpProviderSource()` |
+| `info` | Required official MCP server implementation name and version |
+| `instructions` | Optional server instructions returned to clients |
+| `cacheHints` | Optional official SDK cache hints for list/read responses |
+| `naming` | Optional provider aliases and `.`, `-`, or `_` public-name separator |
+| `startup` | `allow-empty` by default; `require-provider` rejects an empty initial catalog |
+| `requestState` | Optional official SDK verifier; without it, client-echoed state remains `unknown` |
+| `invocationSecurity` | Required `credential` creator or explicit `trusted-internal` mode |
+| `isCapabilityExposed` | Optional principal-aware catalog visibility predicate |
+| `onError` | Optional diagnostic callback for isolated projection and background failures |
+
+`inspect()` is read-only operational state. It reports provider readiness, instance counts, fingerprints, conflicts, and currently exposed names; it does not invoke discovery or providers.
+
+### HTTP and stdio adapters
+
+| API or option | Behavior |
+|---|---|
+| `createMcpHttpEndpoint(gateway, options)` | Returns `{ middleware, close }` and never opens a port |
+| `path` | Required absolute endpoint path without query, fragment, or empty segments |
+| `security.allowedHostnames` | Required non-empty Host allowlist |
+| `security.allowedOriginHostnames` | Required non-empty Origin-host allowlist |
+| `security.authentication` | Required explicit `public`, custom `required`, or SDK-backed `oauth` policy |
+| `legacy` | Optional `stateless` compatibility or `reject` policy for legacy protocol clients |
+| `responseMode` | Optional official SDK per-request response mode: `auto`, `sse`, or `json`; use `sse` when mid-call notifications must be preserved |
+| `keepAliveMs` | Optional positive keepalive interval within Node's safe timer range |
+| `maxSubscriptions` | Optional positive cap for HTTP subscription listeners |
+| `onError` | Optional adapter/transport error callback |
+| `serveMcpStdio(gateway, options?)` | Returns the official `StdioServerHandle`; accepts official stdio options plus `authInfo` and `onError` |
+
+Close the HTTP endpoint or stdio handle before closing the shared gateway. `authInfo` is process-level stdio identity; without it, scoped capabilities remain hidden.
+
+### Invocation credentials, testing, and errors
+
+| API | Purpose |
+|---|---|
+| `createMcpHmacInvocationCredentialCodec(options)` | Creates a replay-protected symmetric codec. `secret` must contain at least 32 bytes; `issuer` defaults to `@hile/mcp`; `ttlMs` defaults to `30000` |
+| `createMcpInvocationCredentialKeyring(codecs)` | Selects an isolated credential codec by `providerId`; use different keys for unrelated trust domains |
+| `McpInvocationCredentialCodec` | Interface for a custom gateway `create()` / provider `verify()` credential mechanism |
+| `InMemoryMcpProviderSource` | Deterministic testing source with `setInstances()`, `emitResourceUpdated()`, recorded `invocations`, and injectable invocation handler |
+| `HileMcpError` | Package error carrying a stable `code` |
+
+`HileMcpErrorCode` values are `INVALID_DEFINITION`, `DUPLICATE_CAPABILITY`, `PROVIDER_ATTACH_FAILED`, `PROVIDER_UNAVAILABLE`, `CATALOG_CONFLICT`, and `GATEWAY_CLOSED`. Transport-level MCP failures are still returned according to the official SDK behavior; callers should not assume every tool error rejects the client promise.
 
 ## Compose With
 
