@@ -57,6 +57,8 @@ pnpm --filter test-rsc-demo-suite test:e2e
 
 The E2E suite proves raw HTML SSR, browser hydration, hooks/context/state, CSS, lazy chunks, module-level `'use server'`, `useActionState`, Server Function → model execution over the internal microservice transport, plugin isolation, Registry activation, and server-artifact non-exposure.
 
+The private packages also exercise signed monotonic discovery generations, bounded concurrent Registry snapshots, bounded Flight window/total/idle timeouts, shared immutable manifest verification, render observation, precise per-boundary lazy chunks, and Host-owned loading/error/retry UI.
+
 `pnpm --filter test-rsc-demo-suite test:e2e:dev` additionally mutates a real plugin source: it proves a broken incremental build keeps the previous deployment serving, then verifies the repaired revision is compiled, announced, downloaded, activated, and rendered by the browser.
 
 ## Run pieces separately

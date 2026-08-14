@@ -27,6 +27,7 @@ const plugins = [
     buildId: 'v1',
     namespace: 'demo.rsc.capabilities.v1',
     port: '4211',
+    generation: '1',
   },
   {
     packageName: 'test-rsc-plugin-capabilities-v2',
@@ -34,6 +35,7 @@ const plugins = [
     buildId: 'v2',
     namespace: 'demo.rsc.capabilities.v2',
     port: '4212',
+    generation: '2',
   },
   {
     packageName: 'test-rsc-plugin-isolation',
@@ -41,6 +43,7 @@ const plugins = [
     buildId: 'isolation-v1',
     namespace: 'demo.rsc.isolation.v1',
     port: '4213',
+    generation: '1',
   },
 ] as const;
 
@@ -123,6 +126,8 @@ describe('private RSC demo package contracts', () => {
       expect(environment).toContain(`PLUGIN_MICRO_PORT=${expected.port}`);
       expect(environment).toContain('REGISTRY_PORT=9876');
       expect(environment).toContain('HILE_ADVERTISE_HOST=127.0.0.1');
+      expect(environment).toContain(`RSC_DISCOVERY_GENERATION=${expected.generation}`);
+      expect(read(`${packageRoot}/src/services/plugin.boot.ts`)).toContain('generation:');
       expect(read(`${packageRoot}/src/services/plugin.boot.ts`)).not.toMatch(/HttpNext|@hile\/http|createServer/);
     }
   });
@@ -200,6 +205,7 @@ describe('private RSC demo package contracts', () => {
     const pluginRuntime = read('packages/test-rsc-plugin-capabilities-v2/src/services/plugin.boot.ts');
     const hostRuntime = read('packages/test-rsc-host/src/services/runtime.boot.ts');
     const hostRoute = read('packages/test-rsc-host/src/app/plugins/[pluginId]/[[...path]]/page.tsx');
+    const clientRuntime = read('packages/test-rsc-host/src/app/rsc-client-runtime.tsx');
 
     expect(action.startsWith("'use server';")).toBe(true);
     expect(action).toContain("invokeRscModel('increment'");
@@ -209,12 +215,15 @@ describe('private RSC demo package contracts', () => {
     expect(pluginRuntime).toContain('RscArtifactServerFunctionRuntime');
     expect(hostRuntime).toContain('createRscServerFunctionMiddleware');
     expect(hostRuntime).toContain('RscServerFunctionGateway');
-    expect(hostRoute).toContain('RscNextClientRuntime');
+    expect(hostRoute).toContain('DemoRscClientRuntime');
+    expect(clientRuntime).toContain('RscNextClientRuntime');
+    expect(clientRuntime).toContain('renderError=');
   });
 
   it('composes all optional RSC adapters behind one HttpNext host', () => {
     const runtime = read('packages/test-rsc-host/src/services/runtime.boot.ts');
     const route = read('packages/test-rsc-host/src/app/plugins/[pluginId]/[[...path]]/page.tsx');
+    const clientRuntime = read('packages/test-rsc-host/src/app/rsc-client-runtime.tsx');
     expect(runtime.match(/new HttpNext/g)).toHaveLength(1);
     expect(runtime).toContain('createRscAssetMiddleware');
     expect(runtime).toContain('createRscActionMiddleware');
@@ -224,6 +233,11 @@ describe('private RSC demo package contracts', () => {
     expect(route).toContain('params: Promise<');
     expect(route).toContain('searchParams: Promise<');
     expect(route).toContain('getHttpNextRequestSignal');
-    expect(route).toContain('RscClientRuntimeProvider');
+    expect(route).toContain('idleTimeout:');
+    expect(route).toContain('window:');
+    expect(clientRuntime).toContain('RscClientRuntimeProvider');
+    expect(runtime).toContain('snapshotConcurrency:');
+    expect(runtime).toContain('requireGeneration: true');
+    expect(runtime).toContain('generationHighWater: discoveryGenerationHighWater');
   });
 });

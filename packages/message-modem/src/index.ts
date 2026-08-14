@@ -14,7 +14,18 @@ export interface MessageTransferFormat<T = any> {
   twoway: boolean,
   stream?: boolean,
   streamVersion?: 1,
+  streamWindow?: number,
   data?: T
+}
+
+export interface MessageStreamOptions {
+  signal?: AbortSignal;
+  /** Maximum total stream lifetime in milliseconds. */
+  timeout?: number;
+  /** Maximum time between valid stream responses in milliseconds. */
+  idleTimeout?: number;
+  /** Maximum number of produced but not yet consumed chunks. */
+  window?: number;
 }
 
 export interface MessageReturnFormat<T = any> {
@@ -34,15 +45,47 @@ interface StreamConsumerState {
   stream: Readable;
   completed: boolean;
   cancelled: boolean;
-  creditOwed: boolean;
+  creditsOwed: number;
+  maxCredits: number;
   nextSeq: number;
+  nextCreditSeq: number;
+  touch(): void;
+  clearTimers(): void;
 }
 
 interface StreamProducerState {
   credits: number;
+  maxCredits: number;
   nextCreditSeq: number;
   wake?: () => void;
   iterator?: AsyncIterator<any>;
+}
+
+const MAX_STREAM_WINDOW = 64;
+const MAX_TIMER_DELAY = 2_147_483_647;
+
+function streamLimit(value: number | undefined, name: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || value < 1) {
+    throw new TypeError(`${name} must be a positive safe integer`);
+  }
+  return value;
+}
+
+function streamWindow(value: number | undefined): number {
+  const normalized = streamLimit(value, 'Stream window') ?? 1;
+  if (normalized > MAX_STREAM_WINDOW) {
+    throw new TypeError(`Stream window must not exceed ${MAX_STREAM_WINDOW}`);
+  }
+  return normalized;
+}
+
+function streamTimeout(value: number | undefined, name: string): number | undefined {
+  const normalized = streamLimit(value, name);
+  if (normalized !== undefined && normalized > MAX_TIMER_DELAY) {
+    throw new TypeError(`${name} must not exceed ${MAX_TIMER_DELAY}`);
+  }
+  return normalized;
 }
 
 class CreditReadable extends Readable {
@@ -172,19 +215,21 @@ export abstract class MessageModem {
     });
   }
 
-  protected _stream(data: any, options?: {
-    signal?: AbortSignal,
-  }): Readable {
+  protected _stream(data: any, options: MessageStreamOptions = {}): Readable {
+    const window = streamWindow(options.window);
+    const timeout = streamTimeout(options.timeout, 'Stream timeout');
+    const idleTimeout = streamTimeout(options.idleTimeout, 'Stream idle timeout');
     const state = this.createPostData(MESSAGE_MODEM_TYPE.REQUEST, data, true, true);
     state.streamVersion = 1;
+    if (window > 1) state.streamWindow = window;
     let consumer!: StreamConsumerState;
     const stream = new CreditReadable(() => {
-        if (!consumer.creditOwed || consumer.completed || consumer.cancelled) return;
-        consumer.creditOwed = false;
+        if (consumer.creditsOwed === 0 || consumer.completed || consumer.cancelled) return;
+        consumer.creditsOwed--;
         try {
           this.post(this.createPostData(
             MESSAGE_MODEM_TYPE.STREAM_CREDIT,
-            { id: state.id, seq: consumer.nextSeq - 1 },
+            { id: state.id, seq: consumer.nextCreditSeq++ },
             false,
           ));
         } catch (error) {
@@ -192,12 +237,35 @@ export abstract class MessageModem {
           stream.destroy(error as Error);
         }
     });
+    let totalTimer: ReturnType<typeof setTimeout> | undefined;
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    const clearTimers = () => {
+      if (totalTimer) clearTimeout(totalTimer);
+      if (idleTimer) clearTimeout(idleTimer);
+      totalTimer = undefined;
+      idleTimer = undefined;
+    };
+    const expire = (message: string) => {
+      if (consumer.completed || consumer.cancelled) return;
+      sendAbort();
+      stream.destroy(new TimeoutException(message));
+    };
+    const touch = () => {
+      if (!idleTimeout || consumer.completed || consumer.cancelled) return;
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => expire('Stream idle timeout'), idleTimeout);
+      idleTimer.unref?.();
+    };
     consumer = {
       stream,
       completed: false,
       cancelled: false,
-      creditOwed: false,
+      creditsOwed: 0,
+      maxCredits: window,
       nextSeq: 0,
+      nextCreditSeq: 0,
+      touch,
+      clearTimers,
     };
     const sendAbort = () => {
       if (consumer.completed || consumer.cancelled) return;
@@ -219,8 +287,14 @@ export abstract class MessageModem {
     }
     this.streams.set(state.id, consumer);
     options?.signal?.addEventListener('abort', onAbort, { once: true });
+    if (timeout) {
+      totalTimer = setTimeout(() => expire('Stream timeout'), timeout);
+      totalTimer.unref?.();
+    }
+    touch();
     stream.on('close', () => {
       sendAbort();
+      clearTimers();
       if (this.streams.has(state.id)) {
         this.streams.delete(state.id);
       }
@@ -401,6 +475,25 @@ export abstract class MessageModem {
       });
       return;
     }
+    let window: number;
+    try {
+      window = streamWindow(msg.streamWindow);
+    } catch (error) {
+      this.post<MessageStreamChunk>({
+        id: msg.id,
+        mode: MESSAGE_MODEM_TYPE.RESPONSE,
+        stream: true,
+        streamVersion: 1,
+        data: {
+          status: 400,
+          seq: 0,
+          payload: error instanceof Error ? error.message : 'Invalid stream window',
+          final: true,
+        },
+        twoway: false,
+      });
+      return;
+    }
     if (this.streamProducers.has(msg.id) || this.streamProducers.size >= 128) {
       this.post<MessageStreamChunk>({
         id: msg.id,
@@ -414,7 +507,8 @@ export abstract class MessageModem {
     }
     const controller = new AbortController();
     const producer: StreamProducerState = {
-      credits: 1,
+      credits: window,
+      maxCredits: window,
       nextCreditSeq: 0,
     };
     let sequence = 0;
@@ -513,6 +607,7 @@ export abstract class MessageModem {
       const consumer = this.streams.get(id)!;
       const stream = consumer.stream;
       if (res) {
+        consumer.touch();
         if (!Number.isSafeInteger(res.seq) || res.seq !== consumer.nextSeq) {
           stream.destroy(new Exception(409, `Invalid stream sequence: expected ${consumer.nextSeq}, received ${String(res.seq)}`));
           return;
@@ -521,18 +616,25 @@ export abstract class MessageModem {
         if (res.status === 200) {
           if (res.final) {
             consumer.completed = true;
+            consumer.clearTimers();
             stream.push(null);
           } else {
-            consumer.creditOwed = true;
+            if (consumer.creditsOwed >= consumer.maxCredits) {
+              stream.destroy(new Exception(429, 'Stream window exceeded'));
+              return;
+            }
+            consumer.creditsOwed++;
             stream.push(res.payload);
           }
         } else {
           consumer.completed = true;
+          consumer.clearTimers();
           const err = new Exception(res.status, res.payload as string);
           setImmediate(() => stream.destroy(err));
         }
       } else {
         consumer.completed = true;
+        consumer.clearTimers();
         const err = new Exception(404, 'Empty chunk data');
         setImmediate(() => stream.destroy(err));
       }
@@ -582,8 +684,12 @@ export abstract class MessageModem {
           || (credit.seq as number) < 0
         ) break;
         const producer = this.streamProducers.get(credit.id as number);
-        if (producer && producer.credits === 0 && (credit.seq as number) === producer.nextCreditSeq) {
-          producer.credits = 1;
+        if (
+          producer
+          && producer.credits < producer.maxCredits
+          && (credit.seq as number) === producer.nextCreditSeq
+        ) {
+          producer.credits++;
           producer.nextCreditSeq++;
           producer.wake?.();
         }

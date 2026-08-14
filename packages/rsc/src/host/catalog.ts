@@ -266,7 +266,10 @@ export function createCatalogRscPluginLocator(
       const catalogLease = catalog.acquire(target);
       try {
         const client = await connect(catalogLease.deployment, options);
-        return { client, release: catalogLease.release };
+        return {
+          client,
+          release: catalogLease.release,
+        };
       } catch (error) {
         catalogLease.release();
         throw error;

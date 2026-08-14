@@ -10,6 +10,7 @@ import {
   RscDiscoveryManager,
   type RscDiscoveryAnnouncement,
   type RscDiscoveryDeployment,
+  type RscDiscoveryGenerationHighWater,
   type RscDiscoverySnapshot,
 } from '@hile/rsc-discovery';
 import {
@@ -18,6 +19,7 @@ import {
 } from './downloader';
 import {
   readHileRscDiscoverySnapshot,
+  type HileRscDiscoverySnapshot,
   type HileRscRegistryReader,
 } from './reader';
 
@@ -30,6 +32,9 @@ export interface HileRscDiscoveryHostOptions {
   runtime: RscRuntimeCompatibility;
   pollIntervalMs?: number;
   missingReconciliations?: number;
+  /** Reusable across sequential Hosts; the previous Host must close before handoff. */
+  generationHighWater?: Map<string, RscDiscoveryGenerationHighWater>;
+  generationHistorySize?: number;
   maxFileBytes?: number;
   maxTotalBytes?: number;
   maxManifestBytes?: number;
@@ -39,6 +44,7 @@ export interface HileRscDiscoveryHostOptions {
   select?: (candidates: readonly RscDiscoveryAnnouncement[]) => RscDiscoveryAnnouncement;
   authorize: (announcement: RscDiscoveryAnnouncement) => boolean | Promise<boolean>;
   operationTimeoutMs?: number;
+  snapshotConcurrency?: number;
   onRejected?: (topic: string, error: unknown) => void;
   onEnabled?: (announcement: RscDiscoveryAnnouncement) => void | Promise<void>;
   onError?: (error: unknown) => void;
@@ -55,6 +61,7 @@ export class HileRscDiscoveryHost {
   private readonly discovery: RscDiscoveryManager<HileRscDiscoveryDeployment>;
   private timer?: ReturnType<typeof setTimeout>;
   private refreshPromise?: Promise<void>;
+  private snapshotPromise?: Promise<HileRscDiscoverySnapshot>;
   private refreshController?: AbortController;
   private startPromise?: Promise<void>;
   private closePromise?: Promise<void>;
@@ -87,6 +94,8 @@ export class HileRscDiscoveryHost {
     });
     this.discovery = new RscDiscoveryManager<HileRscDiscoveryDeployment>({
       missingReconciliations: options.missingReconciliations,
+      generationHighWater: options.generationHighWater,
+      generationHistorySize: options.generationHistorySize,
       select: options.select,
       deploy: async (announcement) => {
         const downloaded = await downloadHileRscArtifact(options.application, announcement, {
@@ -128,14 +137,25 @@ export class HileRscDiscoveryHost {
   public async refresh(): Promise<void> {
     if (this.closed) throw new Error('Hile RSC discovery host is closed');
     if (this.refreshPromise) return this.refreshPromise;
+    if (this.snapshotPromise) {
+      throw new Error('Previous RSC discovery snapshot read is still settling');
+    }
     const controller = new AbortController();
     this.refreshController = controller;
     const timeoutMs = this.options.operationTimeoutMs ?? 30_000;
     const timeout = setTimeout(() => controller.abort(new Error('RSC discovery refresh timed out')), timeoutMs);
     timeout.unref?.();
     const operation = (async () => {
+      const snapshotRead = readHileRscDiscoverySnapshot(this.options.application, {
+        concurrency: this.options.snapshotConcurrency,
+        signal: controller.signal,
+      });
+      const trackedSnapshot = snapshotRead.finally(() => {
+        if (this.snapshotPromise === trackedSnapshot) this.snapshotPromise = undefined;
+      });
+      this.snapshotPromise = trackedSnapshot;
       const snapshot = await Promise.race([
-        readHileRscDiscoverySnapshot(this.options.application),
+        trackedSnapshot,
         new Promise<never>((_, reject) => controller.signal.addEventListener('abort', () =>
           reject(controller.signal.reason), { once: true })),
       ]);

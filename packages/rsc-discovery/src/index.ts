@@ -12,14 +12,29 @@ export interface RscDiscoveryAnnouncement {
   namespace: string;
   /** Transport-neutral precedence. Higher values replace lower values for one pluginId. */
   priority: number;
+  /** Monotonic publication generation. Missing means legacy generation zero. */
+  generation?: number;
   protocolVersion: 1;
   runtime: { react: string; reactDom: string; rsc: string };
   artifactOperation: string;
-  authentication: { scheme: string; keyId: string; signature: string };
+  authentication: {
+    scheme: string;
+    keyId: string;
+    /** Legacy-compatible signature over the announcement without generation. */
+    signature: string;
+    /** Signature over the full announcement when generation is present. */
+    generationSignature?: string;
+  };
 }
 
 export interface RscDiscoveryDeployment {
   announcement: RscDiscoveryAnnouncement;
+}
+
+export interface RscDiscoveryGenerationHighWater {
+  generation: number;
+  announcement: string;
+  active: boolean;
 }
 
 export interface RscDiscoveryManagerOptions<T extends RscDiscoveryDeployment = RscDiscoveryDeployment> {
@@ -28,6 +43,12 @@ export interface RscDiscoveryManagerOptions<T extends RscDiscoveryDeployment = R
   retire(deployment: T): Promise<void>;
   missingReconciliations?: number;
   select?: (candidates: readonly RscDiscoveryAnnouncement[]) => RscDiscoveryAnnouncement;
+  /**
+   * Optional caller-owned store for accepted publication generation high-water marks.
+   * One live manager owns a store exclusively until close() succeeds.
+   */
+  generationHighWater?: Map<string, RscDiscoveryGenerationHighWater>;
+  generationHistorySize?: number;
 }
 
 export interface RscDiscoverySnapshot {
@@ -36,6 +57,7 @@ export interface RscDiscoverySnapshot {
   namespace: string;
   instanceId: string;
   priority: number;
+  generation?: number;
   state: 'enabled' | 'unavailable';
   missingReconciliations: number;
 }
@@ -65,6 +87,10 @@ export function validateRscDiscoveryAnnouncement(value: unknown): RscDiscoveryAn
   if (!Number.isSafeInteger(record.priority)) {
     throw new TypeError('RSC discovery priority must be a safe integer');
   }
+  if (record.generation !== undefined
+    && (!Number.isSafeInteger(record.generation) || (record.generation as number) < 0)) {
+    throw new TypeError('RSC discovery generation must be a non-negative safe integer');
+  }
   const artifactOperation = requiredString(record, 'artifactOperation');
   if (!artifactOperation.startsWith('/') || artifactOperation.includes('..')) {
     throw new TypeError('RSC discovery artifactOperation must be an absolute safe operation');
@@ -87,6 +113,7 @@ export function validateRscDiscoveryAnnouncement(value: unknown): RscDiscoveryAn
     buildId: requiredString(record, 'buildId'),
     namespace: requiredString(record, 'namespace'),
     priority: record.priority as number,
+    ...(record.generation === undefined ? {} : { generation: record.generation as number }),
     protocolVersion: 1,
     runtime: {
       react: requiredString(runtimeRecord, 'react'),
@@ -98,6 +125,9 @@ export function validateRscDiscoveryAnnouncement(value: unknown): RscDiscoveryAn
       scheme: requiredString(authenticationRecord, 'scheme'),
       keyId: requiredString(authenticationRecord, 'keyId'),
       signature: requiredString(authenticationRecord, 'signature'),
+      ...(authenticationRecord.generationSignature === undefined
+        ? {}
+        : { generationSignature: requiredString(authenticationRecord, 'generationSignature') }),
     },
   };
 }
@@ -113,6 +143,7 @@ export function canonicalizeRscDiscoveryAnnouncement(
     buildId: value.buildId,
     namespace: value.namespace,
     priority: value.priority,
+    ...(value.generation === undefined ? {} : { generation: value.generation }),
     protocolVersion: value.protocolVersion,
     runtime: value.runtime,
     artifactOperation: value.artifactOperation,
@@ -127,6 +158,7 @@ export function createRscDiscoveryTopic(instanceId: string): string {
 function defaultSelect(candidates: readonly RscDiscoveryAnnouncement[]): RscDiscoveryAnnouncement {
   return [...candidates].sort((a, b) =>
     b.priority - a.priority
+    || (b.generation ?? 0) - (a.generation ?? 0)
     || b.buildId.localeCompare(a.buildId)
     || a.namespace.localeCompare(b.namespace)
     || a.instanceId.localeCompare(b.instanceId))[0];
@@ -141,6 +173,11 @@ interface ActiveRecord<T extends RscDiscoveryDeployment> {
   missing: number;
 }
 
+const generationStoreOwners = new WeakMap<
+  Map<string, RscDiscoveryGenerationHighWater>,
+  symbol
+>();
+
 export class RscDiscoveryManager<T extends RscDiscoveryDeployment = RscDiscoveryDeployment> {
   private readonly active = new Map<string, ActiveRecord<T>>();
   private readonly pendingRetirements: T[] = [];
@@ -149,6 +186,9 @@ export class RscDiscoveryManager<T extends RscDiscoveryDeployment = RscDiscovery
   private readonly replace?: RscDiscoveryManagerOptions<T>['replace'];
   private readonly missingReconciliations: number;
   private readonly select: NonNullable<RscDiscoveryManagerOptions<T>['select']>;
+  private readonly generationHighWater: Map<string, RscDiscoveryGenerationHighWater>;
+  private readonly generationHistorySize: number;
+  private readonly generationStoreOwner = Symbol('RscDiscoveryManager');
   private queue: Promise<void> = Promise.resolve();
   private closed = false;
   private closePromise?: Promise<void>;
@@ -162,6 +202,89 @@ export class RscDiscoveryManager<T extends RscDiscoveryDeployment = RscDiscovery
       throw new TypeError('missingReconciliations must be a positive safe integer');
     }
     this.select = options.select ?? defaultSelect;
+    this.generationHighWater = options.generationHighWater ?? new Map();
+    this.generationHistorySize = options.generationHistorySize ?? 4096;
+    if (!Number.isSafeInteger(this.generationHistorySize) || this.generationHistorySize < 1) {
+      throw new TypeError('generationHistorySize must be a positive safe integer');
+    }
+    if (this.generationHighWater.size > this.generationHistorySize) {
+      throw new TypeError('generationHighWater exceeds generationHistorySize');
+    }
+    if (generationStoreOwners.has(this.generationHighWater)) {
+      throw new Error('generationHighWater is already in use by another discovery manager');
+    }
+    generationStoreOwners.set(this.generationHighWater, this.generationStoreOwner);
+  }
+
+  private generationKey(announcement: RscDiscoveryAnnouncement): string {
+    return JSON.stringify([
+      announcement.authentication.keyId,
+      announcement.pluginId,
+      announcement.instanceId,
+    ]);
+  }
+
+  private acceptedGeneration(
+    announcement: RscDiscoveryAnnouncement,
+  ): RscDiscoveryGenerationHighWater | undefined {
+    return this.generationHighWater.get(this.generationKey(announcement));
+  }
+
+  private generationFingerprint(announcement: RscDiscoveryAnnouncement): string {
+    return JSON.stringify(announcement);
+  }
+
+  private recordGeneration(announcement: RscDiscoveryAnnouncement): void {
+    const key = this.generationKey(announcement);
+    const generation = announcement.generation ?? 0;
+    const current = this.generationHighWater.get(key);
+    if (current !== undefined
+      && (current.generation > generation
+        || (current.generation === generation
+          && current.announcement === this.generationFingerprint(announcement)))) {
+      this.generationHighWater.delete(key);
+      this.generationHighWater.set(key, current);
+      return;
+    }
+    if (current === undefined && this.generationHighWater.size >= this.generationHistorySize) {
+      throw new Error('RSC discovery generation history capacity exhausted');
+    }
+    this.generationHighWater.delete(key);
+    this.generationHighWater.set(key, {
+      generation,
+      announcement: this.generationFingerprint(announcement),
+      active: true,
+    });
+  }
+
+  private tombstoneGeneration(announcement: RscDiscoveryAnnouncement): void {
+    const key = this.generationKey(announcement);
+    const current = this.generationHighWater.get(key);
+    if (current
+      && current.generation === (announcement.generation ?? 0)
+      && current.announcement === this.generationFingerprint(announcement)) {
+      this.generationHighWater.set(key, { ...current, active: false });
+    }
+  }
+
+  private isLegacyPromotion(
+    announcement: RscDiscoveryAnnouncement,
+    highWater: RscDiscoveryGenerationHighWater,
+  ): boolean {
+    if (!highWater.active
+      || highWater.generation !== 0
+      || announcement.generation !== 0
+      || announcement.authentication.generationSignature === undefined) return false;
+    let previous: RscDiscoveryAnnouncement;
+    try {
+      previous = JSON.parse(highWater.announcement) as RscDiscoveryAnnouncement;
+    } catch {
+      return false;
+    }
+    if (previous.generation !== undefined) return false;
+    const { generation: _generation, authentication, ...legacy } = announcement;
+    const { generationSignature: _generationSignature, ...legacyAuthentication } = authentication;
+    return JSON.stringify({ ...legacy, authentication: legacyAuthentication }) === highWater.announcement;
   }
 
   public reconcile(values: readonly unknown[]): Promise<void> {
@@ -209,12 +332,45 @@ export class RscDiscoveryManager<T extends RscDiscoveryDeployment = RscDiscovery
         current.missing++;
         if (current.missing >= this.missingReconciliations) {
           await this.retire(current.deployment);
+          this.tombstoneGeneration(current.deployment.announcement);
           this.active.delete(pluginId);
         }
         continue;
       }
 
-      const remaining = [...entries];
+      const replayErrors: Error[] = [];
+      const remaining = entries.filter((entry) => {
+        const highWater = this.acceptedGeneration(entry);
+        if (highWater === undefined
+          && this.generationHighWater.size >= this.generationHistorySize) {
+          replayErrors.push(new Error('RSC discovery generation history capacity exhausted'));
+          return false;
+        }
+        const generation = entry.generation ?? 0;
+        if (highWater === undefined
+          || generation > highWater.generation
+          || this.isLegacyPromotion(entry, highWater)
+          || (generation === highWater.generation
+            && highWater.active
+            && this.generationFingerprint(entry) === highWater.announcement)) return true;
+        replayErrors.push(new Error(
+          `RSC discovery generation rollback rejected: ${entry.pluginId}/${entry.instanceId} `
+          + `${generation} is not newer than accepted generation ${highWater.generation}`,
+        ));
+        return false;
+      });
+      if (!remaining.length) {
+        errors.push(...replayErrors);
+        if (current) {
+          current.missing++;
+          if (current.missing >= this.missingReconciliations) {
+            await this.retire(current.deployment);
+            this.tombstoneGeneration(current.deployment.announcement);
+            this.active.delete(pluginId);
+          }
+        }
+        continue;
+      }
       let next: T | undefined;
       const deploymentErrors: unknown[] = [];
       while (remaining.length) {
@@ -226,7 +382,14 @@ export class RscDiscoveryManager<T extends RscDiscoveryDeployment = RscDiscovery
           throw new TypeError('RSC discovery selection policy returned an unknown candidate');
         }
         if (current && sameDeployment(current.deployment.announcement, selected)) {
+          const previous = current.deployment.announcement;
           current.missing = 0;
+          current.deployment.announcement = structuredClone(selected);
+          this.recordGeneration(selected);
+          if (!entries.some((entry) =>
+            this.generationFingerprint(entry) === this.generationFingerprint(previous))) {
+            this.tombstoneGeneration(previous);
+          }
           next = current.deployment;
           break;
         }
@@ -237,10 +400,13 @@ export class RscDiscoveryManager<T extends RscDiscoveryDeployment = RscDiscovery
           && current.deployment.announcement.buildId === selected.buildId
         ) {
           next = await this.replace(current.deployment, selected);
+          this.recordGeneration(selected);
           break;
         }
         try {
-          next = await this.deploy(selected);
+          const deployed = await this.deploy(selected);
+          this.recordGeneration(selected);
+          next = deployed;
           break;
         } catch (error) {
           deploymentErrors.push(error);
@@ -252,6 +418,11 @@ export class RscDiscoveryManager<T extends RscDiscoveryDeployment = RscDiscovery
       }
       if (current && next === current.deployment) continue;
       this.active.set(pluginId, { deployment: next, missing: 0 });
+      if (current && !entries.some((entry) =>
+        this.generationFingerprint(entry)
+          === this.generationFingerprint(current.deployment.announcement))) {
+        this.tombstoneGeneration(current.deployment.announcement);
+      }
       if (current && current.deployment.announcement.buildId !== next.announcement.buildId) {
         try {
           await this.retire(current.deployment);
@@ -278,6 +449,9 @@ export class RscDiscoveryManager<T extends RscDiscoveryDeployment = RscDiscovery
         namespace: deployment.announcement.namespace,
         instanceId: deployment.announcement.instanceId,
         priority: deployment.announcement.priority,
+        ...(deployment.announcement.generation === undefined
+          ? {}
+          : { generation: deployment.announcement.generation }),
         state: missing > 0 ? 'unavailable' as const : 'enabled' as const,
         missingReconciliations: missing,
       }))
@@ -307,6 +481,9 @@ export class RscDiscoveryManager<T extends RscDiscoveryDeployment = RscDiscovery
         }
       }
       if (errors.length) throw new AggregateError(errors, 'RSC discovery shutdown failed');
+      if (generationStoreOwners.get(this.generationHighWater) === this.generationStoreOwner) {
+        generationStoreOwners.delete(this.generationHighWater);
+      }
     })();
     this.closePromise = operation.catch((error) => {
       this.closePromise = undefined;

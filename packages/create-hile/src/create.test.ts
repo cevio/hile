@@ -79,6 +79,7 @@ describe('RSC project templates', () => {
     ['rsc-host', [
       'package.json',
       'src/app/page.tsx',
+      'src/app/rsc-client-runtime.tsx',
       'src/app/plugins/[pluginId]/[[...path]]/page.tsx',
       'src/services/runtime.boot.ts',
     ]],
@@ -132,6 +133,10 @@ describe('RSC project templates', () => {
     const pluginPackage = JSON.parse(readFileSync(path.join(templates, 'rsc-plugin/package.json'), 'utf8'));
     const hostBoot = readFileSync(path.join(templates, 'rsc-host/src/services/runtime.boot.ts'), 'utf8');
     const hostLayout = readFileSync(path.join(templates, 'rsc-host/src/app/layout.tsx'), 'utf8');
+    const hostClientRuntime = readFileSync(
+      path.join(templates, 'rsc-host/src/app/rsc-client-runtime.tsx'),
+      'utf8',
+    );
     expect(pluginPackage.scripts['dev:rsc']).toContain('hile-rsc-dev');
     expect(pluginPackage.dependencies['@hile/rsc-discovery-hile']).toBeDefined();
     expect(pluginBoot).toContain('new HileRscPluginRuntime');
@@ -139,10 +144,18 @@ describe('RSC project templates', () => {
     expect(pluginBoot).toContain('publishArtifact(record.artifactRoot)');
     expect(pluginBoot).toContain('bindRscPluginDevelopmentState');
     expect(pluginBoot).toContain('bindRscModelDevelopment');
+    expect(pluginBoot).toContain('generation:');
     expect(hostBoot).toContain('HileRscDiscoveryHost');
+    expect(hostBoot).toContain('snapshotConcurrency:');
+    expect(hostBoot).toContain('generationHighWater:');
+    expect(hostBoot).toContain('RSC_DISCOVERY_REQUIRE_GENERATION');
+    expect(readFileSync(path.join(templates, 'rsc-host/_env.prod'), 'utf8'))
+      .toContain('RSC_DISCOVERY_REQUIRE_GENERATION=true');
     expect(hostBoot).toContain('createRscDevelopmentEventMiddleware');
     expect(hostBoot).not.toContain('RSC_ARTIFACT_ROOT');
     expect(hostBoot).not.toContain('RSC_PLUGIN_NAMESPACE');
     expect(hostLayout).toContain('RscDevelopmentReload');
+    expect(hostClientRuntime.startsWith("'use client';")).toBe(true);
+    expect(hostClientRuntime).toContain('renderError=');
   });
 });

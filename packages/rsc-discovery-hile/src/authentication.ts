@@ -8,6 +8,8 @@ export interface HmacRscDiscoveryCredential {
   secret: string | Uint8Array;
   /** Plugin identities this signing key is authorized to publish. */
   pluginIds: readonly string[];
+  /** Reject legacy announcements that do not carry a generation-bound signature. */
+  requireGeneration?: boolean;
 }
 
 export function createHmacRscDiscoveryAuthorizer(
@@ -30,12 +32,22 @@ export function createHmacRscDiscoveryAuthorizer(
       || (typeof credential.secret === 'string' && credential.secret.length === 0)
       || (credential.secret instanceof Uint8Array && credential.secret.byteLength === 0)
     ) return false;
+    if (credential.requireGeneration
+      && (announcement.generation === undefined
+        || announcement.authentication.generationSignature === undefined)) return false;
     const { authentication, ...unsigned } = announcement;
-    const expected = createHmac('sha256', credential.secret)
-      .update(canonicalizeRscDiscoveryAnnouncement(unsigned))
-      .digest();
-    let actual: Buffer;
-    try { actual = Buffer.from(authentication.signature, 'base64url'); } catch { return false; }
-    return actual.length === expected.length && timingSafeEqual(actual, expected);
+    const { generation: _generation, ...legacyUnsigned } = unsigned;
+    const verify = (signature: string | undefined, payload: typeof unsigned): boolean => {
+      if (!signature) return false;
+      const expected = createHmac('sha256', credential.secret)
+        .update(canonicalizeRscDiscoveryAnnouncement(payload))
+        .digest();
+      let actual: Buffer;
+      try { actual = Buffer.from(signature, 'base64url'); } catch { return false; }
+      return actual.length === expected.length && timingSafeEqual(actual, expected);
+    };
+    if (!verify(authentication.signature, legacyUnsigned)) return false;
+    return unsigned.generation === undefined
+      || verify(authentication.generationSignature, unsigned);
   };
 }

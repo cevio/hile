@@ -1,12 +1,12 @@
 import { getHttpNextRequestSignal } from '@hile/http-next';
-import { RscClientRuntimeProvider } from '@hile/rsc/client';
 import { decodePluginFlight } from '@hile/rsc-next';
-import { RscNextClientRuntime } from '@hile/rsc-next/client';
 import { RscHostRuntime } from '@hile/rsc/host/runtime';
 import { notFound } from 'next/navigation';
+import DemoRscClientRuntime from '../../../rsc-client-runtime';
 import { getDemoHostComposition } from '../../../../services/runtime-reference';
 
 export const dynamic = 'force-dynamic';
+const manifestVerificationCache = new Map<string, Promise<void>>();
 
 export default async function PluginPage({
   params,
@@ -23,6 +23,14 @@ export default async function PluginPage({
   const runtime = new RscHostRuntime({
     locator: composition.locator,
     decoder: { decode: (flight) => decodePluginFlight(flight) },
+    verificationCache: manifestVerificationCache,
+    observe: (event) => console.info('RSC host render', {
+      pluginId: event.pluginId,
+      buildId: event.buildId,
+      outcome: event.outcome,
+      durationMs: Math.round(event.durationMs),
+      bytes: event.bytes,
+    }),
   });
   const tree = await runtime.render({
     pluginId,
@@ -35,16 +43,17 @@ export default async function PluginPage({
       ),
     },
     signal: getHttpNextRequestSignal(),
+    timeout: Number(process.env.RSC_RENDER_TIMEOUT_MS ?? 30_000),
+    idleTimeout: Number(process.env.RSC_RENDER_IDLE_TIMEOUT_MS ?? 10_000),
+    window: Number(process.env.RSC_RENDER_WINDOW ?? 8),
   });
 
   return (
     <main className="host-plugin-frame" data-rsc-host data-plugin-id={pluginId} data-build-id={active.buildId}>
       <p className="host-badge">Host frame · active {active.buildId}</p>
-      <RscNextClientRuntime serverFunctions={{ headers: { 'x-rsc-demo-token': 'demo-token' } }}>
-        <RscClientRuntimeProvider assetMountPath={composition.assetMountPath}>
-          {tree}
-        </RscClientRuntimeProvider>
-      </RscNextClientRuntime>
+      <DemoRscClientRuntime assetMountPath={composition.assetMountPath}>
+        {tree}
+      </DemoRscClientRuntime>
     </main>
   );
 }

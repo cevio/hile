@@ -17,6 +17,13 @@ export interface ClientProps {
   ws: WebSocket;
 }
 
+export interface ClientStreamOptions {
+  signal?: AbortSignal;
+  timeout?: number;
+  idleTimeout?: number;
+  window?: number;
+}
+
 export type MicroMessageMetadata = {
   context?: ContextInput<ContextData>;
   [key: string]: unknown;
@@ -170,7 +177,7 @@ export class Client extends MessageWs {
     return this._push(createEnvelope(url, data), options);
   }
 
-  public stream(url: string, data: any, options?: { signal?: AbortSignal }) {
+  public stream(url: string, data: any, options?: ClientStreamOptions) {
     if (!this._online) throw new Error('Client is not online');
     return this._stream(createEnvelope(url, data), options);
   }

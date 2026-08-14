@@ -139,6 +139,51 @@ describe('buildRscPlugin', () => {
     expect(ssrChunks.join('\n')).toContain('lazy-client-chunk');
   });
 
+  it('declares only chunks reachable from each client boundary', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'hile-rsc-source-'));
+    const outdir = await mkdtemp(path.join(tmpdir(), 'hile-rsc-build-'));
+    tempDirs.push(cwd, outdir);
+    await mkdir(path.join(cwd, 'src'), { recursive: true });
+    await writeFile(path.join(cwd, 'src/first-lazy.ts'),
+      `export const marker = 'first-lazy-only';\n`);
+    await writeFile(path.join(cwd, 'src/second-lazy.ts'),
+      `export const marker = 'second-lazy-only';\n`);
+    await writeFile(path.join(cwd, 'src/first.tsx'), `
+      'use client';
+      export async function loadFirst() { return import('./first-lazy'); }
+      export default function First() { return null; }
+    `);
+    await writeFile(path.join(cwd, 'src/second.tsx'), `
+      'use client';
+      export async function loadSecond() { return import('./second-lazy'); }
+      export default function Second() { return null; }
+    `);
+    await writeFile(path.join(cwd, 'src/page.tsx'), `
+      import First from './first';
+      import Second from './second';
+      export default function Page() { return <><First /><Second /></>; }
+    `);
+
+    const manifest = await buildRscPlugin({
+      pluginId: 'org.hile.precise-chunks', buildId: 'build-a', cwd, entry: 'src/page.tsx', outdir,
+      routes: [{ path: '/fixture', entry: 'default' }],
+      runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
+    });
+    const first = manifest.clients.find((reference) => reference.id.endsWith('/src/first#default'))!;
+    const second = manifest.clients.find((reference) => reference.id.endsWith('/src/second#default'))!;
+
+    for (const target of ['chunks', 'ssrChunks'] as const) {
+      const firstChunks = await Promise.all(first[target].map((chunk) =>
+        readFile(path.join(outdir, chunk.path), 'utf8')));
+      const secondChunks = await Promise.all(second[target].map((chunk) =>
+        readFile(path.join(outdir, chunk.path), 'utf8')));
+      expect(firstChunks.join('\n')).toContain('first-lazy-only');
+      expect(firstChunks.join('\n')).not.toContain('second-lazy-only');
+      expect(secondChunks.join('\n')).toContain('second-lazy-only');
+      expect(secondChunks.join('\n')).not.toContain('first-lazy-only');
+    }
+  });
+
   it('extracts CSS imported by the client graph', async () => {
     const { outdir, manifest } = await build();
 

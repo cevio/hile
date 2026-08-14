@@ -254,6 +254,54 @@ describe('RscPluginService', () => {
     expect(chunks.map(String)).toEqual(['first']);
   });
 
+  it('terminates an in-flight render with the shutdown reason when the plugin deactivates', async () => {
+    const continueRender = deferred<void>();
+    const service = new RscPluginService({
+      manifest: manifest(),
+      renderer: async function* () {
+        yield Buffer.from('first');
+        await continueRender.promise;
+        yield Buffer.from('late');
+      },
+    });
+    const iterator = service.render({ buildId: 'build-1', path: '/dashboard' })
+      [Symbol.asyncIterator]();
+
+    await expect(iterator.next()).resolves.toMatchObject({ done: false });
+    service.deactivate();
+    continueRender.resolve();
+
+    await expect(iterator.next()).rejects.toMatchObject({
+      code: 'ERR_RSC_PLUGIN_INACTIVE',
+    });
+    await expect(service.drain()).resolves.toBeUndefined();
+  });
+
+  it('does not turn a shutdown-aware renderer return into graceful EOF', async () => {
+    const service = new RscPluginService({
+      manifest: manifest(),
+      renderer: async function* ({ signal }) {
+        yield Buffer.from('first');
+        if (!signal.aborted) {
+          await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), {
+            once: true,
+          }));
+        }
+        return;
+      },
+    });
+    const iterator = service.render({ buildId: 'build-1', path: '/dashboard' })
+      [Symbol.asyncIterator]();
+
+    await expect(iterator.next()).resolves.toMatchObject({ done: false });
+    service.deactivate();
+
+    await expect(iterator.next()).rejects.toMatchObject({
+      code: 'ERR_RSC_PLUGIN_INACTIVE',
+    });
+    await expect(service.drain()).resolves.toBeUndefined();
+  });
+
   it('releases in-flight state when a consumer breaks early', async () => {
     const service = new RscPluginService({
       manifest: manifest(),
@@ -519,7 +567,7 @@ describe('RscPluginService', () => {
     const signal = await started.promise;
 
     service.deactivate();
-    await consume;
+    await expect(consume).rejects.toMatchObject({ code: 'ERR_RSC_PLUGIN_INACTIVE' });
     await service.drain();
 
     expect(signal.aborted).toBe(true);

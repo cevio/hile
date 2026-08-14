@@ -38,7 +38,12 @@ class TestModem extends MessageModem {
     }
   }
 
-  public stream<T>(data: T, options?: { signal?: AbortSignal }) {
+  public stream<T>(data: T, options?: {
+    signal?: AbortSignal;
+    timeout?: number;
+    idleTimeout?: number;
+    window?: number;
+  }) {
     return super._stream(data, options);
   }
 }
@@ -622,6 +627,111 @@ describe('@hile/message-modem', () => {
       expect(nextCalls).toBe(1);
       expect(b.posted.filter((msg) => msg.mode === MESSAGE_MODEM_TYPE.RESPONSE)).toHaveLength(1);
       stream.destroy();
+    });
+
+    it('advertises and enforces a bounded multi-chunk credit window', async () => {
+      const a = new TestModem();
+      const b = new TestModem();
+      a.peer = b;
+      b.peer = a;
+      let nextCalls = 0;
+      b['exec'] = async () => ({
+        [Symbol.asyncIterator]() {
+          return {
+            async next() {
+              nextCalls++;
+              return { done: false, value: nextCalls };
+            },
+          };
+        },
+      });
+
+      const stream = a.stream('windowed', { window: 4 });
+      stream.on('error', () => {});
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      expect(a.posted.find(({ mode }) => mode === MESSAGE_MODEM_TYPE.REQUEST))
+        .toMatchObject({ streamWindow: 4 });
+      expect(nextCalls).toBe(4);
+
+      expect(stream.read()).toBe(1);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(nextCalls).toBe(5);
+      stream.destroy();
+    });
+
+    it('rejects a peer that sends more unconsumed chunks than the negotiated window', async () => {
+      const modem = new TestModem();
+      const stream = modem.stream('windowed', { window: 2 });
+      const error = new Promise<Error>((resolve) => stream.once('error', resolve));
+      const response = (seq: number) => modem.receive({
+        id: 0,
+        mode: MESSAGE_MODEM_TYPE.RESPONSE,
+        stream: true,
+        streamVersion: 1,
+        twoway: false,
+        data: { status: 200, seq, payload: seq, final: false },
+      });
+
+      response(0);
+      response(1);
+      response(2);
+
+      await expect(error).resolves.toMatchObject({ status: 429 });
+      expect(stream.readableLength).toBeLessThanOrEqual(2);
+    });
+
+    it('aborts a stream after its total timeout', async () => {
+      const modem = new TestModem();
+      const stream = modem.stream('timed', { timeout: 20 });
+      const error = new Promise<Error>((resolve) => stream.once('error', resolve));
+      stream.resume();
+
+      await expect(Promise.race([
+        error,
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('stream did not time out')), 200)),
+      ])).resolves.toBeInstanceOf(TimeoutException);
+      expect(modem.posted).toContainEqual(expect.objectContaining({
+        mode: MESSAGE_MODEM_TYPE.ABORT,
+        data: 0,
+      }));
+    });
+
+    it('rejects stream windows and timer delays outside runtime bounds', () => {
+      const modem = new TestModem();
+
+      expect(() => modem.stream('wide', { window: 65 })).toThrow('64');
+      expect(() => modem.stream('long', { timeout: Number.MAX_SAFE_INTEGER }))
+        .toThrow('2147483647');
+      expect(() => modem.stream('idle', { idleTimeout: 0 })).toThrow('positive');
+      expect(modem.posted).toEqual([]);
+    });
+
+    it('resets the idle timeout after every valid stream response', async () => {
+      const a = new TestModem();
+      const b = new TestModem();
+      a.peer = b;
+      b.peer = a;
+      b['exec'] = async () => ({
+        async *[Symbol.asyncIterator]() {
+          yield 'first';
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          yield 'second';
+          await new Promise(() => {});
+        },
+      });
+
+      const stream = a.stream('idle', { timeout: 250, idleTimeout: 50 });
+      const chunks: string[] = [];
+      stream.on('data', (chunk) => chunks.push(chunk));
+      const error = new Promise<Error>((resolve) => stream.once('error', resolve));
+      stream.resume();
+
+      await expect(Promise.race([
+        error,
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('stream did not become idle')), 200)),
+      ])).resolves.toBeInstanceOf(TimeoutException);
+      expect(chunks).toEqual(['first', 'second']);
     });
 
     it('rejects legacy uncredited streams that do not negotiate version 1', async () => {

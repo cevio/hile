@@ -40,6 +40,7 @@ const runtime = new HileRscPluginRuntime({
     namespace,
     instanceId,
     priority: 0,
+    generation: 0,
     artifactRoot,
     authentication: { keyId, secret },
   },

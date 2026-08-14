@@ -55,6 +55,28 @@ test.describe.serial('Registry-driven single HTTP RSC topology', () => {
     expect(border).toBe('rgb(194, 65, 12)');
   });
 
+  test('recovers a remote client boundary after a transient manifest failure', async ({ page }) => {
+    let allowManifest = false;
+    let failures = 0;
+    await page.route('**/_hile/rsc/assets/demo.rsc.capabilities/*/plugin.json', async (route) => {
+      if (!allowManifest) {
+        failures++;
+        await route.fulfill({ status: 503, contentType: 'text/plain', body: 'temporary failure' });
+      } else {
+        await route.continue();
+      }
+    });
+    await page.goto('/plugins/demo.rsc.capabilities?label=retry-boundary');
+    const fallback = page.locator('[data-demo-rsc-error]');
+    await expect(fallback).toHaveAttribute('data-plugin-id', 'demo.rsc.capabilities');
+    await expect(fallback).toHaveAttribute('data-demo-rsc-error', /#/);
+    allowManifest = true;
+    await fallback.getByRole('button', { name: 'Retry' }).click();
+    await expect(page.getByTestId('v2-hydration')).toHaveText('hydrated-v2');
+    await expect(fallback).toHaveCount(0);
+    expect(failures).toBeGreaterThan(0);
+  });
+
   test('removes the manual lifecycle mutation endpoint', async ({ request }) => {
     const response = await request.post('/api/demo/deployments', {
       data: { operation: 'activate', pluginId: 'demo.rsc.capabilities', buildId: 'v1' },

@@ -38,6 +38,8 @@ import {
   type DemoHostComposition,
 } from './runtime-reference';
 
+const discoveryGenerationHighWater = new Map();
+
 export default defineService<DemoHostComposition>(DEMO_HOST_SERVICE_KEY, async (shutdown) => {
   const hostRoot = process.cwd();
   const artifacts = new InMemoryRscArtifactCatalog();
@@ -65,14 +67,18 @@ export default defineService<DemoHostComposition>(DEMO_HOST_SERVICE_KEY, async (
     runtime: HILE_RSC_RUNTIME,
     pollIntervalMs: Number(process.env.RSC_DISCOVERY_POLL_MS ?? 250),
     missingReconciliations: Number(process.env.RSC_DISCOVERY_MISSING_RECONCILIATIONS ?? 3),
+    snapshotConcurrency: Number(process.env.RSC_DISCOVERY_SNAPSHOT_CONCURRENCY ?? 16),
+    generationHighWater: discoveryGenerationHighWater,
     authorize: createHmacRscDiscoveryAuthorizer((keyId) => {
       if (keyId === 'demo-capabilities') return {
         secret: process.env.RSC_CAPABILITIES_DISCOVERY_SECRET ?? 'demo-capabilities-secret',
         pluginIds: ['demo.rsc.capabilities'],
+        requireGeneration: true,
       };
       if (keyId === 'demo-isolation') return {
         secret: process.env.RSC_ISOLATION_DISCOVERY_SECRET ?? 'demo-isolation-secret',
         pluginIds: ['demo.rsc.isolation'],
+        requireGeneration: true,
       };
       return undefined;
     }),

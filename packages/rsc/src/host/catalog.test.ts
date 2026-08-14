@@ -91,6 +91,7 @@ describe('catalog-backed plugin locator', () => {
 
     const lease = await locator.resolve(deploymentA, { signal });
     expect(lease.client).toBe(client);
+    expect(lease.verificationKey).toBeUndefined();
     expect(connect).toHaveBeenCalledWith(deploymentA, { signal });
     expect(catalog.snapshot()[0].references).toBe(1);
     lease.release();

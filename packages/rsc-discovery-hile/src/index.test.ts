@@ -1,10 +1,11 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RscPluginManifest } from '@hile/rsc/protocol';
+import { canonicalizeRscDiscoveryAnnouncement } from '@hile/rsc-discovery';
 import {
   downloadHileRscArtifact,
   createHmacRscDiscoveryAuthorizer,
@@ -76,7 +77,23 @@ describe('Hile RSC discovery publisher', () => {
       ? { secret: 'test-secret', pluginIds: ['org.hile.fixture'] }
       : undefined);
     expect(authorize(published)).toBe(true);
+    const { generation: _legacyGeneration, ...legacyUnsigned } = published;
+    const { generationSignature: _ignored, ...legacyAuthentication } = published.authentication;
+    const legacyView = { ...legacyUnsigned, authentication: legacyAuthentication };
+    expect(createHmacRscDiscoveryAuthorizer(() => ({
+      secret: 'test-secret', pluginIds: ['org.hile.fixture'],
+    }))(legacyView)).toBe(true);
+    const strictAuthorize = createHmacRscDiscoveryAuthorizer(() => ({
+      secret: 'test-secret', pluginIds: ['org.hile.fixture'], requireGeneration: true,
+    }));
+    expect(strictAuthorize(published)).toBe(true);
+    expect(strictAuthorize(legacyView)).toBe(false);
+    const { authentication: _legacyAuthentication, ...legacyPayload } = legacyView;
+    expect(legacyAuthentication.signature).toBe(createHmac('sha256', 'test-secret')
+      .update(canonicalizeRscDiscoveryAnnouncement(legacyPayload))
+      .digest('base64url'));
     expect(authorize({ ...published, priority: published.priority + 1 })).toBe(false);
+    expect(authorize({ ...published, generation: (published.generation ?? 0) + 1 })).toBe(false);
     const wrongOwner = createHmacRscDiscoveryAuthorizer(() => ({
       secret: 'test-secret', pluginIds: ['org.hile.other'],
     }));
@@ -109,11 +126,14 @@ describe('Hile RSC discovery publisher', () => {
     };
     const registration = await registerHileRscPluginDiscovery({
       application, namespace: 'fixture.service', instanceId: 'fixture-instance', priority: 1,
+      generation: 7,
       artifactRoot: first.root,
       authentication: { keyId: 'test', secret: 'test-secret' },
     });
     await registration.update(second.root);
-    expect(update).toHaveBeenCalledWith(expect.objectContaining({ buildId: 'build-2' }));
+    expect(application.publish).toHaveBeenCalledWith(expect.any(String),
+      expect.objectContaining({ buildId: 'build-1', generation: 7 }));
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ buildId: 'build-2', generation: 8 }));
 
     await writeFile(path.join(second.root, second.manifest.server.entry), 'corrupt');
     await expect(registration.update(second.root)).rejects.toThrow('integrity mismatch');
@@ -210,6 +230,69 @@ describe('Hile RSC discovery reader and artifact downloader', () => {
       expect.objectContaining({ topic: '@hile/rsc/discovery/v1/bad', error: expect.any(TypeError) }),
     ]);
     expect(application.getRegistryTopic).toHaveBeenCalledTimes(2);
+  });
+
+  it('reads topics with bounded concurrency while preserving topic order', async () => {
+    const topicNames = ['delta', 'alpha', 'charlie', 'bravo'];
+    let active = 0;
+    let maximumActive = 0;
+    const application = {
+      listRegistryTopics: vi.fn(async () => topicNames.map((name) => ({
+        topic: `@hile/rsc/discovery/v1/${name}`,
+        hasData: true,
+      }))),
+      getRegistryTopic: vi.fn(async (topic: string) => {
+        active++;
+        maximumActive = Math.max(maximumActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        active--;
+        const instanceId = topic.split('/').at(-1)!;
+        return {
+          hasData: true,
+          payload: {
+            schemaVersion: 1, capability: '@hile/rsc', instanceId,
+            pluginId: `org.hile.${instanceId}`, buildId: 'build-1', namespace: instanceId,
+            priority: 1, protocolVersion: 1,
+            runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
+            artifactOperation: '/-/rsc/artifact',
+            authentication: { scheme: 'test', keyId: 'fixture', signature: 'valid' },
+          },
+        };
+      }),
+    };
+
+    const snapshot = await readHileRscDiscoverySnapshot(application, { concurrency: 2 });
+
+    expect(maximumActive).toBe(2);
+    expect(snapshot.announcements.map(({ instanceId }) => instanceId))
+      .toEqual(['alpha', 'bravo', 'charlie', 'delta']);
+  });
+
+  it('forwards one abort signal to Registry listing and topic reads', async () => {
+    const controller = new AbortController();
+    const application = {
+      listRegistryTopics: vi.fn(async (_prefix?: string, _options?: { signal?: AbortSignal }) => [{
+        topic: '@hile/rsc/discovery/v1/fixture', hasData: true,
+      }]),
+      getRegistryTopic: vi.fn(async (_topic: string, _options?: { signal?: AbortSignal }) => ({
+        hasData: true,
+        payload: {
+          schemaVersion: 1, capability: '@hile/rsc', instanceId: 'fixture',
+          pluginId: 'org.hile.fixture', buildId: 'build-1', namespace: 'fixture',
+          priority: 1, protocolVersion: 1,
+          runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
+          artifactOperation: '/-/rsc/artifact',
+          authentication: { scheme: 'test', keyId: 'fixture', signature: 'valid' },
+        },
+      })),
+    };
+    await readHileRscDiscoverySnapshot(application, { signal: controller.signal });
+    expect(application.listRegistryTopics).toHaveBeenCalledWith(
+      '@hile/rsc/discovery/v1/', { signal: controller.signal },
+    );
+    expect(application.getRegistryTopic).toHaveBeenCalledWith(
+      '@hile/rsc/discovery/v1/fixture', { signal: controller.signal },
+    );
   });
 
   it('downloads message-streamed files into a verified isolated artifact', async () => {

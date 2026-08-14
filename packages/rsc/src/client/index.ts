@@ -1,4 +1,10 @@
-export { default as RemoteClientBoundary } from './remote-client-boundary';
+export {
+  clearRscClientCaches,
+  clearRscClientBuildCache,
+  default as RemoteClientBoundary,
+  renderRemoteClientErrorFallback,
+  resolveRemoteClientAssets,
+} from './remote-client-boundary';
 export type {
   RemoteClientAssetResolution,
   RemoteClientBoundaryProps,

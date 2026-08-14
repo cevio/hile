@@ -9,6 +9,8 @@ This project owns the only public `HttpNext` listener. Plugin Flight generation 
 
 The composition root verifies immutable artifacts, mounts browser assets, connects the internal micro transport, holds exact build leases, forwards disconnect cancellation, and decodes Flight inside the Next request context. Add authentication and CSRF policy by composing `RscActionGateway` and `createRscActionMiddleware`; do not put permission decisions in `@hile/rsc`.
 
+The generated route also configures total/idle Flight timeouts, a bounded stream window, shared immutable-manifest verification, and render observation. `src/app/rsc-client-runtime.tsx` owns loading/error/retry UI inside a Client Component, while Registry snapshot concurrency is bounded in the Host service.
+
 The catch-all route `/plugins/[pluginId]/[[...path]]` resolves the active build from the deployment catalog and forwards the remaining URL path to the plugin manifest. Add or replace host routes as composition policy; the runtime does not hardcode product routes.
 
 ## Required trust and UI composition
@@ -18,5 +20,7 @@ The catch-all route `/plugins/[pluginId]/[[...path]]` resolves the active build 
 - Keep `<html>`, `<body>`, navigation, authentication shell, global CSS-in-JS collector, and application error boundaries in the Host layout.
 - Keep plugin-specific providers, theme, styles, and interactive state inside the plugin boundary.
 - Replace the example CSRF token check with the application's authentication, CSRF, and authorization policy before production.
+- Keep `RSC_DISCOVERY_REQUIRE_GENERATION=false` only while legacy publishers are being upgraded; production defaults to `true` so generation fields cannot be stripped to downgrade a signed announcement.
+- A caller-owned generation high-water store belongs to one live discovery Host; close the old Host successfully before reusing that store in a replacement.
 
 For the full file-by-file implementation, development flow, checks, and troubleshooting, read `docs/ai/recipes/rsc-plugin-host.md` in the Hile repository.

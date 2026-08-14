@@ -4,6 +4,8 @@ Private plugin `demo.rsc.isolation@isolation-v1`. It proves a second plugin can 
 
 Use this package to verify that discovery and loading are keyed by immutable `{ pluginId, buildId, namespace }`, not a hardcoded inventory or filesystem import. Its UI is still placed inside the Host-owned layout and reaches the browser through the same public endpoint.
 
+Its generation-aware signed announcement also proves selection and caches remain isolated across plugin identities.
+
 ```bash
 pnpm build
 pnpm verify

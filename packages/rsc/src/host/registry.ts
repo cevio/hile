@@ -6,6 +6,7 @@ import type { RemoteClientAssetResolution, RemoteClientBoundaryProps } from '../
 export interface RegisteredRscArtifacts {
   root: string;
   manifest: RscPluginManifest;
+  registration?: number;
 }
 
 export interface RscArtifactCatalog {
@@ -71,6 +72,7 @@ export function createRscAssetUrls(mountPath = '/_hile/rsc/assets'): RscAssetUrl
 
 export class InMemoryRscArtifactCatalog implements MutableRscArtifactCatalog {
   private readonly artifacts = new Map<string, RegisteredRscArtifacts>();
+  private nextRegistration = 1;
 
   public register(root: string, manifest: RscPluginManifest): () => void {
     const registryKey = key(manifest.pluginId, manifest.buildId);
@@ -80,6 +82,7 @@ export class InMemoryRscArtifactCatalog implements MutableRscArtifactCatalog {
     this.artifacts.set(registryKey, {
       root: path.resolve(root),
       manifest: structuredClone(manifest),
+      registration: this.nextRegistration++,
     });
     let removed = false;
     return () => {
@@ -92,7 +95,11 @@ export class InMemoryRscArtifactCatalog implements MutableRscArtifactCatalog {
   public get(pluginId: string, buildId: string): RegisteredRscArtifacts | undefined {
     const value = this.artifacts.get(key(pluginId, buildId));
     if (!value) return undefined;
-    return { root: value.root, manifest: structuredClone(value.manifest) };
+    return {
+      root: value.root,
+      manifest: structuredClone(value.manifest),
+      registration: value.registration,
+    };
   }
 }
 

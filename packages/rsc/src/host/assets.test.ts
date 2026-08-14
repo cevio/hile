@@ -85,6 +85,58 @@ describe('RSC asset middleware composition', () => {
     expect(fileContext.body).toMatchObject({ readable: true });
   });
 
+  it('precomputes public manifest and allowlisted files once per immutable build', async () => {
+    const value = manifest();
+    const clients = value.clients;
+    let clientsReads = 0;
+    Object.defineProperty(value, 'clients', {
+      configurable: true,
+      get() {
+        clientsReads++;
+        return clients;
+      },
+    });
+    const catalog = {
+      get: vi.fn(() => ({ root: '/tmp/does-not-matter', manifest: value, registration: 1 })),
+    };
+    const middleware = createRscAssetMiddleware({ catalog, mountPath: '/artifacts' });
+
+    await middleware(context('/artifacts/org.hile.fixture/build-a/plugin.json'), vi.fn());
+    await middleware(context('/artifacts/org.hile.fixture/build-a/plugin.json'), vi.fn());
+
+    expect(clientsReads).toBe(1);
+  });
+
+  it('invalidates metadata when a logical build is unregistered and re-registered', async () => {
+    const catalog = new InMemoryRscArtifactCatalog();
+    const first = manifest();
+    const unregister = catalog.register('/tmp/first', first);
+    const middleware = createRscAssetMiddleware({ catalog, mountPath: '/artifacts' });
+    await middleware(context('/artifacts/org.hile.fixture/build-a/plugin.json'), vi.fn());
+    unregister();
+    const second = { ...manifest(), clients: [], styles: [] };
+    catalog.register('/tmp/second', second);
+
+    const staleFile = context('/artifacts/org.hile.fixture/build-a/file/client-browser/entry.js');
+    await middleware(staleFile, vi.fn());
+    expect(staleFile.status).toBe(404);
+    const nextManifest = context('/artifacts/org.hile.fixture/build-a/plugin.json');
+    await middleware(nextManifest, vi.fn());
+    expect(nextManifest.body).toMatchObject({ clients: [], styles: [] });
+  });
+
+  it('does not cache metadata for custom catalogs without a registration identity', async () => {
+    const current = { root: '/tmp/shared', manifest: manifest() };
+    const catalog = { get: vi.fn(() => current) };
+    const middleware = createRscAssetMiddleware({ catalog, mountPath: '/artifacts' });
+    const first = context('/artifacts/org.hile.fixture/build-a/plugin.json');
+    await middleware(first, vi.fn());
+    current.manifest = { ...manifest(), clients: [], styles: [] };
+    const second = context('/artifacts/org.hile.fixture/build-a/plugin.json');
+    await middleware(second, vi.fn());
+    expect(second.body).toMatchObject({ clients: [], styles: [] });
+  });
+
   it.each([
     'server-rsc/index.js',
     'client-ssr/entry.js',

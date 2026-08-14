@@ -1,10 +1,14 @@
 'use client';
 
-import React, { Suspense, lazy } from 'react';
+import React, { Component, Suspense, lazy, useCallback, useState, type ReactNode } from 'react';
 import * as ReactDom from 'react-dom';
 import * as ReactDomClient from 'react-dom/client';
 import * as JsxRuntime from 'react/jsx-runtime';
-import { useRscAssetMountPath } from './runtime-provider';
+import {
+  useRscClientRuntime,
+  type RscClientErrorRenderer,
+  type RscRemoteComponentIdentity,
+} from './runtime-provider';
 
 export interface RemoteClientBoundaryProps {
   pluginId: string;
@@ -36,22 +40,86 @@ globalThis.__HILE_RSC_REACT_DOM__ = ReactDom;
 globalThis.__HILE_RSC_REACT_DOM_CLIENT__ = ReactDomClient;
 
 const components = new Map<string, ReturnType<typeof lazy>>();
+const manifests = new Map<string, Promise<{
+  clients: Array<{ id: string; module: string }>;
+  styles: Array<{ path: string; integrity: string }>;
+}>>();
+const MAX_MANIFESTS = 64;
+const MAX_COMPONENTS = 256;
 
-async function defaultBrowserResolution(
+function lruGet<K, V>(cache: Map<K, V>, key: K): V | undefined {
+  const value = cache.get(key);
+  if (value === undefined) return undefined;
+  cache.delete(key);
+  cache.set(key, value);
+  return value;
+}
+
+function lruSet<K, V>(cache: Map<K, V>, key: K, value: V, limit: number): void {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > limit) cache.delete(cache.keys().next().value!);
+}
+
+export function clearRscClientCaches(): void {
+  manifests.clear();
+  components.clear();
+}
+
+export function clearRscClientBuildCache(
+  pluginId: string,
+  buildId: string,
+  assetMountPath: string,
+): void {
+  manifests.delete(buildKey(assetMountPath, pluginId, buildId));
+  const prefix = `${JSON.stringify([assetMountPath, pluginId, buildId]).slice(0, -1)},`;
+  for (const key of components.keys()) {
+    if (key.startsWith(prefix)) components.delete(key);
+  }
+}
+
+function buildKey(assetMountPath: string, pluginId: string, buildId: string): string {
+  return JSON.stringify([assetMountPath, pluginId, buildId]);
+}
+
+function remoteKey(
+  assetMountPath: string,
+  descriptor: Omit<RemoteClientBoundaryProps, 'props'>,
+): string {
+  return JSON.stringify([
+    assetMountPath,
+    descriptor.pluginId,
+    descriptor.buildId,
+    descriptor.referenceId,
+    descriptor.exportName,
+  ]);
+}
+
+export async function resolveRemoteClientAssets(
   descriptor: Omit<RemoteClientBoundaryProps, 'props'>,
   assetMountPath: string,
 ): Promise<RemoteClientAssetResolution> {
   const prefix = `${assetMountPath}/${encodeURIComponent(descriptor.pluginId)}/${encodeURIComponent(descriptor.buildId)}`;
-  const response = await fetch(`${prefix}/plugin.json`, {
-    credentials: 'same-origin',
-  });
-  if (!response.ok) {
-    throw new Error(`Failed to load RSC plugin manifest: ${response.status}`);
+  const manifestKey = buildKey(assetMountPath, descriptor.pluginId, descriptor.buildId);
+  let manifestPromise = lruGet(manifests, manifestKey);
+  if (!manifestPromise) {
+    manifestPromise = fetch(`${prefix}/plugin.json`, {
+      credentials: 'same-origin',
+    }).then(async (response) => {
+      if (!response.ok) {
+        throw new Error(`Failed to load RSC plugin manifest: ${response.status}`);
+      }
+      return response.json() as Promise<{
+        clients: Array<{ id: string; module: string }>;
+        styles: Array<{ path: string; integrity: string }>;
+      }>;
+    }).catch((error) => {
+      if (manifests.get(manifestKey) === manifestPromise) manifests.delete(manifestKey);
+      throw error;
+    });
+    lruSet(manifests, manifestKey, manifestPromise, MAX_MANIFESTS);
   }
-  const manifest = await response.json() as {
-    clients: Array<{ id: string; module: string }>;
-    styles: Array<{ path: string; integrity: string }>;
-  };
+  const manifest = await manifestPromise;
   const reference = manifest.clients.find(({ id }) => id === descriptor.referenceId);
   if (!reference) throw new Error(`Remote client reference not found: ${descriptor.referenceId}`);
   const fileUrl = (artifactPath: string) =>
@@ -73,14 +141,14 @@ function componentFor(
   descriptor: Omit<RemoteClientBoundaryProps, 'props'>,
   assetMountPath: string,
 ) {
-  const key = `${assetMountPath}:${descriptor.pluginId}:${descriptor.buildId}:${descriptor.referenceId}:${descriptor.exportName}`;
-  let Component = components.get(key);
+  const key = remoteKey(assetMountPath, descriptor);
+  let Component = lruGet(components, key);
   if (Component) return Component;
   Component = lazy(async () => {
     const target = typeof window === 'undefined' ? 'ssr' : 'browser';
     const resolution = globalThis.__HILE_RSC_RESOLVE_CLIENT__
       ? await globalThis.__HILE_RSC_RESOLVE_CLIENT__(descriptor, target)
-      : await defaultBrowserResolution(descriptor, assetMountPath);
+      : await resolveRemoteClientAssets(descriptor, assetMountPath);
     const moduleExports = await importModule(resolution.moduleUrl);
     const RemoteComponent = moduleExports[descriptor.exportName];
     if (typeof RemoteComponent !== 'function' && typeof RemoteComponent !== 'object') {
@@ -104,8 +172,63 @@ function componentFor(
       },
     };
   });
-  components.set(key, Component);
+  lruSet(components, key, Component, MAX_COMPONENTS);
   return Component;
+}
+
+function componentKey(
+  descriptor: Omit<RemoteClientBoundaryProps, 'props'>,
+  assetMountPath: string,
+): string {
+  return remoteKey(assetMountPath, descriptor);
+}
+
+export function renderRemoteClientErrorFallback(
+  error: unknown,
+  identity: RscRemoteComponentIdentity,
+  retry: () => void,
+  renderError?: RscClientErrorRenderer,
+): ReactNode {
+  if (renderError) return renderError(error, identity, retry);
+  return React.createElement('span', {
+    role: 'alert',
+    'data-hile-rsc-error': identity.referenceId,
+  }, 'Remote component failed to load');
+}
+
+interface RemoteClientErrorBoundaryProps {
+  identity: RscRemoteComponentIdentity;
+  renderError?: RscClientErrorRenderer;
+  onRetry(): void;
+  children?: ReactNode;
+}
+
+class RemoteClientErrorBoundary extends Component<
+  RemoteClientErrorBoundaryProps,
+  { failed: boolean; error?: unknown }
+> {
+  public state = { failed: false, error: undefined };
+
+  public static getDerivedStateFromError(error: unknown) {
+    return { failed: true, error };
+  }
+
+  private readonly retry = () => {
+    this.props.onRetry();
+    this.setState({ failed: false, error: undefined });
+  };
+
+  public render() {
+    if (this.state.failed) {
+      return renderRemoteClientErrorFallback(
+        this.state.error,
+        this.props.identity,
+        this.retry,
+        this.props.renderError,
+      );
+    }
+    return this.props.children;
+  }
 }
 
 export default function RemoteClientBoundary({
@@ -115,11 +238,26 @@ export default function RemoteClientBoundary({
   exportName,
   props,
 }: RemoteClientBoundaryProps) {
-  const assetMountPath = useRscAssetMountPath();
-  const Component = componentFor({ pluginId, buildId, referenceId, exportName }, assetMountPath);
+  const { assetMountPath, renderLoading, renderError } = useRscClientRuntime();
+  const identity = { pluginId, buildId, referenceId, exportName };
+  const key = componentKey(identity, assetMountPath);
+  const [attempt, setAttempt] = useState(0);
+  const Component = componentFor(identity, assetMountPath);
+  const retry = useCallback(() => {
+    clearRscClientBuildCache(pluginId, buildId, assetMountPath);
+    setAttempt((value) => value + 1);
+  }, [pluginId, buildId, assetMountPath]);
   return React.createElement(
-    Suspense,
-    { fallback: React.createElement('span', { 'data-hile-rsc-loading': referenceId }) },
-    React.createElement(Component, props),
+    RemoteClientErrorBoundary,
+    { key, identity, renderError, onRetry: retry },
+    React.createElement(
+      Suspense,
+      {
+        fallback: renderLoading
+          ? renderLoading(identity)
+          : React.createElement('span', { 'data-hile-rsc-loading': referenceId }),
+      },
+      React.createElement(Component, { ...props, key: attempt }),
+    ),
   );
 }

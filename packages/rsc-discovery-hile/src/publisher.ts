@@ -25,6 +25,8 @@ export interface RegisterHileRscPluginDiscoveryOptions {
   namespace: string;
   instanceId: string;
   priority: number;
+  /** Initial monotonic publication generation. Defaults to zero. */
+  generation?: number;
   artifactRoot: string;
   artifactOperation?: string;
   retainedArtifacts?: number;
@@ -48,6 +50,7 @@ function createAnnouncement(
   options: RegisterHileRscPluginDiscoveryOptions,
   manifest: RscPluginManifest,
   artifactOperation: string,
+  generation: number,
 ): RscDiscoveryAnnouncement {
   const unsigned = {
     schemaVersion: 1,
@@ -57,11 +60,16 @@ function createAnnouncement(
     buildId: manifest.buildId,
     namespace: options.namespace,
     priority: options.priority,
+    generation,
     protocolVersion: manifest.protocolVersion,
     runtime: manifest.runtime,
     artifactOperation,
   } as const;
+  const { generation: _generation, ...legacyUnsigned } = unsigned;
   const signature = createHmac('sha256', options.authentication.secret)
+    .update(canonicalizeRscDiscoveryAnnouncement(legacyUnsigned))
+    .digest('base64url');
+  const generationSignature = createHmac('sha256', options.authentication.secret)
     .update(canonicalizeRscDiscoveryAnnouncement(unsigned))
     .digest('base64url');
   return validateRscDiscoveryAnnouncement({
@@ -70,6 +78,7 @@ function createAnnouncement(
       scheme: 'hmac-sha256',
       keyId: options.authentication.keyId,
       signature,
+      generationSignature,
     },
   });
 }
@@ -114,11 +123,15 @@ export async function registerHileRscPluginDiscovery(
   if (!Number.isSafeInteger(retainedArtifacts) || retainedArtifacts < 1) {
     throw new TypeError('retainedArtifacts must be a positive safe integer');
   }
+  const initialGeneration = options.generation ?? 0;
+  if (!Number.isSafeInteger(initialGeneration) || initialGeneration < 0) {
+    throw new TypeError('RSC discovery generation must be a non-negative safe integer');
+  }
   const artifactOperation = options.artifactOperation ?? '/-/rsc/artifact';
   const first = await inspectPublishedArtifact(options.artifactRoot);
   const topic = createRscDiscoveryTopic(options.instanceId);
   const artifacts = new Map<string, PublishedArtifact>([[first.manifest.buildId, first]]);
-  let current = createAnnouncement(options, first.manifest, artifactOperation);
+  let current = createAnnouncement(options, first.manifest, artifactOperation, initialGeneration);
   let closed = false;
   let closing = false;
   const unregister = options.application.register(artifactOperation, ({ data, signal }) => {
@@ -160,7 +173,16 @@ export async function registerHileRscPluginDiscovery(
         if (nextArtifact.manifest.pluginId !== current.pluginId) {
           throw new TypeError('RSC discovery update pluginId must remain stable');
         }
-        const next = createAnnouncement(options, nextArtifact.manifest, artifactOperation);
+        const nextGeneration = (current.generation ?? 0) + 1;
+        if (!Number.isSafeInteger(nextGeneration)) {
+          throw new RangeError('RSC discovery generation exceeded the safe integer range');
+        }
+        const next = createAnnouncement(
+          options,
+          nextArtifact.manifest,
+          artifactOperation,
+          nextGeneration,
+        );
         const previous = artifacts.get(next.buildId);
         if (previous) {
           if (JSON.stringify(previous.manifest) !== JSON.stringify(nextArtifact.manifest)) {

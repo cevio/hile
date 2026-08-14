@@ -43,6 +43,7 @@ export default defineService('test.rsc.capabilities.v2', async (shutdown) => {
       namespace,
       instanceId: process.env.RSC_INSTANCE_ID ?? namespace,
       priority: Number(process.env.RSC_DISCOVERY_PRIORITY ?? 2),
+      generation: Number(process.env.RSC_DISCOVERY_GENERATION ?? 0),
       artifactRoot,
       authentication: {
         keyId: process.env.RSC_DISCOVERY_KEY_ID ?? 'demo-capabilities',

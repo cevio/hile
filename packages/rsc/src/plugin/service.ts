@@ -232,12 +232,25 @@ export class RscPluginService {
             signal: combined.signal,
           });
           for await (const chunk of iterable) {
-            if (combined.signal.aborted) return;
+            if (combined.signal.aborted) {
+              if (service.shutdown.signal.aborted) {
+                throw service.shutdown.signal.reason;
+              }
+              return;
+            }
             if (!(chunk instanceof Uint8Array)) {
               throw new TypeError('RSC renderer must yield Uint8Array chunks');
             }
             yield chunk;
           }
+          if (service.shutdown.signal.aborted) {
+            throw service.shutdown.signal.reason;
+          }
+        } catch (error) {
+          if (service.shutdown.signal.aborted) {
+            throw service.shutdown.signal.reason;
+          }
+          throw error;
         } finally {
           combined.cleanup();
           leave();

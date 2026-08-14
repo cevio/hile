@@ -23,6 +23,12 @@ export const DEFAULT_RSC_OPERATIONS: Readonly<RscOperationMap> = Object.freeze({
 
 export interface RscCallOptions {
   signal?: AbortSignal;
+  /** Maximum total RPC or Flight stream lifetime in milliseconds. */
+  timeout?: number;
+  /** Maximum time between valid Flight chunks in milliseconds. */
+  idleTimeout?: number;
+  /** Maximum number of Flight chunks in transit before consumption. */
+  window?: number;
 }
 
 export interface RscPluginClient {
@@ -44,6 +50,8 @@ export interface RscPluginLocator {
 
 export interface RscPluginLease {
   client: RscPluginClient;
+  /** Stable identity of the concrete endpoint used to verify an immutable build. */
+  verificationKey?: string;
   release(): void | Promise<void>;
 }
 

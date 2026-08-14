@@ -18,6 +18,8 @@ import {
 import { createHileRscPluginClient } from '@hile/rsc/transport';
 import { createHmacRscDiscoveryAuthorizer, HileRscDiscoveryHost } from '@hile/rsc-discovery-hile';
 
+const discoveryGenerationHighWater = new Map();
+
 export default defineService('rsc.host.runtime', async (shutdown) => {
   const artifacts = new InMemoryRscArtifactCatalog();
   const deployments = new InMemoryRscDeploymentCatalog();
@@ -50,11 +52,17 @@ export default defineService('rsc.host.runtime', async (shutdown) => {
     runtime: HILE_RSC_RUNTIME,
     pollIntervalMs: Number(process.env.RSC_DISCOVERY_POLL_MS ?? 500),
     missingReconciliations: Number(process.env.RSC_DISCOVERY_MISSING_RECONCILIATIONS ?? 3),
+    snapshotConcurrency: Number(process.env.RSC_DISCOVERY_SNAPSHOT_CONCURRENCY ?? 16),
+    generationHighWater: discoveryGenerationHighWater,
     authorize: createHmacRscDiscoveryAuthorizer((keyId) => {
       if (keyId !== process.env.RSC_DISCOVERY_KEY_ID || !process.env.RSC_DISCOVERY_SECRET) return undefined;
       const pluginIds = (process.env.RSC_DISCOVERY_PLUGIN_IDS ?? '')
         .split(',').map((value) => value.trim()).filter(Boolean);
-      return { secret: process.env.RSC_DISCOVERY_SECRET, pluginIds };
+      return {
+        secret: process.env.RSC_DISCOVERY_SECRET,
+        pluginIds,
+        requireGeneration: process.env.RSC_DISCOVERY_REQUIRE_GENERATION === 'true',
+      };
     }),
     onRejected: (topic, error) => console.error(`Rejected RSC discovery topic ${topic}`, error),
     onError: console.error,

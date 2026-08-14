@@ -2,6 +2,8 @@
 
 Private immutable replacement build `demo.rsc.capabilities@v2`. It deliberately shares the v1 plugin id while changing build id, namespace, styles, client code, and action behavior so runtime activation is visible without rebuilding the host.
 
+It publishes signed generation 2, so the demo covers generation-aware replacement in addition to immutable build identity.
+
 This is the primary executable reference for the recommended chain:
 
 ```text

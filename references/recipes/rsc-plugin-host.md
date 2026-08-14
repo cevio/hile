@@ -39,7 +39,7 @@ const pluginRuntime = new HileRscPluginRuntime({
   application: pluginApplication,
   service,
   port: pluginMicroPort,
-  discovery: { namespace, instanceId, priority: 0, artifactRoot, authentication },
+  discovery: { namespace, instanceId, priority: 0, generation: 0, artifactRoot, authentication },
 })
 await pluginRuntime.start()
 
@@ -51,6 +51,7 @@ const discovery = new HileRscDiscoveryHost({
   artifacts,
   deployments,
   runtime: HILE_RSC_RUNTIME,
+  snapshotConcurrency: 16,
   authorize: discoveryAuthorizer,
 })
 await discovery.start()
@@ -63,6 +64,9 @@ const tree = await new RscHostRuntime({
   pluginId,
   request: { buildId: active.buildId, path, searchParams },
   signal: getHttpNextRequestSignal(),
+  timeout: 30_000,
+  idleTimeout: 10_000,
+  window: 8,
 })
 ```
 
@@ -82,6 +86,8 @@ Before writing code, preserve these invariants:
 8. Mount plugin assets, Server Functions, and optional development SSE on the same Host listener/origin.
 9. Pass the request abort signal into `RscHostRuntime.render()`.
 10. Do not expose server bundles, artifact paths, namespaces, or internal message addresses to the browser.
+11. Configure bounded render timeouts/window and Registry snapshot concurrency for production.
+12. Keep loading/error renderer functions inside a Host Client Component.
 
 ## Recommended Project Layout
 
@@ -351,6 +357,7 @@ const runtime = new HileRscPluginRuntime({
     namespace,
     instanceId: process.env.RSC_INSTANCE_ID ?? namespace,
     priority: Number(process.env.RSC_DISCOVERY_PRIORITY ?? 0),
+    generation: Number(process.env.RSC_DISCOVERY_GENERATION ?? 0),
     artifactRoot,
     authentication: {
       keyId: process.env.RSC_DISCOVERY_KEY_ID ?? '',
@@ -376,6 +383,7 @@ PLUGIN_MICRO_PORT=4101
 RSC_ARTIFACT_ROOT=.hile-rsc/build-a
 RSC_INSTANCE_ID=org.example.rsc-plugin.dev
 RSC_DISCOVERY_PRIORITY=0
+RSC_DISCOVERY_GENERATION=0
 RSC_DISCOVERY_KEY_ID=local-development
 RSC_DISCOVERY_SECRET=replace-this-shared-secret
 ```
@@ -388,6 +396,7 @@ Identity meanings:
 - `buildId`: immutable artifact identity selected under that plugin ID;
 - `MICRO_NAMESPACE` / discovery `namespace`: routable internal service instance that serves the selected artifact;
 - `RSC_INSTANCE_ID`: unique publisher instance identity used to distinguish announcements;
+- `RSC_DISCOVERY_GENERATION`: non-negative monotonic publication generation; increase it for newer immutable deployments at equal priority, while runtime updates increment it automatically;
 - `hile-rsc-dev --namespace`: the internal namespace recorded in development state; it must match the service namespace that will publish that revision.
 
 When `RSC_DEVELOPMENT_STATE` is set, the plugin boot resolves the matching development record and uses its `artifactRoot`; otherwise it uses `RSC_ARTIFACT_ROOT`. Production must not set `RSC_DEVELOPMENT_STATE`.
@@ -413,11 +422,17 @@ authorize: createHmacRscDiscoveryAuthorizer((keyId) => {
   const pluginIds = (process.env.RSC_DISCOVERY_PLUGIN_IDS ?? '')
     .split(',').map((value) => value.trim()).filter(Boolean)
   if (pluginIds.length === 0) return undefined
-  return { secret: process.env.RSC_DISCOVERY_SECRET, pluginIds }
+  return {
+    secret: process.env.RSC_DISCOVERY_SECRET,
+    pluginIds,
+    requireGeneration: process.env.RSC_DISCOVERY_REQUIRE_GENERATION === 'true',
+  }
 })
 ```
 
-Never return a secret without a non-empty, explicit `pluginIds` allowlist. An arbitrary Registry client can announce a topic; signatures and ownership policy establish trust.
+Never return a secret without a non-empty, explicit `pluginIds` allowlist. An arbitrary Registry client can announce a topic; signatures and ownership policy establish trust. Keep `RSC_DISCOVERY_REQUIRE_GENERATION=false` only during a rolling upgrade with legacy publishers, then switch it to `true`; otherwise an intermediary can strip both generation fields and downgrade to the still-valid legacy signature. The discovery manager rejects changed announcements at an accepted or lower generation and tombstones identities retired after the missing threshold. Supply a caller-owned `generationHighWater` map to `HileRscDiscoveryHost` so this state survives Host reconstruction. The map is exclusively owned by one live Host; `close()` the old Host successfully before constructing its replacement with that store.
+
+Treat Registry topic presence as trusted liveness evidence. Generation signatures reject modified and older deployments, but they cannot distinguish a healthy retained topic from an exact replay of the current signed payload. Protect Registry writes/deletes and its transport; use a separate signed freshness service if the Registry itself is in the adversary model.
 
 Set transfer bounds on `HileRscDiscoveryHost` when application quotas differ from the safe defaults:
 
@@ -431,6 +446,7 @@ const discovery = new HileRscDiscoveryHost({
   maxPathBytes: 1024,
   maxPathDepth: 32,
   operationTimeoutMs: 30_000,
+  snapshotConcurrency: 16,
 })
 ```
 
@@ -544,6 +560,9 @@ export default async function PluginPage({ params, searchParams }: {
       searchParams: Object.fromEntries(Object.entries(query).filter(([, value]) => value !== undefined)),
     },
     signal: getHttpNextRequestSignal(),
+    timeout: Number(process.env.RSC_RENDER_TIMEOUT_MS ?? 30_000),
+    idleTimeout: Number(process.env.RSC_RENDER_IDLE_TIMEOUT_MS ?? 10_000),
+    window: Number(process.env.RSC_RENDER_WINDOW ?? 8),
   })
 
   return (
@@ -559,6 +578,14 @@ export default async function PluginPage({ params, searchParams }: {
 ```
 
 `force-dynamic` prevents a build-time snapshot of a runtime deployment. The active build is resolved first and the same exact ID is sent to the plugin. The lease remains valid until Flight decode finishes or is aborted. Never request a base config ID after development has activated a revision-suffixed ID.
+
+The total timeout bounds the complete internal Flight stream, the idle timeout resets after every valid chunk, and `window` bounds chunks in transit (1 through 64). The Host should reuse one `verificationCache` across requests and attach an `observe` callback for render outcome, duration, and byte metrics; observer failures do not affect rendering.
+
+For product loading and failure UI, wrap `RscNextClientRuntime` and `RscClientRuntimeProvider` in a Host-owned file with `'use client'`, then pass `renderLoading` and `renderError(error, identity, retry)` there. Do not define these function props in this Server Component: functions may not cross the RSC serialization boundary. The default error UI is safe but intentionally minimal.
+
+`@hile/rsc-next` supports exactly Next 16.3.0 with React 19.2.8 and checks the installed package tuple before decoding through its isolated private Next modules. Do not widen the Next peer range without rerunning the full production SSR/hydration suite.
+
+Do not add `cache()`, `unstable_cache`, or route revalidation around tenant/user-specific plugin rendering by default. Cross-request caching is an application policy; it requires an explicit authorization-safe key and invalidation contract.
 
 The `/plugins` prefix is only this Host route's policy. You may choose another catch-all route without changing the RSC core.
 
@@ -761,6 +788,7 @@ Use at least two retained revisions. Size `maxRevisions` for the maximum build-d
 - Stopping or uninstalling a plugin therefore disables it without a manual Host activation API.
 - `RscPluginService.activate()` is an internal lifecycle primitive used by verified runtime/development orchestration. “No manual activation” means application users and Host routes do not call it as an install workflow.
 - Never mutate bytes under an already published build ID. It breaks cache and deployment identity.
+- At equal priority, publish newer immutable builds with a higher signed generation. Announcements without generation remain valid legacy generation zero.
 
 ## 12. Verification
 
@@ -811,6 +839,7 @@ An implementation is not complete until tests prove:
 - discovery rejects wrong signatures and publisher/plugin ownership mismatches;
 - artifact transfer is streamed to disk with bounded size/count/path constraints;
 - upgrade preserves in-flight old-build requests and failed rebuilds preserve the last good revision.
+- stream window/timeout/idle-timeout, discovery generation ordering, bounded snapshot concurrency, and Host loading/error retry policies are covered.
 
 ## Troubleshooting
 
@@ -826,6 +855,7 @@ An implementation is not complete until tests prove:
 | Edit requires full rebuild | Production CLI used instead of persistent development compiler | Run `hile-rsc-dev` and bind the emitted state to the plugin service |
 | Previous revision disappears during refresh | Retention lower than deployment overlap | Increase `maxRevisions`; minimum is two |
 | Host can render but shutdown hangs | In-flight Flight/Server Function did not receive cancellation | Pass `getHttpNextRequestSignal()` and retain transport abort propagation |
+| Remote component stays on loading/error UI | Asset fetch/import failed or retry reused a rejected lazy component | Configure Host `renderError`, inspect plugin/build/reference identity, and call its supplied `retry` callback |
 
 ## Completion Checklist For AI Agents
 
@@ -837,6 +867,9 @@ An implementation is not complete until tests prove:
 - [ ] Host discovery authorization binds `keyId` to explicit plugin IDs.
 - [ ] Host mounts assets, Server Functions, and development SSE on its one HTTP server.
 - [ ] Dynamic Next route resolves and passes the exact active build ID and abort signal.
+- [ ] Render timeout, idle timeout, stream window, observer, and shared verification cache are configured.
+- [ ] Discovery generation and snapshot concurrency are configured and signed.
+- [ ] Loading/error functions live in a Host Client Component and retry is tested.
 - [ ] Outer layout remains Host-owned; plugin providers/styles remain plugin-owned.
 - [ ] Development keeps the last good immutable revision and reloads after verified activation.
 - [ ] Contract, production E2E, and development E2E checks pass.

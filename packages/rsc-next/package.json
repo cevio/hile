@@ -33,7 +33,8 @@
   },
   "peerDependencies": {
     "next": "16.3.0",
-    "react": "19.2.8"
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
   },
   "devDependencies": {
     "@hile/http-next": "workspace:^",
@@ -45,6 +46,7 @@
     "fix-esm-import-path": "^1.10.3",
     "next": "16.3.0",
     "react": "19.2.8",
+    "react-dom": "19.2.8",
     "react-server-dom-webpack": "19.2.8",
     "vitest": "^4.0.18"
   }

@@ -17,24 +17,36 @@ export interface RscAssetContext {
 export interface RscAssetMiddlewareOptions {
   catalog?: RscArtifactCatalog;
   mountPath?: string;
+  metadataCacheSize?: number;
 }
 
-function allowedFiles(manifest: RscPluginManifest): Set<string> {
+interface PublicAssetMetadata {
+  source: string;
+  files: Set<string>;
+  manifest: ReturnType<typeof publicManifest>;
+}
+
+function assetMetadata(manifest: RscPluginManifest): PublicAssetMetadata {
   const files = new Set<string>();
-  for (const client of manifest.clients) {
+  const clients = manifest.clients;
+  for (const client of clients) {
     files.add(client.module);
     for (const chunk of client.chunks) files.add(chunk.path);
   }
   for (const style of manifest.styles) files.add(style.path);
-  return files;
+  return {
+    source: '',
+    files,
+    manifest: publicManifest(manifest, clients),
+  };
 }
 
-function publicManifest(manifest: RscPluginManifest) {
+function publicManifest(manifest: RscPluginManifest, clients = manifest.clients) {
   return {
     protocolVersion: manifest.protocolVersion,
     pluginId: manifest.pluginId,
     buildId: manifest.buildId,
-    clients: manifest.clients.map(({ id, module, exportName, chunks, integrity }) => ({
+    clients: clients.map(({ id, module, exportName, chunks, integrity }) => ({
       id, module, exportName, chunks, integrity,
     })),
     styles: manifest.styles,
@@ -70,6 +82,11 @@ function normalizeMountPath(mountPath: string): string {
 export function createRscAssetMiddleware(options: RscAssetMiddlewareOptions = {}) {
   const catalog = options.catalog ?? getDefaultRscArtifactCatalog();
   const prefix = `${normalizeMountPath(options.mountPath ?? '/_hile/rsc/assets')}/`;
+  const cacheLimit = options.metadataCacheSize ?? 256;
+  if (!Number.isSafeInteger(cacheLimit) || cacheLimit < 1) {
+    throw new TypeError('RSC asset metadata cache size must be a positive safe integer');
+  }
+  const metadataCache = new Map<string, PublicAssetMetadata>();
   return async (ctx: RscAssetContext, next: () => Promise<unknown>) => {
     if (!ctx.path.startsWith(prefix)) return next();
     const segments = ctx.path.slice(prefix.length).split('/');
@@ -88,15 +105,37 @@ export function createRscAssetMiddleware(options: RscAssetMiddlewareOptions = {}
     }
     const registered = catalog.get(pluginId, buildId);
     if (!registered) {
+      metadataCache.delete(`${pluginId}\0${buildId}`);
       ctx.status = 404;
       return;
+    }
+    const cacheKey = `${pluginId}\0${buildId}`;
+    const cacheable = registered.registration !== undefined;
+    const metadataSource = `${registered.root}\0${registered.registration ?? ''}`;
+    let metadata = cacheable ? metadataCache.get(cacheKey) : undefined;
+    if (metadata?.source !== metadataSource) {
+      metadataCache.delete(cacheKey);
+      metadata = undefined;
+    }
+    if (metadata) {
+      metadataCache.delete(cacheKey);
+      metadataCache.set(cacheKey, metadata);
+    } else {
+      metadata = assetMetadata(registered.manifest);
+      metadata.source = metadataSource;
+      if (cacheable) {
+        metadataCache.set(cacheKey, metadata);
+        while (metadataCache.size > cacheLimit) {
+          metadataCache.delete(metadataCache.keys().next().value!);
+        }
+      }
     }
     if (segments.length === 1 && segments[0] === 'plugin.json') {
       ctx.status = 200;
       ctx.type = 'application/json; charset=utf-8';
       ctx.set('Cache-Control', 'public, max-age=31536000, immutable');
       ctx.set('X-Content-Type-Options', 'nosniff');
-      ctx.body = publicManifest(registered.manifest);
+      ctx.body = metadata.manifest;
       return;
     }
     if (segments.shift() !== 'file') {
@@ -104,7 +143,7 @@ export function createRscAssetMiddleware(options: RscAssetMiddlewareOptions = {}
       return;
     }
     const artifactPath = decodeSegments(segments.join('/'));
-    if (!artifactPath || !allowedFiles(registered.manifest).has(artifactPath)) {
+    if (!artifactPath || !metadata.files.has(artifactPath)) {
       ctx.status = 404;
       return;
     }

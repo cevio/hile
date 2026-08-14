@@ -49,6 +49,7 @@ export default defineService('rsc.plugin.runtime', async (shutdown) => {
       namespace,
       instanceId: process.env.RSC_INSTANCE_ID ?? namespace,
       priority: Number(process.env.RSC_DISCOVERY_PRIORITY ?? 0),
+      generation: Number(process.env.RSC_DISCOVERY_GENERATION ?? 0),
       artifactRoot,
       authentication: {
         keyId: process.env.RSC_DISCOVERY_KEY_ID ?? '',

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  canonicalizeRscDiscoveryAnnouncement,
   RscDiscoveryManager,
   validateRscDiscoveryAnnouncement,
   type RscDiscoveryAnnouncement,
@@ -39,6 +40,166 @@ function setup(missingReconciliations = 2) {
 }
 
 describe('RscDiscoveryManager', () => {
+  it('prefers a newer generation before using buildId as a tie-breaker', async () => {
+    const { manager, deploy } = setup();
+    await manager.reconcile([
+      announcement({ instanceId: 'older', buildId: 'z-build', generation: 4 }),
+      announcement({ instanceId: 'newer', buildId: 'a-build', generation: 5 }),
+    ]);
+
+    expect(deploy).toHaveBeenCalledWith(expect.objectContaining({ buildId: 'a-build', generation: 5 }));
+  });
+
+  it('rejects a signed generation rollback for an already accepted publisher identity', async () => {
+    const { manager, deploy } = setup();
+    await manager.reconcile([announcement({ buildId: 'build-new', generation: 9 })]);
+    await expect(manager.reconcile([
+      announcement({ buildId: 'build-old', generation: 8 }),
+    ])).rejects.toThrow('generation rollback');
+    expect(deploy.mock.calls.map(([candidate]) => candidate.buildId)).toEqual(['build-new']);
+    expect(manager.snapshot()[0]).toMatchObject({
+      buildId: 'build-new', state: 'unavailable', missingReconciliations: 1,
+    });
+  });
+
+  it('rejects a different deployment that reuses an accepted generation', async () => {
+    const { manager, deploy } = setup();
+    await manager.reconcile([announcement({ buildId: 'build-new', generation: 9 })]);
+    await expect(manager.reconcile([
+      announcement({ buildId: 'build-old', namespace: 'fixture.old', generation: 9 }),
+    ])).rejects.toThrow('not newer');
+    expect(deploy.mock.calls.map(([candidate]) => candidate.buildId)).toEqual(['build-new']);
+  });
+
+  it('tombstones a retired publisher so an exact equal-generation replay cannot resurrect it', async () => {
+    const { manager, deploy, retire } = setup(1);
+    const published = announcement({ generation: 9 });
+    await manager.reconcile([published]);
+    await manager.reconcile([]);
+    expect(retire).toHaveBeenCalledOnce();
+    await expect(manager.reconcile([published])).rejects.toThrow('not newer');
+    expect(deploy).toHaveBeenCalledOnce();
+    expect(manager.snapshot()).toEqual([]);
+  });
+
+  it('counts snapshots containing only stale replays as missing and retires the active build', async () => {
+    const { manager, retire } = setup(2);
+    await manager.reconcile([announcement({ buildId: 'build-new', generation: 9 })]);
+    const stale = announcement({ buildId: 'build-old', generation: 8 });
+    await expect(manager.reconcile([stale])).rejects.toThrow('generation rollback');
+    expect(manager.snapshot()[0]).toMatchObject({ state: 'unavailable', missingReconciliations: 1 });
+    await expect(manager.reconcile([stale])).rejects.toThrow('generation rollback');
+    expect(retire).toHaveBeenCalledOnce();
+    expect(manager.snapshot()).toEqual([]);
+  });
+
+  it('shares generation high-water state across manager replacements when injected', async () => {
+    const highWater = new Map();
+    const deploy = vi.fn(async (candidate: RscDiscoveryAnnouncement) => ({
+      announcement: structuredClone(candidate),
+    }));
+    const first = new RscDiscoveryManager({ deploy, retire: async () => undefined, generationHighWater: highWater });
+    await first.reconcile([announcement({ generation: 4 })]);
+    await first.close();
+    const second = new RscDiscoveryManager({ deploy, retire: async () => undefined, generationHighWater: highWater });
+    await expect(second.reconcile([announcement({ generation: 3 })])).rejects.toThrow('generation rollback');
+    await second.close();
+  });
+
+  it('allows one legacy generation-zero announcement to promote to a generation-bound signature', async () => {
+    const { manager, deploy } = setup();
+    const legacy = announcement();
+    await manager.reconcile([legacy]);
+    const promoted = announcement({
+      generation: 0,
+      authentication: { ...legacy.authentication, generationSignature: 'generation-valid' },
+    });
+    await expect(manager.reconcile([promoted])).resolves.toBeUndefined();
+    expect(deploy).toHaveBeenCalledOnce();
+    expect(manager.snapshot()[0]).toMatchObject({ generation: 0, state: 'enabled' });
+  });
+
+  it('tombstones an absent identity during a same-deployment instance handoff', async () => {
+    const { manager, deploy } = setup();
+    const first = announcement({ instanceId: 'instance-old', generation: 4 });
+    const next = announcement({
+      instanceId: 'instance-new', authentication: { ...first.authentication, keyId: 'rotated' },
+      generation: 4,
+    });
+    await manager.reconcile([first]);
+    await manager.reconcile([next]);
+    await expect(manager.reconcile([first])).rejects.toThrow('not newer');
+    expect(deploy).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a superseded but still-present candidate eligible for fallback', async () => {
+    const { manager, deploy } = setup(1);
+    const fallback = announcement({ instanceId: 'fallback', generation: 1 });
+    const preferred = announcement({
+      instanceId: 'preferred', buildId: 'build-v2', namespace: 'fixture.v2',
+      priority: 2, generation: 1,
+    });
+    await manager.reconcile([fallback]);
+    await manager.reconcile([fallback, preferred]);
+    await manager.reconcile([fallback]);
+    expect(deploy.mock.calls.map(([candidate]) => candidate.instanceId))
+      .toEqual(['fallback', 'preferred', 'fallback']);
+  });
+
+  it('fails closed when an injected generation store reaches its configured capacity', async () => {
+    const highWater = new Map();
+    const deploy = vi.fn(async (candidate: RscDiscoveryAnnouncement) => ({ announcement: candidate }));
+    const manager = new RscDiscoveryManager({
+      deploy, retire: async () => undefined, generationHighWater: highWater,
+      generationHistorySize: 1,
+    });
+    await manager.reconcile([announcement({ generation: 1 })]);
+    await expect(manager.reconcile([announcement({
+      instanceId: 'another-instance', pluginId: 'org.hile.another', generation: 1,
+    })])).rejects.toThrow('capacity exhausted');
+    expect(highWater.size).toBe(1);
+  });
+
+  it('requires exclusive ownership of a shared generation store until close', async () => {
+    const highWater = new Map();
+    const deployed: string[] = [];
+    const createManager = () => new RscDiscoveryManager({
+      generationHighWater: highWater,
+      generationHistorySize: 1,
+      deploy: async (candidate) => {
+        await Promise.resolve();
+        deployed.push(candidate.instanceId);
+        return { announcement: candidate };
+      },
+      retire: async () => undefined,
+    });
+    const first = createManager();
+    expect(createManager).toThrow('already in use');
+    await first.reconcile([announcement({ instanceId: 'first', pluginId: 'org.hile.first' })]);
+    expect(deployed).toHaveLength(1);
+    expect(highWater.size).toBe(1);
+    await first.close();
+    const successor = createManager();
+    await successor.close();
+  });
+
+  it('keeps legacy canonical signatures byte-for-byte stable', () => {
+    const { authentication: _authentication, ...unsigned } = announcement();
+
+    expect(canonicalizeRscDiscoveryAnnouncement(unsigned)).toBe(JSON.stringify({
+      schemaVersion: 1,
+      capability: '@hile/rsc',
+      instanceId: 'instance-v1',
+      pluginId: 'org.hile.fixture',
+      buildId: 'build-v1',
+      namespace: 'fixture.v1',
+      priority: 1,
+      protocolVersion: 1,
+      runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
+      artifactOperation: '/-/rsc/artifact',
+    }));
+  });
+
   it('automatically deploys the first healthy Registry announcement', async () => {
     const { manager, deploy } = setup();
     await manager.reconcile([announcement()]);
@@ -211,5 +372,7 @@ describe('RscDiscoveryManager', () => {
       .toThrow('artifactOperation');
     expect(() => validateRscDiscoveryAnnouncement({ ...announcement(), capability: 'other' }))
       .toThrow('capability');
+    expect(() => validateRscDiscoveryAnnouncement({ ...announcement(), generation: -1 }))
+      .toThrow('generation');
   });
 });

@@ -1,4 +1,4 @@
-import { Client } from './client';
+import { Client, type ClientStreamOptions } from './client';
 import { Server, type MicroServerProps } from './server';
 import type {
   RegistryAddress,
@@ -948,12 +948,9 @@ export class Application extends Server {
     namespace: string,
     url: string,
     data: any,
-    options?: {
-      signal?: AbortSignal,
-      retries?: number
-    },
+    options?: ClientStreamOptions & { retries?: number },
   ): Promise<import('stream').Readable> {
-    const { signal, retries = 1 } = options || {};
+    const { signal, retries = 1, timeout, idleTimeout, window } = options || {};
     let remainingRetries = retries;
     let retrySourceError: unknown;
     let hasRetrySourceError = false;
@@ -968,7 +965,7 @@ export class Application extends Server {
       }
       const { client, probe } = selected;
       try {
-        const readable = client.stream(url, data, { signal });
+        const readable = client.stream(url, data, { signal, timeout, idleTimeout, window });
         return this.trackCircuitStream(namespace, client.host, client.port, probe, readable);
       } catch (err) {
         this.recordFailure(namespace, client.host, client.port, err, probe);
@@ -1016,7 +1013,7 @@ export class Application extends Server {
   }
 
   /** Reads Registry topic metadata without creating a pub/sub subscription. */
-  public async listRegistryTopics(prefix?: string): Promise<RegistryTopicSummary[]> {
+  public async listRegistryTopics(prefix?: string, options?: { signal?: AbortSignal }): Promise<RegistryTopicSummary[]> {
     const registry = this.registry;
     if (!registry) {
       this.ensureRegistryReconnectScheduled();
@@ -1025,13 +1022,13 @@ export class Application extends Server {
     const result = await registry.request<RegistryTopicsResult>(
       '/-/topics',
       prefix === undefined ? {} : { prefix },
-      this.registryRequestOptions(),
+      { ...this.registryRequestOptions(), signal: options?.signal },
     );
     return structuredClone(result.topics);
   }
 
   /** Reads one retained/current Registry topic payload without subscribing to it. */
-  public async getRegistryTopic<T = unknown>(topic: string): Promise<RegistryTopicSnapshot & { payload: T } | undefined> {
+  public async getRegistryTopic<T = unknown>(topic: string, options?: { signal?: AbortSignal }): Promise<RegistryTopicSnapshot & { payload: T } | undefined> {
     if (typeof topic !== 'string' || topic.length === 0) {
       throw new TypeError('Registry topic must not be empty');
     }
@@ -1043,7 +1040,7 @@ export class Application extends Server {
     const snapshot = await registry.request<RegistryTopicSnapshot & { payload: T } | undefined>(
       '/-/topic/get',
       { topic },
-      this.registryRequestOptions(),
+      { ...this.registryRequestOptions(), signal: options?.signal },
     );
     return snapshot === undefined ? undefined : structuredClone(snapshot);
   }

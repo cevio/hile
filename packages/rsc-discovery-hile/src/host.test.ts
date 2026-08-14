@@ -8,6 +8,7 @@ import { InMemoryRscArtifactCatalog } from '@hile/rsc/host/registry';
 import { InMemoryRscDeploymentCatalog } from '@hile/rsc/host/catalog';
 import type { RscPluginManifest } from '@hile/rsc/protocol';
 import { HileRscDiscoveryHost } from './host';
+import type { RscDiscoveryGenerationHighWater } from '@hile/rsc-discovery';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -250,5 +251,62 @@ describe('HileRscDiscoveryHost', () => {
     await secondStarted;
     await host.close();
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('does not start another snapshot while an aborted Registry read is still settling', async () => {
+    const value = await artifact('build-v1');
+    const discovered = announcement(value.manifest, 1);
+    const getRegistryTopic = vi.fn(() => new Promise<never>(() => undefined));
+    const host = new HileRscDiscoveryHost({
+      application: {
+        listRegistryTopics: vi.fn(async () => [{
+          topic: `@hile/rsc/discovery/v1/${discovered.instanceId}`,
+          hasData: true,
+        }]),
+        getRegistryTopic,
+        stream: vi.fn(),
+      },
+      artifacts: new InMemoryRscArtifactCatalog(),
+      deployments: new InMemoryRscDeploymentCatalog(),
+      runtime: value.manifest.runtime,
+      authorize: async () => true,
+      operationTimeoutMs: 100,
+    });
+
+    await expect(host.refresh()).rejects.toThrow('timed out');
+    await expect(host.refresh()).rejects.toThrow('still settling');
+    expect(getRegistryTopic).toHaveBeenCalledOnce();
+    await host.close();
+  });
+
+  it('retains generation replay protection when a Host is recreated with the same store', async () => {
+    const value = await artifact('build-v1');
+    let discovered = { ...announcement(value.manifest, 1), generation: 9 };
+    const application = {
+      listRegistryTopics: vi.fn(async () => [{
+        topic: `@hile/rsc/discovery/v1/${discovered.instanceId}`,
+        hasData: true,
+      }]),
+      getRegistryTopic: vi.fn(async () => ({ hasData: true, payload: discovered })),
+      stream: artifactStream(() => value),
+    };
+    const generationHighWater = new Map<string, RscDiscoveryGenerationHighWater>();
+    const createHost = () => new HileRscDiscoveryHost({
+      application,
+      artifacts: new InMemoryRscArtifactCatalog(),
+      deployments: new InMemoryRscDeploymentCatalog(),
+      runtime: value.manifest.runtime,
+      authorize: async () => true,
+      generationHighWater,
+    });
+    const first = createHost();
+    await first.refresh();
+    await first.close();
+
+    discovered = { ...discovered, generation: 8 };
+    const second = createHost();
+    await expect(second.refresh()).rejects.toThrow('generation rollback');
+    expect(second.snapshot()).toEqual([]);
+    await second.close();
   });
 });
