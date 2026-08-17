@@ -44,6 +44,22 @@ export interface RscRouteDefinition {
   entry: string;
 }
 
+/** Host-agnostic presentation data owned by one immutable plugin build. */
+export interface RscPluginMetadata {
+  displayName: string;
+  description?: string;
+  navigation: RscPluginNavigationItem[];
+}
+
+/** A plugin-internal destination. The Host owns its public URL and visibility policy. */
+export interface RscPluginNavigationItem {
+  id: string;
+  label: string;
+  path: string;
+  order?: number;
+  group?: string;
+}
+
 export interface RscPluginManifest {
   protocolVersion: typeof HILE_RSC_PROTOCOL_VERSION;
   pluginId: string;
@@ -54,6 +70,7 @@ export interface RscPluginManifest {
   clients: RscClientReference[];
   styles: RscStyleAsset[];
   routes: RscRouteDefinition[];
+  metadata?: RscPluginMetadata;
 }
 
 export type RscProtocolErrorCode =
@@ -64,5 +81,7 @@ export type RscProtocolErrorCode =
   | 'ERR_RSC_DUPLICATE_SERVER_FUNCTION_REFERENCE'
   | 'ERR_RSC_DUPLICATE_STYLE'
   | 'ERR_RSC_DUPLICATE_ROUTE'
+  | 'ERR_RSC_INVALID_METADATA'
+  | 'ERR_RSC_DUPLICATE_NAVIGATION'
   | 'ERR_RSC_UNSAFE_ARTIFACT_PATH'
   | 'ERR_RSC_INVALID_ROUTE';

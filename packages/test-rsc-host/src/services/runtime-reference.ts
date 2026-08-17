@@ -1,5 +1,6 @@
 import type { Application } from '@hile/micro';
 import type { InMemoryRscDeploymentCatalog } from '@hile/rsc/host/catalog';
+import type { InMemoryRscArtifactCatalog } from '@hile/rsc/host/registry';
 import type { RscPluginLocator } from '@hile/rsc/transport';
 import type { HileRscDiscoveryHost } from '@hile/rsc-discovery-hile';
 
@@ -8,6 +9,7 @@ const compositionKey = Symbol.for('test-rsc-host/composition');
 
 export interface DemoHostComposition {
   application: Application;
+  artifacts: InMemoryRscArtifactCatalog;
   deployments: InMemoryRscDeploymentCatalog;
   discovery: HileRscDiscoveryHost;
   locator: RscPluginLocator;

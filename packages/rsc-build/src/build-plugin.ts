@@ -7,6 +7,7 @@ import {
   HILE_RSC_PROTOCOL_VERSION,
   validateRscPluginManifest,
   type RscPluginManifest,
+  type RscPluginMetadata,
   type RscRouteDefinition,
   type RscRuntimeCompatibility,
 } from '@hile/rsc/protocol';
@@ -27,6 +28,7 @@ export interface BuildRscPluginOptions {
   entry: string;
   outdir: string;
   routes: RscRouteDefinition[];
+  metadata?: RscPluginMetadata;
   runtime: RscRuntimeCompatibility;
 }
 
@@ -136,6 +138,7 @@ async function buildRscPluginIntoEmptyDirectory(options: BuildRscPluginOptions):
     clients,
     styles,
     routes: options.routes,
+    metadata: options.metadata,
   }, options.runtime);
 
   const manifestPath = path.join(outdir, 'plugin.json');

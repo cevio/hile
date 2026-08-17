@@ -75,6 +75,137 @@ function expectProtocolError(fn: () => unknown, code: string): void {
 }
 
 describe('validateRscPluginManifest', () => {
+  it('accepts bounded plugin metadata and returns a canonical defensive copy', () => {
+    const manifest = createManifest();
+    const metadata = {
+      displayName: 'Analytics',
+      description: 'Operational analytics',
+      navigation: [
+        { id: 'dashboard', label: 'Dashboard', path: '/dashboard', order: 10, group: 'Operations' },
+      ],
+    };
+    (manifest as unknown as { metadata: unknown }).metadata = metadata;
+
+    const validated = validateRscPluginManifest(manifest, hostRuntime) as RscPluginManifest & {
+      metadata: typeof metadata;
+    };
+    metadata.navigation[0].label = 'mutated';
+
+    expect(validated.metadata).toEqual({
+      displayName: 'Analytics',
+      description: 'Operational analytics',
+      navigation: [
+        { id: 'dashboard', label: 'Dashboard', path: '/dashboard', order: 10, group: 'Operations' },
+      ],
+    });
+  });
+
+  it('accepts metadata exactly at every public limit using Unicode code points', () => {
+    const manifest = createManifest();
+    (manifest as unknown as { metadata: unknown }).metadata = {
+      displayName: `📊${'a'.repeat(119)}`,
+      description: 'd'.repeat(500),
+      navigation: [{
+        id: 'i'.repeat(64),
+        label: 'l'.repeat(120),
+        path: '/dashboard',
+        order: 1_000_000,
+        group: 'g'.repeat(120),
+      }],
+    };
+
+    expect(validateRscPluginManifest(manifest, hostRuntime).metadata).toMatchObject({
+      displayName: `📊${'a'.repeat(119)}`,
+      navigation: [{ order: 1_000_000 }],
+    });
+  });
+
+  it('canonicalizes display-only raw metadata with an empty navigation list', () => {
+    const manifest = createManifest();
+    (manifest as unknown as { metadata: unknown }).metadata = {
+      displayName: 'Background capability',
+    };
+
+    expect(validateRscPluginManifest(manifest, hostRuntime).metadata).toEqual({
+      displayName: 'Background capability',
+      navigation: [],
+    });
+  });
+
+  it('rejects navigation metadata that targets an undeclared plugin route', () => {
+    const manifest = createManifest();
+    (manifest as unknown as { metadata: unknown }).metadata = {
+      displayName: 'Analytics',
+      navigation: [{ id: 'settings', label: 'Settings', path: '/settings' }],
+    };
+
+    expectProtocolError(
+      () => validateRscPluginManifest(manifest, hostRuntime),
+      'ERR_RSC_INVALID_METADATA',
+    );
+  });
+
+  it.each([undefined, null, 1, {}])(
+    'classifies a non-string navigation path as invalid metadata: %j',
+    (path) => {
+      const manifest = createManifest();
+      (manifest as unknown as { metadata: unknown }).metadata = {
+        displayName: 'Analytics',
+        navigation: [{ id: 'dashboard', label: 'Dashboard', path }],
+      };
+
+      expectProtocolError(
+        () => validateRscPluginManifest(manifest, hostRuntime),
+        'ERR_RSC_INVALID_METADATA',
+      );
+    },
+  );
+
+  it('rejects duplicate navigation ids', () => {
+    const manifest = createManifest();
+    (manifest as unknown as { metadata: unknown }).metadata = {
+      displayName: 'Analytics',
+      navigation: [
+        { id: 'dashboard', label: 'Dashboard', path: '/dashboard' },
+        { id: 'dashboard', label: 'Dashboard again', path: '/dashboard' },
+      ],
+    };
+
+    expectProtocolError(
+      () => validateRscPluginManifest(manifest, hostRuntime),
+      'ERR_RSC_DUPLICATE_NAVIGATION',
+    );
+  });
+
+  it.each([
+    null,
+    [],
+    { displayName: '', navigation: [] },
+    { displayName: 'a'.repeat(121), navigation: [] },
+    { displayName: 'Anal\u2028ytics', navigation: [] },
+    { displayName: 'Analytics', description: 'a'.repeat(501), navigation: [] },
+    { displayName: 'Analytics', navigation: [{ id: '../x', label: 'X', path: '/dashboard' }] },
+    { displayName: 'Analytics', navigation: [{ id: 'i'.repeat(65), label: 'X', path: '/dashboard' }] },
+    { displayName: 'Analytics', navigation: [{ id: 'x', label: ' X', path: '/dashboard' }] },
+    { displayName: 'Analytics', navigation: [{ id: 'x', label: 'l'.repeat(121), path: '/dashboard' }] },
+    { displayName: 'Analytics', navigation: [{ id: 'x', label: 'Safe\u202eevil', path: '/dashboard' }] },
+    { displayName: 'Analytics', navigation: [{ id: 'x', label: 'X', path: '/dashboard', group: 'g'.repeat(121) }] },
+    { displayName: 'Analytics', navigation: [{ id: 'x', label: 'X', path: '/dashboard', group: '\ud800' }] },
+    { displayName: 'Analytics', navigation: [{ id: 'x', label: 'X', path: '/dashboard', order: 1.5 }] },
+    { displayName: 'Analytics', navigation: [{ id: 'x', label: 'X', path: '/dashboard', order: 1_000_001 }] },
+    { displayName: 'Analytics', navigation: Array.from({ length: 129 }, (_, index) => ({
+      id: `item-${index}`, label: `Item ${index}`, path: '/dashboard',
+    })) },
+  ])('rejects malformed or unbounded plugin metadata: %#', (metadata) => {
+    const manifest = createManifest();
+    (manifest as unknown as { metadata: unknown }).metadata = metadata;
+
+    expectProtocolError(
+      () => validateRscPluginManifest(manifest, hostRuntime),
+      'ERR_RSC_INVALID_METADATA',
+    );
+  });
+
   it('accepts a valid manifest, returns a canonical copy, and does not mutate input', () => {
     const manifest = createManifest();
     const before = structuredClone(manifest);

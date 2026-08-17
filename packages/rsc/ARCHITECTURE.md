@@ -22,6 +22,7 @@ Core has no dependency on esbuild, TypeScript, filesystem watchers, EventSource 
 6. A module-level `'use server'` directive defines build-scoped Server Functions. The Host authorizes one same-origin endpoint and forwards execution to the exact plugin microservice revision.
 7. Server Functions adapt UI intent to automatically loaded `defineActionModel()` methods; they do not replace or duplicate the model layer.
 8. Production modules contain protocol and infrastructure behavior only. Domain routing, authorization decisions, and product state belong to composition roots or applications.
+9. Optional presentation metadata is immutable build data. The Host derives it from the active deployment and matching artifact manifest; discovery does not carry a second copy and plugins do not control public URLs or visibility. Next.js pages import the lightweight `@hile/rsc/host/plugin-metadata` entry so artifact verification and streaming stay outside their dependency graph.
 
 ## Dependency direction
 
@@ -81,6 +82,7 @@ Each arrow is an interface boundary. Applications may replace discovery, transpo
 Fixed ABI:
 
 - protocol version and manifest field meanings;
+- bounded plugin presentation metadata and plugin-internal navigation paths;
 - exact React/React DOM/RSC runtime identity;
 - the logical `RemoteClientBoundary` reference;
 - Flight binary semantics and client-reference descriptors.
@@ -91,6 +93,7 @@ Configurable policy:
 - service namespace and discovery mechanism;
 - public asset/action/Server Function mount paths;
 - deployment selection and retention;
+- public navigation URL composition, localization, visibility, and authorization;
 - action origin, CSRF, authentication, and authorization;
 - error-to-route/status mapping;
 - Next decoder implementation for a supported Next version.

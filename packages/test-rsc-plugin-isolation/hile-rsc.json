@@ -4,6 +4,13 @@
   "cwd": ".",
   "entry": "src/plugin/page.tsx",
   "outdir": ".hile-rsc/isolation-v1",
+  "metadata": {
+    "displayName": "Isolation lab",
+    "description": "Independent plugin state and failure isolation",
+    "navigation": [
+      { "id": "isolation", "label": "Isolation lab", "path": "/", "order": 200 }
+    ]
+  },
   "routes": [
     { "path": "/", "entry": "IsolationPage" },
     { "path": "/inspect", "entry": "InspectPage" }

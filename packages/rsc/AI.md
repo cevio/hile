@@ -145,6 +145,22 @@ export function PluginPage({ rsc }: RscRouteProps) {
 }
 ```
 
+### Immutable plugin presentation metadata
+
+An RSC plugin may declare optional Host-agnostic presentation metadata in its immutable manifest. `displayName`, `description`, and navigation labels are bounded display strings. Navigation IDs are stable plugin-local identifiers, and every navigation `path` must match a declared plugin route. The Host still owns public URL composition, authorization, visibility, ordering overrides, localization policy, and the rendered component library.
+
+Metadata is carried by `plugin.json`, not duplicated into a discovery announcement. It therefore changes only with a new `buildId` (or development revision) and activates or rolls back atomically with the plugin code and routes. Legacy manifests without metadata remain valid and render normally.
+
+Derive a catalog view from the existing active deployment and artifact catalogs:
+
+```ts
+import { listActiveRscPlugins } from '@hile/rsc/host/plugin-metadata'
+
+const activePlugins = listActiveRscPlugins(deployments, artifacts)
+```
+
+`listActiveRscPlugins()` retains no second inventory. It fails closed if lifecycle state claims a deployment is active but its matching immutable manifest is absent. Consumers receive defensive values and may filter or project them into Host navigation without querying Registry on each request.
+
 ## Use When
 
 - Plugins must be built, installed, activated, upgraded, and removed independently from the host Next build.
@@ -186,6 +202,7 @@ import { buildRscPlugin } from '@hile/rsc-build'
 import { RscPluginService } from '@hile/rsc/plugin'
 import { createHileRscPluginClient } from '@hile/rsc/transport'
 import { RscHostRuntime, InMemoryRscDeploymentCatalog } from '@hile/rsc/host'
+import { listActiveRscPlugins } from '@hile/rsc/host/plugin-metadata'
 import { RscClientRuntimeProvider } from '@hile/rsc/client'
 import { verifyRscPluginArtifact } from '@hile/rsc/artifact'
 import { decodePluginFlight } from '@hile/rsc-next'
@@ -508,7 +525,14 @@ Create `hile-rsc.json`:
   "cwd": ".",
   "entry": "src/plugin/page.tsx",
   "outdir": ".hile-rsc/build-a",
-    "routes": [{ "path": "/page", "entry": "default" }],
+  "routes": [{ "path": "/page", "entry": "default" }],
+  "metadata": {
+    "displayName": "Example plugin",
+    "description": "An independently deployed Hile RSC plugin",
+    "navigation": [
+      { "id": "page", "label": "Example", "path": "/page", "order": 100 }
+    ]
+  },
   "runtime": {
     "react": "19.2.8",
     "reactDom": "19.2.8",
@@ -517,7 +541,7 @@ Create `hile-rsc.json`:
 }
 ```
 
-`pluginId` is the stable logical plugin identity. `buildId` identifies exact immutable bytes. `routes` maps plugin-internal paths to exports from the server entry. The Host URL prefix is Host policy and is not configured here.
+`pluginId` is the stable logical plugin identity. `buildId` identifies exact immutable bytes. `routes` maps plugin-internal paths to exports from the server entry. Optional `metadata` travels in the same immutable manifest: each navigation path must reference one declared route. The Host URL prefix, authorization, visibility, localization, and final navigation components remain Host policy and are not configured here.
 
 With the example Host catch-all, this route is opened at `/plugins/org.example.rsc-plugin/page`. The later `/plugins/demo.rsc.capabilities` and `/details` URLs belong to the richer private test suite, whose build config declares those routes; they are not routes from this minimal config.
 
@@ -923,9 +947,24 @@ The minimal route maps “no active deployment” to 404 and lets the Host error
 
 ## 8. Keep The Outer Layout In The Host
 
-The Host owns `<html>`, `<body>`, navigation, authentication shell, global theme, metadata, and application-level error boundaries. The plugin tree is rendered inside that shell.
+The Host owns `<html>`, `<body>`, navigation, authentication shell, global theme, document metadata, and application-level error boundaries. The plugin tree is rendered inside that shell.
 
-There is currently no core API that lets arbitrary plugin code mutate the Host document head. If plugins need titles or metadata, define an application-owned, validated metadata capability in the Host (for example trusted installation metadata keyed by plugin ID) and render it through Next's Host metadata APIs. Do not execute plugin-provided head code.
+Plugin builds may publish bounded presentation metadata through `plugin.json`. Read it from the current active deployment and artifact catalogs with `listActiveRscPlugins(deployments, artifacts)`, then apply Host authorization and visibility policy before passing serializable navigation items to the shell. This is a derived view, not another plugin inventory, and it changes atomically with active `buildId` selection.
+
+Presentation metadata is data, not executable head code. The Host may map trusted fields such as `displayName` or `description` through Next metadata APIs, but arbitrary plugin code still cannot mutate the Host document head.
+
+```ts
+import { listActiveRscPlugins } from '@hile/rsc/host/plugin-metadata'
+
+const navigation = listActiveRscPlugins(deployments, artifacts)
+  .flatMap(({ pluginId, metadata }) => (metadata?.navigation ?? []).map((item) => ({
+    key: `${pluginId}:${item.id}`,
+    label: item.label,
+    href: `/plugins/${encodeURIComponent(pluginId)}${item.path === '/' ? '' : item.path}`,
+    order: item.order ?? 0,
+  })))
+  .sort((left, right) => left.order - right.order || left.key.localeCompare(right.key))
+```
 
 ```tsx
 import type { ReactNode } from 'react'

@@ -117,6 +117,34 @@ describe('RSC project templates', () => {
     expect(plugin.dependencies.next).toBeUndefined();
   });
 
+  it('declares immutable presentation metadata in the RSC plugin build', () => {
+    const config = JSON.parse(readFileSync(
+      path.join(templates, 'rsc-plugin/hile-rsc.json'),
+      'utf8',
+    ));
+
+    expect(config.metadata).toEqual({
+      displayName: 'Example plugin',
+      description: 'An independently deployed Hile RSC plugin',
+      navigation: [{ id: 'page', label: 'Example', path: '/page', order: 100 }],
+    });
+  });
+
+  it('derives Host navigation from active immutable plugin manifests', () => {
+    const layout = readFileSync(
+      path.join(templates, 'rsc-host/src/app/layout.tsx'),
+      'utf8',
+    );
+    const runtime = readFileSync(
+      path.join(templates, 'rsc-host/src/services/runtime.boot.ts'),
+      'utf8',
+    );
+
+    expect(layout).toContain('listActiveRscPlugins(composition.deployments, composition.artifacts)');
+    expect(layout).toContain("href={`/plugins/${encodeURIComponent(plugin.pluginId)}");
+    expect(runtime).toContain('return { artifacts, deployments, discovery, locator, assetMountPath };');
+  });
+
   it('scans explicitly marked action models without a handwritten action map', () => {
     const boot = readFileSync(path.join(templates, 'rsc-plugin/src/services/plugin.boot.ts'), 'utf8');
     const model = readFileSync(

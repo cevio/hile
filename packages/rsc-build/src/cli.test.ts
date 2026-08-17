@@ -33,6 +33,10 @@ async function configFile() {
     entry: 'src/page.tsx',
     outdir: '.hile-rsc/build-a',
     routes: [{ path: '/fixture', entry: 'default' }],
+    metadata: {
+      displayName: 'Fixture plugin',
+      navigation: [{ id: 'fixture', label: 'Fixture', path: '/fixture' }],
+    },
     runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
   }));
   return { root, config, artifact: path.join(root, '.hile-rsc/build-a') };
@@ -69,6 +73,10 @@ describe('hile-rsc CLI', () => {
     expect(await runRscCli(['inspect', artifact], inspect.io)).toBe(0);
     expect(JSON.parse(inspect.read().stdout)).toMatchObject({
       command: 'inspect', pluginId: 'org.hile.fixture', buildId: 'build-a',
+      metadata: {
+        displayName: 'Fixture plugin',
+        navigation: [{ id: 'fixture', label: 'Fixture', path: '/fixture' }],
+      },
     });
 
     const verify = output();
@@ -78,6 +86,7 @@ describe('hile-rsc CLI', () => {
     ], verify.io)).toBe(0);
     expect(JSON.parse(verify.read().stdout)).toMatchObject({
       command: 'verify', valid: true, files: expect.any(Number),
+      metadata: { displayName: 'Fixture plugin' },
     });
   });
 

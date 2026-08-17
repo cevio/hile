@@ -16,3 +16,5 @@ NODE_OPTIONS=--conditions=react-server RSC_DEVELOPMENT_STATE=.hile-rsc/developme
 ```
 
 Bind artifact activation with `bindRscPluginDevelopmentState()`, models with `bindRscModelDevelopment()`, and mount `createRscDevelopmentEventMiddleware()` plus `RscDevelopmentReload` in the Host. Failed builds preserve the previous active revision. This package provides safe full-page reload after activation, not React Fast Refresh state preservation. See the [end-to-end guide](../../docs/ai/recipes/rsc-plugin-host.md#10-development-mode).
+
+Build configuration metadata is copied into every immutable development revision. A metadata config reload creates a new revision, so Host navigation never observes presentation data from a different build than the rendered plugin.

@@ -1,5 +1,7 @@
+import { HILE_RSC_PLUGIN_METADATA_LIMITS } from './constants';
 import {
   HILE_RSC_PROTOCOL_VERSION,
+  type RscPluginMetadata,
   type RscPluginManifest,
   type RscProtocolErrorCode,
   type RscRuntimeCompatibility,
@@ -133,8 +135,15 @@ function validateRuntime(
   return pluginRuntime;
 }
 
-function validateRoutePath(value: unknown, field: string): string {
-  const routePath = requireString(value, field);
+function validateRoutePath(
+  value: unknown,
+  field: string,
+  errorCode: RscProtocolErrorCode = 'ERR_RSC_INVALID_ROUTE',
+): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    fail(errorCode, `${field} must be a non-empty string`);
+  }
+  const routePath = value;
   const segments = routePath.slice(1).split('/');
   if (
     !routePath.startsWith('/')
@@ -148,9 +157,125 @@ function validateRoutePath(value: unknown, field: string): string {
     || segments.some((segment) => segment === '.' || segment === '..')
     || segments.some((segment) => segment !== '' && !/^[A-Za-z0-9._~-]+$/.test(segment))
   ) {
-    fail('ERR_RSC_INVALID_ROUTE', `${field} must be a normalized absolute route path`);
+    fail(errorCode, `${field} must be a normalized absolute route path`);
   }
   return routePath;
+}
+
+const INVALID_METADATA_TEXT_PATTERN = /[\p{Cc}\p{Cs}\p{Zl}\p{Zp}\u061C\u200B\u200E\u200F\u202A-\u202E\u2060\u2066-\u2069]/u;
+
+function exceedsCodePointLength(value: string, maximum: number): boolean {
+  let length = 0;
+  for (const _codePoint of value) {
+    length++;
+    if (length > maximum) return true;
+  }
+  return false;
+}
+
+function validateMetadataText(value: unknown, field: string, maxLength: number): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    fail('ERR_RSC_INVALID_METADATA', `${field} must be a non-empty string`);
+  }
+  if (
+    value !== value.trim()
+    || exceedsCodePointLength(value, maxLength)
+    || INVALID_METADATA_TEXT_PATTERN.test(value)
+  ) {
+    fail('ERR_RSC_INVALID_METADATA', `${field} is not a bounded display string`);
+  }
+  return value;
+}
+
+function validatePluginMetadata(
+  value: unknown,
+  routePaths: ReadonlySet<string>,
+): RscPluginMetadata {
+  if (!isRecord(value)) {
+    fail('ERR_RSC_INVALID_METADATA', 'metadata must be an object');
+  }
+  const displayName = validateMetadataText(
+    value.displayName,
+    'metadata.displayName',
+    HILE_RSC_PLUGIN_METADATA_LIMITS.displayNameLength,
+  );
+  const description = value.description === undefined
+    ? undefined
+    : validateMetadataText(
+        value.description,
+        'metadata.description',
+        HILE_RSC_PLUGIN_METADATA_LIMITS.descriptionLength,
+      );
+  const navigationValue = value.navigation === undefined ? [] : value.navigation;
+  if (
+    !Array.isArray(navigationValue)
+    || navigationValue.length > HILE_RSC_PLUGIN_METADATA_LIMITS.navigationItems
+  ) {
+    fail(
+      'ERR_RSC_INVALID_METADATA',
+      `metadata.navigation must contain at most ${HILE_RSC_PLUGIN_METADATA_LIMITS.navigationItems} items`,
+    );
+  }
+  const navigationIds = new Set<string>();
+  const navigation = navigationValue.map((item, index) => {
+    if (!isRecord(item)) {
+      fail('ERR_RSC_INVALID_METADATA', `metadata.navigation[${index}] must be an object`);
+    }
+    const id = typeof item.id === 'string' ? item.id : '';
+    if (
+      id.length > HILE_RSC_PLUGIN_METADATA_LIMITS.navigationIdLength
+      || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)
+    ) {
+      fail('ERR_RSC_INVALID_METADATA', `metadata.navigation[${index}].id is invalid`);
+    }
+    if (navigationIds.has(id)) {
+      fail('ERR_RSC_DUPLICATE_NAVIGATION', `duplicate navigation id: ${id}`);
+    }
+    navigationIds.add(id);
+    const navigationPath = validateRoutePath(
+      item.path,
+      `metadata.navigation[${index}].path`,
+      'ERR_RSC_INVALID_METADATA',
+    );
+    if (!routePaths.has(navigationPath)) {
+      fail(
+        'ERR_RSC_INVALID_METADATA',
+        `metadata.navigation[${index}].path must reference a declared route`,
+      );
+    }
+    if (
+      item.order !== undefined
+      && (
+        !Number.isSafeInteger(item.order)
+        || Math.abs(item.order as number)
+          > HILE_RSC_PLUGIN_METADATA_LIMITS.navigationOrderMagnitude
+      )
+    ) {
+      fail('ERR_RSC_INVALID_METADATA', `metadata.navigation[${index}].order is invalid`);
+    }
+    return {
+      id,
+      label: validateMetadataText(
+        item.label,
+        `metadata.navigation[${index}].label`,
+        HILE_RSC_PLUGIN_METADATA_LIMITS.navigationLabelLength,
+      ),
+      path: navigationPath,
+      ...(item.order === undefined ? {} : { order: item.order as number }),
+      ...(item.group === undefined ? {} : {
+        group: validateMetadataText(
+          item.group,
+          `metadata.navigation[${index}].group`,
+          HILE_RSC_PLUGIN_METADATA_LIMITS.navigationGroupLength,
+        ),
+      }),
+    };
+  });
+  return {
+    displayName,
+    ...(description === undefined ? {} : { description }),
+    navigation,
+  };
 }
 
 export function validateRscPluginManifest(
@@ -270,6 +395,9 @@ export function validateRscPluginManifest(
       entry: validateEntryName(route.entry, `routes[${index}].entry`),
     };
   });
+  const metadata = manifest.metadata === undefined
+    ? undefined
+    : validatePluginMetadata(manifest.metadata, routePaths);
 
   return {
     protocolVersion: HILE_RSC_PROTOCOL_VERSION,
@@ -281,5 +409,6 @@ export function validateRscPluginManifest(
     clients,
     styles,
     routes,
+    ...(metadata === undefined ? {} : { metadata }),
   };
 }

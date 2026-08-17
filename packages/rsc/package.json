@@ -42,6 +42,10 @@
       "types": "./dist/host/mount.d.ts",
       "import": "./dist/host/mount.js"
     },
+    "./host/plugin-metadata": {
+      "types": "./dist/host/plugin-metadata.d.ts",
+      "import": "./dist/host/plugin-metadata.js"
+    },
     "./host/registry": {
       "types": "./dist/host/registry.d.ts",
       "import": "./dist/host/registry.js"

@@ -12,6 +12,7 @@ import {
   HILE_RSC_PROTOCOL_VERSION,
   validateRscPluginManifest,
   type RscPluginManifest,
+  type RscPluginMetadata,
   type RscRouteDefinition,
   type RscRuntimeCompatibility,
 } from '@hile/rsc/protocol';
@@ -33,6 +34,7 @@ export interface RscDevelopmentCompilerOptions {
   entry: string;
   outdir: string;
   routes: readonly RscRouteDefinition[];
+  metadata?: RscPluginMetadata;
   runtime: RscRuntimeCompatibility;
   sessionId?: string;
   initialRevision?: number;
@@ -279,6 +281,7 @@ export async function createRscDevelopmentCompiler(
       clients,
       styles,
       routes: [...options.routes],
+      metadata: options.metadata,
     }, options.runtime);
     await writeFile(path.join(workdir, 'plugin.json'), `${JSON.stringify(manifest, null, 2)}\n`);
     const artifactRoot = path.join(revisionsDir, `r${revision}`);

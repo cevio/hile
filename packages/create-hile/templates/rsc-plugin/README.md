@@ -9,6 +9,8 @@ This project is an independently built RSC plugin runtime. It creates no HTTP se
 
 Keep product routes, permissions, and domain logic outside the runtime composition code. Define browser-callable behavior with `defineActionModel()` under the domain-oriented `src/models` tree; the runtime scans models and mounts only explicitly marked action models.
 
+The optional `metadata` block in `hile-rsc.json` is immutable presentation data for Host-owned shells. Navigation paths are plugin-internal declared routes; the Host decides public URLs, authorization, visibility, and the final component library.
+
 `RSC_DISCOVERY_GENERATION` starts the signed monotonic generation for this instance. Use a higher value for a newer immutable deployment at equal priority; successful runtime artifact updates increment it automatically.
 
 ## Add interactive server behavior

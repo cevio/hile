@@ -91,6 +91,34 @@ describe('private RSC demo package contracts', () => {
     }
   });
 
+  it('derives Host navigation from the active immutable plugin manifests', () => {
+    const layout = read('packages/test-rsc-host/src/app/layout.tsx');
+    const shell = read('packages/test-rsc-host/src/app/host-shell.tsx');
+    const runtime = read('packages/test-rsc-host/src/services/runtime.boot.ts');
+
+    expect(layout).toContain('listActiveRscPlugins');
+    expect(layout).toContain('composition.artifacts');
+    expect(shell).toContain('navigation: readonly HostNavigationItem[]');
+    expect(shell).not.toContain('demo.rsc.capabilities');
+    expect(shell).not.toContain('demo.rsc.isolation');
+    expect(runtime).toContain('artifacts,');
+
+    for (const { packageName } of plugins) {
+      const config = JSON.parse(read(`packages/${packageName}/hile-rsc.json`));
+      expect(config.metadata).toMatchObject({
+        displayName: expect.any(String),
+        navigation: [
+          expect.objectContaining({
+            id: expect.any(String),
+            label: expect.any(String),
+            path: '/',
+            order: expect.any(Number),
+          }),
+        ],
+      });
+    }
+  });
+
   it('uses the current Ant Design Timeline item contract without runtime warnings', () => {
     const panel = read('packages/test-rsc-plugin-capabilities-v2/src/plugin/update-panel.tsx');
     const timeline = panel.match(/<Timeline items=\{\[([\s\S]*?)\]\} \/>/)?.[1];

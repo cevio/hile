@@ -15,3 +15,5 @@ hile-rsc verify .hile-rsc/build-a --react 19.2.8 --react-dom 19.2.8 --rsc 19.2.8
 ```
 
 Use an empty output directory and a new `buildId` for changed bytes. The validated config, directive rules, artifact layout, and full Host/plugin walkthrough are documented in [`docs/ai/packages/rsc.md`](../../docs/ai/packages/rsc.md) and [`docs/ai/recipes/rsc-plugin-host.md`](../../docs/ai/recipes/rsc-plugin-host.md).
+
+Optional `metadata` is validated and emitted into the same immutable `plugin.json`. Navigation paths must reference declared plugin routes; public URL and visibility policy remain Host-owned. `build`, `inspect`, and `verify` expose the canonical metadata for automation.

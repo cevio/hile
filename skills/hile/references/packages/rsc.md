@@ -116,6 +116,22 @@ export function PluginPage({ rsc }: RscRouteProps) {
 }
 ```
 
+### Immutable plugin presentation metadata
+
+An RSC plugin may declare optional Host-agnostic presentation metadata in its immutable manifest. `displayName`, `description`, and navigation labels are bounded display strings. Navigation IDs are stable plugin-local identifiers, and every navigation `path` must match a declared plugin route. The Host still owns public URL composition, authorization, visibility, ordering overrides, localization policy, and the rendered component library.
+
+Metadata is carried by `plugin.json`, not duplicated into a discovery announcement. It therefore changes only with a new `buildId` (or development revision) and activates or rolls back atomically with the plugin code and routes. Legacy manifests without metadata remain valid and render normally.
+
+Derive a catalog view from the existing active deployment and artifact catalogs:
+
+```ts
+import { listActiveRscPlugins } from '@hile/rsc/host/plugin-metadata'
+
+const activePlugins = listActiveRscPlugins(deployments, artifacts)
+```
+
+`listActiveRscPlugins()` retains no second inventory. It fails closed if lifecycle state claims a deployment is active but its matching immutable manifest is absent. Consumers receive defensive values and may filter or project them into Host navigation without querying Registry on each request.
+
 ## Use When
 
 - Plugins must be built, installed, activated, upgraded, and removed independently from the host Next build.
@@ -157,6 +173,7 @@ import { buildRscPlugin } from '@hile/rsc-build'
 import { RscPluginService } from '@hile/rsc/plugin'
 import { createHileRscPluginClient } from '@hile/rsc/transport'
 import { RscHostRuntime, InMemoryRscDeploymentCatalog } from '@hile/rsc/host'
+import { listActiveRscPlugins } from '@hile/rsc/host/plugin-metadata'
 import { RscClientRuntimeProvider } from '@hile/rsc/client'
 import { verifyRscPluginArtifact } from '@hile/rsc/artifact'
 import { decodePluginFlight } from '@hile/rsc-next'

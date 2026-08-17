@@ -50,13 +50,11 @@ export default async function PluginPage({
   });
 
   return (
-    <main data-rsc-host>
-      <RscHostClientRuntime
-        assetMountPath={composition.assetMountPath}
-        csrfToken={process.env.RSC_CSRF_TOKEN ?? ''}
-      >
-        {tree}
-      </RscHostClientRuntime>
-    </main>
+    <RscHostClientRuntime
+      assetMountPath={composition.assetMountPath}
+      csrfToken={process.env.RSC_CSRF_TOKEN ?? ''}
+    >
+      {tree}
+    </RscHostClientRuntime>
   );
 }

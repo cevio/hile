@@ -4,6 +4,13 @@
   "cwd": ".",
   "entry": "src/plugin/page.tsx",
   "outdir": ".hile-rsc/v1",
+  "metadata": {
+    "displayName": "Capability matrix",
+    "description": "Reference RSC capability surface",
+    "navigation": [
+      { "id": "capabilities", "label": "Capability matrix", "path": "/", "order": 100 }
+    ]
+  },
   "routes": [
     { "path": "/", "entry": "CapabilitiesPage" },
     { "path": "/details", "entry": "DetailsPage" },

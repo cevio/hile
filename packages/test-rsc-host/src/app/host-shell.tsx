@@ -17,21 +17,28 @@ import type { ReactNode } from 'react';
 
 const { Header, Sider, Content } = Layout;
 
-const navigation = [
-  { key: '/', label: <Link href="/">Runtime overview</Link> },
-  {
-    key: '/plugins/demo.rsc.capabilities',
-    label: <Link href="/plugins/demo.rsc.capabilities?label=from-shell&count=3">Capability matrix</Link>,
-  },
-  {
-    key: '/plugins/demo.rsc.isolation',
-    label: <Link href="/plugins/demo.rsc.isolation?marker=separate-state">Isolation lab</Link>,
-  },
-];
+export interface HostNavigationItem {
+  key: string;
+  label: string;
+  href: string;
+}
 
-export default function HostShell({ children }: { children: ReactNode }) {
+export default function HostShell({
+  children,
+  navigation,
+}: {
+  children: ReactNode;
+  navigation: readonly HostNavigationItem[];
+}) {
   const pathname = usePathname();
-  const selected = navigation.find(({ key }) => key !== '/' && pathname.startsWith(key))?.key ?? '/';
+  const items = [
+    { key: '/', label: <Link href="/">Runtime overview</Link> },
+    ...navigation.map((item) => ({
+      key: item.key,
+      label: <Link href={item.href}>{item.label}</Link>,
+    })),
+  ];
+  const selected = items.find(({ key }) => key !== '/' && pathname.startsWith(key))?.key ?? '/';
 
   return (
     <ConfigProvider
@@ -69,7 +76,7 @@ export default function HostShell({ children }: { children: ReactNode }) {
           <Layout>
             <Sider className="host-sider" width={236} breakpoint="lg" collapsedWidth={0}>
               <div className="host-nav-caption">WORKSPACE</div>
-              <Menu theme="dark" mode="inline" selectedKeys={[selected]} items={navigation} />
+              <Menu theme="dark" mode="inline" selectedKeys={[selected]} items={items} />
               <div className="host-sider-foot">
                 <span>PUBLIC EDGE</span>
                 <strong>127.0.0.1:3200</strong>

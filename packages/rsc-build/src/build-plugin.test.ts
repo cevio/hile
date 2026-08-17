@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -23,6 +23,10 @@ async function build() {
     entry: 'src/page.tsx',
     outdir,
     routes: [{ path: '/basic', entry: 'default' }],
+    metadata: {
+      displayName: 'Basic plugin',
+      navigation: [{ id: 'basic', label: 'Basic', path: '/basic', order: 10 }],
+    },
     runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
   });
   return { outdir, manifest };
@@ -218,6 +222,30 @@ describe('buildRscPlugin', () => {
 
     expect(disk).toEqual(manifest);
     expect(validateRscPluginManifest(disk, manifest.runtime)).toEqual(manifest);
+    expect(manifest.metadata).toEqual({
+      displayName: 'Basic plugin',
+      navigation: [{ id: 'basic', label: 'Basic', path: '/basic', order: 10 }],
+    });
+  });
+
+  it('does not publish a partial artifact when metadata validation fails', async () => {
+    const outdir = await mkdtemp(path.join(tmpdir(), 'hile-rsc-build-invalid-metadata-'));
+    tempDirs.push(outdir);
+
+    await expect(buildRscPlugin({
+      pluginId: 'com.example.basic',
+      buildId: 'build-invalid-metadata',
+      cwd: fixtureDir,
+      entry: 'src/page.tsx',
+      outdir,
+      routes: [{ path: '/basic', entry: 'default' }],
+      metadata: {
+        displayName: 'Invalid metadata',
+        navigation: [{ id: 'missing', label: 'Missing', path: '/missing' }],
+      },
+      runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
+    })).rejects.toMatchObject({ code: 'ERR_RSC_INVALID_METADATA' });
+    expect(await readdir(outdir)).toEqual([]);
   });
 
   it('rejects entry and output paths that escape their roots', async () => {

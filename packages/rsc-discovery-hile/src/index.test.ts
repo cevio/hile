@@ -35,6 +35,10 @@ async function artifact(buildId = 'build-1') {
     server: { entry: 'server/index.js', integrity: integrity(server) },
     serverFunctions: [],
     clients: [], styles: [], routes: [{ path: '/', entry: 'default' }],
+    metadata: {
+      displayName: `Fixture ${buildId}`,
+      navigation: [{ id: 'home', label: 'Home', path: '/' }],
+    },
   };
   await import('node:fs/promises').then(({ mkdir }) => mkdir(path.join(root, 'server')));
   await writeFile(path.join(root, manifest.server.entry), server);

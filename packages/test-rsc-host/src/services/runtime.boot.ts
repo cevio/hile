@@ -226,6 +226,7 @@ export default defineService<DemoHostComposition>(DEMO_HOST_SERVICE_KEY, async (
   });
   const composition: DemoHostComposition = {
     application,
+    artifacts,
     deployments,
     discovery,
     locator,

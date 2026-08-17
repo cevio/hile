@@ -23,6 +23,8 @@ async function setup() {
   const configFile = path.join(cwd, 'hile-rsc.json');
   await cp(fixtureDir, cwd, { recursive: true });
   let buildId = 'build-a';
+  let displayName = 'Basic plugin';
+  let navigationPath = '/basic';
   const loadConfig = vi.fn(async () => ({
     pluginId: 'com.example.basic',
     buildId,
@@ -30,10 +32,24 @@ async function setup() {
     entry: 'src/page.tsx',
     outdir,
     routes: [{ path: '/basic', entry: 'default' }],
+    metadata: {
+      displayName,
+      navigation: [{ id: 'basic', label: displayName, path: navigationPath }],
+    },
     runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
   }));
   await writeFile(configFile, '{}');
-  return { root, cwd, outdir, stateFile, configFile, loadConfig, setBuildId(value: string) { buildId = value; } };
+  return {
+    root,
+    cwd,
+    outdir,
+    stateFile,
+    configFile,
+    loadConfig,
+    setBuildId(value: string) { buildId = value; },
+    setDisplayName(value: string) { displayName = value; },
+    setNavigationPath(value: string) { navigationPath = value; },
+  };
 }
 
 describe('RSC development project', () => {
@@ -67,9 +83,11 @@ describe('RSC development project', () => {
     expect(project.current().contexts).toEqual({ server: 'reused', browser: 'reused', ssr: 'reused' });
 
     value.setBuildId('build-b');
+    value.setDisplayName('Basic plugin v2');
     const configured = await project.reloadConfig();
     expect(configured.revision).toBeGreaterThanOrEqual(3);
     expect(configured.manifest.buildId).toContain('build-b-dev-project-test');
+    expect(configured.manifest.metadata?.displayName).toBe('Basic plugin v2');
     expect(revisions.at(-1)).toBe(configured.revision);
     await project.dispose();
   }, 20_000);
@@ -91,6 +109,28 @@ describe('RSC development project', () => {
     incompatible = true;
     await expect(project.reloadConfig()).rejects.toThrow('pluginId cannot change');
     incompatible = false;
+    await expect(project.rebuild()).resolves.toMatchObject({ revision: 2 });
+    await project.dispose();
+  });
+
+  it('keeps the last successful revision when reconfigured metadata is invalid', async () => {
+    const value = await setup();
+    const project = await createRscDevelopmentProject({
+      configFile: value.configFile,
+      stateFile: value.stateFile,
+      outdir: value.outdir,
+      namespace: 'fixture.dev',
+      sessionId: 'project-invalid-metadata',
+      loadConfig: value.loadConfig,
+    });
+    const successful = project.current();
+
+    value.setNavigationPath('/missing');
+    await expect(project.reloadConfig())
+      .rejects.toMatchObject({ code: 'ERR_RSC_INVALID_METADATA' });
+    expect(project.current()).toBe(successful);
+
+    value.setNavigationPath('/basic');
     await expect(project.rebuild()).resolves.toMatchObject({ revision: 2 });
     await project.dispose();
   });

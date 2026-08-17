@@ -59,6 +59,7 @@ async function execute(args: string[], io: RscCliIo): Promise<void> {
       pluginId: manifest.pluginId,
       buildId: manifest.buildId,
       artifact: path.resolve(options.outdir),
+      metadata: manifest.metadata,
     });
     return;
   }
@@ -71,6 +72,7 @@ async function execute(args: string[], io: RscCliIo): Promise<void> {
       buildId: manifest.buildId,
       runtime: manifest.runtime,
       routes: manifest.routes,
+      metadata: manifest.metadata,
       clients: manifest.clients.length,
       styles: manifest.styles.length,
     });
@@ -91,6 +93,7 @@ async function execute(args: string[], io: RscCliIo): Promise<void> {
       valid: true,
       pluginId: verification.manifest.pluginId,
       buildId: verification.manifest.buildId,
+      metadata: verification.manifest.metadata,
       files: verification.files.length,
     });
     return;

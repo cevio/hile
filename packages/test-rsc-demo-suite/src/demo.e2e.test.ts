@@ -115,6 +115,10 @@ test.describe.serial('Registry-driven single HTTP RSC topology', () => {
     });
     await page.goto('/plugins/demo.rsc.capabilities?label=registry-selected');
     await expect(page.getByTestId('host-application-shell')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Capability matrix' }))
+      .toHaveAttribute('href', '/plugins/demo.rsc.capabilities');
+    await expect(page.getByRole('link', { name: 'Isolation lab' }))
+      .toHaveAttribute('href', '/plugins/demo.rsc.isolation');
     await expect(page.getByTestId('host-plugin-content')).toContainText('Capabilities plugin');
     await expect(page.getByTestId('host-application-shell')).toHaveClass(/ant-layout/);
     await expect(page.getByTestId('plugin-capabilities')).toHaveAttribute('data-build', 'v2');

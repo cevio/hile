@@ -6,6 +6,7 @@ import { Readable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { InMemoryRscArtifactCatalog } from '@hile/rsc/host/registry';
 import { InMemoryRscDeploymentCatalog } from '@hile/rsc/host/catalog';
+import { listActiveRscPlugins } from '@hile/rsc/host/plugin-metadata';
 import type { RscPluginManifest } from '@hile/rsc/protocol';
 import { HileRscDiscoveryHost } from './host';
 import type { RscDiscoveryGenerationHighWater } from '@hile/rsc-discovery';
@@ -30,6 +31,10 @@ async function artifact(buildId: string) {
     },
     serverFunctions: [],
     clients: [], styles: [], routes: [{ path: '/', entry: 'default' }],
+    metadata: {
+      displayName: `Fixture ${buildId}`,
+      navigation: [{ id: 'home', label: 'Home', path: '/' }],
+    },
   };
   await mkdir(path.join(root, 'server'));
   await writeFile(path.join(root, manifest.server.entry), server);
@@ -98,6 +103,12 @@ describe('HileRscDiscoveryHost', () => {
     currentArtifact = v2;
     await host.refresh();
     expect(deployments.getActive(v2.manifest.pluginId)?.buildId).toBe('build-v2');
+    expect(listActiveRscPlugins(deployments, artifacts)).toEqual([{
+      pluginId: v2.manifest.pluginId,
+      buildId: 'build-v2',
+      namespace: 'fixture.build-v2',
+      metadata: v2.manifest.metadata,
+    }]);
     expect(deployments.snapshot().some(({ buildId }) => buildId === 'build-v1')).toBe(false);
 
     present = false;
@@ -131,6 +142,43 @@ describe('HileRscDiscoveryHost', () => {
     registryAvailable = false;
     await expect(host.refresh()).rejects.toThrow('registry offline');
     expect(deployments.getActive(value.manifest.pluginId)?.buildId).toBe('build-v1');
+    await host.close();
+  });
+
+  it('keeps the active build when a discovered replacement has invalid metadata', async () => {
+    const v1 = await artifact('build-v1');
+    const v2 = await artifact('build-v2');
+    let current = announcement(v1.manifest, 1);
+    let currentArtifact = v1;
+    const application = {
+      listRegistryTopics: vi.fn(async () => [{
+        topic: `@hile/rsc/discovery/v1/${current.instanceId}`,
+        hasData: true,
+      }]),
+      getRegistryTopic: vi.fn(async () => ({ hasData: true, payload: current })),
+      stream: artifactStream(() => currentArtifact),
+    };
+    const artifacts = new InMemoryRscArtifactCatalog();
+    const deployments = new InMemoryRscDeploymentCatalog();
+    const host = new HileRscDiscoveryHost({
+      application,
+      artifacts,
+      deployments,
+      runtime: v1.manifest.runtime,
+      authorize: async () => true,
+    });
+    await host.refresh();
+
+    v2.manifest.metadata!.navigation[0].path = '/missing';
+    current = announcement(v2.manifest, 2);
+    currentArtifact = v2;
+    await expect(host.refresh()).rejects.toThrow('reconciliation failed');
+    expect(listActiveRscPlugins(deployments, artifacts)).toEqual([{
+      pluginId: v1.manifest.pluginId,
+      buildId: v1.manifest.buildId,
+      namespace: 'fixture.build-v1',
+      metadata: v1.manifest.metadata,
+    }]);
     await host.close();
   });
 

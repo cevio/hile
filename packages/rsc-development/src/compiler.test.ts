@@ -28,6 +28,10 @@ function options(cwd: string, outdir: string) {
     entry: 'src/page.tsx',
     outdir,
     routes: [{ path: '/basic', entry: 'default' }],
+    metadata: {
+      displayName: 'Basic development plugin',
+      navigation: [{ id: 'basic', label: 'Basic', path: '/basic', order: 10 }],
+    },
     runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
     sessionId: 'test-session',
   } as const;
@@ -51,6 +55,10 @@ describe('createRscDevelopmentCompiler', () => {
     const second = await compiler.rebuild();
 
     expect(first.revision).toBe(1);
+    expect(first.manifest.metadata).toEqual({
+      displayName: 'Basic development plugin',
+      navigation: [{ id: 'basic', label: 'Basic', path: '/basic', order: 10 }],
+    });
     expect(first.contexts).toEqual({ server: 'created', browser: 'created', ssr: 'created' });
     expect(second.revision).toBe(2);
     expect(second.contexts).toEqual({ server: 'reused', browser: 'reused', ssr: 'reused' });

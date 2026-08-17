@@ -123,5 +123,5 @@ export default defineService('rsc.host.runtime', async (shutdown) => {
     uninstallResolver();
     await stopMicro();
   });
-  return { deployments, discovery, locator, assetMountPath };
+  return { artifacts, deployments, discovery, locator, assetMountPath };
 });
