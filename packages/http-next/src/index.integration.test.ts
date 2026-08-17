@@ -6,8 +6,11 @@ import { HttpNext } from './index'
 
 describe('HttpNext integration', () => {
   let stop: (() => Promise<void>) | undefined
+  let socket: WebSocket | undefined
 
   afterEach(async () => {
+    socket?.close()
+    socket = undefined
     await stop?.()
     stop = undefined
     vi.unstubAllEnvs()
@@ -40,5 +43,38 @@ describe('HttpNext integration', () => {
     const publicFile = await fetch(`${origin}/probe.txt`)
     expect(publicFile.status).toBe(200)
     expect(await publicFile.text()).toBe('public-value\n')
+
+    socket = new WebSocket(`${origin.replace('http:', 'ws:')}/_next/hmr?id=http-next-stop-test`)
+    await waitForWebSocket(socket, 'open')
+
+    await withTimeout(stop(), 5_000, 'HttpNext stop timed out with an active HMR WebSocket')
+    stop = undefined
+    if (socket.readyState !== WebSocket.CLOSED) {
+      await waitForWebSocket(socket, 'close')
+    }
+    expect(socket.readyState).toBe(WebSocket.CLOSED)
   }, 60_000)
 })
+
+function waitForWebSocket(socket: WebSocket, event: 'open' | 'close'): Promise<void> {
+  return withTimeout(new Promise<void>((resolve, reject) => {
+    socket.addEventListener(event, () => resolve(), { once: true })
+    socket.addEventListener('error', () => reject(new Error(`WebSocket ${event} failed`)), {
+      once: true,
+    })
+  }), 5_000, `WebSocket ${event} timed out`)
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), timeoutMs)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}

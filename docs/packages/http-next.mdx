@@ -84,7 +84,8 @@ export const dynamic = 'force-dynamic'
 - Call `use()` and `load()` before `start()`; configuration is frozen once startup begins.
 - Next.js exclusively owns `public/`, `distDir`, `/_next/static`, RSC, Server Functions, and `next.config`.
 - `start(onReady)` calls readiness only after Next is prepared and the shared HTTP server is listening.
-- The returned async stop function drains HTTP requests before closing the Next runtime.
+- The returned async stop function first asks the shared HTTP server to stop accepting new connections, then waits for HTTP drain and Next runtime cleanup concurrently. It tracks and terminates upgraded connections, including development HMR WebSockets, because Node's HTTP drain does not own their protocol lifecycle. Development shutdown also closes disposable HTTP/compiler connections, matching Next's own development-server policy; production HTTP requests retain graceful drain behavior.
+- Stop and startup rollback attempt both HTTP and Next cleanup even when either side fails. One failure is rethrown directly; multiple failures are reported together.
 
 ## Anti-Patterns
 

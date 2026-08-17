@@ -3,7 +3,11 @@ import type { Server } from 'node:http'
 import { EventEmitter } from 'node:events'
 
 const lifecycle: string[] = []
-const server = { listen: vi.fn() } as unknown as Server
+const closeAllConnections = vi.fn()
+const server = Object.assign(new EventEmitter(), {
+  listen: vi.fn(),
+  closeAllConnections,
+}) as unknown as Server
 const closeHttpMock = vi.fn(async () => {
   lifecycle.push('http:closed')
 })
@@ -61,6 +65,8 @@ describe('HttpNext', () => {
     nextHandler.mockClear()
     nextGetRequestHandler.mockClear()
     NextServer.mockClear()
+    closeAllConnections.mockClear()
+    server.removeAllListeners('upgrade')
   })
 
   it('开发模式按约定加载 cwd/src/controllers 到 /-', async () => {
@@ -230,7 +236,7 @@ describe('HttpNext', () => {
     expect(res.listenerCount('close')).toBe(0)
   })
 
-  it('stop 先等待 HTTP drain 再关闭 Next，且重复调用安全', async () => {
+  it('stop 同时完成 HTTP drain 与 Next cleanup，且重复调用安全', async () => {
     const app = new HttpNext({ port: 3000, cwd: '/proj' })
     const stop = await app.start()
 
@@ -239,7 +245,81 @@ describe('HttpNext', () => {
 
     expect(closeHttpMock).toHaveBeenCalledOnce()
     expect(nextClose).toHaveBeenCalledOnce()
-    expect(lifecycle.slice(-2)).toEqual(['http:closed', 'next:closed'])
+  })
+
+  it('HTTP drain 被升级连接阻塞时仍立即启动 Next cleanup', async () => {
+    let releaseHttp!: () => void
+    closeHttpMock.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      releaseHttp = resolve
+    }))
+    const app = new HttpNext({ port: 3000, cwd: '/proj' })
+    const stop = await app.start()
+
+    const stopping = stop()
+    await vi.waitFor(() => expect(nextClose).toHaveBeenCalledOnce())
+    expect(closeHttpMock).toHaveBeenCalledOnce()
+
+    releaseHttp()
+    await stopping
+  })
+
+  it('停止时只终止已升级连接，使 HTTP drain 可以完成', async () => {
+    const upgradedSocket = Object.assign(new EventEmitter(), {
+      destroy: vi.fn(),
+    })
+    const app = new HttpNext({ port: 3000, cwd: '/proj' })
+    const stop = await app.start()
+    server.emit('upgrade', {}, upgradedSocket)
+
+    await stop()
+
+    expect(upgradedSocket.destroy).toHaveBeenCalledOnce()
+    expect(closeAllConnections).toHaveBeenCalledOnce()
+  })
+
+  it('生产环境保留普通 HTTP 连接的优雅排空', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    const app = new HttpNext({ port: 3000, cwd: '/proj' })
+    const stop = await app.start()
+
+    await stop()
+
+    expect(closeAllConnections).not.toHaveBeenCalled()
+  })
+
+  it('停止开始后到达的升级连接会被立即拒绝', async () => {
+    let releaseHttp!: () => void
+    closeHttpMock.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      releaseHttp = resolve
+    }))
+    const upgradedSocket = Object.assign(new EventEmitter(), {
+      destroy: vi.fn(),
+    })
+    const app = new HttpNext({ port: 3000, cwd: '/proj' })
+    const stop = await app.start()
+
+    const stopping = stop()
+    server.emit('upgrade', {}, upgradedSocket)
+
+    expect(upgradedSocket.destroy).toHaveBeenCalledOnce()
+    releaseHttp()
+    await stopping
+  })
+
+  it('onReady 回滚时也不会让 HTTP drain 阻止 Next cleanup', async () => {
+    let releaseHttp!: () => void
+    closeHttpMock.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      releaseHttp = resolve
+    }))
+    const app = new HttpNext({ port: 3000, cwd: '/proj' })
+
+    const starting = app.start(async () => {
+      throw new Error('ready failed')
+    })
+    await vi.waitFor(() => expect(nextClose).toHaveBeenCalledOnce())
+    releaseHttp()
+
+    await expect(starting).rejects.toThrow('ready failed')
   })
 
   it('HTTP drain 失败时仍关闭 Next runtime 并保留原错误', async () => {
@@ -250,6 +330,17 @@ describe('HttpNext', () => {
     await expect(stop()).rejects.toThrow('drain failed')
 
     expect(nextClose).toHaveBeenCalledOnce()
+  })
+
+  it('HTTP drain 与 Next cleanup 都失败时保留全部错误', async () => {
+    const drainError = new Error('drain failed')
+    const nextError = new Error('next cleanup failed')
+    closeHttpMock.mockRejectedValueOnce(drainError)
+    nextClose.mockRejectedValueOnce(nextError)
+    const app = new HttpNext({ port: 3000, cwd: '/proj' })
+    const stop = await app.start()
+
+    await expect(stop()).rejects.toMatchObject({ errors: [drainError, nextError] })
   })
 
   it('拒绝重复启动同一个实例', async () => {

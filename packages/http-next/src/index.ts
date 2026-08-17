@@ -2,7 +2,8 @@ import NextServer from 'next'
 import { Http } from '@hile/http'
 import type { Middleware } from 'koa'
 import { resolve } from 'node:path'
-import type { Server } from 'node:http'
+import type { IncomingMessage, Server } from 'node:http'
+import type { Duplex } from 'node:stream'
 import { AsyncLocalStorage } from 'node:async_hooks'
 
 type NextApplication = ReturnType<typeof NextServer>
@@ -33,8 +34,12 @@ export class HttpNext {
   private readonly http: Http
   private nextApp?: NextApplication
   private nextHandler?: NextRequestHandler
+  private server?: Server
   private started = false
+  private stopping = false
   private stopPromise?: Promise<void>
+  private readonly upgradedSockets = new Set<Duplex>()
+  private stopUpgradeTracking?: () => void
 
   constructor(options: HttpNextProps) {
     const { cwd, port } = options
@@ -91,6 +96,51 @@ export class HttpNext {
     })
   }
 
+  private trackUpgradedSockets(server: Server) {
+    this.server = server
+    const onUpgrade = (_request: IncomingMessage, socket: Duplex) => {
+      if (this.stopping) {
+        socket.destroy()
+        return
+      }
+      this.upgradedSockets.add(socket)
+      socket.once('close', () => this.upgradedSockets.delete(socket))
+    }
+    server.on('upgrade', onUpgrade)
+    this.stopUpgradeTracking = () => server.off('upgrade', onUpgrade)
+  }
+
+  private async closeRuntime(stopHttp?: () => Promise<void>) {
+    this.stopping = true
+    const cleanups: Promise<void>[] = []
+    if (stopHttp) cleanups.push(invokeCleanup(stopHttp))
+    if (this.nextApp) cleanups.push(invokeCleanup(() => this.nextApp!.close()))
+
+    // Match Next's own development-server shutdown policy. Development
+    // connections are disposable and may include long-lived compiler channels;
+    // production requests retain normal graceful-drain behavior.
+    if (this.isDevelopment) this.server?.closeAllConnections?.()
+
+    // server.close() cannot finish while upgraded connections (including Next
+    // development HMR) remain open. They are no longer ordinary HTTP requests,
+    // so terminate only these sockets while regular requests continue draining.
+    for (const socket of this.upgradedSockets) socket.destroy()
+
+    const results = await Promise.allSettled(cleanups).finally(() => {
+      this.stopUpgradeTracking?.()
+      this.stopUpgradeTracking = undefined
+      this.upgradedSockets.clear()
+      this.server = undefined
+    })
+    const errors = results.flatMap((result) => (
+      result.status === 'rejected' ? [result.reason] : []
+    ))
+    if (errors.length === 1) throw errors[0]
+    if (errors.length > 1) {
+      throw new AggregateError(errors, 'Failed to close HttpNext runtime')
+    }
+  }
+
   /** 注册在 Hile 控制器与 Next fallback 之前执行的 Koa 中间件。 */
   public use(middleware: Middleware) {
     this.assertCanConfigure()
@@ -120,6 +170,7 @@ export class HttpNext {
       let serverRef: Server | undefined
       const stopServer = await this.http.listen(async (server) => {
         serverRef = server
+        this.trackUpgradedSockets(server)
         const app = NextServer({
           dev: this.isDevelopment,
           httpServer: server,
@@ -136,38 +187,29 @@ export class HttpNext {
 
       return () => {
         if (this.stopPromise) return this.stopPromise
-        this.stopPromise = (async () => {
-          let stopError: unknown
-          try {
-            await stopServer()
-          } catch (error) {
-            stopError = error
-          }
-          try {
-            await this.nextApp?.close()
-          } catch (error) {
-            stopError ??= error
-          }
-          if (stopError) throw stopError
-        })()
+        this.stopPromise = this.closeRuntime(stopServer)
         return this.stopPromise
       }
     } catch (error) {
       try {
-        await stopHttp?.()
+        await this.closeRuntime(stopHttp)
       } catch {
-        // Preserve the startup error while continuing Next runtime cleanup.
-      }
-      try {
-        await this.nextApp?.close()
-      } catch {
-        // Preserve the startup error reported to the caller.
+        // Preserve the startup error after attempting every acquired cleanup.
       }
       this.nextApp = undefined
       this.nextHandler = undefined
+      this.stopping = false
       this.started = false
       throw error
     }
+  }
+}
+
+function invokeCleanup(cleanup: () => void | Promise<void>): Promise<void> {
+  try {
+    return Promise.resolve(cleanup())
+  } catch (error) {
+    return Promise.reject(error)
   }
 }
 
