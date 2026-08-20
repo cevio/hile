@@ -7,6 +7,10 @@ This project is an independently built RSC plugin runtime. It creates no HTTP se
 3. Run `pnpm dev`: the persistent compiler and service stay alive together; source edits create immutable incremental revisions, while model edits reload only action models.
 4. Create and start a separate project from the `rsc-host` template. This service publishes an instance-scoped Registry announcement, so no artifact path, namespace list, install call, or activation call is configured in the Host.
 
+The default `hile-rsc.json` intentionally omits `buildId`, `outdir`, and `runtime`. Each production build receives an immutable ID automatically, is written below `.hile-rsc`, and uses the runtime tuple supported by the installed RSC packages; set `RSC_BUILD_ID` only when a deployment system needs to supply that identity.
+
+Development keeps stable `MICRO_NAMESPACE` and `RSC_INSTANCE_ID` values so one publisher can update incremental revisions. Production omits both by default, deriving a unique routable namespace and publisher identity from the immutable manifest plugin/build IDs; set either variable only when the deployment platform supplies values unique to every concurrently running immutable build.
+
 Keep product routes, permissions, and domain logic outside the runtime composition code. Define browser-callable behavior with `defineActionModel()` under the domain-oriented `src/models` tree; the runtime scans models and mounts only explicitly marked action models.
 
 The optional `metadata` block in `hile-rsc.json` is immutable presentation data for Host-owned shells. Navigation paths are plugin-internal declared routes; the Host decides public URLs, authorization, visibility, and the final component library.

@@ -9,6 +9,7 @@ The package implementation is separated by responsibility: `authentication` owns
 ## Recommended entry points
 
 - Plugin: construct `HileRscPluginRuntime`, call `start()`, and register `close()` with Hile shutdown.
+- Identity: use `resolveHileRscPluginIdentity()` to keep development routing stable while deriving build-scoped production namespaces and publisher IDs; explicit deployment-provided values remain supported.
 - Host: construct `HileRscDiscoveryHost` with `createHmacRscDiscoveryAuthorizer()`, call `start()`, and close it before the Host Micro application.
 - Trust: bind every `keyId` to a non-empty explicit `pluginIds` allowlist. Registry presence is discovery, not authorization.
 - Transfer: use the built-in downloader; it streams manifests and artifacts to isolated files with backpressure and limits instead of accumulating bodies in memory.

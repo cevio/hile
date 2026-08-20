@@ -1,14 +1,11 @@
 {
   "pluginId": "org.example.rsc-plugin",
-  "buildId": "build-a",
   "cwd": ".",
   "entry": "src/plugin/page.tsx",
-  "outdir": ".hile-rsc/build-a",
   "routes": [{ "path": "/page", "entry": "default" }],
   "metadata": {
     "displayName": "Example plugin",
     "description": "An independently deployed Hile RSC plugin",
     "navigation": [{ "id": "page", "label": "Example", "path": "/page", "order": 100 }]
-  },
-  "runtime": { "react": "19.2.8", "reactDom": "19.2.8", "rsc": "19.2.8" }
+  }
 }

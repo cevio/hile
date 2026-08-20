@@ -9,11 +9,13 @@ Builds are transactional: all graphs and the manifest are completed in a sibling
 ## Use
 
 ```bash
-hile-rsc build --config hile-rsc.json
-hile-rsc inspect .hile-rsc/build-a
-hile-rsc verify .hile-rsc/build-a --react 19.2.8 --react-dom 19.2.8 --rsc 19.2.8
+hile-rsc build
+hile-rsc inspect
+hile-rsc verify
 ```
 
-Use an empty output directory and a new `buildId` for changed bytes. The validated config, directive rules, artifact layout, and full Host/plugin walkthrough are documented in [`docs/ai/packages/rsc.md`](../../docs/ai/packages/rsc.md) and [`docs/ai/recipes/rsc-plugin-host.md`](../../docs/ai/recipes/rsc-plugin-host.md).
+The common commands default to `hile-rsc.json`, `.hile-rsc`, and the runtime tuple supported by the installed `@hile/rsc`. Explicit paths, `--config`, and the complete `--react`/`--react-dom`/`--rsc` tuple remain available for automation and compatibility checks.
+
+`buildId` is the immutable identity for one deployment. When omitted in config, it is auto-generated and can be overridden by `RSC_BUILD_ID`; output is placed under the configured `outdir` with the resolved `buildId`. `inspect` and `verify` accept either one artifact directory or its build root and select the newest generated build. An explicit `buildId` keeps the existing exact-`outdir` behavior. The validated config, directive rules, artifact layout, and full Host/plugin walkthrough are documented in [`docs/ai/packages/rsc.md`](../../docs/ai/packages/rsc.md) and [`docs/ai/recipes/rsc-plugin-host.md`](../../docs/ai/recipes/rsc-plugin-host.md).
 
 Optional `metadata` is validated and emitted into the same immutable `plugin.json`. Navigation paths must reference declared plugin routes; public URL and visibility policy remain Host-owned. `build`, `inspect`, and `verify` expose the canonical metadata for automation.

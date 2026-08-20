@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineService } from '@hile/core';
 import { Application } from '@hile/micro';
@@ -7,20 +6,38 @@ import {
   RscArtifactServerFunctionRuntime,
   createOfficialRscRenderer,
 } from '@hile/rsc/plugin';
-import { verifyRscPluginArtifact } from '@hile/rsc/artifact';
+import { resolveVerifiedRscPluginArtifact, verifyRscPluginArtifact } from '@hile/rsc/artifact';
 import { HILE_RSC_RUNTIME } from '@hile/rsc/protocol';
-import { HileRscPluginRuntime } from '@hile/rsc-discovery-hile';
+import { HileRscPluginRuntime, resolveHileRscPluginIdentity } from '@hile/rsc-discovery-hile';
 
 export default defineService('rsc.plugin.runtime', async (shutdown) => {
-  const namespace = process.env.MICRO_NAMESPACE ?? 'org.example.rsc-plugin.dev';
+  const configuredNamespace = process.env.MICRO_NAMESPACE?.trim();
+  const developmentNamespace = configuredNamespace || 'org.example.rsc-plugin.dev';
   const developmentFile = process.env.RSC_DEVELOPMENT_STATE;
   const developmentState = developmentFile ? await import('@hile/rsc-development/state') : undefined;
   const developmentBinding = developmentFile ? await import('@hile/rsc-development/plugin') : undefined;
   const developmentRecord = developmentFile
-    ? (await developmentState!.readRscDevelopmentState(developmentFile)).revisions.find((record) => record.namespace === namespace)
+    ? (await developmentState!.readRscDevelopmentState(developmentFile)).revisions.find((record) => record.namespace === developmentNamespace)
     : undefined;
-  const artifactRoot = developmentRecord?.artifactRoot ?? path.resolve(process.env.RSC_ARTIFACT_ROOT ?? '.hile-rsc/build-a');
-  const { manifest } = await verifyRscPluginArtifact(artifactRoot, HILE_RSC_RUNTIME);
+  const resolvedArtifact = developmentRecord
+    ? {
+      artifactRoot: developmentRecord.artifactRoot,
+      ...await verifyRscPluginArtifact(developmentRecord.artifactRoot, HILE_RSC_RUNTIME),
+    }
+    : await resolveVerifiedRscPluginArtifact(
+      process.env.RSC_ARTIFACT_ROOT?.trim() || '.hile-rsc',
+      HILE_RSC_RUNTIME,
+      { buildId: process.env.RSC_BUILD_ID?.trim() || undefined },
+    );
+  const { artifactRoot, manifest } = resolvedArtifact;
+  const identity = resolveHileRscPluginIdentity({
+    pluginId: manifest.pluginId,
+    buildId: manifest.buildId,
+    development: Boolean(developmentFile),
+    namespace: developmentFile ? developmentNamespace : configuredNamespace,
+    instanceId: process.env.RSC_INSTANCE_ID,
+  });
+  const { namespace } = identity;
   const application = new Application({
     namespace,
     registry: {
@@ -47,7 +64,7 @@ export default defineService('rsc.plugin.runtime', async (shutdown) => {
     port: Number(process.env.PLUGIN_MICRO_PORT ?? 4101),
     discovery: {
       namespace,
-      instanceId: process.env.RSC_INSTANCE_ID ?? namespace,
+      instanceId: identity.instanceId,
       priority: Number(process.env.RSC_DISCOVERY_PRIORITY ?? 0),
       generation: Number(process.env.RSC_DISCOVERY_GENERATION ?? 0),
       artifactRoot,

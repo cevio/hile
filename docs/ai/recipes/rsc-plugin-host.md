@@ -174,10 +174,8 @@ Create `hile-rsc.json`:
 ```json
 {
   "pluginId": "org.example.rsc-plugin",
-  "buildId": "build-a",
   "cwd": ".",
   "entry": "src/plugin/page.tsx",
-  "outdir": ".hile-rsc/build-a",
   "routes": [{ "path": "/page", "entry": "default" }],
   "metadata": {
     "displayName": "Example plugin",
@@ -185,16 +183,11 @@ Create `hile-rsc.json`:
     "navigation": [
       { "id": "page", "label": "Example", "path": "/page", "order": 100 }
     ]
-  },
-  "runtime": {
-    "react": "19.2.8",
-    "reactDom": "19.2.8",
-    "rsc": "19.2.8"
   }
 }
 ```
 
-`pluginId` is the stable logical plugin identity. `buildId` identifies exact immutable bytes. `routes` maps plugin-internal paths to exports from the server entry. Optional `metadata` travels in the same immutable manifest: each navigation path must reference one declared route. The Host URL prefix, authorization, visibility, localization, and final navigation components remain Host policy and are not configured here.
+`pluginId` is the stable logical plugin identity. The omitted `buildId` is generated for each immutable build, while the omitted `outdir` defaults to `.hile-rsc`; set `RSC_BUILD_ID` when a deployment system must provide the identity. Explicit `buildId` and `outdir` remain supported. `routes` maps plugin-internal paths to exports from the server entry. Optional `metadata` travels in the same immutable manifest: each navigation path must reference one declared route. The Host URL prefix, authorization, visibility, localization, and final navigation components remain Host policy and are not configured here.
 
 With the example Host catch-all, this route is opened at `/plugins/org.example.rsc-plugin/page`. The later `/plugins/demo.rsc.capabilities` and `/details` URLs belong to the richer private test suite, whose build config declares those routes; they are not routes from this minimal config.
 
@@ -203,10 +196,10 @@ Useful scripts:
 ```json
 {
   "scripts": {
-    "build:rsc": "hile-rsc build --config hile-rsc.json",
+    "build:rsc": "hile-rsc build",
     "build:runtime": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
     "build": "pnpm build:rsc && pnpm build:runtime",
-    "verify": "hile-rsc verify .hile-rsc/build-a --react 19.2.8 --react-dom 19.2.8 --rsc 19.2.8",
+    "verify": "hile-rsc verify",
     "dev:rsc": "hile-rsc-dev --config hile-rsc.json --state .hile-rsc/development.json --namespace org.example.rsc-plugin.dev --outdir .hile-rsc/development",
     "dev:service": "NODE_OPTIONS=--conditions=react-server RSC_DEVELOPMENT_STATE=.hile-rsc/development.json hile start --dev --env-file .env",
     "start": "NODE_OPTIONS=--conditions=react-server hile start --env-file .env.prod"
@@ -362,7 +355,7 @@ const runtime = new HileRscPluginRuntime({
   port: Number(process.env.PLUGIN_MICRO_PORT),
   discovery: {
     namespace,
-    instanceId: process.env.RSC_INSTANCE_ID ?? namespace,
+    instanceId: process.env.RSC_INSTANCE_ID?.trim() || namespace,
     priority: Number(process.env.RSC_DISCOVERY_PRIORITY ?? 0),
     generation: Number(process.env.RSC_DISCOVERY_GENERATION ?? 0),
     artifactRoot,
@@ -387,7 +380,7 @@ REGISTRY_HOST=127.0.0.1
 REGISTRY_PORT=9876
 MICRO_NAMESPACE=org.example.rsc-plugin.dev
 PLUGIN_MICRO_PORT=4101
-RSC_ARTIFACT_ROOT=.hile-rsc/build-a
+RSC_ARTIFACT_ROOT=.hile-rsc
 RSC_INSTANCE_ID=org.example.rsc-plugin.dev
 RSC_DISCOVERY_PRIORITY=0
 RSC_DISCOVERY_GENERATION=0
@@ -401,12 +394,14 @@ Identity meanings:
 
 - `pluginId`: stable logical UI plugin identity and Host route key;
 - `buildId`: immutable artifact identity selected under that plugin ID;
-- `MICRO_NAMESPACE` / discovery `namespace`: routable internal service instance that serves the selected artifact;
-- `RSC_INSTANCE_ID`: unique publisher instance identity used to distinguish announcements;
+- `MICRO_NAMESPACE` / discovery `namespace`: routable internal service instance that serves the selected artifact; development configures a stable value, while production normally omits it and derives `${pluginId}.${buildId}` so concurrent immutable builds cannot share a Micro route;
+- `RSC_INSTANCE_ID`: optional unique publisher identity; development configures a stable value for incremental updates, while production normally reuses the derived build-scoped namespace so rolling immutable deployments cannot share a discovery topic;
 - `RSC_DISCOVERY_GENERATION`: non-negative monotonic publication generation; increase it for newer immutable deployments at equal priority, while runtime updates increment it automatically;
 - `hile-rsc-dev --namespace`: the internal namespace recorded in development state; it must match the service namespace that will publish that revision.
 
-When `RSC_DEVELOPMENT_STATE` is set, the plugin boot resolves the matching development record and uses its `artifactRoot`; otherwise it uses `RSC_ARTIFACT_ROOT`. Production must not set `RSC_DEVELOPMENT_STATE`.
+When `RSC_DEVELOPMENT_STATE` is set, the plugin boot resolves and verifies the matching development record; otherwise it passes `RSC_ARTIFACT_ROOT` and optional `RSC_BUILD_ID` to `resolveVerifiedRscPluginArtifact()`, which selects and verifies once. Production must not set `RSC_DEVELOPMENT_STATE`.
+
+Use `resolveHileRscPluginIdentity()` from `@hile/rsc-discovery-hile` for the production/development identity policy rather than rebuilding namespace and instance rules in each plugin boot.
 
 ## 6. Compose The Single Public Host
 
@@ -882,7 +877,7 @@ An implementation is not complete until tests prove:
 ## Completion Checklist For AI Agents
 
 - [ ] I used the current templates or explained every deviation.
-- [ ] Plugin and Host runtime pins exactly match `hile-rsc.json`.
+- [ ] Plugin and Host runtime pins match the compatibility tuple supported by their installed RSC packages.
 - [ ] Plugin process uses `--conditions=react-server` and creates no HTTP server.
 - [ ] Models load before `HileRscPluginRuntime.start()`.
 - [ ] New UI behavior uses module-level `'use server'` → `invokeRscModel()` → `defineActionModel()`.

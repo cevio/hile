@@ -156,6 +156,19 @@ describe('RSC project templates', () => {
     expect(model).toContain('defineActionModel');
   });
 
+  it('keeps development identity stable and derives production identity from the immutable build', () => {
+    const boot = readFileSync(path.join(templates, 'rsc-plugin/src/services/plugin.boot.ts'), 'utf8');
+    const developmentEnv = readFileSync(path.join(templates, 'rsc-plugin/_env'), 'utf8');
+    const productionEnv = readFileSync(path.join(templates, 'rsc-plugin/_env.prod'), 'utf8');
+
+    expect(developmentEnv).toContain('RSC_INSTANCE_ID=org.example.rsc-plugin.dev');
+    expect(productionEnv).not.toMatch(/^MICRO_NAMESPACE=/m);
+    expect(productionEnv).not.toMatch(/^RSC_INSTANCE_ID=/m);
+    expect(boot).toContain('resolveHileRscPluginIdentity({');
+    expect(boot).toContain('namespace: developmentFile ? developmentNamespace : configuredNamespace');
+    expect(boot).toContain('instanceId: identity.instanceId');
+  });
+
   it('ships Registry-driven discovery and incremental development composition in both templates', () => {
     const pluginBoot = readFileSync(path.join(templates, 'rsc-plugin/src/services/plugin.boot.ts'), 'utf8');
     const pluginPackage = JSON.parse(readFileSync(path.join(templates, 'rsc-plugin/package.json'), 'utf8'));

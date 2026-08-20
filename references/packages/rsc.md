@@ -73,11 +73,14 @@ shutdown(() => runtime.close())
 Build and verify an immutable plugin artifact:
 
 ```bash
-pnpm exec hile-rsc build --config hile-rsc.json
-pnpm exec hile-rsc inspect .hile-rsc/build-a
-pnpm exec hile-rsc verify .hile-rsc/build-a \
-  --react 19.2.8 --react-dom 19.2.8 --rsc 19.2.8
+pnpm exec hile-rsc build
+pnpm exec hile-rsc inspect
+pnpm exec hile-rsc verify
 ```
+
+`buildId`, `outdir`, and `runtime` are optional in `hile-rsc.json`. Without them, the CLI generates an immutable build ID, writes the artifact below `.hile-rsc`, and uses the compatibility tuple supported by the installed `@hile/rsc`. `RSC_BUILD_ID` provides an explicit deployment identity without coupling builds to Git. Explicit config values and the complete `verify --react ... --react-dom ... --rsc ...` tuple remain available for compatibility checks.
+
+`resolveRscPluginArtifact()` from `@hile/rsc/artifact` is the shared path resolver for either one artifact directory or a build root. It validates an optional explicit build ID, ignores development, hidden, incomplete, and corrupt candidates, and otherwise selects the newest internally valid artifact. `resolveVerifiedRscPluginArtifact()` additionally evaluates candidates against the supplied Host runtime and returns the selected root plus its reusable verification result; verification and plugin boot code should use this form to skip incompatible builds without hashing the selected artifact twice.
 
 Compose a host runtime:
 

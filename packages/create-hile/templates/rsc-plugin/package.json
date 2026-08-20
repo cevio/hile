@@ -5,14 +5,14 @@
   "type": "module",
   "engines": { "node": ">=20.12.0" },
   "scripts": {
-    "build:rsc": "hile-rsc build --config hile-rsc.json",
+    "build:rsc": "hile-rsc build",
     "build:runtime": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
     "build": "pnpm run build:rsc && pnpm run build:runtime",
     "dev:rsc": "hile-rsc-dev --config hile-rsc.json --state .hile-rsc/development.json --namespace org.example.rsc-plugin.dev --outdir .hile-rsc/development",
     "dev:service": "NODE_OPTIONS=--conditions=react-server RSC_DEVELOPMENT_STATE=.hile-rsc/development.json hile start --dev --env-file .env",
     "dev": "node scripts/dev.mjs",
     "start": "NODE_OPTIONS=--conditions=react-server hile start --env-file .env.prod",
-    "verify": "hile-rsc verify .hile-rsc/build-a --react 19.2.8 --react-dom 19.2.8 --rsc 19.2.8"
+    "verify": "hile-rsc verify"
   },
   "dependencies": {
     "@hile/cli": "^4.0.0",
