@@ -106,6 +106,7 @@ Use the message packages for request/response messaging over WebSocket, process 
 - Do not use `stream()` for normal single-result calls.
 - Do not rely on message IDs for business idempotency. They are transport IDs.
 - Do not bypass `defineMessage()` for file-loaded handlers.
+- Do not pass zero, fractional, non-finite, or oversized message timeouts. Explicit timeout values must be safe integers from `1` through `2_147_483_647` milliseconds.
 
 ## Install
 
@@ -136,7 +137,11 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 - `MessageLoader` maps `*.msg.*` files to routes using `@hile/loader`.
 - `MessageLoader.dispatch(path, data, extras?)` invokes the matched handler.
 - `MessageModem._send()` returns a `Promise`.
+- `MessageModem._send()` and `_push()` use a `30_000` ms timeout when none is provided. An explicit timeout must be a safe integer from `1` through `2_147_483_647`; invalid values throw `TypeError` before a message is sent.
 - `MessageModem._stream()` returns a Node `Readable` in object mode.
+- Stream `timeout` and `idleTimeout` values use the same `1` through `2_147_483_647` ms range. The stream `window` must be a safe integer from `1` through `64` and defaults to `1`.
+- Each modem schedules request, total-stream, and idle-stream deadlines through one internal deadline scheduler. This reduces active Node.js timers without changing timeout, cancellation, ordering, or error semantics.
+- `@hile/message-ws` keeps public `decodeMessageFrame()` payloads isolated from caller-owned input by default. Its owned WebSocket `RawData` path uses a zero-copy binary Flight payload view internally.
 - A stream request requires `exec()` to return an async iterable.
 - `Application.call(namespace, url, data, options?)` returns a promise.
 - `Application.stream(namespace, url, data, options?)` returns a readable stream.
@@ -156,5 +161,6 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 - Message files default-export `defineMessage(...)`.
 - RPC callers use `await app.call(...)`.
 - Streaming handlers are async generators.
+- Custom modem timeout values use the documented safe-integer range.
 - Registry is started before application nodes need discovery.
 - Micro apps use stable namespaces and advertise reachable hosts.

@@ -69,6 +69,7 @@ const result = await app.call('example.service', '/ping', { hello: 'world' })
 - Do not use `stream()` for normal single-result calls.
 - Do not rely on message IDs for business idempotency. They are transport IDs.
 - Do not bypass `defineMessage()` for file-loaded handlers.
+- Do not pass zero, fractional, non-finite, or oversized message timeouts. Explicit timeout values must be safe integers from `1` through `2_147_483_647` milliseconds.
 
 - Appending a secondary response getter to `client.request('/x', data)`
 - Returning a plain object from a handler called through `stream()`.
@@ -80,6 +81,7 @@ const result = await app.call('example.service', '/ping', { hello: 'world' })
 - Message files default-export `defineMessage(...)`.
 - RPC callers use `await app.call(...)`.
 - Streaming handlers are async generators.
+- Custom modem timeout values use the documented safe-integer range.
 - Registry is started before application nodes need discovery.
 - Micro apps use stable namespaces and advertise reachable hosts.
 
