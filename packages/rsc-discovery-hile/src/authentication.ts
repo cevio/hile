@@ -1,6 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import {
   canonicalizeRscDiscoveryAnnouncement,
+  isTrustedInternalRscDiscoveryAuthentication,
   type RscDiscoveryAnnouncement,
 } from '@hile/rsc-discovery';
 
@@ -19,7 +20,8 @@ export function createHmacRscDiscoveryAuthorizer(
   ) => HmacRscDiscoveryCredential | undefined,
 ): (announcement: RscDiscoveryAnnouncement) => boolean {
   return (announcement) => {
-    if (announcement.authentication.scheme !== 'hmac-sha256') return false;
+    if (isTrustedInternalRscDiscoveryAuthentication(announcement.authentication)
+      || announcement.authentication.scheme !== 'hmac-sha256') return false;
     const credential = resolveCredential(
       announcement.authentication.keyId,
       structuredClone(announcement),
@@ -50,4 +52,15 @@ export function createHmacRscDiscoveryAuthorizer(
     return unsigned.generation === undefined
       || verify(authentication.generationSignature, unsigned);
   };
+}
+
+/**
+ * Accepts unsigned discovery only when every service that can reach the internal
+ * Hile Micro network is inside the deployment trust boundary.
+ */
+export function createTrustedInternalRscDiscoveryAuthorizer(): (
+  announcement: RscDiscoveryAnnouncement,
+) => boolean {
+  return (announcement) =>
+    isTrustedInternalRscDiscoveryAuthentication(announcement.authentication);
 }

@@ -30,7 +30,9 @@ export interface RegisterHileRscPluginDiscoveryOptions {
   artifactRoot: string;
   artifactOperation?: string;
   retainedArtifacts?: number;
-  authentication: { keyId: string; secret: string | Uint8Array };
+  authentication:
+    | { keyId: string; secret: string | Uint8Array }
+    | { mode: 'trusted-internal' };
 }
 
 export interface HileRscPluginDiscoveryRegistration {
@@ -38,6 +40,42 @@ export interface HileRscPluginDiscoveryRegistration {
   announcement(): RscDiscoveryAnnouncement;
   update(artifactRoot: string): Promise<RscDiscoveryAnnouncement>;
   close(): Promise<void>;
+}
+
+type DiscoveryAuthentication = RegisterHileRscPluginDiscoveryOptions['authentication'];
+
+function normalizeDiscoveryAuthentication(value: unknown): DiscoveryAuthentication {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new TypeError('RSC discovery authentication configuration must be an object');
+  }
+  const authentication = value as Record<string, unknown>;
+  if ('mode' in authentication) {
+    if (authentication.mode !== 'trusted-internal') {
+      throw new TypeError('RSC discovery authentication mode must be trusted-internal');
+    }
+    if (Object.keys(authentication).some((key) => key !== 'mode')) {
+      throw new TypeError('RSC trusted-internal authentication must not include signing configuration');
+    }
+    return { mode: 'trusted-internal' };
+  }
+  if (typeof authentication.keyId !== 'string'
+    || !authentication.keyId
+    || Buffer.byteLength(authentication.keyId) > 1024) {
+    throw new TypeError('RSC discovery authentication keyId must not be empty or oversized');
+  }
+  if (typeof authentication.secret !== 'string'
+    && !(authentication.secret instanceof Uint8Array)) {
+    throw new TypeError('RSC discovery authentication secret must be a string or Uint8Array');
+  }
+  if (authentication.secret.length === 0) {
+    throw new TypeError('RSC discovery authentication secret must not be empty');
+  }
+  return {
+    keyId: authentication.keyId,
+    secret: typeof authentication.secret === 'string'
+      ? authentication.secret
+      : Uint8Array.from(authentication.secret),
+  };
 }
 
 interface PublishedArtifact {
@@ -66,6 +104,12 @@ function createAnnouncement(
     artifactOperation,
   } as const;
   const { generation: _generation, ...legacyUnsigned } = unsigned;
+  if ('mode' in options.authentication) {
+    return validateRscDiscoveryAnnouncement({
+      ...unsigned,
+      authentication: { scheme: 'trusted-internal' },
+    });
+  }
   const signature = createHmac('sha256', options.authentication.secret)
     .update(canonicalizeRscDiscoveryAnnouncement(legacyUnsigned))
     .digest('base64url');
@@ -110,15 +154,10 @@ function artifactRequest(value: unknown): { pluginId: string; buildId: string; p
 export async function registerHileRscPluginDiscovery(
   options: RegisterHileRscPluginDiscoveryOptions,
 ): Promise<HileRscPluginDiscoveryRegistration> {
-  if (!options.authentication.keyId || Buffer.byteLength(options.authentication.keyId) > 1024) {
-    throw new TypeError('RSC discovery authentication keyId must not be empty or oversized');
-  }
-  if (
-    (typeof options.authentication.secret === 'string' && options.authentication.secret.length === 0)
-    || (options.authentication.secret instanceof Uint8Array && options.authentication.secret.byteLength === 0)
-  ) {
-    throw new TypeError('RSC discovery authentication secret must not be empty');
-  }
+  const normalizedOptions = {
+    ...options,
+    authentication: normalizeDiscoveryAuthentication(options?.authentication),
+  };
   const retainedArtifacts = options.retainedArtifacts ?? 2;
   if (!Number.isSafeInteger(retainedArtifacts) || retainedArtifacts < 1) {
     throw new TypeError('retainedArtifacts must be a positive safe integer');
@@ -131,7 +170,7 @@ export async function registerHileRscPluginDiscovery(
   const first = await inspectPublishedArtifact(options.artifactRoot);
   const topic = createRscDiscoveryTopic(options.instanceId);
   const artifacts = new Map<string, PublishedArtifact>([[first.manifest.buildId, first]]);
-  let current = createAnnouncement(options, first.manifest, artifactOperation, initialGeneration);
+  let current = createAnnouncement(normalizedOptions, first.manifest, artifactOperation, initialGeneration);
   let closed = false;
   let closing = false;
   const unregister = options.application.register(artifactOperation, ({ data, signal }) => {
@@ -178,7 +217,7 @@ export async function registerHileRscPluginDiscovery(
           throw new RangeError('RSC discovery generation exceeded the safe integer range');
         }
         const next = createAnnouncement(
-          options,
+          normalizedOptions,
           nextArtifact.manifest,
           artifactOperation,
           nextGeneration,

@@ -51,7 +51,7 @@ Do not invent another public plugin endpoint, static plugin inventory, manual ac
 | `@hile/rsc-build` | Plugin build tooling | Directive graph, esbuild compilation, immutable artifact and CLI | Runtime listener or development watcher |
 | `@hile/rsc-development` | Development-only Host/plugin tooling | Incremental contexts, immutable revisions, model reload, SSE reload | Production deployment policy |
 | `@hile/rsc-discovery` | Host lifecycle layer | Transport-neutral selection, failover, grace, retirement | Hile Registry or filesystem I/O |
-| `@hile/rsc-discovery-hile` | Host and plugin | Signed Hile publication, bounded stream-to-disk download, lifecycle composition | Public HTTP or application authorization |
+| `@hile/rsc-discovery-hile` | Host and plugin | Explicitly secured Hile publication, bounded stream-to-disk download, lifecycle composition | Public HTTP or application authorization |
 | `@hile/rsc-next` | Host only | Decode Flight in the supported Next request context | Plugin compilation or domain behavior |
 
 The packages form a one-way dependency graph:
@@ -60,7 +60,7 @@ The packages form a one-way dependency graph:
 - `@hile/rsc-build` owns the shared directive-aware module graph, reference source generation, artifact assembly, production publication transaction, configuration loader, and `hile-rsc` CLI. Production and development compilation use the same graph and assembler instead of parallel implementations.
 - `@hile/rsc-development` owns persistent incremental compilation, file observation, immutable revision state, plugin/model reload, Host activation, SSE, browser reload, and `hile-rsc-dev`.
 - `@hile/rsc-discovery` owns transport-neutral candidate selection, failover, missing-service grace, and deployment retirement.
-- `@hile/rsc-discovery-hile` owns signed Registry announcements, message-streamed artifact transfer, resource bounds, and automatic Host deployment.
+- `@hile/rsc-discovery-hile` owns signed or explicitly trusted-internal Registry announcements, message-streamed artifact transfer, resource bounds, and automatic Host deployment.
 - `@hile/rsc-next` owns the Next-version-specific Flight decoder and is the only RSC package allowed to import Next private modules.
 
 Dependencies point from adapters and tooling toward core; `@hile/rsc` never imports the other packages.
@@ -88,7 +88,8 @@ const runtime = new HileRscPluginRuntime({
     priority: 0,
     generation: 0,
     artifactRoot,
-    authentication: { keyId, secret },
+    // Only use this mode when every peer able to reach the internal Micro mesh is trusted.
+    authentication: { mode: 'trusted-internal' },
   },
 })
 await runtime.start()
@@ -96,6 +97,20 @@ shutdown(() => runtime.close())
 ```
 
 `HileRscPluginRuntime` is the recommended Hile composition root. Use the lower-level transport attachment APIs only when implementing a non-Hile adapter. The plugin service creates an internal Micro listener, never an HTTP listener.
+
+The matching Host uses `authorize: createTrustedInternalRscDiscoveryAuthorizer()`.
+This removes discovery keys and signatures; it does not remove immutable artifact integrity
+verification, generation ordering, transfer bounds, public HTTP authentication, or Server
+Function authorization. Use the existing `{ keyId, secret }` publisher configuration with
+`createHmacRscDiscoveryAuthorizer()` whenever an internal peer is outside the trust boundary.
+Only the exact `trusted-internal` mode is accepted; misspelled modes or objects mixing the mode
+with signing fields fail before listener registration or Registry publication.
+
+When migrating a running HMAC deployment, upgrade the Host's `@hile/rsc-discovery` and
+`@hile/rsc-discovery-hile` packages before any plugin starts publishing trusted-internal
+announcements. New readers remain compatible with signed announcements, while older readers do
+not understand the unsigned wire shape. After all Hosts are upgraded, plugin replicas may roll
+independently without a shared discovery secret.
 
 ## More Examples
 
@@ -238,7 +253,7 @@ await compiler.dispose()
 
 The server, browser, and SSR esbuild contexts are reused. Browser and SSR contexts are recreated only when the set of `'use client'` entries or their exports changes. Server-only edits reuse emitted browser/SSR artifacts when their input fingerprint and the Server Function graph are unchanged; build-scoped Server Function graphs rebuild client artifacts conservatively. Failed rebuilds leave the last successful revision intact. Development output retention is bounded per session and across stale sessions; keep at least two revisions and size `maxRevisions` for the maximum activation/download overlap your environment permits. The mutable `.work/<session>` directory is removed on compiler disposal.
 
-`HileRscPluginRuntime` is the reusable Hile composition root for a plugin process. It owns transport attachment, the internal listener, signed discovery registration, optional development binding, auxiliary watcher cleanup, renderer drain, and rollback. Plugin packages provide declarative namespace/port/credential/artifact configuration; they do not duplicate lifecycle ordering.
+`HileRscPluginRuntime` is the reusable Hile composition root for a plugin process. It owns transport attachment, the internal listener, explicitly secured discovery registration, optional development binding, auxiliary watcher cleanup, renderer drain, and rollback. Plugin packages provide declarative namespace/port/trust/artifact configuration; they do not duplicate lifecycle ordering.
 
 ## Server Functions
 
@@ -275,7 +290,7 @@ The word “Server Action” in React/Next documentation describes a Server Func
 
 The semantic baseline for Server Functions is the official [Next.js `use server` reference](https://nextjs.org/docs/app/api-reference/directives/use-server), [Next.js forms guide](https://nextjs.org/docs/app/guides/forms), and [React `useActionState` reference](https://react.dev/reference/react/useActionState). Those documents describe framework behavior; Hile deliberately supports the module-level async-export subset listed above and routes it through the independent plugin build/transport instead of Next's application compiler.
 
-`RscPluginService.activate()` switches new render requests to a verified manifest/renderer pair while in-flight requests finish on their captured revision. `RscPluginService.load()` atomically replaces the model snapshot; `bindRscModelDevelopment()` can watch model files without rebuilding RSC assets. The plugin updates its signed discovery announcement only after activation; `HileRscDiscoveryHost` downloads and enables that revision, then the Host may compose `createRscDevelopmentEventMiddleware()` and `RscDevelopmentReload` for browser refresh.
+`RscPluginService.activate()` switches new render requests to a verified manifest/renderer pair while in-flight requests finish on their captured revision. `RscPluginService.load()` atomically replaces the model snapshot; `bindRscModelDevelopment()` can watch model files without rebuilding RSC assets. The plugin updates its discovery announcement only after activation; `HileRscDiscoveryHost` authorizes, downloads, and enables that revision, then the Host may compose `createRscDevelopmentEventMiddleware()` and `RscDevelopmentReload` for browser refresh.
 
 This development path performs full-page refresh after activation. It does not claim React Fast Refresh state preservation across independently compiled plugin boundaries.
 
@@ -306,11 +321,11 @@ The core package root exports only the transport-neutral protocol. Build, develo
 - Browser manifest/lazy-component caches and Host asset-metadata caches are bounded LRU caches. Rejected browser manifest requests are evicted, and immutable `{pluginId, buildId}` is the cache identity.
 - Each client reference declares only browser and SSR chunks reachable from its own esbuild output graph; shared chunks remain shared without attaching unrelated lazy chunks.
 - Registry manifests and all declared artifacts use the same bounded internal stream path and are piped directly to isolated files; the downloader does not buffer artifact bodies in memory.
-- New publishers sign a non-negative monotonic `generation` (default 0) and increment it on each immutable build update. The discovery manager keeps a fail-closed high-water mark per signing key, plugin, and instance: changed content must use a strictly higher generation, and an identity retired after the missing threshold is tombstoned so the same signed payload cannot resurrect it. Pass a caller-owned `generationHighWater` map through `HileRscDiscoveryHost` when the history must survive manager or Host replacement; the generated Host keeps one module-level store. A store has one live owner: close the old Host successfully before handing it to its replacement.
+- New publishers include a non-negative monotonic `generation` (default 0) and increment it on each immutable build update; HMAC mode signs it. The discovery manager keeps a fail-closed high-water mark per trust identity, plugin, and instance: changed content must use a strictly higher generation, and an identity retired after the missing threshold is tombstoned so the same payload cannot resurrect it. Pass a caller-owned `generationHighWater` map through `HileRscDiscoveryHost` when the history must survive manager or Host replacement; the generated Host keeps one module-level store. A store has one live owner: close the old Host successfully before handing it to its replacement.
 - Generation history has a fail-closed capacity (default 4096 identities), including caller-owned stores. Reaching the limit rejects new identities instead of evicting replay history.
 - Registry snapshot reads default to 16 concurrent topic reads and accept a validated `snapshotConcurrency` up to 64 while preserving deterministic topic order.
-- Registry discovery is not authorization. Every announcement is signed, and the Host must supply a fail-closed `authorize` policy before artifact download or activation. An HMAC credential must bind its `keyId` to an explicit allowlist of plugin IDs; sharing a secret without publisher-to-plugin ownership does not establish authorization. During a rolling upgrade, legacy generation-less announcements remain verifiable; after every publisher is upgraded, set `requireGeneration: true` to prevent field-stripping downgrade.
-- Registry presence is the liveness source of truth and must be protected against unauthorized topic writes, deletes, and exact-payload replay. HMAC plus generation detects modification and rollback, but an exact replay of the currently accepted signed announcement is intentionally indistinguishable from a healthy retained topic; deployments requiring an adversarial-Registry threat model need a separate signed freshness/attestation layer.
+- The Host always requires an explicit `authorize` policy before artifact download or activation. HMAC mode must bind its `keyId` to an explicit allowlist of plugin IDs. `trusted-internal` accepts unsigned announcements and is correct only when every service able to reach the internal Hile Micro mesh is trusted to publish any plugin identity. During an HMAC rolling upgrade, legacy generation-less announcements remain verifiable; after every publisher is upgraded, set `requireGeneration: true` to prevent field-stripping downgrade.
+- Registry presence is the liveness source of truth. HMAC plus generation detects modification and rollback, but an exact replay of the currently accepted announcement is intentionally indistinguishable from a healthy retained topic. `trusted-internal` additionally assumes Registry writers are trusted. Deployments requiring an adversarial-Registry threat model need a separate signed freshness/attestation layer.
 - `HileRscDiscoveryHost` exposes bounded transfer settings: `maxManifestBytes`, `maxFileBytes`, `maxTotalBytes`, `maxArtifactFiles`, `maxPathBytes`, `maxPathDepth`, and `operationTimeoutMs`. Configure them for the deployment environment instead of assuming defaults are an application quota.
 - `@hile/rsc-next` validates the installed Next 16.3.0 + React 19.2.8 + React DOM 19.2.8 package tuple before decoding through its isolated Next-private modules. These peer dependencies are intentionally exact, not ranges.
 - `RscClientRuntimeProvider` accepts Host-owned `renderLoading` and `renderError(error, identity, retry)` policies. Define those functions inside a Host Client Component so they never cross the RSC serialization boundary.
@@ -367,11 +382,11 @@ Browser
             -> internal @hile/micro request -> plugin Server Function -> @hile/model
 
 Registry
-  <- signed plugin announcement
+  <- explicitly secured plugin announcement
   -> Host discovers, authorizes, streams to disk, verifies, and activates
 ```
 
-The plugin has an internal Micro TCP listener because it is a microservice. It has no public HTTP listener. The Host is the only process that owns public HTTP. Registry presence plus a trusted signed announcement causes automatic installation and activation; there is no static plugin list or manual activation call.
+The plugin has an internal Micro TCP listener because it is a microservice. It has no public HTTP listener. The Host is the only process that owns public HTTP. Registry presence plus an announcement accepted by the selected trust policy causes automatic installation and activation; there is no static plugin list or manual activation call.
 
 ## Complete Example
 
@@ -432,7 +447,7 @@ Before writing code, preserve these invariants:
 4. Use a module-level `'use server'` file for React Server Functions and call scanned `defineActionModel()` definitions through `invokeRscModel()`.
 5. Keep exact React/RSC versions identical across Host, plugin, and build config.
 6. Treat `buildId` and artifact directories as immutable. A changed artifact requires a new build ID or development revision.
-7. Bind every discovery `keyId` to an explicit plugin-ID allowlist in the Host. Registry discovery alone is not authorization.
+7. Choose discovery trust explicitly: bind each HMAC `keyId` to a plugin-ID allowlist, or use `trusted-internal` only when every internal Micro peer is trusted.
 8. Mount plugin assets, Server Functions, and optional development SSE on the same Host listener/origin.
 9. Pass the request abort signal into `RscHostRuntime.render()`.
 10. Do not expose server bundles, artifact paths, namespaces, or internal message addresses to the browser.
@@ -709,10 +724,8 @@ const runtime = new HileRscPluginRuntime({
     priority: Number(process.env.RSC_DISCOVERY_PRIORITY ?? 0),
     generation: Number(process.env.RSC_DISCOVERY_GENERATION ?? 0),
     artifactRoot,
-    authentication: {
-      keyId: process.env.RSC_DISCOVERY_KEY_ID ?? '',
-      secret: process.env.RSC_DISCOVERY_SECRET ?? '',
-    },
+    // Deployment trust boundary: every peer able to reach this internal Micro mesh is trusted.
+    authentication: { mode: 'trusted-internal' },
   },
 })
 await runtime.start()
@@ -721,7 +734,7 @@ shutdown(() => runtime.close())
 
 Do not duplicate attach/listen/publish/drain/rollback order in every plugin. The class owns that lifecycle.
 
-Validate required production environment values before constructing the runtime. In particular, reject an empty discovery key/secret, a non-integer port outside `1..65535`, an empty namespace, and a missing artifact directory. The `?? ''` expressions in small snippets only preserve type shape; they are not permission to start with empty credentials.
+Validate required production values before constructing the runtime. In particular, reject a non-integer port outside `1..65535`, an empty namespace, and a missing artifact directory. In HMAC mode, also reject an empty discovery key or secret.
 
 Plugin environment:
 
@@ -734,8 +747,6 @@ RSC_ARTIFACT_ROOT=.hile-rsc
 RSC_INSTANCE_ID=org.example.rsc-plugin.dev
 RSC_DISCOVERY_PRIORITY=0
 RSC_DISCOVERY_GENERATION=0
-RSC_DISCOVERY_KEY_ID=local-development
-RSC_DISCOVERY_SECRET=replace-this-shared-secret
 ```
 
 Every concurrently running plugin instance needs a unique internal namespace and port. Multiple builds may share a `pluginId`; priority and compatibility select the active candidate.
@@ -760,12 +771,29 @@ The complete maintained implementation is `packages/create-hile/templates/rsc-ho
 - `InMemoryRscArtifactCatalog` and `InMemoryRscDeploymentCatalog`;
 - an internal Host `Application` and catalog-backed plugin locator;
 - the remote client resolver and asset URLs;
-- `HileRscDiscoveryHost` with a fail-closed authorizer;
+- `HileRscDiscoveryHost` with an explicit authorizer;
 - `RscServerFunctionGateway` with application authentication/authorization;
 - asset, Server Function, and optional development middleware;
 - exactly one `HttpNext` instance.
 
-Trust configuration must bind publisher identity to plugin ownership:
+For a fully trusted internal Micro mesh, use the matching explicit policy and keep the trust assumption next to the code:
+
+```ts
+// Deployment trust boundary: every peer able to reach this internal Micro mesh is trusted.
+authorize: createTrustedInternalRscDiscoveryAuthorizer()
+```
+
+This mode needs no discovery secret, key ID, or plugin allowlist. It does not disable
+artifact digest verification, generation rollback protection, transfer bounds, or public
+request authorization.
+
+The mode is an exact fail-closed choice: a misspelling or a configuration that also contains
+`keyId`/`secret` is rejected before the plugin registers operations or publishes to Registry.
+For a live HMAC-to-trusted migration, upgrade every Host reader first; upgraded Hosts continue
+to accept old signed announcements, but old Hosts cannot read the new unsigned announcement
+shape. Plugin replicas can roll after the Host fleet is ready.
+
+When any internal publisher is outside that trust boundary, HMAC configuration must bind publisher identity to plugin ownership:
 
 ```ts
 authorize: createHmacRscDiscoveryAuthorizer((keyId) => {
@@ -855,7 +883,7 @@ const gateway = new RscServerFunctionGateway({
 
 `authenticate()` and `canInvoke()` are application ports, not `@hile/rsc` APIs. Apply equivalent authentication/authorization to the dynamic page GET before rendering a plugin. The example `RSC_CSRF_TOKEN` is deliberately only a local pairing value: it reaches browser JavaScript and is not a production secret or user/session authorization mechanism.
 
-Host environment:
+HMAC Host environment (omit the discovery key fields in `trusted-internal` mode):
 
 ```dotenv
 HTTP_PORT=3000
@@ -873,7 +901,7 @@ RSC_DISCOVERY_SECRET=replace-this-shared-secret
 RSC_DISCOVERY_PLUGIN_IDS=org.example.rsc-plugin
 ```
 
-Production should source secrets from a secret manager, use real authentication, and normally use a less frequent discovery poll. The example token is not production security.
+HMAC deployments should source discovery secrets from a secret manager. All deployments need real public authentication and normally use a less frequent discovery poll. The example token is not production security.
 
 ## 7. Render Through A Dynamic Next Route
 
@@ -1096,7 +1124,7 @@ cd rsc-plugin && pnpm start
 cd rsc-host && pnpm start
 ```
 
-Ordering between plugin and Host startup is flexible after Registry exists: discovery reconciles later arrivals. Readiness means the plugin internal listener is ready and its signed announcement is visible; a process merely existing is not sufficient.
+Ordering between plugin and Host startup is flexible after Registry exists: discovery reconciles later arrivals. Readiness means the plugin internal listener is ready and its accepted announcement is visible; a process merely existing is not sufficient.
 
 On first reconciliation the Host:
 
@@ -1155,7 +1183,7 @@ Use at least two retained revisions. Size `maxRevisions` for the maximum build-d
 - Stopping or uninstalling a plugin therefore disables it without a manual Host activation API.
 - `RscPluginService.activate()` is an internal lifecycle primitive used by verified runtime/development orchestration. “No manual activation” means application users and Host routes do not call it as an install workflow.
 - Never mutate bytes under an already published build ID. It breaks cache and deployment identity.
-- At equal priority, publish newer immutable builds with a higher signed generation. Announcements without generation remain valid legacy generation zero.
+- At equal priority, publish newer immutable builds with a higher generation. HMAC mode signs that generation; announcements without generation remain valid legacy generation zero.
 
 ## 12. Verification
 
@@ -1203,7 +1231,7 @@ An implementation is not complete until tests prove:
 - a module-level Server Function works through `useActionState` and executes the expected scanned Model in the plugin process;
 - wrong origin/token, unknown reference, stale build, invalid input, excessive body, and aborted requests fail safely;
 - server/SSR artifacts cannot be fetched from the public asset route;
-- discovery rejects wrong signatures and publisher/plugin ownership mismatches;
+- discovery rejects values outside the selected trust mode; HMAC coverage includes wrong signatures and publisher/plugin ownership mismatches;
 - artifact transfer is streamed to disk with bounded size/count/path constraints;
 - upgrade preserves in-flight old-build requests and failed rebuilds preserve the last good revision.
 - stream window/timeout/idle-timeout, discovery generation ordering, bounded snapshot concurrency, and Host loading/error retry policies are covered.
@@ -1212,7 +1240,7 @@ An implementation is not complete until tests prove:
 
 | Symptom | Likely cause | Check/fix |
 |---|---|---|
-| Plugin never appears | Registry, namespace, signature, ownership, or internal listener mismatch | Confirm Registry address, unique Micro port, readiness log, matching key/secret, and Host allowlisted plugin ID |
+| Plugin never appears | Registry, namespace, selected trust policy, or internal listener mismatch | Confirm Registry address, unique Micro port, readiness log, and matching trusted-internal or HMAC policy |
 | `RSC plugin build mismatch` | Host requested a base/stale ID after a revision activated | Always resolve `deployments.getActive(pluginId)` and pass that exact ID; never hardcode `buildId` in the Host page |
 | Browser asset 403 | Host origin/asset middleware mismatch or stale build URL | Use the same `assetMountPath` for middleware and `RscClientRuntimeProvider`; verify active build and origin |
 | Server Function 403 | Same-origin, CSRF, authentication, or permission policy rejected it | Pair `RscNextClientRuntime` headers with Host authorization; do not bypass policy |
@@ -1231,11 +1259,11 @@ An implementation is not complete until tests prove:
 - [ ] Plugin process uses `--conditions=react-server` and creates no HTTP server.
 - [ ] Models load before `HileRscPluginRuntime.start()`.
 - [ ] New UI behavior uses module-level `'use server'` → `invokeRscModel()` → `defineActionModel()`.
-- [ ] Host discovery authorization binds `keyId` to explicit plugin IDs.
+- [ ] Host and plugin select the same explicit discovery trust mode; HMAC mode binds `keyId` to explicit plugin IDs.
 - [ ] Host mounts assets, Server Functions, and development SSE on its one HTTP server.
 - [ ] Dynamic Next route resolves and passes the exact active build ID and abort signal.
 - [ ] Render timeout, idle timeout, stream window, observer, and shared verification cache are configured.
-- [ ] Discovery generation and snapshot concurrency are configured and signed.
+- [ ] Discovery generation and snapshot concurrency are configured; HMAC mode signs generations.
 - [ ] Loading/error functions live in a Host Client Component and retry is tested.
 - [ ] Outer layout remains Host-owned; plugin providers/styles remain plugin-owned.
 - [ ] Development keeps the last good immutable revision and reloads after verified activation.

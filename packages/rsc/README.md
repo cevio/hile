@@ -42,7 +42,8 @@ const runtime = new HileRscPluginRuntime({
     priority: 0,
     generation: 0,
     artifactRoot,
-    authentication: { keyId, secret },
+    // Only use this mode when every peer able to reach the internal Micro mesh is trusted.
+    authentication: { mode: 'trusted-internal' },
   },
 })
 await runtime.start()
@@ -50,6 +51,20 @@ shutdown(() => runtime.close())
 ```
 
 `HileRscPluginRuntime` is the recommended Hile composition root. Use the lower-level transport attachment APIs only when implementing a non-Hile adapter. The plugin service creates an internal Micro listener, never an HTTP listener.
+
+The matching Host uses `authorize: createTrustedInternalRscDiscoveryAuthorizer()`.
+This removes discovery keys and signatures; it does not remove immutable artifact integrity
+verification, generation ordering, transfer bounds, public HTTP authentication, or Server
+Function authorization. Use the existing `{ keyId, secret }` publisher configuration with
+`createHmacRscDiscoveryAuthorizer()` whenever an internal peer is outside the trust boundary.
+Only the exact `trusted-internal` mode is accepted; misspelled modes or objects mixing the mode
+with signing fields fail before listener registration or Registry publication.
+
+When migrating a running HMAC deployment, upgrade the Host's `@hile/rsc-discovery` and
+`@hile/rsc-discovery-hile` packages before any plugin starts publishing trusted-internal
+announcements. New readers remain compatible with signed announcements, while older readers do
+not understand the unsigned wire shape. After all Hosts are upgraded, plugin replicas may roll
+independently without a shared discovery secret.
 
 ## Boundaries
 

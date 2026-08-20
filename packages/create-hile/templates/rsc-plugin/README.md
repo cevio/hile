@@ -15,7 +15,9 @@ Keep product routes, permissions, and domain logic outside the runtime compositi
 
 The optional `metadata` block in `hile-rsc.json` is immutable presentation data for Host-owned shells. Navigation paths are plugin-internal declared routes; the Host decides public URLs, authorization, visibility, and the final component library.
 
-`RSC_DISCOVERY_GENERATION` starts the signed monotonic generation for this instance. Use a higher value for a newer immutable deployment at equal priority; successful runtime artifact updates increment it automatically.
+`RSC_DISCOVERY_GENERATION` starts the monotonic generation for this instance. HMAC mode signs it. Use a higher value for a newer immutable deployment at equal priority; successful runtime artifact updates increment it automatically.
+
+The generated files select HMAC discovery by default. A deployment where every peer able to reach the internal Hile Micro mesh is trusted may instead use `authentication: { mode: 'trusted-internal' }`, pair it with `createTrustedInternalRscDiscoveryAuthorizer()` in the Host, document that trust boundary next to both calls, and remove the unused discovery key configuration.
 
 ## Add interactive server behavior
 

@@ -32,7 +32,7 @@ async function settlePhase(operations: readonly (() => void | Promise<void>)[], 
   if (errors.length) throw new AggregateError(errors, message);
 }
 
-/** Composes transport, listener, signed discovery and optional development binding as one lifecycle. */
+/** Composes transport, listener, explicit discovery security and optional development binding as one lifecycle. */
 export class HileRscPluginRuntime {
   readonly #options: HileRscPluginRuntimeOptions;
   readonly #resources: Set<{ close(): void | Promise<void> }>;

@@ -9,6 +9,7 @@ import { canonicalizeRscDiscoveryAnnouncement } from '@hile/rsc-discovery';
 import {
   downloadHileRscArtifact,
   createHmacRscDiscoveryAuthorizer,
+  createTrustedInternalRscDiscoveryAuthorizer,
   readHileRscDiscoverySnapshot,
   registerHileRscPluginDiscovery,
 } from './index';
@@ -47,6 +48,71 @@ async function artifact(buildId = 'build-1') {
 }
 
 describe('Hile RSC discovery publisher', () => {
+  it('publishes without credentials when the internal Micro mesh is explicitly trusted', async () => {
+    const value = await artifact('build-1');
+    const next = await artifact('build-2');
+    const update = vi.fn(async () => undefined);
+    const application = {
+      register: vi.fn(() => vi.fn()),
+      publish: vi.fn(async () => ({
+        update,
+        unpublish: vi.fn(async () => undefined),
+      })),
+    };
+
+    const registration = await registerHileRscPluginDiscovery({
+      application,
+      namespace: 'fixture.service',
+      instanceId: 'fixture-instance',
+      priority: 10,
+      artifactRoot: value.root,
+      authentication: { mode: 'trusted-internal' },
+    });
+
+    const published = application.publish.mock.calls[0][1];
+    expect(published.authentication).toEqual({ scheme: 'trusted-internal' });
+    expect(createTrustedInternalRscDiscoveryAuthorizer()(published)).toBe(true);
+    expect(createHmacRscDiscoveryAuthorizer(() => ({
+      secret: 'test-secret', pluginIds: ['org.hile.fixture'],
+    }))(published)).toBe(false);
+
+    const updated = await registration.update(next.root);
+    expect(updated).toMatchObject({ buildId: 'build-2', generation: 1 });
+    expect(updated.authentication).toEqual({ scheme: 'trusted-internal' });
+    expect(update).toHaveBeenCalledWith(updated);
+
+    await registration.close();
+  });
+
+  it('fails closed for misspelled or mixed trusted-internal publisher configuration', async () => {
+    const value = await artifact();
+    const application = {
+      register: vi.fn(() => vi.fn()),
+      publish: vi.fn(async () => ({
+        update: vi.fn(async () => undefined),
+        unpublish: vi.fn(async () => undefined),
+      })),
+    };
+    const base = {
+      application,
+      namespace: 'fixture.service',
+      instanceId: 'fixture-instance',
+      priority: 10,
+      artifactRoot: value.root,
+    };
+
+    await expect(registerHileRscPluginDiscovery({
+      ...base,
+      authentication: { mode: 'trusted-internal-typo' },
+    } as any)).rejects.toThrow('trusted-internal');
+    await expect(registerHileRscPluginDiscovery({
+      ...base,
+      authentication: { mode: 'trusted-internal', keyId: 'ignored', secret: 'ignored' },
+    } as any)).rejects.toThrow('must not include');
+    expect(application.register).not.toHaveBeenCalled();
+    expect(application.publish).not.toHaveBeenCalled();
+  });
+
   it('publishes one instance-scoped announcement and serves only verified declared files', async () => {
     const value = await artifact();
     let artifactHandler!: (input: { data: unknown; signal?: AbortSignal }) => unknown;

@@ -3,6 +3,29 @@ export const HILE_RSC_DISCOVERY_CAPABILITY = '@hile/rsc' as const;
 export const HILE_RSC_DISCOVERY_TOPIC_PREFIX = '@hile/rsc/discovery/v1/' as const;
 const utf8 = new TextEncoder();
 
+export interface TrustedInternalRscDiscoveryAuthentication {
+  scheme: 'trusted-internal';
+}
+
+export interface SignedRscDiscoveryAuthentication {
+  scheme: string;
+  keyId: string;
+  /** Legacy-compatible signature over the announcement without generation. */
+  signature: string;
+  /** Signature over the full announcement when generation is present. */
+  generationSignature?: string;
+}
+
+export type RscDiscoveryAuthentication =
+  | TrustedInternalRscDiscoveryAuthentication
+  | SignedRscDiscoveryAuthentication;
+
+export function isTrustedInternalRscDiscoveryAuthentication(
+  authentication: RscDiscoveryAuthentication,
+): authentication is TrustedInternalRscDiscoveryAuthentication {
+  return authentication.scheme === 'trusted-internal' && !('keyId' in authentication);
+}
+
 export interface RscDiscoveryAnnouncement {
   schemaVersion: typeof HILE_RSC_DISCOVERY_SCHEMA_VERSION;
   capability: typeof HILE_RSC_DISCOVERY_CAPABILITY;
@@ -17,14 +40,7 @@ export interface RscDiscoveryAnnouncement {
   protocolVersion: 1;
   runtime: { react: string; reactDom: string; rsc: string };
   artifactOperation: string;
-  authentication: {
-    scheme: string;
-    keyId: string;
-    /** Legacy-compatible signature over the announcement without generation. */
-    signature: string;
-    /** Signature over the full announcement when generation is present. */
-    generationSignature?: string;
-  };
+  authentication: RscDiscoveryAuthentication;
 }
 
 export interface RscDiscoveryDeployment {
@@ -105,6 +121,14 @@ export function validateRscDiscoveryAnnouncement(value: unknown): RscDiscoveryAn
     throw new TypeError('RSC discovery authentication must be an object');
   }
   const authenticationRecord = authentication as Record<string, unknown>;
+  const authenticationScheme = requiredString(authenticationRecord, 'scheme');
+  if (authenticationScheme === 'trusted-internal') {
+    if (authenticationRecord.keyId !== undefined
+      || authenticationRecord.signature !== undefined
+      || authenticationRecord.generationSignature !== undefined) {
+      throw new TypeError('RSC trusted-internal discovery authentication must not carry signing fields');
+    }
+  }
   return {
     schemaVersion: HILE_RSC_DISCOVERY_SCHEMA_VERSION,
     capability: HILE_RSC_DISCOVERY_CAPABILITY,
@@ -121,14 +145,16 @@ export function validateRscDiscoveryAnnouncement(value: unknown): RscDiscoveryAn
       rsc: requiredString(runtimeRecord, 'rsc'),
     },
     artifactOperation,
-    authentication: {
-      scheme: requiredString(authenticationRecord, 'scheme'),
-      keyId: requiredString(authenticationRecord, 'keyId'),
-      signature: requiredString(authenticationRecord, 'signature'),
-      ...(authenticationRecord.generationSignature === undefined
-        ? {}
-        : { generationSignature: requiredString(authenticationRecord, 'generationSignature') }),
-    },
+    authentication: authenticationScheme === 'trusted-internal'
+      ? { scheme: 'trusted-internal' }
+      : {
+          scheme: authenticationScheme,
+          keyId: requiredString(authenticationRecord, 'keyId'),
+          signature: requiredString(authenticationRecord, 'signature'),
+          ...(authenticationRecord.generationSignature === undefined
+            ? {}
+            : { generationSignature: requiredString(authenticationRecord, 'generationSignature') }),
+        },
   };
 }
 
@@ -218,7 +244,9 @@ export class RscDiscoveryManager<T extends RscDiscoveryDeployment = RscDiscovery
 
   private generationKey(announcement: RscDiscoveryAnnouncement): string {
     return JSON.stringify([
-      announcement.authentication.keyId,
+      isTrustedInternalRscDiscoveryAuthentication(announcement.authentication)
+        ? announcement.authentication.scheme
+        : announcement.authentication.keyId,
       announcement.pluginId,
       announcement.instanceId,
     ]);
@@ -271,7 +299,8 @@ export class RscDiscoveryManager<T extends RscDiscoveryDeployment = RscDiscovery
     announcement: RscDiscoveryAnnouncement,
     highWater: RscDiscoveryGenerationHighWater,
   ): boolean {
-    if (!highWater.active
+    if (isTrustedInternalRscDiscoveryAuthentication(announcement.authentication)
+      || !highWater.active
       || highWater.generation !== 0
       || announcement.generation !== 0
       || announcement.authentication.generationSignature === undefined) return false;

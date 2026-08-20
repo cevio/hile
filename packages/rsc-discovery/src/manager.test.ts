@@ -200,6 +200,41 @@ describe('RscDiscoveryManager', () => {
     }));
   });
 
+  it('accepts an explicit unsigned announcement for a trusted internal mesh', () => {
+    const trusted = validateRscDiscoveryAnnouncement({
+      ...announcement(),
+      authentication: { scheme: 'trusted-internal' },
+    });
+
+    expect(trusted.authentication).toEqual({ scheme: 'trusted-internal' });
+  });
+
+  it('rejects trusted-internal announcements carrying pretend signature fields', () => {
+    expect(() => validateRscDiscoveryAnnouncement({
+      ...announcement(),
+      authentication: { scheme: 'trusted-internal', keyId: 'fake', signature: 'fake' },
+    })).toThrow('must not carry signing fields');
+  });
+
+  it('keeps generation rollback protection for trusted-internal replicas', async () => {
+    const { manager, deploy } = setup();
+    const trusted = (overrides: Partial<RscDiscoveryAnnouncement> = {}) => announcement({
+      authentication: { scheme: 'trusted-internal' },
+      ...overrides,
+    });
+
+    await manager.reconcile([
+      trusted({ instanceId: 'replica-a', generation: 4 }),
+      trusted({ instanceId: 'replica-b', generation: 4 }),
+    ]);
+    expect(deploy).toHaveBeenCalledOnce();
+    await expect(manager.reconcile([
+      trusted({ instanceId: 'replica-a', buildId: 'stale', generation: 3 }),
+      trusted({ instanceId: 'replica-b', generation: 4 }),
+    ])).resolves.toBeUndefined();
+    expect(manager.snapshot()[0]).toMatchObject({ buildId: 'build-v1', state: 'enabled' });
+  });
+
   it('automatically deploys the first healthy Registry announcement', async () => {
     const { manager, deploy } = setup();
     await manager.reconcile([announcement()]);

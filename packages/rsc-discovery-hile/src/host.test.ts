@@ -8,6 +8,7 @@ import { InMemoryRscArtifactCatalog } from '@hile/rsc/host/registry';
 import { InMemoryRscDeploymentCatalog } from '@hile/rsc/host/catalog';
 import { listActiveRscPlugins } from '@hile/rsc/host/plugin-metadata';
 import type { RscPluginManifest } from '@hile/rsc/protocol';
+import { createTrustedInternalRscDiscoveryAuthorizer } from './authentication';
 import { HileRscDiscoveryHost } from './host';
 import type { RscDiscoveryGenerationHighWater } from '@hile/rsc-discovery';
 
@@ -70,6 +71,34 @@ function artifactStream(getArtifact: () => Awaited<ReturnType<typeof artifact>>)
 }
 
 describe('HileRscDiscoveryHost', () => {
+  it('deploys an unsigned announcement only through the explicit trusted-internal policy', async () => {
+    const value = await artifact('build-trusted');
+    const discovered = {
+      ...announcement(value.manifest, 1),
+      authentication: { scheme: 'trusted-internal' as const },
+    };
+    const application = {
+      listRegistryTopics: vi.fn(async () => [{
+        topic: `@hile/rsc/discovery/v1/${discovered.instanceId}`,
+        hasData: true,
+      }]),
+      getRegistryTopic: vi.fn(async () => ({ hasData: true, payload: discovered })),
+      stream: artifactStream(() => value),
+    };
+    const deployments = new InMemoryRscDeploymentCatalog();
+    const host = new HileRscDiscoveryHost({
+      application,
+      artifacts: new InMemoryRscArtifactCatalog(),
+      deployments,
+      runtime: value.manifest.runtime,
+      authorize: createTrustedInternalRscDiscoveryAuthorizer(),
+    });
+
+    await host.refresh();
+    expect(deployments.getActive(value.manifest.pluginId)?.buildId).toBe('build-trusted');
+    await host.close();
+  });
+
   it('automatically stages, enables, upgrades and unregisters Registry-discovered services', async () => {
     const v1 = await artifact('build-v1');
     const v2 = await artifact('build-v2');

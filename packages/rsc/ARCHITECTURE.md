@@ -109,7 +109,7 @@ plugin source change
   -> persistent esbuild contexts rebuild one plugin
   -> successful immutable revision snapshot
   -> plugin microservice atomically activates renderer
-  -> plugin updates its signed Registry announcement
+  -> plugin updates its Registry announcement under the selected trust policy
   -> Host downloads and verifies the new immutable artifact
   -> Host activates catalog deployment automatically
   -> SSE revision event
