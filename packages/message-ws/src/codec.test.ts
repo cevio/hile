@@ -116,6 +116,29 @@ describe('message-ws frame codec', () => {
     expect((decoded.data as any).payload).toEqual(Buffer.from([1, 2, 3]));
   });
 
+  it('decodes binary payload as a zero-copy view of the frame', () => {
+    const encoded = encodeMessageFrame(binaryMessage(Buffer.from([1, 2, 3]))) as Buffer;
+    const headerLength = encoded.readUInt32BE(HILE_MESSAGE_FRAME_MAGIC.length + 1);
+    const payloadOffset = HILE_MESSAGE_FRAME_HEADER_SIZE + headerLength;
+
+    const decoded = decodeMessageFrame(encoded, true, { copyBinaryPayload: false });
+    const payload = (decoded.data as any).payload as Buffer;
+
+    expect(payload.buffer).toBe(encoded.buffer);
+    expect(payload.byteOffset).toBe(encoded.byteOffset + payloadOffset);
+    expect(payload).toEqual(Buffer.from([1, 2, 3]));
+  });
+
+  it('isolates decoded payload from caller-owned frame mutations by default', () => {
+    const encoded = encodeMessageFrame(binaryMessage(Buffer.from([1, 2, 3]))) as Buffer;
+    const decoded = decodeMessageFrame(encoded, true);
+    const payload = (decoded.data as any).payload as Buffer;
+
+    encoded.fill(0);
+
+    expect(payload).toEqual(Buffer.from([1, 2, 3]));
+  });
+
   it('supports unicode JSON metadata beside binary payload', () => {
     const message = binaryMessage(Buffer.from('flight'));
     (message.data as any).diagnostic = '上海/插件';

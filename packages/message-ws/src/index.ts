@@ -34,7 +34,9 @@ export abstract class MessageWs extends MessageModem {
     this.ws = ws;
     this.listener = (raw: WebSocket.RawData, isBinary: boolean) => {
       try {
-        const msg = decodeMessageFrame(raw, isBinary);
+        // ws owns RawData for the lifetime of the emitted message and does not
+        // mutate it afterwards, so Flight payloads can safely remain views.
+        const msg = decodeMessageFrame(raw, isBinary, { copyBinaryPayload: false });
         this.receive(msg);
       } catch {
         // A malformed protocol frame is fatal. Keeping the connection alive would

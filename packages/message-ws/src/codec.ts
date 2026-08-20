@@ -134,6 +134,7 @@ export function encodeMessageFrame(message: MessageTransferFormat): string | Buf
 export function decodeMessageFrame(
   raw: Buffer | ArrayBuffer | Buffer[] | Uint8Array | string,
   isBinary: boolean,
+  options: { copyBinaryPayload?: boolean } = {},
 ): MessageTransferFormat {
   const bytes = toBuffer(raw);
   if (!isBinary) {
@@ -163,11 +164,12 @@ export function decodeMessageFrame(
     bytes.subarray(HILE_MESSAGE_FRAME_HEADER_SIZE, headerEnd).toString('utf8'),
   );
   validateBinaryEnvelope(envelope);
+  const payload = bytes.subarray(headerEnd);
   return {
     ...envelope,
     data: {
       ...envelope.data,
-      payload: Buffer.from(bytes.subarray(headerEnd)),
+      payload: options.copyBinaryPayload === false ? payload : Buffer.from(payload),
     },
   };
 }

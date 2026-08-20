@@ -257,6 +257,20 @@ describe('@hile/message-modem', () => {
       const modem = new TestModem();
       await expect(modem.send('data', 50)).rejects.toThrow();
     });
+
+    it.each([0, -1, 1.5, Number.POSITIVE_INFINITY, 2_147_483_648])(
+      'rejects invalid message timeout %s',
+      (timeout) => {
+        const modem = new TestModem();
+        expect(() => modem.send('data', timeout)).toThrow(TypeError);
+      },
+    );
+
+    it('validates timeout for one-way messages too', () => {
+      const modem = new TestModem();
+      expect(() => modem.push('data', 0)).toThrow(TypeError);
+      expect(modem.posted).toEqual([]);
+    });
   });
 
   describe('push (one-way)', () => {

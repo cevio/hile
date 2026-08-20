@@ -1,5 +1,6 @@
 import { AbortException, Exception, TimeoutException } from "./exception";
 import { Readable } from 'node:stream';
+import { DeadlineScheduler, type DeadlineHandle } from './deadline-scheduler';
 export * from './exception';
 export enum MESSAGE_MODEM_TYPE {
   REQUEST,
@@ -106,6 +107,7 @@ class CreditReadable extends Readable {
 
 export abstract class MessageModem {
   private id = 0;
+  private readonly deadlines = new DeadlineScheduler();
 
   private readonly aborts = new Map<number, AbortController>();
   private readonly stacks = new Map<number, {
@@ -133,6 +135,7 @@ export abstract class MessageModem {
     this.stacks.clear();
     this.streams.clear();
     this.streamProducers.clear();
+    this.deadlines.clear();
   }
 
   /**
@@ -237,11 +240,11 @@ export abstract class MessageModem {
           stream.destroy(error as Error);
         }
     });
-    let totalTimer: ReturnType<typeof setTimeout> | undefined;
-    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    let totalTimer: DeadlineHandle | undefined;
+    let idleTimer: DeadlineHandle | undefined;
     const clearTimers = () => {
-      if (totalTimer) clearTimeout(totalTimer);
-      if (idleTimer) clearTimeout(idleTimer);
+      this.deadlines.cancel(totalTimer);
+      this.deadlines.cancel(idleTimer);
       totalTimer = undefined;
       idleTimer = undefined;
     };
@@ -252,9 +255,8 @@ export abstract class MessageModem {
     };
     const touch = () => {
       if (!idleTimeout || consumer.completed || consumer.cancelled) return;
-      if (idleTimer) clearTimeout(idleTimer);
-      idleTimer = setTimeout(() => expire('Stream idle timeout'), idleTimeout);
-      idleTimer.unref?.();
+      if (idleTimer) this.deadlines.reschedule(idleTimer, idleTimeout);
+      else idleTimer = this.deadlines.schedule(idleTimeout, () => expire('Stream idle timeout'));
     };
     consumer = {
       stream,
@@ -288,16 +290,13 @@ export abstract class MessageModem {
     this.streams.set(state.id, consumer);
     options?.signal?.addEventListener('abort', onAbort, { once: true });
     if (timeout) {
-      totalTimer = setTimeout(() => expire('Stream timeout'), timeout);
-      totalTimer.unref?.();
+      totalTimer = this.deadlines.schedule(timeout, () => expire('Stream timeout'));
     }
     touch();
     stream.on('close', () => {
       sendAbort();
       clearTimers();
-      if (this.streams.has(state.id)) {
-        this.streams.delete(state.id);
-      }
+      this.streams.delete(state.id);
       options?.signal?.removeEventListener('abort', onAbort);
     });
     try {
@@ -321,7 +320,7 @@ export abstract class MessageModem {
     twoway?: boolean,
     signal?: AbortSignal,
   }) {
-    const timeout = options?.timeout ?? 30000;
+    const timeout = streamTimeout(options?.timeout ?? 30000, 'Message timeout')!;
     const twoway = !!options?.twoway;
     const signal = options?.signal;
 
@@ -334,22 +333,22 @@ export abstract class MessageModem {
     }
 
     return new Promise<U>((resolve, reject) => {
-      let timer: NodeJS.Timeout | undefined;
+      let timer: DeadlineHandle | undefined;
       let posted = false;
       const clear = () => {
-        if (this.stacks.has(state.id)) {
-          this.stacks.delete(state.id);
-        }
+        this.stacks.delete(state.id);
       }
 
       const clean = () => {
-        if (timer) clearTimeout(timer);
+        this.deadlines.cancel(timer);
+        timer = undefined;
         signal?.removeEventListener('abort', onAbort);
         clear();
       }
 
       const onAbort = () => {
-        if (timer) clearTimeout(timer);
+        this.deadlines.cancel(timer);
+        timer = undefined;
         try {
           if (posted) this.post(this.createPostData(MESSAGE_MODEM_TYPE.ABORT, state.id));
         } catch {
@@ -376,7 +375,7 @@ export abstract class MessageModem {
         resolve: _resolve,
         reject: _reject,
       });
-      timer = setTimeout(() => _reject(new TimeoutException()), timeout).unref();
+      timer = this.deadlines.schedule(timeout, () => _reject(new TimeoutException()));
       signal?.addEventListener('abort', onAbort, { once: true });
       if (signal?.aborted) {
         onAbort();
@@ -398,11 +397,6 @@ export abstract class MessageModem {
   private onRequest<T = any>(msg: MessageTransferFormat<T>) {
     const controller = new AbortController();
     this.aborts.set(msg.id, controller);
-    controller.signal.addEventListener('abort', () => {
-      if (this.aborts.has(msg.id)) {
-        this.aborts.delete(msg.id);
-      }
-    });
     this.exec(msg.data, controller.signal)
       .then(value => {
         if (controller.signal.aborted) return;
@@ -437,10 +431,7 @@ export abstract class MessageModem {
         }
       })
       .finally(() => {
-        // 删除 Abort 处理函数
-        if (this.aborts.has(msg.id)) {
-          this.aborts.delete(msg.id);
-        }
+        this.aborts.delete(msg.id);
       });
   }
 
@@ -451,9 +442,10 @@ export abstract class MessageModem {
   private onResponse<T = any>(msg: MessageTransferFormat<MessageReturnFormat<T>>) {
     const id = msg.id;
     const res = msg.data;
+    const stack = this.stacks.get(id);
     // 如果栈中存在该消息，则处理响应消息
-    if (this.stacks.has(id)) {
-      const { resolve, reject } = this.stacks.get(id)!;
+    if (stack) {
+      const { resolve, reject } = stack;
       // 如果响应状态码不是 200，则拒绝响应
       if (res?.status !== 200) {
         reject(new Exception(res?.status!, res?.message!));
@@ -514,12 +506,6 @@ export abstract class MessageModem {
     let sequence = 0;
     this.aborts.set(msg.id, controller);
     this.streamProducers.set(msg.id, producer);
-    controller.signal.addEventListener('abort', () => {
-      producer.wake?.();
-      if (this.aborts.has(msg.id)) {
-        this.aborts.delete(msg.id);
-      }
-    });
     const takeCredit = async () => {
       while (producer.credits === 0 && !controller.signal.aborted) {
         await new Promise<void>((resolve) => {
@@ -593,18 +579,16 @@ export abstract class MessageModem {
         }
         producer.wake?.();
         this.streamProducers.delete(msg.id);
-        if (this.aborts.has(msg.id)) {
-          this.aborts.delete(msg.id);
-        }
+        this.aborts.delete(msg.id);
       });
   }
 
   private onStreamResponse<T = any>(msg: MessageTransferFormat<MessageStreamChunk<T>>) {
     const id = msg.id;
     const res = msg.data;
+    const consumer = this.streams.get(id);
     // 如果栈中存在该消息，则处理响应消息
-    if (this.streams.has(id)) {
-      const consumer = this.streams.get(id)!;
+    if (consumer) {
       const stream = consumer.stream;
       if (res) {
         consumer.touch();
@@ -665,15 +649,18 @@ export abstract class MessageModem {
         }
         break;
       // 处理终止消息
-      case MESSAGE_MODEM_TYPE.ABORT:
+      case MESSAGE_MODEM_TYPE.ABORT: {
         const id: number = msg.data;
-        if (this.aborts.has(id)) {
-          const controller = this.aborts.get(id)!;
+        const controller = this.aborts.get(id);
+        if (controller) {
+          this.aborts.delete(id);
+          this.streamProducers.get(id)?.wake?.();
           if (!controller.signal.aborted) {
             controller.abort();
           }
         }
         break;
+      }
       case MESSAGE_MODEM_TYPE.STREAM_CREDIT: {
         const credit = msg.data as { id?: unknown; seq?: unknown } | undefined;
         if (
