@@ -1,7 +1,7 @@
 {
   "name": "@hile/rsc",
   "description": "Core protocol and runtime for dynamically loaded React Server Component plugins",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
