@@ -1,6 +1,14 @@
+import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { createMcpHmacInvocationCredentialCodec, defineMcpPrompt, defineMcpProvider, defineMcpResource, defineMcpTool } from '../index.js';
+import {
+  createMcpEd25519InvocationCredentialSigner,
+  createMcpEd25519InvocationCredentialVerifier,
+  defineMcpPrompt,
+  defineMcpProvider,
+  defineMcpResource,
+  defineMcpTool,
+} from '../index.js';
 import { attachMcpProvider } from './provider.js';
 
 const trustedInvocation = { invocationSecurity: { mode: 'trusted-internal' as const } };
@@ -255,9 +263,11 @@ describe('attachMcpProvider', () => {
 
   it('rejects a forged direct principal and accepts only a bound invocation credential', async () => {
     const handlers = new Map<string, (input: any) => unknown>();
-    const codec = createMcpHmacInvocationCredentialCodec({ secret: 'provider-isolated-secret-at-least-32-bytes' });
-    const invocationSecurity: { mode: 'credential' | 'trusted-internal'; credentials: typeof codec } = {
-      mode: 'credential', credentials: codec,
+    const authority = generateKeyPairSync('ed25519');
+    const signer = createMcpEd25519InvocationCredentialSigner({ privateKey: authority.privateKey });
+    const verifier = createMcpEd25519InvocationCredentialVerifier({ publicKey: authority.publicKey });
+    const invocationSecurity: { mode: 'credential' | 'trusted-internal'; credentials: typeof verifier } = {
+      mode: 'credential', credentials: verifier,
     };
     const handler = vi.fn(async () => ({ content: [{ type: 'text' as const, text: 'authorized' }] }));
     const application = {
@@ -272,7 +282,7 @@ describe('attachMcpProvider', () => {
     const attachment = await attachMcpProvider(application, defineMcpProvider({
       id: 'orders',
       tools: { lookup: defineMcpTool({ name: 'lookup', inputSchema: z.object({}), access: { scopes: ['orders:read'] } }, handler) },
-    }), { invocationSecurity: invocationSecurity as { mode: 'credential'; credentials: typeof codec } });
+    }), { invocationSecurity: invocationSecurity as { mode: 'credential'; credentials: typeof verifier } });
     invocationSecurity.mode = 'trusted-internal';
     const descriptor = {
       providerId: attachment.manifest.providerId,
@@ -291,7 +301,7 @@ describe('attachMcpProvider', () => {
     const iterable = await invoke({
       data: {
         ...descriptor,
-        credential: codec.create(descriptor, { subject: 'gateway-user', scopes: ['orders:read'] }),
+        credential: signer.create(descriptor, { subject: 'gateway-user', scopes: ['orders:read'] }),
       },
     }) as AsyncIterable<any>;
     const frames = [];

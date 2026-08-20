@@ -147,11 +147,15 @@ stdio may supply one process-level `authInfo`. Without it, scoped capabilities a
 
 Credential mode signs a short-lived envelope bound to the exact provider, instance, fingerprint, capability, input, and normalized principal. Providers verify before creating `context.principal`. Nonces are replay-protected.
 
-The built-in HMAC codec is symmetric. Use a different secret per provider or trust domain and select it through the gateway keyring. Any service holding a symmetric key can mint credentials within that key's domain; do not distribute one global secret to unrelated providers.
+The preferred built-in codec uses one Ed25519 Gateway authority. The Gateway alone holds the private signing key; Providers share the matching non-secret public verification key exposed by the signer as `publicKey` with its `keyId`. One signer therefore covers every dynamically discovered Provider without per-Provider shared secrets, while Providers cannot mint Gateway credentials. The issuer, maximum TTL, bounded clock tolerance, exact invocation descriptor, normalized principal, nonce, key fingerprint, and signature all fail closed. A verifier may accept up to 16 overlapping public keys so operators can deploy the next key, switch the Gateway signer, and retire the old key without downtime.
+
+The HMAC codec remains available for compatibility. It is symmetric, so use a different secret per provider or trust domain and select it through the gateway keyring. Any service holding a symmetric key can mint credentials within that key's domain; do not distribute one global HMAC secret to unrelated providers.
 
 `trusted-internal` is an explicit alternative for a fully trusted Micro mesh. It propagates an unsigned principal, so any peer that can invoke the internal operation must be trusted not to forge identity.
 
 Capability `access.scopes` is enforced in both catalog visibility and provider authorization. Capability-local `authorize()` runs at the provider after input validation.
+
+Provider manifests already carry capability-required scopes. `MCP_SCOPE_ALL` (`*`) is an explicit administrator grant covering all current and future discovered scopes. It is never inferred from an empty scope list.
 
 Client-echoed `requestState` remains `unknown` unless the gateway is configured with an SDK `requestState.verify` hook. Type parameters alone do not establish trust.
 
@@ -187,7 +191,7 @@ The six public entry points are the complete supported boundary:
 
 | Entry point | Public construction APIs |
 |---|---|
-| `@hile/mcp` | Four definition factories, HMAC codec, provider keyring, custom credential types, principals, handler contexts, definitions, and `HileMcpError` |
+| `@hile/mcp` | Four definition factories, Ed25519 authority signer/verifier, HMAC compatibility codec, provider keyring, custom credential types, principals, handler contexts, definitions, and `HileMcpError` |
 | `@hile/mcp/micro` | Provider attachment, concrete/factory discovery source, provider/source contracts, manifests, and resource-update types |
 | `@hile/mcp/gateway` | Gateway factory plus gateway option, inspection, and capability types |
 | `@hile/mcp/http` | Streamable HTTP endpoint factory and option/handle types |

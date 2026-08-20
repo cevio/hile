@@ -14,6 +14,7 @@ import {
 } from '@modelcontextprotocol/server';
 import { HileMcpError } from '../errors.js';
 import { compareText } from '../ordering.js';
+import { hasMcpScopes } from '../scopes.js';
 import { parseMcpProviderManifest } from '../micro/manifest.js';
 import { MCP_OPERATIONS, type McpCapabilityKind, type McpManifestCapability, type McpProviderManifest, type McpProviderSource, type McpResourceUpdate } from '../micro/types.js';
 import type { McpInvocationCredentialCodec, McpPrincipal } from '../types.js';
@@ -321,8 +322,7 @@ export class McpGatewayRuntime implements McpGateway {
   }
 
   private visible(entry: CatalogEntry, currentPrincipal: McpPrincipal | undefined) {
-    const scopes = new Set(currentPrincipal?.scopes ?? []);
-    if (entry.scopes.some(scope => !scopes.has(scope))) return false;
+    if (!hasMcpScopes(currentPrincipal?.scopes, entry.scopes)) return false;
     return this.options.isCapabilityExposed?.(entry.view, currentPrincipal) ?? true;
   }
 

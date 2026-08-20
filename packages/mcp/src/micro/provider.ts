@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { UriTemplate, type Variables } from '@modelcontextprotocol/server';
 import { HileMcpError } from '../errors.js';
 import { normalizeMcpPrincipal } from '../principal.js';
+import { hasMcpScopes } from '../scopes.js';
 import type { McpCapabilityAccess, McpInvocationContext, McpInvocationCredentialCodec, McpPrincipal, McpProviderDefinition } from '../types.js';
 import { McpLoader } from './loader.js';
 import { createMcpProviderManifest } from './manifest.js';
@@ -29,8 +30,7 @@ async function validate(schema: any, input: unknown) {
 }
 
 async function authorize(access: McpCapabilityAccess<any> | undefined, principal: McpPrincipal | undefined, input: unknown) {
-  const scopes = new Set(principal?.scopes ?? []);
-  if (access?.scopes?.some(scope => !scopes.has(scope))) return false;
+  if (!hasMcpScopes(principal?.scopes, access?.scopes)) return false;
   return access?.authorize ? await access.authorize(principal, input) : true;
 }
 
@@ -97,8 +97,7 @@ async function completeCapability(provider: McpProviderDefinition, request: Trus
     ? provider.prompts[request.name]?.config.completions?.[input.argument]
     : resourceConfig?.kind === 'template' ? resourceConfig.completions?.[input.argument] : undefined;
   if (!complete) throw new HileMcpError('INVALID_DEFINITION', `Unknown MCP completion argument "${input.argument}"`);
-  const scopes = new Set(request.principal?.scopes ?? []);
-  if (capability.config.access?.scopes?.some(scope => !scopes.has(scope))) throw new Error('MCP capability access denied');
+  if (!hasMcpScopes(request.principal?.scopes, capability.config.access?.scopes)) throw new Error('MCP capability access denied');
   invocation.signal.throwIfAborted();
   const suggestions = await complete(input.value, {
     signal: invocation.signal,

@@ -62,6 +62,33 @@ describe('MCP gateway catalog', () => {
     expect(source.close).toHaveBeenCalledOnce();
   });
 
+  it('treats an explicit wildcard grant as access to every discovered scope', async () => {
+    const source = new Source();
+    const base = provider('a');
+    const identity = {
+      providerId: base.providerId,
+      capabilities: {
+        ...base.capabilities,
+        tools: [{ ...base.capabilities.tools[0], scopes: ['orders:read'] }],
+      },
+    };
+    source.items = [{ ...base, ...identity, fingerprint: createMcpProviderFingerprint(identity) }];
+    const gateway = await createMcpGateway({ source, info: { name: 'hile', version: '1.0.0' }, invocationSecurity: trustedInvocation });
+    const server = mcpServerFactory(gateway)({
+      authInfo: { token: 'operator', clientId: 'operator', scopes: ['*'] },
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: 'test', version: '1.0.0' });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+
+    expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(['orders.lookup']);
+
+    await client.close();
+    await server.close();
+    await gateway.close();
+  });
+
   it('round-robins compatible instances while preserving the selected instance identity', async () => {
     const source = new Source();
     source.items = [provider('a'), provider('b')];

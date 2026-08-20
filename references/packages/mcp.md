@@ -39,11 +39,12 @@ export default defineMcpTool(
 Attach the provider only after its `Application` is listening:
 
 ```ts
-import { createMcpHmacInvocationCredentialCodec } from '@hile/mcp'
+import { createMcpEd25519InvocationCredentialVerifier } from '@hile/mcp'
 import { attachMcpProvider } from '@hile/mcp/micro'
 
-const credentials = createMcpHmacInvocationCredentialCodec({
-  secret: process.env.ORDERS_MCP_KEY!,
+const credentials = createMcpEd25519InvocationCredentialVerifier({
+  publicKey: process.env.MCP_GATEWAY_PUBLIC_KEY!,
+  issuer: 'company-mcp-gateway',
 })
 
 const attachment = await attachMcpProvider(
@@ -185,8 +186,7 @@ Unified gateway and Streamable HTTP adapter:
 
 ```ts
 import {
-  createMcpHmacInvocationCredentialCodec,
-  createMcpInvocationCredentialKeyring,
+  createMcpEd25519InvocationCredentialSigner,
 } from '@hile/mcp'
 import { createMcpGateway } from '@hile/mcp/gateway'
 import { createMcpHttpEndpoint } from '@hile/mcp/http'
@@ -207,10 +207,9 @@ const gateway = await createMcpGateway({
   startup: 'require-provider',
   invocationSecurity: {
     mode: 'credential',
-    credentials: createMcpInvocationCredentialKeyring({
-      orders: createMcpHmacInvocationCredentialCodec({
-        secret: process.env.ORDERS_MCP_KEY!,
-      }),
+    credentials: createMcpEd25519InvocationCredentialSigner({
+      privateKey: process.env.MCP_GATEWAY_PRIVATE_KEY!,
+      issuer: 'company-mcp-gateway',
     }),
   },
   onError: (error) => logger.error(error),
@@ -309,6 +308,9 @@ Node.js `20.12.0` or newer is required. `@hile/mcp` uses the official `@modelcon
 
 ```ts
 import {
+  MCP_SCOPE_ALL,
+  createMcpEd25519InvocationCredentialSigner,
+  createMcpEd25519InvocationCredentialVerifier,
   defineMcpPrompt,
   defineMcpProvider,
   defineMcpResource,
@@ -389,7 +391,9 @@ Close the HTTP endpoint or stdio handle before closing the shared gateway. `auth
 
 | API | Purpose |
 |---|---|
-| `createMcpHmacInvocationCredentialCodec(options)` | Creates a replay-protected symmetric codec. `secret` must contain at least 32 bytes; `issuer` defaults to `@hile/mcp`; `ttlMs` defaults to `30000` |
+| `createMcpEd25519InvocationCredentialSigner(options)` | Creates the Gateway-only signer from an Ed25519 private key. Its `publicKey` and `keyId` are safe to distribute to Providers; `issuer` defaults to `@hile/mcp`; `ttlMs` defaults to `30000` |
+| `createMcpEd25519InvocationCredentialVerifier(options)` | Creates a Provider verifier from one `publicKey` or an overlapping `publicKeys` set for zero-downtime rotation. `maxTtlMs` defaults to `30000`; `clockToleranceMs` defaults to `5000`; it enforces issuer, exact invocation binding, and replay protection |
+| `createMcpHmacInvocationCredentialCodec(options)` | Creates a replay-protected symmetric compatibility codec. `secret` must contain at least 32 bytes; prefer Ed25519 when one Gateway authority serves multiple Providers |
 | `createMcpInvocationCredentialKeyring(codecs)` | Selects an isolated credential codec by `providerId`; use different keys for unrelated trust domains |
 | `McpInvocationCredentialCodec` | Interface for a custom gateway `create()` / provider `verify()` credential mechanism |
 | `InMemoryMcpProviderSource` | Deterministic testing source with `setInstances()`, `emitResourceUpdated()`, recorded `invocations`, and injectable invocation handler |
@@ -434,7 +438,8 @@ Client-owned roots and server-to-client sampling are not provider definitions in
 - Capability metadata supports official titles, descriptions, icons, annotations, `_meta`, resource size, and cache hints. Gateway-level list/read cache hints are configured with `cacheHints`.
 - OAuth mode delegates Bearer verification, challenges, and metadata documents to official SDK helpers; the package does not implement an authorization server.
 - HTTP authentication determines the external principal and scopes. Capability `access.scopes`, `access.authorize`, and gateway `isCapabilityExposed` are separate defense layers.
-- Credential mode signs a short-lived, replay-protected envelope bound to the provider, instance, fingerprint, capability, input, and principal. Use a different HMAC key for each provider or trust domain and a gateway keyring. A symmetric key holder can mint credentials for its own trust domain.
+- Credential mode signs a short-lived, replay-protected envelope bound to the provider, instance, fingerprint, capability, input, and principal. Prefer one Ed25519 Gateway authority: the Gateway keeps the private key, while every Provider can consume the same non-secret public key from deployment configuration. Providers cannot mint Gateway credentials. Verifiers bound accepted lifetime and allow a small explicit clock tolerance. During rotation, Providers may accept overlapping `publicKeys` before the Gateway switches its private key. HMAC remains available for compatibility and requires a different key per provider or trust domain.
+- Capability-required scopes are part of the discovered Provider manifest. `MCP_SCOPE_ALL` (`*`) is an explicit administrator grant covering every discovered capability scope; use it only when automatic access to future Providers is intended.
 - `trusted-internal` is explicit, propagates an unsigned principal, and is appropriate only when every peer able to reach the Micro operation is trusted.
 - Client-echoed `requestState` stays `unknown` unless `requestState.verify` is configured on the gateway.
 - Close the external transport first, then the gateway, then provider attachments, and finally the underlying Micro applications. Close operations are serialized; provider teardown withdraws discovery before removing handlers.

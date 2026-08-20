@@ -55,11 +55,12 @@ export default defineMcpTool(
 Attach the provider only after its `Application` is listening:
 
 ```ts
-import { createMcpHmacInvocationCredentialCodec } from '@hile/mcp'
+import { createMcpEd25519InvocationCredentialVerifier } from '@hile/mcp'
 import { attachMcpProvider } from '@hile/mcp/micro'
 
-const credentials = createMcpHmacInvocationCredentialCodec({
-  secret: process.env.ORDERS_MCP_KEY!,
+const credentials = createMcpEd25519InvocationCredentialVerifier({
+  publicKey: process.env.MCP_GATEWAY_PUBLIC_KEY!,
+  issuer: 'company-mcp-gateway',
 })
 
 const attachment = await attachMcpProvider(
@@ -201,8 +202,7 @@ Unified gateway and Streamable HTTP adapter:
 
 ```ts
 import {
-  createMcpHmacInvocationCredentialCodec,
-  createMcpInvocationCredentialKeyring,
+  createMcpEd25519InvocationCredentialSigner,
 } from '@hile/mcp'
 import { createMcpGateway } from '@hile/mcp/gateway'
 import { createMcpHttpEndpoint } from '@hile/mcp/http'
@@ -223,10 +223,9 @@ const gateway = await createMcpGateway({
   startup: 'require-provider',
   invocationSecurity: {
     mode: 'credential',
-    credentials: createMcpInvocationCredentialKeyring({
-      orders: createMcpHmacInvocationCredentialCodec({
-        secret: process.env.ORDERS_MCP_KEY!,
-      }),
+    credentials: createMcpEd25519InvocationCredentialSigner({
+      privateKey: process.env.MCP_GATEWAY_PRIVATE_KEY!,
+      issuer: 'company-mcp-gateway',
     }),
   },
   onError: (error) => logger.error(error),
@@ -364,7 +363,9 @@ Close the HTTP endpoint or stdio handle before closing the shared gateway. `auth
 
 | API | Purpose |
 |---|---|
-| `createMcpHmacInvocationCredentialCodec(options)` | Creates a replay-protected symmetric codec. `secret` must contain at least 32 bytes; `issuer` defaults to `@hile/mcp`; `ttlMs` defaults to `30000` |
+| `createMcpEd25519InvocationCredentialSigner(options)` | Creates the Gateway-only signer from an Ed25519 private key. Its `publicKey` and `keyId` are safe to distribute to Providers; `issuer` defaults to `@hile/mcp`; `ttlMs` defaults to `30000` |
+| `createMcpEd25519InvocationCredentialVerifier(options)` | Creates a Provider verifier from one `publicKey` or an overlapping `publicKeys` set for zero-downtime rotation. `maxTtlMs` defaults to `30000`; `clockToleranceMs` defaults to `5000`; it enforces issuer, exact invocation binding, and replay protection |
+| `createMcpHmacInvocationCredentialCodec(options)` | Creates a replay-protected symmetric compatibility codec. `secret` must contain at least 32 bytes; prefer Ed25519 when one Gateway authority serves multiple Providers |
 | `createMcpInvocationCredentialKeyring(codecs)` | Selects an isolated credential codec by `providerId`; use different keys for unrelated trust domains |
 | `McpInvocationCredentialCodec` | Interface for a custom gateway `create()` / provider `verify()` credential mechanism |
 | `InMemoryMcpProviderSource` | Deterministic testing source with `setInstances()`, `emitResourceUpdated()`, recorded `invocations`, and injectable invocation handler |

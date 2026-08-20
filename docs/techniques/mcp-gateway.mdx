@@ -80,14 +80,15 @@ Prompt arguments and RFC 6570 template variables may declare `completions`. Tool
 
 ```ts
 import { defineService, loadService } from '@hile/core'
-import { createMcpHmacInvocationCredentialCodec } from '@hile/mcp'
+import { createMcpEd25519InvocationCredentialVerifier } from '@hile/mcp'
 import { attachMcpProvider } from '@hile/mcp/micro'
 import applicationService from './application.boot.js'
 
 export default defineService('orders.mcp', async (shutdown) => {
   const application = await loadService(applicationService)
-  const credentials = createMcpHmacInvocationCredentialCodec({
-    secret: process.env.ORDERS_MCP_KEY!,
+  const credentials = createMcpEd25519InvocationCredentialVerifier({
+    publicKey: process.env.MCP_GATEWAY_PUBLIC_KEY!,
+    issuer: 'company-mcp-gateway',
   })
   const attachment = await attachMcpProvider(
     application,
@@ -110,8 +111,7 @@ Run another process with the same provider ID and capability files to add a repl
 ```ts
 import { defineService, loadService } from '@hile/core'
 import {
-  createMcpHmacInvocationCredentialCodec,
-  createMcpInvocationCredentialKeyring,
+  createMcpEd25519InvocationCredentialSigner,
 } from '@hile/mcp'
 import { createMcpGateway } from '@hile/mcp/gateway'
 import { createHileMcpProviderSource } from '@hile/mcp/micro'
@@ -138,9 +138,9 @@ export default defineService('mcp.gateway', async (shutdown) => {
     },
     invocationSecurity: {
       mode: 'credential',
-      credentials: createMcpInvocationCredentialKeyring({
-        orders: createMcpHmacInvocationCredentialCodec({ secret: process.env.ORDERS_MCP_KEY! }),
-        inventory: createMcpHmacInvocationCredentialCodec({ secret: process.env.INVENTORY_MCP_KEY! }),
+      credentials: createMcpEd25519InvocationCredentialSigner({
+        privateKey: process.env.MCP_GATEWAY_PRIVATE_KEY!,
+        issuer: 'company-mcp-gateway',
       }),
     },
     isCapabilityExposed: (capability, principal) => {
@@ -273,7 +273,9 @@ Catalog updates re-project connected MCP servers and emit list-change notificati
 - Gateway catalog visibility checks required scopes before registration and can apply `isCapabilityExposed` policy.
 - Provider authorization repeats scope checks and optional capability-local `authorize()` after schema validation.
 - Credential mode proves that the invocation was minted for the exact provider instance, fingerprint, capability, and input. Nonces are replay-protected and expire.
-- Configure a separate HMAC secret for each provider or trust domain. Because HMAC is symmetric, a holder can mint credentials within that domain.
+- Prefer one Ed25519 Gateway authority for all discovered Providers. Keep its private key only in the Gateway and distribute the matching public key to Providers; the public key is not a credential and Providers cannot mint invocations. Rotate without downtime by publishing overlapping Provider `publicKeys`, switching the Gateway private key, then removing the retired public key.
+- HMAC remains available for compatibility. Configure a separate HMAC secret for each provider or trust domain because a symmetric-key holder can mint credentials within that domain.
+- Required scopes travel in each discovered capability manifest. Grant `MCP_SCOPE_ALL` (`*`) to an external principal only as an explicit administrator policy that intentionally includes capabilities registered in the future.
 - `trusted-internal` sends an unsigned principal. Use it only on a Micro mesh where every reachable peer is trusted to impersonate the gateway.
 - `requestState` is client-echoed state. Treat it as `unknown` unless the gateway is configured with the official SDK request-state verifier.
 
