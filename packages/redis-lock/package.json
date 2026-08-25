@@ -1,6 +1,6 @@
 {
   "name": "@hile/redis-lock",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "description": "Redis-backed lease locks for Hile services",
   "type": "module",
   "main": "./dist/index.js",

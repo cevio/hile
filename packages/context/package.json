@@ -1,6 +1,6 @@
 {
   "name": "@hile/context",
-  "version": "4.0.1",
+  "version": "4.0.2",
   "description": "Explicit immutable execution context carriers for Hile applications",
   "type": "module",
   "main": "./dist/index.js",
