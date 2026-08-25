@@ -133,12 +133,18 @@ Controller:
 
 ```ts
 // src/controllers/users/[id].controller.ts
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext, createInvocationContext } from '@hile/context'
 import { defineController } from '@hile/http'
 import { loadModel } from '@hile/model'
 import { getUser } from '../../models/users/get-user.model'
 
 export default defineController('GET', async (ctx) => {
-  return loadModel(getUser, { userId: String(ctx.params.id) })
+  const invocation = createInvocationContext(
+    createExecutionContext({ requestId: randomUUID() }),
+    new AbortController().signal,
+  )
+  return loadModel(getUser, { userId: String(ctx.params.id) }, invocation)
 })
 ```
 

@@ -1,5 +1,10 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
+import {
+  createExecutionContext,
+  createInvocationContext,
+  MissingExecutionContextError,
+} from '@hile/context';
 import { z } from 'zod';
 import {
   createMcpEd25519InvocationCredentialSigner,
@@ -12,6 +17,8 @@ import {
 import { attachMcpProvider } from './provider.js';
 
 const trustedInvocation = { invocationSecurity: { mode: 'trusted-internal' as const } };
+const executionContext = createExecutionContext({ requestId: 'mcp-provider-test' });
+const invocation = createInvocationContext(executionContext, new AbortController().signal);
 
 describe('attachMcpProvider', () => {
   it('requires an explicit internal invocation trust mode', async () => {
@@ -49,19 +56,32 @@ describe('attachMcpProvider', () => {
     };
     const provider = defineMcpProvider({
       id: 'orders',
-      tools: { lookup: defineMcpTool({ name: 'lookup', inputSchema: z.object({}) }, async (_input, context) => {
+      tools: { lookup: defineMcpTool({
+        name: 'lookup',
+        inputSchema: z.object({}),
+        access: {
+          authorize: async (_principal, _input, context) => context.values.requestId === 'mcp-provider-test',
+        },
+      }, async (_input, context) => {
+        expect(context.executionContext.values.requestId).toBe('mcp-provider-test');
         await context.emit.progress(1, 2, 'working');
         return { content: [{ type: 'text', text: 'done' }] };
       }) },
     });
     const attachment = await attachMcpProvider(application, provider, trustedInvocation);
+    const data = {
+      providerId: attachment.manifest.providerId,
+      instanceId: attachment.manifest.instanceId,
+      fingerprint: attachment.manifest.fingerprint,
+      kind: 'tool' as const,
+      name: 'lookup',
+      input: {},
+    };
+    await expect(handlers.get('/-/mcp/invoke')!({ data }))
+      .rejects.toBeInstanceOf(MissingExecutionContextError);
     const iterable = await handlers.get('/-/mcp/invoke')!({
-      data: {
-        providerId: attachment.manifest.providerId,
-        instanceId: attachment.manifest.instanceId,
-        fingerprint: attachment.manifest.fingerprint,
-        kind: 'tool', name: 'lookup', input: {},
-      }, signal: new AbortController().signal,
+      data,
+      invocation,
     }) as AsyncIterable<unknown>;
     const frames = [];
     for await (const frame of iterable) frames.push(frame);
@@ -104,13 +124,14 @@ describe('attachMcpProvider', () => {
       kind: 'prompt',
       name: 'review',
       input: { argument: 'language', value: 'ty', context: { arguments: { framework: 'node' } } },
-    }, signal: new AbortController().signal }) as AsyncIterable<any>;
+    }, invocation }) as AsyncIterable<any>;
     const frames = [];
     for await (const frame of iterable) frames.push(frame);
 
     expect(frames).toEqual([{ type: 'result', result: ['user-1:typescript'] }]);
     expect(complete).toHaveBeenCalledWith('ty', expect.objectContaining({
       principal: { subject: 'user-1', scopes: ['catalog:read'] },
+      executionContext,
       arguments: { framework: 'node' },
     }));
     await attachment.close();
@@ -246,7 +267,7 @@ describe('attachMcpProvider', () => {
         instanceId: attachment.manifest.instanceId,
         fingerprint: attachment.manifest.fingerprint,
         kind: 'tool', name: 'lookup', input: {},
-      } }) as AsyncIterable<any>;
+      }, invocation }) as AsyncIterable<any>;
       const frames = [];
       for await (const frame of iterable) frames.push(frame);
       return frames.at(-1)?.result;
@@ -285,6 +306,7 @@ describe('attachMcpProvider', () => {
     }), { invocationSecurity: invocationSecurity as { mode: 'credential'; credentials: typeof verifier } });
     invocationSecurity.mode = 'trusted-internal';
     const descriptor = {
+      executionContext,
       providerId: attachment.manifest.providerId,
       instanceId: attachment.manifest.instanceId,
       fingerprint: attachment.manifest.fingerprint,
@@ -294,7 +316,10 @@ describe('attachMcpProvider', () => {
     };
     const invoke = handlers.get('/-/mcp/invoke')!;
 
-    await expect(invoke({ data: { ...descriptor, principal: { subject: 'attacker', scopes: ['orders:read'] } } }))
+    await expect(invoke({
+      data: { ...descriptor, principal: { subject: 'attacker', scopes: ['orders:read'] } },
+      invocation,
+    }))
       .rejects.toThrow(/credential/i);
     expect(handler).not.toHaveBeenCalled();
 
@@ -303,6 +328,7 @@ describe('attachMcpProvider', () => {
         ...descriptor,
         credential: signer.create(descriptor, { subject: 'gateway-user', scopes: ['orders:read'] }),
       },
+      invocation,
     }) as AsyncIterable<any>;
     const frames = [];
     for await (const frame of iterable) frames.push(frame);

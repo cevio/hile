@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createExecutionContext, MissingExecutionContextError } from '@hile/context';
 import type { RscPluginClient, RscPluginLocator } from '../transport';
 import {
   RscServerFunctionGateway,
@@ -6,6 +7,8 @@ import {
   createRscServerFunctionMiddleware,
   type RscServerFunctionHttpContext,
 } from './server-functions';
+
+const testContext = createExecutionContext({ test: true });
 
 function setup() {
   const client = { serverFunction: vi.fn(async (request) => request.args) } as unknown as RscPluginClient;
@@ -15,6 +18,19 @@ function setup() {
 }
 
 describe('RscServerFunctionGateway', () => {
+  it('fails before authorization when execution context is missing', async () => {
+    const { locator } = setup();
+    const authorize = vi.fn(async () => true);
+    const gateway = new RscServerFunctionGateway({ locator, authorize });
+
+    await expect(gateway.invoke({
+      referenceId: 'org.hile.fixture/build-a/src/actions#save',
+      args: {},
+    }, {} as never)).rejects.toBeInstanceOf(MissingExecutionContextError);
+    expect(authorize).not.toHaveBeenCalled();
+    expect(locator.resolve).not.toHaveBeenCalled();
+  });
+
   it('pins the reference to its exact plugin build and always releases the lease', async () => {
     const { client, release, locator } = setup();
     const authorize = vi.fn(async () => true);
@@ -25,16 +41,16 @@ describe('RscServerFunctionGateway', () => {
       args: { $rsc: 'array', value: [1] },
     };
 
-    await expect(gateway.invoke(request, { signal })).resolves.toEqual(request.args);
+    await expect(gateway.invoke(request, { context: testContext, signal })).resolves.toEqual(request.args);
     expect(authorize).toHaveBeenCalledWith(expect.objectContaining({
       pluginId: 'org.hile.fixture', buildId: 'build-a', referenceId: request.referenceId,
-    }), { signal });
+    }), expect.objectContaining({ context: testContext, signal }));
     expect(locator.resolve).toHaveBeenCalledWith(
-      { pluginId: 'org.hile.fixture', buildId: 'build-a' }, { signal },
+      { pluginId: 'org.hile.fixture', buildId: 'build-a' }, { context: testContext, signal },
     );
     expect(client.serverFunction).toHaveBeenCalledWith({
       buildId: 'build-a', referenceId: request.referenceId, args: request.args,
-    }, { signal });
+    }, { context: testContext, signal });
     expect(release).toHaveBeenCalledOnce();
   });
 
@@ -44,12 +60,12 @@ describe('RscServerFunctionGateway', () => {
     for (const invalid of [null, {}, { referenceId: 'bad', args: {} }, {
       referenceId: 'plugin/build/module#name', args: undefined,
     }]) {
-      await expect(gateway.invoke(invalid, {})).rejects.toBeInstanceOf(RscServerFunctionGatewayError);
+      await expect(gateway.invoke(invalid, { context: testContext })).rejects.toBeInstanceOf(RscServerFunctionGatewayError);
     }
     const denied = new RscServerFunctionGateway({ locator, authorize: async () => false });
     await expect(denied.invoke({
       referenceId: 'plugin/build/module#name', args: {},
-    }, {})).rejects.toMatchObject({ code: 'ERR_RSC_SERVER_FUNCTION_FORBIDDEN' });
+    }, { context: testContext })).rejects.toMatchObject({ code: 'ERR_RSC_SERVER_FUNCTION_FORBIDDEN' });
     expect(locator.resolve).not.toHaveBeenCalled();
   });
 
@@ -59,14 +75,20 @@ describe('RscServerFunctionGateway', () => {
     const gateway = new RscServerFunctionGateway({ locator, authorize: async () => true });
     await expect(gateway.invoke({
       referenceId: 'plugin/build/module#name', args: {},
-    }, {})).rejects.toThrow('remote failed');
+    }, { context: testContext })).rejects.toThrow('remote failed');
     expect(release).toHaveBeenCalledOnce();
   });
 });
 
 function context(method: string, path: string): RscServerFunctionHttpContext {
   const headers = new Map<string, string>();
-  return { method, path, status: 0, set(name, value) { headers.set(name, value); } };
+  return {
+    method,
+    path,
+    status: 0,
+    requestContext: { context: testContext },
+    set(name, value) { headers.set(name, value); },
+  };
 }
 
 describe('RSC Server Function HTTP adapter', () => {

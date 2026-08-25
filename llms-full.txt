@@ -175,7 +175,7 @@ Packages: `@hile/typeorm`, `@hile/ioredis`, `@hile/logger`, `@hile/schedule`, `@
 Read `packages/messaging-micro.md` when the task mentions:
 
 - WebSocket/IPC/worker messaging
-- `defineMessage`
+- `defineMicroMessage` or transport-neutral `defineMessage`
 - service registry
 - `Application.call`
 - streaming RPC
@@ -314,7 +314,7 @@ Hile uses `@hile/loader` conventions:
 ## Model Layer
 
 - `defineModel()` returns a definition.
-- `loadModel(model, input)` runs the model every call.
+- `loadModel(model, input, invocation)` runs the model every call with an explicit execution context and cancellation signal.
 - Model input must be an object.
 - If pipelines are present, the final return value is read from `ctx.state.result`.
 
@@ -378,7 +378,7 @@ Avoid assuming Zod coercion has rewritten Koa context values. The current contro
 
 Avoid putting business logic only in controllers or Next.js pages when it needs reuse. Put domain logic in `@hile/model`, then call `loadModel()`.
 
-Avoid calling `loadModel(model, primitive)`. Model input must be an object.
+Avoid calling `loadModel(model, primitive, invocation)`. Model input must be an object.
 
 ## Messaging
 
@@ -387,7 +387,7 @@ Avoid old message examples that append a second response getter after `request()
 Current APIs return the response promise directly:
 
 ```ts
-const result = await client.request('/x', data)
+const result = await client.request('/x', data, { context })
 ```
 
 Avoid `stream()` for single-value RPC. It requires the remote handler to return an async iterable.
@@ -802,7 +802,7 @@ The second parse is intentional when you need parsed/coerced data. Hile's contro
 ## Compose With
 
 - Call `loadModel()` from controllers to keep business logic out of HTTP files.
-- Use `contextHttp()` before controllers to seed request context.
+- Create an `ExecutionContext` at controller ingress and explicitly pass its `InvocationContext` to models and its carrier to transports.
 - Use `rateLimitHttp()` for Redis-backed HTTP quotas.
 
 ## Runtime And Lifecycle Notes
@@ -1129,6 +1129,8 @@ The provider uses one shared update publication per Micro `Application`. The sou
 Unified gateway and Streamable HTTP adapter:
 
 ```ts
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext } from '@hile/context'
 import {
   createMcpEd25519InvocationCredentialSigner,
 } from '@hile/mcp'
@@ -1143,6 +1145,10 @@ const source = createHileMcpProviderSource(application, {
 
 const gateway = await createMcpGateway({
   source,
+  executionContext: (request) => createExecutionContext({
+    requestId: randomUUID(),
+    ...(request.authInfo ? { clientId: request.authInfo.clientId } : {}),
+  }),
   info: { name: 'company-mcp', version: '1.0.0' },
   cacheHints: {
     'tools/list': { ttlMs: 30_000, cacheScope: 'public' },
@@ -1282,7 +1288,7 @@ import { InMemoryMcpProviderSource } from '@hile/mcp/testing'
 
 Names must match `[A-Za-z0-9._-]{1,128}`. Metadata is cloned and frozen when the definition is created. Invalid schemas, annotations, cache hints, completion keys, access policies, timer values, URIs, or retry combinations fail before publication.
 
-Every handler receives `McpInvocationContext`: an abort `signal`, a verified or explicitly trusted `principal`, optional `inputResponses`, `requestState`, and awaited `emit.progress()` / `emit.log()` methods. Treat `requestState` as untrusted unless the gateway configures the official SDK verifier. Template resource variables use the SDK `Variables` shape, so a variable may be a string or string array.
+Every handler receives `McpInvocationContext`: the ingress-owned Hile `executionContext`, an abort `signal`, a verified or explicitly trusted `principal`, optional `inputResponses`, `requestState`, and awaited `emit.progress()` / `emit.log()` methods. Completion handlers receive the same `executionContext`, and capability `access.authorize(principal, input, executionContext)` receives it as its third argument. Credential mode binds the serialized execution context into the signed invocation descriptor, so a carrier cannot be substituted after signing. Treat `requestState` as untrusted unless the gateway configures the official SDK verifier. Template resource variables use the SDK `Variables` shape, so a variable may be a string or string array.
 
 ### Provider and discovery APIs
 
@@ -1301,6 +1307,7 @@ One Application may attach multiple providers. The provider host shares one disp
 | Option | Meaning |
 |---|---|
 | `source` | Required `McpProviderSource`; production normally uses `createHileMcpProviderSource()` |
+| `executionContext` | Required ingress-owned resolver; its versioned carrier is validated and forwarded to every provider call |
 | `info` | Required official MCP server implementation name and version |
 | `instructions` | Optional server instructions returned to clients |
 | `cacheHints` | Optional official SDK cache hints for list/read responses |
@@ -1427,13 +1434,14 @@ Message handler file:
 
 ```ts
 // src/messages/ping.msg.ts
-import { defineMessage } from '@hile/message-loader'
+import { defineMicroMessage } from '@hile/micro'
 
-export default defineMessage(async ({ data, params }) => {
+export default defineMicroMessage(async ({ data, params, invocation }) => {
   return {
     type: 'pong',
     data,
     params,
+    requestId: invocation.context.values.requestId,
     timestamp: Date.now(),
   }
 })
@@ -1466,7 +1474,11 @@ export default defineService('micro.app', async (shutdown) => {
 Caller:
 
 ```ts
-const result = await app.call('example.service', '/ping', { hello: 'world' })
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext } from '@hile/context'
+
+const context = createExecutionContext({ requestId: randomUUID() })
+const result = await app.call('example.service', '/ping', { hello: 'world' }, { context })
 ```
 
 ## More Examples
@@ -1475,11 +1487,11 @@ Streaming handler:
 
 ```ts
 // src/messages/events.msg.ts
-import { defineMessage } from '@hile/message-loader'
+import { defineMicroMessage } from '@hile/micro'
 
-export default defineMessage(async function* () {
+export default defineMicroMessage(async function* ({ invocation }) {
   for (let i = 0; i < 3; i++) {
-    yield { seq: i }
+    yield { seq: i, requestId: invocation.context.values.requestId }
   }
 })
 ```
@@ -1487,7 +1499,7 @@ export default defineMessage(async function* () {
 Streaming caller:
 
 ```ts
-const stream = await app.stream('example.service', '/events', {})
+const stream = await app.stream('example.service', '/events', {}, { context })
 for await (const chunk of stream) {
   console.log(chunk)
 }
@@ -1524,13 +1536,13 @@ Use the message packages for request/response messaging over WebSocket, process 
 
 - Do not use `stream()` for normal single-result calls.
 - Do not rely on message IDs for business idempotency. They are transport IDs.
-- Do not bypass `defineMessage()` for file-loaded handlers.
+- Use `defineMicroMessage()` for Micro business handlers; reserve generic `defineMessage()` for transport-neutral loaders.
 - Do not pass zero, fractional, non-finite, or oversized message timeouts. Explicit timeout values must be safe integers from `1` through `2_147_483_647` milliseconds.
 
 ## Install
 
 ```bash
-pnpm add @hile/micro @hile/message-loader @hile/message-ws
+pnpm add @hile/context @hile/micro @hile/message-loader @hile/message-ws
 ```
 
 Use transport-specific packages only when you need to build custom IPC or worker-thread bridges.
@@ -1539,7 +1551,8 @@ Use transport-specific packages only when you need to build custom IPC or worker
 
 ```ts
 import { defineMessage, MessageLoader } from '@hile/message-loader'
-import { Application, Registry, Server } from '@hile/micro'
+import { createExecutionContext } from '@hile/context'
+import { Application, defineMicroMessage, Registry, Server } from '@hile/micro'
 import { MessageWs } from '@hile/message-ws'
 import { MessageIpc } from '@hile/message-ipc'
 import { MessageWorkerThread } from '@hile/message-worker-thread'
@@ -1547,7 +1560,7 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 
 ## Compose With
 
-- `@hile/context` propagates context in micro message metadata.
+- Pass `ExecutionContext` explicitly in every business call or stream option; the receiver gets it in `invocation.context`.
 - `@hile/redis-idempotency` protects retryable side effects in message handlers.
 - `@hile/redis-stream-queue` is better for durable background jobs.
 
@@ -1562,8 +1575,8 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 - Each modem schedules request, total-stream, and idle-stream deadlines through one internal deadline scheduler. This reduces active Node.js timers without changing timeout, cancellation, ordering, or error semantics.
 - `@hile/message-ws` keeps public `decodeMessageFrame()` payloads isolated from caller-owned input by default. Its owned WebSocket `RawData` path uses a zero-copy binary Flight payload view internally.
 - A stream request requires `exec()` to return an async iterable.
-- `Application.call(namespace, url, data, options?)` returns a promise.
-- `Application.stream(namespace, url, data, options?)` returns a readable stream.
+- `Application.call(namespace, url, data, options)` requires `options.context` and returns a promise.
+- `Application.stream(namespace, url, data, options)` requires `options.context` and returns a readable stream.
 - `Application.publish(topic, payload)` returns an object with `update()` and `unpublish()`.
 - `Application.subscribe(topic, callback)` returns an unsubscribe function.
 - `Registry` stores service addresses and retained config/topic state under `~/.registry`.
@@ -1577,8 +1590,8 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 
 ## Verification Checklist
 
-- Message files default-export `defineMessage(...)`.
-- RPC callers use `await app.call(...)`.
+- Micro message files default-export `defineMicroMessage(...)` and receive `invocation.context`.
+- RPC callers use `await app.call(..., { context })`.
 - Streaming handlers are async generators.
 - Custom modem timeout values use the documented safe-integer range.
 - Registry is started before application nodes need discovery.
@@ -1586,18 +1599,21 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 
 ---
 
-# Model And Context
+# Model And Explicit Context
 
 Packages: `@hile/model`, `@hile/context`.
 
 ## Use When
 
-Use `@hile/model` for reusable business logic and `@hile/context` for request/work-unit context that should flow through async calls, micro messages, and queue jobs.
+Use `@hile/model` for reusable business logic. Use `@hile/context` to create immutable, versioned context data that an application explicitly carries through HTTP ingress, models, Micro calls, RSC, and queue jobs.
+
+`@hile/context` has no ambient store and owns no `AsyncLocalStorage`. Context identity is protocol data, not module-instance identity.
 
 ## Do Not Use When
 
-- Do not put business logic only in controllers when it will be reused by jobs, pages, or message handlers.
-- Do not add fixed business fields to `@hile/context`; each app owns its context shape.
+- Do not use context as a mutable application state container.
+- Do not put business fields into a framework-owned global schema; each application owns its context values.
+- Do not use ambient state to cross a bundle, Worker, VM, plugin, or transport boundary.
 
 ## Install
 
@@ -1609,108 +1625,143 @@ pnpm add @hile/model @hile/context
 
 ```ts
 import { defineActionModel, defineModel, loadModel } from '@hile/model'
-import { contextHttp, contextModel, getContext, requireContext, runWithContext } from '@hile/context'
+import {
+  createExecutionContext,
+  createInvocationContext,
+  deriveExecutionContext,
+  parseExecutionContext,
+  pickExecutionContext,
+  requireExecutionContextValues,
+  withExecutionContextLogger,
+  type ExecutionContext,
+  type InvocationContext,
+} from '@hile/context'
 ```
 
 ## Copy-Paste Example
 
 ```ts
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext, createInvocationContext } from '@hile/context'
+
+const invocation = createInvocationContext(
+  createExecutionContext({ requestId: randomUUID() }),
+  new AbortController().signal,
+)
+```
+
+Values must be JSON-compatible plain data. Creation snapshots and deeply freezes them. `parseExecutionContext()` validates untrusted or transported values and rejects unsupported protocol versions.
+
+## Models
+
+```ts
 import { defineModel } from '@hile/model'
 
-export default defineModel(async (input: { name: string }) => {
-  return { greeting: `Hello ${input.name}` }
-})
-```
-
-Use it:
-
-```ts
-const result = await loadModel(greetModel, { name: 'Ada' })
-```
-
-Action adapters can discover a model explicitly without changing how it executes:
-
-```ts
-import { defineActionModel } from '@hile/model'
-
-export default defineActionModel(async (input: { value: number }) => ({
-  value: input.value + 1,
+export default defineModel(async (input: { name: string }, invocation) => ({
+  greeting: `Hello ${input.name}`,
+  requestId: invocation.context.values.requestId,
 }))
 ```
 
-`ModelActionRegistry` extends `@hile/loader.Loader`, scans domain-organized `*.model.*` files, and registers only action-marked models. `RscPluginService.load(modelsDirectory)` owns this lifecycle for RSC plugins.
+Execute it with the explicit invocation:
+
+```ts
+const result = await loadModel(greetModel, { name: 'Ada' }, invocation)
+```
 
 ## More Examples
 
-```ts
-import { defineModel } from '@hile/model'
-import typeormService from '@hile/typeorm'
+Pipelines receive the same value as `ctx.invocation`:
 
+```ts
 export const findUser = defineModel({
-  services: [typeormService] as const,
   pipelines: [
     async (ctx, next) => {
-      if (!ctx.args.userId) throw new Error('userId is required')
+      requireExecutionContextValues(ctx.invocation.context, ['tenantId'])
       await next()
     },
   ],
-  async main([ds], input: { userId: string }) {
-    return ds.getRepository(User).findOneBy({ id: input.userId })
+  async main(input: { userId: string }, invocation) {
+    return findTenantUser(invocation.context.values.tenantId, input.userId)
   },
 })
 ```
 
-Context in HTTP:
+Action models use the same contract:
 
 ```ts
-http.use(contextHttp({
-  read: (ctx) => ({ requestId: String(ctx.headers['x-request-id'] ?? crypto.randomUUID()) }),
-  write: (context, ctx) => ctx.set('x-request-id', String(context.requestId ?? '')),
-}))
-```
-
-Context in model pipeline:
-
-```ts
-const withTenant = contextModel<{ tenantId: string }>({
-  read: (input) => ({ tenantId: input.tenantId }),
+export default defineActionModel(async (input: { value: number }, invocation) => {
+  invocation.signal.throwIfAborted()
+  return { value: input.value + 1 }
 })
 ```
 
 ## Compose With
 
-- `@hile/http` controllers should call `loadModel()`.
-- `@hile/redis-idempotency` and `@hile/redis-rate-limit` provide model pipeline middleware.
-- `@hile/micro` propagates context in message metadata.
-- `@hile/redis-stream-queue` snapshots context when enqueuing and restores it in workers.
+- HTTP ingress creates the context and request cancellation signal.
+- Model receives an `InvocationContext` in pipelines and `main`.
+- Micro and RSC carry the versioned context in message metadata.
+- Redis Stream Queue persists it with the job and restores it as an explicit handler argument.
+- Logger derives selected bindings from an explicitly supplied context.
+
+## Carry Context Across Boundaries
+
+```ts
+await application.call('billing', '/charge', payload, {
+  context: invocation.context,
+  signal: invocation.signal,
+})
+
+await queue.add(emailQueue, payload, {
+  context: invocation.context,
+})
+
+const worker = queue.worker(emailQueue, async (job, jobInvocation) => {
+  await loadModel(sendEmailModel, job.data, jobInvocation)
+}, workerOptions)
+```
+
+Micro business calls and queue enqueue operations fail before transport/storage when context is missing. Framework-only Micro control traffic uses the separate `requestControl()` and `pushControl()` APIs.
+
+Across Worker, VM, plugin, or bundle boundaries, send the `ExecutionContext` as structured-cloneable or serialized data and call `parseExecutionContext()` on the receiving side. Never expect ambient state to cross an execution boundary.
+
+## Derive, Restrict, And Log
+
+```ts
+const child = deriveExecutionContext(invocation.context, { operation: 'charge' })
+const carrier = pickExecutionContext(child, ['requestId', 'tenantId', 'operation'])
+const logger = withExecutionContextLogger(baseLogger, carrier, {
+  pick: ['requestId', 'tenantId'],
+})
+```
+
+Explicit `pick` lists keep secrets and internal-only values out of transport and logs.
 
 ## Runtime And Lifecycle Notes
 
-- `loadModel(model, input)` rejects if the first argument was not created by `defineModel()`.
-- `defineActionModel()` returns a normal model definition plus an explicit action capability marker.
-- Model input must be an object.
-- Services are loaded in the order of the `services` tuple.
-- Pipeline middleware follows Koa-style `await next()`.
-- The terminal model result is stored in `ctx.state.result` and returned by `loadModel()`.
-- `runWithContext()` merges with parent context by default; pass `{ merge: false }` to replace.
-- `getContext()` returns a frozen shallow snapshot.
-- `requireContext(keys)` throws when selected keys are missing.
+- Every business invocation has an explicit `ExecutionContext` and `AbortSignal`.
+- Establishment, derivation, transport, and consumption operate on versioned data rather than a shared module singleton.
+- Independently evaluated copies of `@hile/context` interoperate structurally.
+- Context is immutable and cannot leak between concurrent requests.
+- Missing or unsupported context fails with a stable diagnostic error instead of becoming `{}`.
+- Model pipeline and `main` receive the same invocation object.
 
 ## Anti-Patterns
 
-- Passing primitives to `loadModel()`.
-- Mutating context snapshots.
-- Logging whole context objects by default.
-- Assuming context propagation changes business payloads; it should stay in metadata or async storage.
-- Exposing every scanned model as a browser action; only action-marked models may be mounted.
+- Hiding context in module globals, singleton containers, or `AsyncLocalStorage`.
+- Calling `loadModel()` without an invocation.
+- Adding context fields to business payloads merely to compensate for missing transport support.
+- Sending the whole context when only a subset is required.
+- Logging entire context objects by default.
 
 ## Verification Checklist
 
-- Models export `defineModel(...)` results.
-- Browser-callable models explicitly use `defineActionModel(...)`.
-- Controllers and pages call `loadModel(model, objectInput)`.
-- Pipeline middleware writes derived state to `ctx.state`.
-- Context keys are app-defined and JSON-serializable when crossing process boundaries.
+- Create context once at each ingress boundary.
+- Pass it explicitly to Model, Micro, RSC, Queue, and Logger APIs.
+- Validate transported context with `parseExecutionContext()`.
+- Use structured-cloneable, JSON-compatible values only.
+- Assert missing context fails before side effects.
+- Test independent module instances and concurrent invocations.
 
 ---
 
@@ -1976,12 +2027,15 @@ Queue add with delayed retry policy:
 
 ```ts
 await queue.add(emailQueue, payload, {
+  context: invocation.context,
   jobId: `welcome:${payload.tenantId}:${payload.userId}`,
   delay: 10_000,
   maxAttempts: 5,
   backoff: { type: 'exponential', baseMs: 1_000, maxMs: 60_000 },
 })
 ```
+
+`invocation` is the explicit `InvocationContext` supplied by the HTTP, Micro, RSC, Model, or worker boundary that schedules the job.
 
 ## Use When
 
@@ -2013,7 +2067,7 @@ import { RedisStreamQueue, defineQueue } from '@hile/redis-stream-queue'
 
 - Use `@hile/ioredis` for the Redis client.
 - Use `idempotent()` and `rateLimitModel()` in `@hile/model` pipelines.
-- Use `@hile/context` with queues; active context is snapshotted during enqueue and restored in handlers.
+- Pass `ExecutionContext` explicitly when enqueueing; workers receive the persisted carrier as `invocation.context`.
 - Use `@hile/cache` singleflight to reduce stampedes.
 
 ## Runtime And Lifecycle Notes
@@ -2335,6 +2389,8 @@ pnpm exec hile-rsc verify
 Compose a host runtime:
 
 ```ts
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext } from '@hile/context'
 import { RscHostRuntime } from '@hile/rsc/host'
 
 const runtime = new RscHostRuntime({
@@ -2345,6 +2401,7 @@ const runtime = new RscHostRuntime({
 })
 
 const tree = await runtime.render({
+  context: createExecutionContext({ requestId: randomUUID() }),
   pluginId,
   request: { buildId, path, params, searchParams },
   signal,
@@ -2478,13 +2535,13 @@ The server, browser, and SSR esbuild contexts are reused. Browser and SSR contex
 
 A plugin-owned module-level `'use server'` directive creates immutable, build-scoped Server Function references. Client Components import those functions normally and may pass them to React `useActionState` or a form `action`. The browser sends one same-origin POST to the Host; the Host authorizes it, resolves the exact `{ pluginId, buildId }` lease, and forwards the invocation through the internal RSC transport to the plugin microservice.
 
-Server Functions are UI adapters, not another domain layer. Call an automatically loaded `defineActionModel()` with `invokeRscModel()` inside the Server Function. Inline closure-capturing `'use server'` functions, re-exports, synchronous exports, mixed `'use client'`/`'use server'` modules, and external dependency-owned `'use server'` modules fail at compile time. Arguments and return values use the RSC tagged wire codec, including `FormData`, dates, maps, sets, bigint, typed arrays, and promises; unsupported functions, class instances, non-global symbols, cyclic data, non-canonical binary encodings, and values outside configured depth/node/string/binary limits fail closed.
+Server Functions are UI adapters, not another domain layer. Define them with `defineRscServerFunction(async (api, ...args) => ...)`: Hile hides `api` from the public React call signature, then supplies that explicit request-scoped capability at runtime. Call an automatically loaded `defineActionModel()` with `api.invokeModel()`; the API also carries the request `signal` and `context`, without module-level ambient state. Inline closure-capturing `'use server'` functions, ordinary unwrapped async exports, re-exports, synchronous exports, mixed `'use client'`/`'use server'` modules, and external dependency-owned `'use server'` modules fail at compile time. Arguments and return values use the RSC tagged wire codec, including `FormData`, dates, maps, sets, bigint, typed arrays, and promises; unsupported functions, class instances, non-global symbols, cyclic data, non-canonical binary encodings, and values outside configured depth/node/string/binary limits fail closed.
 
 ### Do not confuse the two action paths
 
 | Path | Intended use | Browser API | Domain execution |
 |---|---|---|---|
-| React Server Function | Preferred for new plugin UI behavior | Import an async export from a module-level `'use server'` file; call it, pass it as `formAction`, or use `useActionState` | Call `invokeRscModel(actionId, input)`; the target must be a scanned `defineActionModel()` |
+| React Server Function | Preferred for new plugin UI behavior | Import a `defineRscServerFunction()` export from a module-level `'use server'` file; call it, pass it as `formAction`, or use `useActionState` | The definition callback receives `RscServerFunctionApi` first and calls `api.invokeModel(actionId, input)`; the target must be a scanned `defineActionModel()` |
 | Direct RSC Action Gateway | Lower-level compatibility/infrastructure integration | Explicit action POST through `RscActionGateway` | Resolves the same action-model registry, but does not provide React Server Function semantics |
 
 The word “Server Action” in React/Next documentation describes a Server Function used for mutations or forms. In this architecture, use the broader and less ambiguous term **Server Function** for the `'use server'` path.
@@ -2502,7 +2559,7 @@ The word “Server Action” in React/Next documentation describes a Server Func
 
 - A plugin component is a Server Component by default; it does not need `'use server'`.
 - A module-level `'use client'` marks the client boundary. Its transitive browser graph is built by the shared custom directive graph and esbuild pipeline, SSR-rendered with the Host React runtime, then hydrated from immutable same-origin assets.
-- A module-level `'use server'` marks all supported async exports as build-scoped Server Functions. This implementation intentionally does not support Next's inline closure-capturing form.
+- A module-level `'use server'` marks `defineRscServerFunction()` exports as build-scoped Server Functions. Ordinary async exports and Next's inline closure-capturing form are intentionally rejected.
 - Directive recognition parses the JavaScript directive prologue; it is not a substring or regular-expression check.
 - Imported CSS is emitted as integrity-declared plugin assets. CSS Modules and library CSS that esbuild can bundle follow the same path.
 - CSS-in-JS libraries that require an SSR collector must be composed at the correct owner. The Host owns its outer layout collector; a plugin owns providers inside its client boundary. Never create a second React runtime or assume a plugin can mutate the Host document head outside the declared asset/provider contracts.
@@ -2586,12 +2643,18 @@ Controller:
 
 ```ts
 // src/controllers/users/[id].controller.ts
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext, createInvocationContext } from '@hile/context'
 import { defineController } from '@hile/http'
 import { loadModel } from '@hile/model'
 import { getUser } from '../../models/users/get-user.model'
 
 export default defineController('GET', async (ctx) => {
-  return loadModel(getUser, { userId: String(ctx.params.id) })
+  const invocation = createInvocationContext(
+    createExecutionContext({ requestId: randomUUID() }),
+    new AbortController().signal,
+  )
+  return loadModel(getUser, { userId: String(ctx.params.id) }, invocation)
 })
 ```
 
@@ -2669,7 +2732,7 @@ Use this recipe when the user wants an HTTP endpoint backed by reusable business
 
 1. Put domain logic in a model file.
 2. Inject TypeORM through `services: [typeormService] as const`.
-3. Keep the controller thin and call `loadModel(model, objectInput)`.
+3. At the HTTP ingress, create an explicit `InvocationContext` and call `loadModel(model, objectInput, invocation)`.
 4. Load controllers before `http.listen()`.
 5. Register the close function with `shutdown()`.
 
@@ -2714,12 +2777,18 @@ API controller:
 
 ```ts
 // src/controllers/post.controller.ts
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext, createInvocationContext } from '@hile/context'
 import { defineController } from '@hile/http'
 import { loadModel } from '@hile/model'
 import { getPost } from '../models/post/get-post.model'
 
 export default defineController('GET', async () => {
-  return loadModel(getPost, { id: 'demo' })
+  const invocation = createInvocationContext(
+    createExecutionContext({ requestId: randomUUID() }),
+    new AbortController().signal,
+  )
+  return loadModel(getPost, { id: 'demo' }, invocation)
 })
 ```
 
@@ -2727,13 +2796,19 @@ Next.js page:
 
 ```tsx
 // src/app/page.tsx
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext, createInvocationContext } from '@hile/context'
 import { loadModel } from '@hile/model'
 import { getPost } from '../models/post/get-post.model'
 
 export const dynamic = 'force-dynamic'
 
 export default async function Page() {
-  const post = await loadModel(getPost, { id: 'demo' })
+  const invocation = createInvocationContext(
+    createExecutionContext({ requestId: randomUUID() }),
+    new AbortController().signal,
+  )
+  const post = await loadModel(getPost, { id: 'demo' }, invocation)
   return <main>{post.title}</main>
 }
 ```
@@ -2862,6 +2937,8 @@ Prompt arguments and RFC 6570 template variables may declare `completions`. Tool
 ### 2. Attach each provider after Micro listen
 
 ```ts
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext } from '@hile/context'
 import { defineService, loadService } from '@hile/core'
 import { createMcpEd25519InvocationCredentialVerifier } from '@hile/mcp'
 import { attachMcpProvider } from '@hile/mcp/micro'
@@ -2908,6 +2985,10 @@ export default defineService('mcp.gateway', async (shutdown) => {
   })
   const gateway = await createMcpGateway({
     source,
+    executionContext: (request) => createExecutionContext({
+      requestId: randomUUID(),
+      ...(request.authInfo ? { clientId: request.authInfo.clientId } : {}),
+    }),
     info: { name: 'company-mcp', version: '1.0.0' },
     instructions: 'Use provider-prefixed names and request confirmation before writes.',
     cacheHints: {
@@ -3149,10 +3230,10 @@ Provider handler:
 
 ```ts
 // src/messages/charge.msg.ts
-import { defineMessage } from '@hile/message-loader'
+import { defineMicroMessage } from '@hile/micro'
 
-export default defineMessage(async ({ data }) => {
-  return { charged: true, input: data }
+export default defineMicroMessage(async ({ data, invocation }) => {
+  return { charged: true, input: data, requestId: invocation.context.values.requestId }
 })
 ```
 
@@ -3180,10 +3261,14 @@ export default defineService('billing.micro', async (shutdown) => {
 Consumer:
 
 ```ts
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext } from '@hile/context'
+
+const context = createExecutionContext({ requestId: randomUUID(), tenantId: 't1' })
 const result = await app.call('billing', '/charge', {
   tenantId: 't1',
   amount: 100,
-})
+}, { context })
 ```
 
 ## File Layout
@@ -3203,16 +3288,15 @@ Use this recipe when services communicate over Hile registry-backed RPC.
 ## Packages To Use
 
 - `@hile/micro`
-- `@hile/message-loader`
-- `@hile/context` when context must cross service boundaries
+- `@hile/context` for the required explicit execution context carrier
 - `@hile/redis-idempotency` for retryable side effects
 
 ## Implementation Steps
 
 1. Start a Registry with `hile registry`.
 2. Start providers with stable namespaces.
-3. Load `*.msg.ts` handlers through `app.load()`.
-4. Call providers with `await app.call(namespace, url, data)`.
+3. Default-export `defineMicroMessage()` handlers and load them through `app.load()`.
+4. Create context at ingress and call providers with `await app.call(namespace, url, data, { context })`.
 5. Use `app.stream()` only for async-generator handlers.
 
 ## Failure And Cleanup Behavior
@@ -3225,8 +3309,8 @@ Use this recipe when services communicate over Hile registry-backed RPC.
 
 - Registry is reachable.
 - Provider namespace matches consumer call.
-- Handlers default-export `defineMessage()`.
-- Consumer code awaits `app.call(...)` directly.
+- Handlers default-export `defineMicroMessage()` and consume explicit invocation context when needed.
+- Consumer code awaits `app.call(..., { context })` directly.
 
 ---
 
@@ -3359,15 +3443,20 @@ export default defineService('email.worker', async (shutdown) => {
 Enqueue:
 
 ```ts
-await queue.add(emailQueue, {
-  tenantId: 't1',
-  userId: 'u1',
-  template: 'welcome',
-}, {
-  jobId: 'welcome:t1:u1',
-  maxAttempts: 5,
-  backoff: { type: 'exponential', baseMs: 1_000, maxMs: 60_000 },
-})
+import type { InvocationContext } from '@hile/context'
+
+async function enqueueWelcome(invocation: InvocationContext) {
+  await queue.add(emailQueue, {
+    tenantId: 't1',
+    userId: 'u1',
+    template: 'welcome',
+  }, {
+    context: invocation.context,
+    jobId: 'welcome:t1:u1',
+    maxAttempts: 5,
+    backoff: { type: 'exponential', baseMs: 1_000, maxMs: 60_000 },
+  })
+}
 ```
 
 ## File Layout
@@ -3385,6 +3474,7 @@ Use this recipe for at-least-once background work where side effects must surviv
 ## Packages To Use
 
 - `@hile/redis-stream-queue`
+- `@hile/context`
 - `@hile/redis-idempotency`
 - `@hile/ioredis`
 - `@hile/core`
@@ -3392,7 +3482,7 @@ Use this recipe for at-least-once background work where side effects must surviv
 ## Implementation Steps
 
 1. Define the queue and payload type.
-2. Enqueue with a stable `jobId`.
+2. Enqueue with the caller's explicit `ExecutionContext` and a stable `jobId`.
 3. Wrap side effects with `RedisIdempotency.run()`.
 4. Use business identifiers in idempotency keys.
 5. Monitor DLQ with `readDeadLetters()`.
@@ -3407,6 +3497,7 @@ Use this recipe for at-least-once background work where side effects must surviv
 ## Verification Checklist
 
 - Handler is idempotent.
+- Enqueue passes `invocation.context` explicitly.
 - Idempotency key is business-derived.
 - Worker stop is registered with `shutdown`.
 - DLQ read path exists.
@@ -3568,7 +3659,7 @@ Before writing code, preserve these invariants:
 1. Use `HileRscPluginRuntime` as the plugin lifecycle composition root.
 2. Use `HileRscDiscoveryHost` for automatic Host deployment.
 3. Use `RscHostRuntime` plus `decodePluginFlight()` inside a dynamic Next route.
-4. Use a module-level `'use server'` file for React Server Functions and call scanned `defineActionModel()` definitions through `invokeRscModel()`.
+4. Use a module-level `'use server'` file with `defineRscServerFunction()` and call scanned `defineActionModel()` definitions through its explicit API argument.
 5. Keep exact React/RSC versions identical across Host, plugin, and build config.
 6. Treat `buildId` and artifact directories as immutable. A changed artifact requires a new build ID or development revision.
 7. Choose discovery trust explicitly: bind each HMAC `keyId` to a plugin-ID allowlist, or use `trusted-internal` only when every internal Micro peer is trusted.
@@ -3770,11 +3861,10 @@ Minimal `src/plugin/plugin.css` for proving style delivery:
 Create `src/models/example/increment.model.ts`:
 
 ```ts
-import { defineActionModel, getModelExecutionContext } from '@hile/model'
+import { defineActionModel } from '@hile/model'
 
-export default defineActionModel(async (input: { value: number }) => {
-  const signal = getModelExecutionContext()?.signal
-  if (signal?.aborted) throw signal.reason
+export default defineActionModel(async (input: { value: number }, invocation) => {
+  if (invocation.signal.aborted) throw invocation.signal.reason
   if (!Number.isFinite(input.value)) throw new TypeError('value must be finite')
   return { value: input.value + 1 }
 })
@@ -3785,22 +3875,23 @@ Create `src/plugin/actions.ts`:
 ```ts
 'use server'
 
-import { invokeRscModel } from '@hile/rsc/plugin'
+import { defineRscServerFunction } from '@hile/rsc/plugin'
 
-export async function increment(
+export const increment = defineRscServerFunction(async (
+  api,
   _previous: { value: number; invoked: boolean },
   formData: FormData,
-) {
+) => {
   const raw = formData.get('value')
   if (typeof raw !== 'string' || raw.trim() === '') throw new TypeError('value is required')
   const value = Number(raw)
   if (!Number.isFinite(value)) throw new TypeError('value must be finite')
-  const result = await invokeRscModel('example/increment', { value }) as { value: number }
+  const result = await api.invokeModel('example/increment', { value }) as { value: number }
   return { ...result, invoked: true }
-}
+})
 ```
 
-This follows the React/Next module-level Server Function shape: the client imports an async export and `useActionState` adds previous state as the first argument. Hile compiles a build-scoped reference instead of using Next's application compiler. The request still enters the one public Host, is authorized there, acquires the exact build lease, runs in the plugin microservice, then invokes the Model.
+This follows the React/Next module-level Server Function shape: the client imports an async callable and `useActionState` supplies previous state and form data. `defineRscServerFunction()` keeps that public signature intact while its callback explicitly receives the request API first. Hile compiles a build-scoped reference instead of using Next's application compiler. The request still enters the one public Host, is authorized there, acquires the exact build lease, runs in the plugin microservice, then invokes the Model.
 
 The Client Component does not manually append `buildId` to the Server Function arguments. The compiled Server Function reference and `RscNextClientRuntime` carry the exact plugin/build identity to the Host gateway. Passing `rsc` into the Client Boundary remains useful for display, cache keys, diagnostics, and any lower-level direct Action request; it must match the active deployment and must never be replaced with the base config build ID.
 
@@ -3813,7 +3904,7 @@ Model rules:
 - Model pipelines and services remain supported because execution uses `@hile/model`.
 - Keep authentication/authorization in the Host policy and application layer; validate action input again in the Server Function or Model.
 
-Supported Hile Server Function syntax is deliberately narrower than Next: use a plugin-owned module-level `'use server'` file whose exports are async functions. Inline closure-capturing directives, re-exports, synchronous exports, mixed client/server directives, and dependency-owned directives fail during compilation.
+Supported Hile Server Function syntax is deliberately narrower than Next: use a plugin-owned module-level `'use server'` file whose exports are created by `defineRscServerFunction()`. Ordinary unwrapped async exports, inline closure-capturing directives, re-exports, synchronous exports, mixed client/server directives, and dependency-owned directives fail during compilation.
 
 ## 5. Start The Plugin Microservice
 
@@ -4032,6 +4123,8 @@ HMAC deployments should source discovery secrets from a secret manager. All depl
 Create `src/app/plugins/[pluginId]/[[...path]]/page.tsx`:
 
 ```tsx
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext } from '@hile/context'
 import { loadService } from '@hile/core'
 import { getHttpNextRequestSignal } from '@hile/http-next'
 import { RscClientRuntimeProvider } from '@hile/rsc/client'
@@ -4057,6 +4150,7 @@ export default async function PluginPage({ params, searchParams }: {
     decoder: { decode: (flight) => decodePluginFlight(flight) },
   })
   const tree = await runtime.render({
+    context: createExecutionContext({ requestId: randomUUID() }),
     pluginId,
     request: {
       buildId: active.buildId,
@@ -4382,7 +4476,7 @@ An implementation is not complete until tests prove:
 - [ ] Plugin and Host runtime pins match the compatibility tuple supported by their installed RSC packages.
 - [ ] Plugin process uses `--conditions=react-server` and creates no HTTP server.
 - [ ] Models load before `HileRscPluginRuntime.start()`.
-- [ ] New UI behavior uses module-level `'use server'` → `invokeRscModel()` → `defineActionModel()`.
+- [ ] New UI behavior uses module-level `'use server'` → `defineRscServerFunction()` → explicit API → `defineActionModel()`.
 - [ ] Host and plugin select the same explicit discovery trust mode; HMAC mode binds `keyId` to explicit plugin IDs.
 - [ ] Host mounts assets, Server Functions, and development SSE on its one HTTP server.
 - [ ] Dynamic Next route resolves and passes the exact active build ID and abort signal.

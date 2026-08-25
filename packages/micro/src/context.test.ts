@@ -1,8 +1,14 @@
 import { createServer } from 'node:net';
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import { getContext, runWithContext } from '@hile/context';
+import {
+  createExecutionContext,
+  createInvocationContext,
+  MissingExecutionContextError,
+  UnsupportedExecutionContextVersionError,
+} from '@hile/context';
 import { Application } from './application';
+import { defineMicroMessage } from './message';
 import { Registry } from './registry';
 
 const testAdvertise = { advertiseHost: '127.0.0.1' as const };
@@ -33,6 +39,41 @@ async function collectStream<T>(readable: Readable): Promise<T[]> {
 }
 
 describe('@hile/micro context propagation', () => {
+  it('gives file-loaded business handlers a typed explicit invocation context', async () => {
+    const handler = defineMicroMessage(async ({ invocation }) => invocation.context.values.requestId);
+    const invocation = createInvocationContext(
+      createExecutionContext({ requestId: 'file-handler' }),
+      new AbortController().signal,
+    );
+
+    await expect(handler.fn({ data: {}, url: '/typed-context', client: {} as never, invocation }))
+      .resolves.toBe('file-handler');
+  });
+
+  it('fails before transport when a business call omits execution context', async () => {
+    const consumer = new Application({
+      namespace: 'context-required-consumer',
+      registry: { host: '127.0.0.1', port: 1 },
+      ...testAdvertise,
+    });
+
+    await expect((consumer.call as any)('provider', '/inspect-context', {})).rejects.toThrow(
+      MissingExecutionContextError,
+    );
+  });
+
+  it('rejects an unsupported execution context version before registry lookup', async () => {
+    const consumer = new Application({
+      namespace: 'context-version-consumer',
+      registry: { host: '127.0.0.1', port: 1 },
+      ...testAdvertise,
+    });
+
+    await expect(consumer.call('provider', '/inspect-context', {}, {
+      context: { version: 2, values: {} } as never,
+    })).rejects.toThrow(UnsupportedExecutionContextVersionError);
+  });
+
   it('propagates user-defined context through Application.call', async () => {
     const registryPort = await getAvailablePort();
     const providerPort = await getAvailablePort();
@@ -53,14 +94,20 @@ describe('@hile/micro context propagation', () => {
     const disposeRegistry = await registry.listen(registryPort);
     const disposeProvider = await provider.listen(providerPort);
     const disposeConsumer = await consumer.listen(consumerPort);
-    const unregister = provider.register('/inspect-context', async () => getContext<ShopContext>());
+    const unregister = provider.register('/inspect-context', async ({ invocation }) => invocation.context.values);
 
     try {
-      const result = await runWithContext<ShopContext>({
+      const context = createExecutionContext<ShopContext>({
         shopId: 'shop-1',
         memberId: 'member-1',
         channel: 'wechat',
-      }, () => consumer.call<Partial<ShopContext>>('context-provider', '/inspect-context', {}));
+      });
+      const result = await consumer.call<Partial<ShopContext>>(
+        'context-provider',
+        '/inspect-context',
+        {},
+        { context },
+      );
 
       expect(result).toEqual({
         shopId: 'shop-1',
@@ -95,18 +142,24 @@ describe('@hile/micro context propagation', () => {
     const disposeRegistry = await registry.listen(registryPort);
     const disposeProvider = await provider.listen(providerPort);
     const disposeConsumer = await consumer.listen(consumerPort);
-    const unregister = provider.register('/stream-context', async function* () {
-      yield { shopId: getContext<ShopContext>().shopId };
+    const unregister = provider.register('/stream-context', async function* ({ invocation }) {
+      yield { shopId: invocation.context.values.shopId };
       await new Promise(resolve => setTimeout(resolve, 1));
-      yield { channel: getContext<ShopContext>().channel };
+      yield { channel: invocation.context.values.channel };
     });
 
     try {
-      const stream = await runWithContext<ShopContext>({
+      const context = createExecutionContext<ShopContext>({
         shopId: 'shop-2',
         memberId: 'member-2',
         channel: 'web',
-      }, () => consumer.stream('context-stream-provider', '/stream-context', {}));
+      });
+      const stream = await consumer.stream(
+        'context-stream-provider',
+        '/stream-context',
+        {},
+        { context },
+      );
 
       await expect(collectStream(stream)).resolves.toEqual([
         { shopId: 'shop-2' },

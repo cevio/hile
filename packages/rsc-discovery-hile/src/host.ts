@@ -1,4 +1,9 @@
 import type { RscRuntimeCompatibility } from '@hile/rsc/protocol';
+import {
+  MissingExecutionContextError,
+  parseExecutionContext,
+  type ExecutionContext,
+} from '@hile/context';
 import { createRscDiscoveryTopic } from '@hile/rsc-discovery';
 import type { MutableRscArtifactCatalog } from '@hile/rsc/host/registry';
 import {
@@ -26,6 +31,7 @@ import {
 export interface HileRscDiscoveryHostApplication extends HileRscRegistryReader, HileRscArtifactClient {}
 
 export interface HileRscDiscoveryHostOptions {
+  context: ExecutionContext;
   application: HileRscDiscoveryHostApplication;
   artifacts: MutableRscArtifactCatalog;
   deployments: InMemoryRscDeploymentCatalog;
@@ -72,7 +78,9 @@ export class HileRscDiscoveryHost {
   }
 
   constructor(options: HileRscDiscoveryHostOptions) {
-    this.options = options;
+    if (!options?.context) throw new MissingExecutionContextError('RSC discovery host');
+    const context = parseExecutionContext(options.context);
+    this.options = { ...options, context };
     const pollIntervalMs = options.pollIntervalMs ?? 500;
     if (!Number.isFinite(pollIntervalMs) || pollIntervalMs < 25) {
       throw new TypeError('pollIntervalMs must be at least 25');
@@ -99,6 +107,7 @@ export class HileRscDiscoveryHost {
       select: options.select,
       deploy: async (announcement) => {
         const downloaded = await downloadHileRscArtifact(options.application, announcement, {
+          context,
           runtime: options.runtime,
           signal: this.refreshController?.signal,
           maxFileBytes: options.maxFileBytes,

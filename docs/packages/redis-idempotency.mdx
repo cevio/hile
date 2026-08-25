@@ -120,12 +120,15 @@ Queue add with delayed retry policy:
 
 ```ts
 await queue.add(emailQueue, payload, {
+  context: invocation.context,
   jobId: `welcome:${payload.tenantId}:${payload.userId}`,
   delay: 10_000,
   maxAttempts: 5,
   backoff: { type: 'exponential', baseMs: 1_000, maxMs: 60_000 },
 })
 ```
+
+`invocation` is the explicit `InvocationContext` supplied by the HTTP, Micro, RSC, Model, or worker boundary that schedules the job.
 
 ## Runtime And Lifecycle Notes
 
@@ -208,15 +211,20 @@ export default defineService('email.worker', async (shutdown) => {
 Enqueue:
 
 ```ts
-await queue.add(emailQueue, {
-  tenantId: 't1',
-  userId: 'u1',
-  template: 'welcome',
-}, {
-  jobId: 'welcome:t1:u1',
-  maxAttempts: 5,
-  backoff: { type: 'exponential', baseMs: 1_000, maxMs: 60_000 },
-})
+import type { InvocationContext } from '@hile/context'
+
+async function enqueueWelcome(invocation: InvocationContext) {
+  await queue.add(emailQueue, {
+    tenantId: 't1',
+    userId: 'u1',
+    template: 'welcome',
+  }, {
+    context: invocation.context,
+    jobId: 'welcome:t1:u1',
+    maxAttempts: 5,
+    backoff: { type: 'exponential', baseMs: 1_000, maxMs: 60_000 },
+  })
+}
 ```
 
 ## Package-Local AI Guide

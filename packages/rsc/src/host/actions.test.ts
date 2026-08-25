@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createExecutionContext, MissingExecutionContextError } from '@hile/context';
 import type { RscPluginClient, RscPluginLocator } from '../transport';
 import {
   RscActionGateway,
@@ -7,6 +8,8 @@ import {
   createSameOriginCsrfAuthorizer,
   type RscActionHttpContext,
 } from './actions';
+
+const testContext = createExecutionContext({ test: true });
 
 function setup() {
   const client = {
@@ -23,22 +26,37 @@ function setup() {
 }
 
 describe('RscActionGateway', () => {
+  it('fails before authorization when execution context is missing', async () => {
+    const { locator, authorize } = setup();
+    const gateway = new RscActionGateway({ locator, authorize });
+
+    await expect(gateway.invoke({
+      pluginId: 'org.hile.fixture', buildId: 'build-a', actionId: 'operation-a', input: {},
+    }, {} as never)).rejects.toBeInstanceOf(MissingExecutionContextError);
+    expect(authorize).not.toHaveBeenCalled();
+    expect(locator.resolve).not.toHaveBeenCalled();
+  });
+
   it('authorizes, invokes an exact build and always releases its lease', async () => {
     const { client, release, locator, authorize } = setup();
     const gateway = new RscActionGateway({ locator, authorize });
     const signal = new AbortController().signal;
-    const context = { signal, headers: { origin: 'https://host.test' } };
+    const context = { context: testContext, signal, headers: { origin: 'https://host.test' } };
 
     await expect(gateway.invoke({
       pluginId: 'org.hile.fixture', buildId: 'build-a', actionId: 'operation-a', input: { value: 1 },
     }, context)).resolves.toEqual({ actionId: 'operation-a', input: { value: 1 } });
 
-    expect(authorize).toHaveBeenCalledWith(expect.objectContaining({ actionId: 'operation-a' }), context);
+    expect(authorize).toHaveBeenCalledWith(
+      expect.objectContaining({ actionId: 'operation-a' }),
+      expect.objectContaining(context),
+    );
     expect(locator.resolve).toHaveBeenCalledWith(
-      { pluginId: 'org.hile.fixture', buildId: 'build-a' }, { signal },
+      { pluginId: 'org.hile.fixture', buildId: 'build-a' }, { context: testContext, signal },
     );
     expect(client.action).toHaveBeenCalledWith(
-      { buildId: 'build-a', actionId: 'operation-a', input: { value: 1 } }, { signal },
+      { buildId: 'build-a', actionId: 'operation-a', input: { value: 1 } },
+      { context: testContext, signal },
     );
     expect(release).toHaveBeenCalledOnce();
   });
@@ -48,7 +66,7 @@ describe('RscActionGateway', () => {
     const denied = new RscActionGateway({ locator, authorize: async () => false });
     await expect(denied.invoke({
       pluginId: 'org.hile.fixture', buildId: 'build-a', actionId: 'operation-a', input: {},
-    }, {})).rejects.toMatchObject({ code: 'ERR_RSC_ACTION_FORBIDDEN' });
+    }, { context: testContext })).rejects.toMatchObject({ code: 'ERR_RSC_ACTION_FORBIDDEN' });
 
     const gateway = new RscActionGateway({ locator, authorize: async () => true });
     for (const invalid of [
@@ -58,7 +76,7 @@ describe('RscActionGateway', () => {
       { pluginId: 'p', buildId: 'a', actionId: 'x', input: null },
       { pluginId: 'p', buildId: 'a', actionId: 'x', input: [] },
     ]) {
-      await expect(gateway.invoke(invalid, {})).rejects.toBeInstanceOf(RscActionGatewayError);
+      await expect(gateway.invoke(invalid, { context: testContext })).rejects.toBeInstanceOf(RscActionGatewayError);
     }
     expect(locator.resolve).not.toHaveBeenCalled();
   });
@@ -69,7 +87,7 @@ describe('RscActionGateway', () => {
     const gateway = new RscActionGateway({ locator, authorize: async () => true });
     await expect(gateway.invoke({
       pluginId: 'org.hile.fixture', buildId: 'build-a', actionId: 'operation-a', input: {},
-    }, {})).rejects.toThrow('remote failed');
+    }, { context: testContext })).rejects.toThrow('remote failed');
     expect(release).toHaveBeenCalledOnce();
   });
 });
@@ -126,6 +144,7 @@ function context(method: string, requestPath: string): RscActionHttpContext & {
     path: requestPath,
     status: 0,
     headers,
+    requestContext: { context: testContext },
     set(name, value) { headers.set(name, value); },
   };
 }
@@ -156,13 +175,13 @@ describe('RSC action HTTP adapter', () => {
     const ctx = context('POST', '/runtime-actions/org.hile%2Ffixture/build%20a/action%2Fa');
     const signal = new AbortController().signal;
     ctx.signal = signal;
-    ctx.requestContext = { headers: { origin: 'https://host.test' } };
+    ctx.requestContext = { context: testContext, headers: { origin: 'https://host.test' } };
 
     await middleware(ctx, vi.fn());
     expect(readJson).toHaveBeenCalledWith(ctx, 256);
     expect(gateway.invoke).toHaveBeenCalledWith({
       pluginId: 'org.hile/fixture', buildId: 'build a', actionId: 'action/a', input: { value: 'value' },
-    }, { signal, headers: { origin: 'https://host.test' } });
+    }, { context: testContext, signal, headers: { origin: 'https://host.test' } });
     expect(ctx.status).toBe(200);
     expect(ctx.body).toEqual({ accepted: true });
     expect(ctx.type).toBe('application/json; charset=utf-8');

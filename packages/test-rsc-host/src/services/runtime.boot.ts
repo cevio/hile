@@ -1,4 +1,6 @@
 import { defineService } from '@hile/core';
+import { randomUUID } from 'node:crypto';
+import { createExecutionContext } from '@hile/context';
 import HttpNext from '@hile/http-next';
 import {
   createMcpHmacInvocationCredentialCodec,
@@ -49,6 +51,7 @@ import {
 const discoveryGenerationHighWater = new Map();
 
 export default defineService<DemoHostComposition>(DEMO_HOST_SERVICE_KEY, async (shutdown) => {
+  const discoveryContext = createExecutionContext({ component: 'rsc-discovery' });
   const hostRoot = process.cwd();
   const artifacts = new InMemoryRscArtifactCatalog();
   const deployments = new InMemoryRscDeploymentCatalog();
@@ -68,6 +71,15 @@ export default defineService<DemoHostComposition>(DEMO_HOST_SERVICE_KEY, async (
   });
   const mcpGateway = await createMcpGateway({
     source: mcpSource,
+    executionContext: (request) => createExecutionContext({
+      requestId: randomUUID(),
+      ...(request.authInfo ? {
+        principal: {
+          clientId: request.authInfo.clientId,
+          scopes: request.authInfo.scopes ?? [],
+        },
+      } : {}),
+    }),
     info: { name: 'test-rsc-host', version: '1.0.0' },
     instructions: 'Use catalog resources for grounding. Order tools are provided by the isolated plugin service.',
     cacheHints: {
@@ -101,6 +113,7 @@ export default defineService<DemoHostComposition>(DEMO_HOST_SERVICE_KEY, async (
   const developmentEvents = new RscDevelopmentEvents();
   const developmentRevision = new Map<string, number>();
   const discovery = new HileRscDiscoveryHost({
+    context: discoveryContext,
     application,
     artifacts,
     deployments,
@@ -213,11 +226,17 @@ export default defineService<DemoHostComposition>(DEMO_HOST_SERVICE_KEY, async (
   mountRscHostAdapters(host, {
     asset: createRscAssetMiddleware({ catalog: artifacts, mountPath: assetMountPath }),
     action: async (context, next) => {
-      context.requestContext = { headers: context.headers };
+      context.requestContext = {
+        context: createExecutionContext({ requestId: randomUUID() }),
+        headers: context.headers,
+      };
       return actionMiddleware(context, next);
     },
     serverFunction: async (context, next) => {
-      context.requestContext = { headers: context.headers };
+      context.requestContext = {
+        context: createExecutionContext({ requestId: randomUUID() }),
+        headers: context.headers,
+      };
       return serverFunctionMiddleware(context, next);
     },
     middleware: process.env.RSC_DEVELOPMENT_STATE ? [

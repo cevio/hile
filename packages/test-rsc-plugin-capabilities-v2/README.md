@@ -11,7 +11,7 @@ This is the primary executable reference for the recommended chain:
   -> module-level 'use server'
   -> same-origin Host authorization
   -> exact-build internal micro request
-  -> invokeRscModel('increment', input)
+  -> api.invokeModel('increment', input)
   -> scanned defineActionModel()
 ```
 

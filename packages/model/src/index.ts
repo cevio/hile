@@ -9,7 +9,6 @@ export {
   loadModel,
   isModel,
   isActionModel,
-  getModelExecutionContext,
   type ActionModelDefinition,
   type ActionModelFlag,
   type InferServiceResult,
@@ -18,7 +17,6 @@ export {
   type ModelFlag,
   type ModelPipeline,
   type ModelProps,
-  type ModelExecutionContext,
 } from "./model";
 export {
   ModelActionRegistry,

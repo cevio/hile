@@ -1,5 +1,8 @@
 import { type ServiceRegisterProps, defineService, loadService } from '@hile/core';
-import { AsyncLocalStorage } from 'node:async_hooks';
+import {
+  createInvocationContext,
+  type InvocationContext,
+} from '@hile/context';
 import {
   Pipeline,
   PipelineContext,
@@ -8,15 +11,10 @@ import {
 
 const modelFlag = Symbol.for('@hile/model');
 const actionModelFlag = Symbol.for('@hile/model/action');
-const modelExecutionStorage = new AsyncLocalStorage<ModelExecutionContext>();
 
 /** `defineModel` 返回值上的标记类型 */
 export type ModelFlag = typeof modelFlag;
 export type ActionModelFlag = typeof actionModelFlag;
-
-export interface ModelExecutionContext {
-  signal?: AbortSignal;
-}
 
 /** model 可用的 pipeline 中间件列表（默认可跨 model 复用） */
 export type ModelPipeline = readonly PipelineMiddleware[];
@@ -39,21 +37,21 @@ export type ModelProps<
   services?: S;
   pipelines?: ModelPipeline;
   main: S extends readonly ServiceRegisterProps<any>[]
-  ? (services: InferredServices<S>, input: TInput) => R | Promise<R>
-  : (input: TInput) => R | Promise<R>;
+  ? (services: InferredServices<S>, input: TInput, invocation: InvocationContext) => R | Promise<R>
+  : (input: TInput, invocation: InvocationContext) => R | Promise<R>;
 };
 
 /**
  * `defineModel` 的统一返回值；仅应由 {@link defineModel} 构造。
  *
- * 对外统一通过 `handler(input)` 调用。
+ * 对外统一通过 `loadModel(model, input, invocation)` 调用。
  */
 export type ModelDefinition<
   TInput extends object = Record<string, unknown>,
   R = unknown,
 > = {
   readonly flag: ModelFlag;
-  readonly handler: (input: TInput) => Promise<R>;
+  readonly handler: (input: TInput, invocation: InvocationContext) => Promise<R>;
 };
 
 /** A normal model explicitly marked as safe to mount through an action adapter. */
@@ -65,28 +63,27 @@ export type ActionModelDefinition<
 };
 
 /**
- * 使用给定参数执行 `model.handler(input)`，并以 Promise 返回其结果
+ * 使用给定参数执行 `model.handler(input, invocation)`，并以 Promise 返回其结果
  *（`handler` 内同步抛错也会变为 reject）。
  */
 export function loadModel<TInput extends object, R>(
   model: ModelDefinition<TInput, R>,
   input: TInput,
-  context?: ModelExecutionContext,
+  invocation: InvocationContext,
 ): Promise<R> {
   if (!isModel(model)) {
     return Promise.reject(
       new TypeError('loadModel: first argument must be a return value of defineModel'),
     );
   }
-  if (context !== undefined) {
-    return modelExecutionStorage.run(context, () => model.handler(input));
+  try {
+    return model.handler(
+      input,
+      createInvocationContext(invocation?.context, invocation?.signal, 'model invocation'),
+    );
+  } catch (error) {
+    return Promise.reject(error);
   }
-  return model.handler(input);
-}
-
-/** Returns request-scoped execution state without adding transport fields to model input. */
-export function getModelExecutionContext(): Readonly<ModelExecutionContext> | undefined {
-  return modelExecutionStorage.getStore();
 }
 
 /** 判断值是否为 {@link defineModel} 的返回值 */
@@ -108,7 +105,7 @@ export function isActionModel(value: unknown): value is ActionModelDefinition {
  * It remains a regular ModelDefinition and is always executed with loadModel().
  */
 export function defineActionModel<TInput extends object, R>(
-  main: (input: TInput) => R | Promise<R>,
+  main: (input: TInput, invocation: InvocationContext) => R | Promise<R>,
 ): ActionModelDefinition<TInput, R>;
 export function defineActionModel<
   const S extends readonly ServiceRegisterProps<any>[] | undefined = undefined,
@@ -120,7 +117,7 @@ export function defineActionModel<
   TInput extends object = Record<string, unknown>,
   R = unknown,
 >(
-  optionsOrMain: ModelProps<S, TInput, R> | ((input: TInput) => R | Promise<R>),
+  optionsOrMain: ModelProps<S, TInput, R> | ((input: TInput, invocation: InvocationContext) => R | Promise<R>),
 ): ActionModelDefinition<TInput, R> {
   const model = typeof optionsOrMain === 'function'
     ? defineModel(optionsOrMain)
@@ -128,11 +125,11 @@ export function defineActionModel<
   return Object.assign(model, { actionFlag: actionModelFlag as ActionModelFlag });
 }
 
-/** 无 services / pipelines 时可直接传入 main：`defineModel(async (input) => ...)` */
+/** 无 services / pipelines 时可直接传入 main：`defineModel(async (input, invocation) => ...)` */
 export function defineModel<TInput extends object, R>(
-  main: (input: TInput) => R | Promise<R>,
+  main: (input: TInput, invocation: InvocationContext) => R | Promise<R>,
 ): ModelDefinition<TInput, R>;
-/** `defineModel({ services?: [A, B], pipelines?: [PA, PB], async main(services?, input) { ... } })` */
+/** `defineModel({ services?: [A, B], pipelines?: [PA, PB], async main(services?, input, invocation) { ... } })` */
 export function defineModel<
   const S extends readonly ServiceRegisterProps<any>[] | undefined = undefined,
   TInput extends object = Record<string, unknown>,
@@ -143,40 +140,41 @@ export function defineModel<
   TInput extends object = Record<string, unknown>,
   R = unknown,
 >(
-  optionsOrMain: ModelProps<S, TInput, R> | ((input: TInput) => R | Promise<R>),
+  optionsOrMain: ModelProps<S, TInput, R> | ((input: TInput, invocation: InvocationContext) => R | Promise<R>),
 ): ModelDefinition<TInput, R> {
   if (typeof optionsOrMain === 'function') {
-    return defineModel({ main: optionsOrMain });
+    return defineModel<undefined, TInput, R>({ main: optionsOrMain });
   }
   const { services, pipelines, main } = optionsOrMain;
 
-  const invokeMain = async (input: TInput): Promise<R> => {
+  const invokeMain = async (input: TInput, invocation: InvocationContext): Promise<R> => {
     if (services !== undefined) {
       const loaded = await Promise.all(services.map((service) => loadService(service)));
       return Promise.resolve(
-        (main as (services: InferredServices<NonNullable<S>>, input: TInput) => R | Promise<R>)(
+        (main as (services: InferredServices<NonNullable<S>>, input: TInput, invocation: InvocationContext) => R | Promise<R>)(
           loaded as InferredServices<NonNullable<S>>,
           input,
+          invocation,
         ),
       );
     }
-    return Promise.resolve((main as (input: TInput) => R | Promise<R>)(input));
+    return Promise.resolve((main as (input: TInput, invocation: InvocationContext) => R | Promise<R>)(input, invocation));
   };
 
-  const handler = async (input: TInput): Promise<R> => {
+  const handler = async (input: TInput, invocation: InvocationContext): Promise<R> => {
     if (pipelines !== undefined && pipelines.length > 0) {
-      const ctx = new PipelineContext<TInput>(input);
+      const ctx = new PipelineContext<TInput>(input, invocation);
       const chain = new Pipeline<TInput>();
       for (const middleware of pipelines) {
         chain.use(middleware as PipelineMiddleware<TInput>);
       }
       chain.use(async (ctx) => {
-        ctx.state.result = await invokeMain(ctx.args);
+        ctx.state.result = await invokeMain(ctx.args, ctx.invocation);
       });
       await chain.dispatch(ctx);
       return ctx.state.result as R;
     }
-    return invokeMain(input);
+    return invokeMain(input, invocation);
   };
 
   return { flag: modelFlag, handler };

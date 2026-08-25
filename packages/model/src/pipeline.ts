@@ -1,3 +1,5 @@
+import type { InvocationContext } from '@hile/context';
+
 export type PipelineMiddleware<TInput extends object = Record<string, unknown>> = (
   ctx: PipelineContext<TInput>,
   next: () => Promise<void>,
@@ -6,9 +8,11 @@ export type PipelineMiddleware<TInput extends object = Record<string, unknown>> 
 export class PipelineContext<TInput extends object = Record<string, unknown>> {
   public state: Record<string, unknown> = {};
   public readonly args: TInput;
+  public readonly invocation: InvocationContext;
 
-  constructor(args: TInput) {
+  constructor(args: TInput, invocation: InvocationContext) {
     this.args = args;
+    this.invocation = invocation;
   }
 }
 

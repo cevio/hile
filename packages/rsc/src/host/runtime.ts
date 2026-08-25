@@ -1,4 +1,8 @@
 import type { RscRenderRequest } from '../plugin/types';
+import {
+  MissingExecutionContextError,
+  parseExecutionContext,
+} from '@hile/context';
 import type { RscCallOptions, RscFlightDecoder, RscPluginLocator } from '../transport';
 
 export interface RscHostRuntimeOptions {
@@ -74,11 +78,12 @@ export class RscHostRuntime {
     pluginId: string,
     buildId: string,
     verificationKey: string | undefined,
+    context: RscCallOptions['context'],
   ): Promise<void> {
     const performVerification = async () => {
       const verificationLease = await this.locator.resolve(
         { pluginId, buildId },
-        { timeout: this.verificationTimeout },
+        { context, timeout: this.verificationTimeout },
       );
       let manifest: { pluginId: string; buildId: string } | undefined;
       let primaryError: unknown;
@@ -86,7 +91,7 @@ export class RscHostRuntime {
         if (verificationLease.verificationKey !== verificationKey) {
           throw new Error('RSC plugin endpoint changed during manifest verification');
         }
-        manifest = await verificationLease.client.describe({ timeout: this.verificationTimeout });
+        manifest = await verificationLease.client.describe({ context, timeout: this.verificationTimeout });
         if (manifest.pluginId !== pluginId) {
           throw new Error(
             `RSC plugin identity mismatch: requested=${pluginId}, resolved=${manifest.pluginId}`,
@@ -119,7 +124,9 @@ export class RscHostRuntime {
       await performVerification();
       return;
     }
-    const key = JSON.stringify([pluginId, buildId, verificationKey]);
+    // Verification may involve context-sensitive discovery or authorization.
+    // Never reuse a successful verification across different callers.
+    const key = JSON.stringify([pluginId, buildId, verificationKey, context]);
     let verification = this.verificationCache.get(key);
     if (verification) {
       this.verificationCache.delete(key);
@@ -170,6 +177,7 @@ export class RscHostRuntime {
   public async render({
     pluginId,
     request,
+    context,
     signal,
     timeout,
     idleTimeout,
@@ -196,6 +204,8 @@ export class RscHostRuntime {
       }
     };
     try {
+      if (!context) throw new MissingExecutionContextError('RSC host render');
+      context = parseExecutionContext(context);
       validateCallOptions(timeout, idleTimeout, window);
       signal?.throwIfAborted();
     } catch (error) {
@@ -204,7 +214,7 @@ export class RscHostRuntime {
     }
     let lease: Awaited<ReturnType<RscPluginLocator['resolve']>>;
     try {
-      lease = await this.locator.resolve({ pluginId, buildId: request.buildId }, { signal });
+      lease = await this.locator.resolve({ pluginId, buildId: request.buildId }, { context, signal });
     } catch (error) {
       finish(isCancellation(error, signal) ? 'cancelled' : 'error', error);
       throw error;
@@ -217,10 +227,12 @@ export class RscHostRuntime {
           pluginId,
           request.buildId,
           lease.verificationKey,
+          context,
         );
         await this.waitForVerification(verification, signal, timeout);
       }
       const flight = await lease.client.render(request, {
+        context,
         signal,
         timeout,
         idleTimeout,

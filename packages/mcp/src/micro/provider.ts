@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { UriTemplate, type Variables } from '@modelcontextprotocol/server';
+import { createInvocationContext, type InvocationContext } from '@hile/context';
 import { HileMcpError } from '../errors.js';
 import { normalizeMcpPrincipal } from '../principal.js';
 import { hasMcpScopes } from '../scopes.js';
@@ -29,9 +30,14 @@ async function validate(schema: any, input: unknown) {
   return result.value;
 }
 
-async function authorize(access: McpCapabilityAccess<any> | undefined, principal: McpPrincipal | undefined, input: unknown) {
+async function authorize(
+  access: McpCapabilityAccess<any> | undefined,
+  principal: McpPrincipal | undefined,
+  input: unknown,
+  executionContext: McpInvocationContext['executionContext'],
+) {
   if (!hasMcpScopes(principal?.scopes, access?.scopes)) return false;
-  return access?.authorize ? await access.authorize(principal, input) : true;
+  return access?.authorize ? await access.authorize(principal, input, executionContext) : true;
 }
 
 function trustedPrincipal(value: unknown): McpPrincipal | undefined {
@@ -40,9 +46,10 @@ function trustedPrincipal(value: unknown): McpPrincipal | undefined {
   }
 }
 
-function context(request: TrustedWireRequest, signal?: AbortSignal): McpInvocationContext {
+function context(request: TrustedWireRequest, invocation: InvocationContext): McpInvocationContext {
   return {
-    signal: signal ?? new AbortController().signal,
+    executionContext: invocation.context,
+    signal: invocation.signal,
     principal: request.principal,
     requestState: request.requestState,
     inputResponses: request.inputResponses,
@@ -57,7 +64,7 @@ async function invokeCapability(provider: McpProviderDefinition, request: Truste
     if (!capability) throw new HileMcpError('INVALID_DEFINITION', `Unknown MCP tool "${request.name}"`);
     const input = await validate(capability.config.inputSchema, request.input);
     invocation.signal.throwIfAborted();
-    if (!await authorize(capability.config.access, request.principal, input)) throw new Error('MCP capability access denied');
+    if (!await authorize(capability.config.access, request.principal, input, invocation.executionContext)) throw new Error('MCP capability access denied');
     invocation.signal.throwIfAborted();
     return capability.handler(input, invocation);
   }
@@ -65,7 +72,7 @@ async function invokeCapability(provider: McpProviderDefinition, request: Truste
     const capability = provider.resources[request.name];
     if (!capability) throw new HileMcpError('INVALID_DEFINITION', `Unknown MCP resource "${request.name}"`);
     const input = capability.config.kind === 'static' ? new URL(capability.config.uri) : request.input;
-    if (!await authorize(capability.config.access, request.principal, input)) throw new Error('MCP capability access denied');
+    if (!await authorize(capability.config.access, request.principal, input, invocation.executionContext)) throw new Error('MCP capability access denied');
     invocation.signal.throwIfAborted();
     return capability.handler(input as never, invocation);
   }
@@ -74,7 +81,7 @@ async function invokeCapability(provider: McpProviderDefinition, request: Truste
     if (!capability) throw new HileMcpError('INVALID_DEFINITION', `Unknown MCP prompt "${request.name}"`);
     const input = await validate(capability.config.argsSchema, request.input);
     invocation.signal.throwIfAborted();
-    if (!await authorize(capability.config.access, request.principal, input)) throw new Error('MCP capability access denied');
+    if (!await authorize(capability.config.access, request.principal, input, invocation.executionContext)) throw new Error('MCP capability access denied');
     invocation.signal.throwIfAborted();
     return capability.handler(input, invocation);
   }
@@ -100,6 +107,7 @@ async function completeCapability(provider: McpProviderDefinition, request: Trus
   if (!hasMcpScopes(request.principal?.scopes, capability.config.access?.scopes)) throw new Error('MCP capability access denied');
   invocation.signal.throwIfAborted();
   const suggestions = await complete(input.value, {
+    executionContext: invocation.executionContext,
     signal: invocation.signal,
     principal: request.principal,
     arguments: input.context?.arguments,
@@ -125,11 +133,16 @@ class McpProviderHost {
   private resourceUpdateQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly application: HileMcpProviderApplication) {
-    const dispatch = async (data: unknown, signal: AbortSignal | undefined, execute: (
+    const dispatch = async (data: unknown, inputInvocation: InvocationContext | undefined, execute: (
       provider: McpProviderDefinition,
       request: TrustedWireRequest,
       invocation: McpInvocationContext,
     ) => Promise<unknown>) => {
+      const invocation = createInvocationContext(
+        inputInvocation?.context,
+        inputInvocation?.signal,
+        'MCP provider invocation',
+      );
       const request = data as WireRequest;
       if (!request || typeof request !== 'object' || typeof request.providerId !== 'string' || typeof request.instanceId !== 'string'
         || !['tool', 'resource', 'prompt'].includes(request.kind) || typeof request.name !== 'string') {
@@ -140,23 +153,24 @@ class McpProviderHost {
         throw new HileMcpError('PROVIDER_UNAVAILABLE', 'MCP provider instance is unavailable');
       }
       const descriptor = {
+        executionContext: invocation.context,
         providerId: request.providerId, instanceId: request.instanceId, fingerprint: request.fingerprint,
         kind: request.kind, name: request.name, input: request.input,
       };
-      signal?.throwIfAborted();
+      invocation.signal.throwIfAborted();
       const verifiedPrincipal = entry.security.mode === 'credential'
-        ? await entry.security.credentials.verify(request.credential, descriptor, signal)
+        ? await entry.security.credentials.verify(request.credential, descriptor, invocation.signal)
         : trustedPrincipal(request.principal);
-      signal?.throwIfAborted();
+      invocation.signal.throwIfAborted();
       const trustedRequest = { ...request, principal: verifiedPrincipal };
-      const base = context(trustedRequest, signal);
-      return streamExecution(base, invocation => Promise.resolve(execute(entry.provider, trustedRequest, invocation)));
+      const base = context(trustedRequest, invocation);
+      return streamExecution(base, handlerContext => Promise.resolve(execute(entry.provider, trustedRequest, handlerContext)));
     };
     try {
-      this.unregisters.push(application.register(MCP_OPERATIONS.invoke, ({ data, signal }) =>
-        dispatch(data, signal, invokeCapability)));
-      this.unregisters.push(application.register(MCP_OPERATIONS.complete, ({ data, signal }) =>
-        dispatch(data, signal, completeCapability)));
+      this.unregisters.push(application.register(MCP_OPERATIONS.invoke, ({ data, invocation }) =>
+        dispatch(data, invocation, invokeCapability)));
+      this.unregisters.push(application.register(MCP_OPERATIONS.complete, ({ data, invocation }) =>
+        dispatch(data, invocation, completeCapability)));
     } catch (error) {
       for (const unregister of this.unregisters.splice(0).reverse()) unregister();
       throw error;

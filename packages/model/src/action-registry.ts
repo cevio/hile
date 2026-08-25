@@ -1,4 +1,5 @@
 import { Loader, normalizePath, type ScannedFile } from '@hile/loader';
+import { createInvocationContext, type InvocationContext } from '@hile/context';
 import {
   isActionModel,
   isModel,
@@ -79,9 +80,14 @@ export class ModelActionRegistry extends Loader<unknown> {
     return this.models.has(id);
   }
 
-  public async invoke(id: string, input: unknown, options: { signal?: AbortSignal } = {}): Promise<unknown> {
+  public async invoke(id: string, input: unknown, invocation: InvocationContext): Promise<unknown> {
+    invocation = createInvocationContext(
+      invocation?.context,
+      invocation?.signal,
+      `model action ${id}`,
+    );
     assertInput(input);
-    if (options.signal?.aborted) throw options.signal.reason ?? new DOMException('Aborted', 'AbortError');
+    if (invocation.signal.aborted) throw invocation.signal.reason ?? new DOMException('Aborted', 'AbortError');
     const model = this.models.get(id);
     if (!model) {
       throw new ModelActionRegistryError(
@@ -89,6 +95,6 @@ export class ModelActionRegistry extends Loader<unknown> {
         `Unknown action model: ${id}`,
       );
     }
-    return loadModel(model, input, { signal: options.signal });
+    return loadModel(model, input, invocation);
   }
 }

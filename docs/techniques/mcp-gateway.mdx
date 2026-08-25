@@ -79,6 +79,8 @@ Prompt arguments and RFC 6570 template variables may declare `completions`. Tool
 ### 2. Attach each provider after Micro listen
 
 ```ts
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext } from '@hile/context'
 import { defineService, loadService } from '@hile/core'
 import { createMcpEd25519InvocationCredentialVerifier } from '@hile/mcp'
 import { attachMcpProvider } from '@hile/mcp/micro'
@@ -125,6 +127,10 @@ export default defineService('mcp.gateway', async (shutdown) => {
   })
   const gateway = await createMcpGateway({
     source,
+    executionContext: (request) => createExecutionContext({
+      requestId: randomUUID(),
+      ...(request.authInfo ? { clientId: request.authInfo.clientId } : {}),
+    }),
     info: { name: 'company-mcp', version: '1.0.0' },
     instructions: 'Use provider-prefixed names and request confirmation before writes.',
     cacheHints: {

@@ -123,7 +123,12 @@ export class HileMcpProviderSource implements McpProviderSource {
     return this.refreshPromise;
   }
 
-  stream(instance: McpProviderManifest, operation: string, data: unknown, options?: { timeout?: number; idleTimeout?: number; signal?: AbortSignal }) {
+  stream(instance: McpProviderManifest, operation: string, data: unknown, options: {
+    context: import('@hile/context').ExecutionContext;
+    timeout?: number;
+    idleTimeout?: number;
+    signal?: AbortSignal;
+  }) {
     return this.application.streamPeer(instance.address, operation, data, options);
   }
 

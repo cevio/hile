@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createExecutionContext, MissingExecutionContextError } from '@hile/context';
 import type { RscPluginClient } from '../transport';
 import {
   InMemoryRscDeploymentCatalog,
@@ -15,6 +16,10 @@ const deploymentB = {
   pluginId: 'org.hile.fixture',
   buildId: 'build-b',
   namespace: 'runtime.fixture.b',
+};
+const callOptions = {
+  context: createExecutionContext({ requestId: 'rsc-catalog-test' }),
+  signal: new AbortController().signal,
 };
 
 describe('InMemoryRscDeploymentCatalog', () => {
@@ -81,18 +86,28 @@ describe('InMemoryRscDeploymentCatalog', () => {
 });
 
 describe('catalog-backed plugin locator', () => {
+  it('rejects missing context before acquiring a deployment lease', async () => {
+    const catalog = new InMemoryRscDeploymentCatalog();
+    catalog.install(deploymentA, { activate: true });
+    const connect = vi.fn();
+    const locator = createCatalogRscPluginLocator(catalog, connect);
+
+    await expect((locator.resolve as any)(deploymentA))
+      .rejects.toBeInstanceOf(MissingExecutionContextError);
+    expect(connect).not.toHaveBeenCalled();
+    expect(catalog.snapshot()[0].references).toBe(0);
+  });
+
   it('composes catalog leases with an injected connection factory', async () => {
     const catalog = new InMemoryRscDeploymentCatalog();
     catalog.install(deploymentA, { activate: true });
     const client = {} as RscPluginClient;
     const connect = vi.fn(async () => client);
     const locator = createCatalogRscPluginLocator(catalog, connect);
-    const signal = new AbortController().signal;
-
-    const lease = await locator.resolve(deploymentA, { signal });
+    const lease = await locator.resolve(deploymentA, callOptions);
     expect(lease.client).toBe(client);
     expect(lease.verificationKey).toBeUndefined();
-    expect(connect).toHaveBeenCalledWith(deploymentA, { signal });
+    expect(connect).toHaveBeenCalledWith(deploymentA, callOptions);
     expect(catalog.snapshot()[0].references).toBe(1);
     lease.release();
     expect(catalog.snapshot()[0].references).toBe(0);
@@ -105,7 +120,7 @@ describe('catalog-backed plugin locator', () => {
       throw new Error('connection failed');
     });
 
-    await expect(locator.resolve(deploymentA)).rejects.toThrow('connection failed');
+    await expect(locator.resolve(deploymentA, callOptions)).rejects.toThrow('connection failed');
     expect(catalog.snapshot()[0].references).toBe(0);
   });
 });

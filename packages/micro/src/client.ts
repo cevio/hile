@@ -1,10 +1,11 @@
 import { MessageWs } from "@hile/message-ws";
 import {
-  isContextData,
-  runWithContext,
-  snapshotContext,
-  type ContextData,
-  type ContextInput,
+  createInvocationContext,
+  MissingExecutionContextError,
+  parseExecutionContext,
+  type ContextValues,
+  type ExecutionContext,
+  type InvocationContext,
 } from '@hile/context';
 import { Server } from './server';
 import { WebSocket } from 'ws';
@@ -18,6 +19,7 @@ export interface ClientProps {
 }
 
 export interface ClientStreamOptions {
+  context: ExecutionContext;
   signal?: AbortSignal;
   timeout?: number;
   idleTimeout?: number;
@@ -25,7 +27,8 @@ export interface ClientStreamOptions {
 }
 
 export type MicroMessageMetadata = {
-  context?: ContextInput<ContextData>;
+  context?: ExecutionContext;
+  control?: true;
   [key: string]: unknown;
 };
 
@@ -35,69 +38,47 @@ export type MicroMessage<T = any> = {
   metadata?: MicroMessageMetadata;
 };
 
-function createEnvelope<T = any>(url: string, data: T): MicroMessage<T> {
-  const context = snapshotContext();
-  if (Object.keys(context).length === 0) return { url, data };
+const FRAMEWORK_CONTROL_ROUTES = new Set([
+  '/-/config/get',
+  '/-/configs',
+  '/-/declare',
+  '/-/find',
+  '/-/namespace/peers',
+  '/-/namespaces',
+  '/-/registry/status',
+  '/-/subscribe',
+  '/-/topic/get',
+  '/-/topic/snapshots',
+  '/-/topic/update',
+  '/-/topics',
+  '/-/undeclare',
+  '/-/unsubscribe',
+]);
+
+function assertFrameworkControlRoute(url: string): void {
+  if (!FRAMEWORK_CONTROL_ROUTES.has(url)) {
+    throw new TypeError(`Unknown framework control route: ${url}`);
+  }
+}
+
+function createEnvelope<T = any>(url: string, data: T, context: ExecutionContext): MicroMessage<T> {
   return {
     url,
     data,
     metadata: {
-      context,
+      context: parseExecutionContext(context),
     },
   };
 }
 
-function getEnvelopeContext(data: MicroMessage): ContextInput<ContextData> | undefined {
+function createControlEnvelope<T = any>(url: string, data: T): MicroMessage<T> {
+  assertFrameworkControlRoute(url);
+  return { url, data, metadata: { control: true } };
+}
+
+function getEnvelopeContext(data: MicroMessage): ExecutionContext | undefined {
   const context = data.metadata?.context;
-  if (!isContextData(context)) return undefined;
-  return context;
-}
-
-function isAsyncIterable<T = any>(value: unknown): value is AsyncIterable<T> {
-  return value != null && typeof (value as AsyncIterable<T>)[Symbol.asyncIterator] === 'function';
-}
-
-function bindAsyncIterableToContext<T>(
-  iterable: AsyncIterable<T>,
-  context: ContextInput<ContextData>,
-): AsyncIterable<T> {
-  return {
-    [Symbol.asyncIterator]() {
-      const iterator = iterable[Symbol.asyncIterator]();
-      return {
-        next() {
-          return Promise.resolve(
-            runWithContext<ContextData, Promise<IteratorResult<T>> | IteratorResult<T>>(
-              context,
-              () => iterator.next(),
-            ),
-          );
-        },
-        return(value?: unknown) {
-          if (!iterator.return) {
-            return Promise.resolve({ done: true, value } as IteratorResult<T>);
-          }
-          return Promise.resolve(
-            runWithContext<ContextData, Promise<IteratorResult<T>> | IteratorResult<T>>(
-              context,
-              () => iterator.return!(value),
-            ),
-          );
-        },
-        throw(error?: unknown) {
-          if (!iterator.throw) {
-            return Promise.reject(error);
-          }
-          return Promise.resolve(
-            runWithContext<ContextData, Promise<IteratorResult<T>> | IteratorResult<T>>(
-              context,
-              () => iterator.throw!(error),
-            ),
-          );
-        },
-      };
-    },
-  };
+  return context === undefined ? undefined : parseExecutionContext(context);
 }
 
 export class Client extends MessageWs {
@@ -151,35 +132,68 @@ export class Client extends MessageWs {
     }
     if (!this._online) throw new Error('Client is not online');
     const context = getEnvelopeContext(data);
-    const dispatch = async () => {
-      const result = await this.server.dispatch(data.url, data.data, {
-        client: this,
-        metadata: data.metadata,
-        signal,
-      });
-      if (context && isAsyncIterable(result)) {
-        return bindAsyncIterableToContext(result, context);
-      }
-      return result;
-    };
-
-    if (context) return runWithContext(context, dispatch);
-    return dispatch();
+    const isControl = data.metadata?.control === true && FRAMEWORK_CONTROL_ROUTES.has(data.url);
+    if (!context && !isControl) {
+      throw new MissingExecutionContextError(`inbound micro message ${data.url}`);
+    }
+    const invocation: InvocationContext<ContextValues> | undefined = context
+      ? createInvocationContext(
+        context,
+        signal ?? new AbortController().signal,
+        `inbound micro message ${data.url}`,
+      )
+      : undefined;
+    return this.server.dispatch(data.url, data.data, {
+      client: this,
+      metadata: data.metadata,
+      signal,
+      invocation,
+    });
   }
 
-  public request<T = any>(url: string, data: any, options?: { timeout?: number; signal?: AbortSignal }) {
+  public request<T = any>(url: string, data: any, options: {
+    context: ExecutionContext;
+    timeout?: number;
+    signal?: AbortSignal;
+  }) {
     if (!this._online) throw new Error('Client is not online');
-    return this._send<T>(createEnvelope(url, data), options);
+    if (!options?.context) throw new MissingExecutionContextError(`micro client request ${url}`);
+    const { context, ...transport } = options;
+    return this._send<T>(createEnvelope(url, data, context), transport);
   }
 
-  public push(url: string, data: any, options?: { timeout?: number; signal?: AbortSignal }) {
+  /** Framework-internal transport path. Business requests must use request() with context. */
+  public requestControl<T = any>(
+    url: string,
+    data: any,
+    options?: { timeout?: number; signal?: AbortSignal },
+  ) {
     if (!this._online) throw new Error('Client is not online');
-    return this._push(createEnvelope(url, data), options);
+    return this._send<T>(createControlEnvelope(url, data), options);
   }
 
-  public stream(url: string, data: any, options?: ClientStreamOptions) {
+  public push(url: string, data: any, options: {
+    context: ExecutionContext;
+    timeout?: number;
+    signal?: AbortSignal;
+  }) {
     if (!this._online) throw new Error('Client is not online');
-    return this._stream(createEnvelope(url, data), options);
+    if (!options?.context) throw new MissingExecutionContextError(`micro client push ${url}`);
+    const { context, ...transport } = options;
+    return this._push(createEnvelope(url, data, context), transport);
+  }
+
+  /** Framework-internal transport path. Business pushes must use push() with context. */
+  public pushControl(url: string, data: any, options?: { timeout?: number; signal?: AbortSignal }) {
+    if (!this._online) throw new Error('Client is not online');
+    return this._push(createControlEnvelope(url, data), options);
+  }
+
+  public stream(url: string, data: any, options: ClientStreamOptions) {
+    if (!this._online) throw new Error('Client is not online');
+    if (!options?.context) throw new MissingExecutionContextError(`micro client stream ${url}`);
+    const { context, ...transport } = options;
+    return this._stream(createEnvelope(url, data, context), transport);
   }
 
   public dispose(): void {

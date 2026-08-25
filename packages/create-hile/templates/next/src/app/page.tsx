@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { createExecutionContext } from '@hile/context';
 import Image from "next/image";
 import styles from "./page.module.css";
 import { ClickTest } from "./click";
@@ -7,7 +9,10 @@ import homeModel from "@/models/home/home.model";
 export const dynamic = "force-dynamic";
 
 export default async function Home() {
-  const home = await loadModel(homeModel, {});
+  const home = await loadModel(homeModel, {}, {
+    context: createExecutionContext({ requestId: randomUUID() }),
+    signal: new AbortController().signal,
+  });
 
   return (
     <div className={styles.page}>

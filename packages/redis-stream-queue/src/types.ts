@@ -1,4 +1,4 @@
-import type { ContextData, ContextInput } from '@hile/context';
+import type { ExecutionContext, InvocationContext } from '@hile/context';
 
 export type QueueSafeParseResult<T> =
   | { success: true; data: T }
@@ -31,6 +31,7 @@ export type QueueBackoff =
   };
 
 export type QueueAddOptions = {
+  context: ExecutionContext;
   jobId?: string;
   delay?: number;
   maxAttempts?: number;
@@ -56,7 +57,7 @@ export type QueueJob<TData = unknown> = {
   jobId?: string;
   createdAt: number;
   runAt: number;
-  context?: ContextInput<ContextData>;
+  context: ExecutionContext;
 };
 
 export type QueueDeadLetter<TData = unknown> = Omit<QueueJob<TData>, 'streamId'> & {
@@ -65,7 +66,10 @@ export type QueueDeadLetter<TData = unknown> = Omit<QueueJob<TData>, 'streamId'>
   lastFailureReason?: string;
 };
 
-export type QueueWorkerHandler<TData = unknown> = (job: QueueJob<TData>) => void | Promise<void>;
+export type QueueWorkerHandler<TData = unknown> = (
+  job: QueueJob<TData>,
+  invocation: InvocationContext,
+) => void | Promise<void>;
 
 export type QueueWorkerOptions = {
   group?: string;
@@ -126,7 +130,7 @@ export type StoredQueueJob = {
   maxAttempts: number;
   backoff: StoredQueueBackoff;
   jobId?: string;
-  context?: ContextInput<ContextData>;
+  context: ExecutionContext;
   firstFailureReason?: string;
   lastFailureReason?: string;
 };

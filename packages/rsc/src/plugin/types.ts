@@ -1,4 +1,5 @@
 import type { RscPluginManifest } from '../protocol';
+import type { ExecutionContext } from '@hile/context';
 import type {
   RscServerFunctionReference,
 } from '../protocol';
@@ -41,6 +42,14 @@ export interface RscServerFunctionInvocationContext {
   reference: RscServerFunctionReference;
   args: unknown[];
   signal: AbortSignal;
+  context: ExecutionContext;
+  invokeModel(id: string, input: unknown): Promise<unknown>;
+}
+
+/** Explicit request-scoped capabilities passed as the first argument to every Server Function. */
+export interface RscServerFunctionApi {
+  signal: AbortSignal;
+  context: ExecutionContext;
   invokeModel(id: string, input: unknown): Promise<unknown>;
 }
 
@@ -53,6 +62,7 @@ export interface RscRenderContext {
   routeEntry: string;
   request: RscRenderRequest;
   signal: AbortSignal;
+  context: ExecutionContext;
 }
 
 export type RscRenderer = (

@@ -1,11 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createExecutionContext } from '@hile/context';
 import { Client } from '@modelcontextprotocol/client';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
-import { createMcpGateway, mcpServerFactory } from './gateway.js';
+import {
+  createMcpGateway as createMcpGatewayRuntime,
+  mcpServerFactory,
+  type CreateMcpGatewayOptions,
+} from './gateway.js';
 import type { McpProviderManifest, McpProviderSource } from '../micro/index.js';
 import { createMcpProviderFingerprint } from '../micro/manifest.js';
 
 const trustedInvocation = { mode: 'trusted-internal' as const };
+const testExecutionContext = createExecutionContext({ requestId: 'mcp-gateway-test' });
+
+function createMcpGateway(
+  options: Omit<CreateMcpGatewayOptions, 'executionContext'> & Partial<Pick<CreateMcpGatewayOptions, 'executionContext'>>,
+) {
+  return createMcpGatewayRuntime({ executionContext: () => testExecutionContext, ...options });
+}
 
 function provider(instanceId: string, version = 'v1', providerId = 'orders'): McpProviderManifest {
   const identity = {
@@ -38,6 +50,16 @@ class Source implements McpProviderSource {
 }
 
 describe('MCP gateway catalog', () => {
+  it('requires an explicit ingress execution-context resolver', async () => {
+    const source = new Source();
+    await expect(createMcpGatewayRuntime({
+      source,
+      info: { name: 'hile', version: '1.0.0' },
+      invocationSecurity: trustedInvocation,
+    } as CreateMcpGatewayOptions)).rejects.toThrow(/executionContext/i);
+    expect(source.start).not.toHaveBeenCalled();
+  });
+
   it('rejects invalid public naming options at startup', async () => {
     const source = new Source();
     await expect(createMcpGateway({
@@ -92,15 +114,23 @@ describe('MCP gateway catalog', () => {
   it('round-robins compatible instances while preserving the selected instance identity', async () => {
     const source = new Source();
     source.items = [provider('a'), provider('b')];
-    source.stream = vi.fn(async (instance: McpProviderManifest, _operation, request: any) => (async function* () {
+    const ingressContext = createExecutionContext({ requestId: 'request-a', values: { tenantId: 'tenant-a' } });
+    source.stream = vi.fn(async (instance: McpProviderManifest, _operation, request: any, options: any) => (async function* () {
       expect(request).toMatchObject({
         providerId: instance.providerId,
         instanceId: instance.instanceId,
         fingerprint: instance.fingerprint,
       });
+      expect(options.context).toEqual(ingressContext);
+      expect(Object.isFrozen(options.context)).toBe(true);
       yield { type: 'result', result: { content: [{ type: 'text', text: instance.instanceId }] } };
     })());
-    const gateway = await createMcpGateway({ source, info: { name: 'hile', version: '1.0.0' }, invocationSecurity: trustedInvocation });
+    const gateway = await createMcpGateway({
+      source,
+      info: { name: 'hile', version: '1.0.0' },
+      invocationSecurity: trustedInvocation,
+      executionContext: () => ingressContext,
+    });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const server = mcpServerFactory(gateway)({});
     const client = new Client({ name: 'test', version: '1.0.0' });

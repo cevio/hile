@@ -2,8 +2,11 @@ import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import WebSocket, { WebSocketServer } from 'ws';
 import { MessageWs } from '@hile/message-ws';
+import { createExecutionContext, MissingExecutionContextError } from '@hile/context';
 import { Client, type MicroMessage } from './client';
 import type { Server } from './server';
+
+const testContext = createExecutionContext({ requestId: 'client-test' });
 
 type Dispatch = (
   path: string,
@@ -31,15 +34,15 @@ class RequestWs extends MessageWs {
     data: any,
     options?: { timeout?: number; signal?: AbortSignal },
   ) {
-    return this._send<T>({ url, data }, options);
+    return this._send<T>({ url, data, metadata: { context: testContext } }, options);
   }
 
   public stream(url: string, data: any, options?: { signal?: AbortSignal }) {
-    return this._stream({ url, data }, options);
+    return this._stream({ url, data, metadata: { context: testContext } }, options);
   }
 
   public push(url: string, data: any, options?: { signal?: AbortSignal }) {
-    return this._push({ url, data }, options);
+    return this._push({ url, data, metadata: { context: testContext } }, options);
   }
 }
 
@@ -130,7 +133,11 @@ describe('@hile/micro Client AbortSignal propagation', () => {
     });
     cleanups.push(() => client.dispose());
 
-    await expect(client.invoke({ url: '/render', data: { id: 1 } }, controller.signal))
+    await expect(client.invoke({
+      url: '/render',
+      data: { id: 1 },
+      metadata: { context: testContext },
+    }, controller.signal))
       .resolves.toEqual({ id: 1 });
     expect(dispatch).toHaveBeenCalledTimes(1);
   });
@@ -146,7 +153,7 @@ describe('@hile/micro Client AbortSignal propagation', () => {
       port: 3000,
     });
     cleanups.push(() => client.dispose());
-    const metadata = { traceId: 'trace-1' };
+    const metadata = { traceId: 'trace-1', context: testContext };
 
     const extras = await client.invoke({ url: '/render', data: null, metadata }, controller.signal);
 
@@ -167,6 +174,38 @@ describe('@hile/micro Client AbortSignal propagation', () => {
     await expect(client.invoke({ url: '/-/heartbeat', data: {} }, new AbortController().signal))
       .resolves.toBeUndefined();
     expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('does not let an arbitrary business route spoof framework control metadata', async () => {
+    const socket = createFakeSocket();
+    const dispatch = vi.fn<Dispatch>();
+    const client = new ExposedClient({
+      server: createServer(dispatch),
+      ws: socket,
+      host: '127.0.0.1',
+      port: 3000,
+    });
+    cleanups.push(() => client.dispose());
+
+    await expect(client.invoke({
+      url: '/business/charge',
+      data: {},
+      metadata: { control: true },
+    })).rejects.toBeInstanceOf(MissingExecutionContextError);
+    expect(dispatch).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown routes from the framework control sender API', () => {
+    const socket = createFakeSocket();
+    const client = new ExposedClient({
+      server: createServer(vi.fn<Dispatch>()),
+      ws: socket,
+      host: '127.0.0.1',
+      port: 3000,
+    });
+    cleanups.push(() => client.dispose());
+
+    expect(() => client.requestControl('/business/charge', {})).toThrow(/control route/i);
   });
 
   it('aborts a request handler when the remote caller aborts', async () => {

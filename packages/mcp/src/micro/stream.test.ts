@@ -1,10 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createExecutionContext } from '@hile/context';
 import { streamExecution } from './stream.js';
 
 describe('streamExecution', () => {
   it('applies bounded backpressure to provider emit calls', async () => {
     let secondEmitCompleted = false;
-    const stream = streamExecution({ signal: new AbortController().signal }, async context => {
+    const stream = streamExecution({
+      executionContext: createExecutionContext({ requestId: 'mcp-stream-test' }),
+      signal: new AbortController().signal,
+    }, async context => {
       await context.emit.progress(1);
       await context.emit.progress(2);
       secondEmitCompleted = true;

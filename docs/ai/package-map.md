@@ -125,7 +125,7 @@ Packages: `@hile/typeorm`, `@hile/ioredis`, `@hile/logger`, `@hile/schedule`, `@
 Read `packages/messaging-micro.md` when the task mentions:
 
 - WebSocket/IPC/worker messaging
-- `defineMessage`
+- `defineMicroMessage` or transport-neutral `defineMessage`
 - service registry
 - `Application.call`
 - streaming RPC

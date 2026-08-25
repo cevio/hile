@@ -24,18 +24,21 @@ Use this file when an AI agent installs the npm package and needs package-local 
 
 
 
-# Model And Context
+# Model And Explicit Context
 
 Packages: `@hile/model`, `@hile/context`.
 
 ## Use When
 
-Use `@hile/model` for reusable business logic and `@hile/context` for request/work-unit context that should flow through async calls, micro messages, and queue jobs.
+Use `@hile/model` for reusable business logic. Use `@hile/context` to create immutable, versioned context data that an application explicitly carries through HTTP ingress, models, Micro calls, RSC, and queue jobs.
+
+`@hile/context` has no ambient store and owns no `AsyncLocalStorage`. Context identity is protocol data, not module-instance identity.
 
 ## Do Not Use When
 
-- Do not put business logic only in controllers when it will be reused by jobs, pages, or message handlers.
-- Do not add fixed business fields to `@hile/context`; each app owns its context shape.
+- Do not use context as a mutable application state container.
+- Do not put business fields into a framework-owned global schema; each application owns its context values.
+- Do not use ambient state to cross a bundle, Worker, VM, plugin, or transport boundary.
 
 ## Install
 
@@ -47,108 +50,143 @@ pnpm add @hile/model @hile/context
 
 ```ts
 import { defineActionModel, defineModel, loadModel } from '@hile/model'
-import { contextHttp, contextModel, getContext, requireContext, runWithContext } from '@hile/context'
+import {
+  createExecutionContext,
+  createInvocationContext,
+  deriveExecutionContext,
+  parseExecutionContext,
+  pickExecutionContext,
+  requireExecutionContextValues,
+  withExecutionContextLogger,
+  type ExecutionContext,
+  type InvocationContext,
+} from '@hile/context'
 ```
 
 ## Copy-Paste Example
 
 ```ts
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext, createInvocationContext } from '@hile/context'
+
+const invocation = createInvocationContext(
+  createExecutionContext({ requestId: randomUUID() }),
+  new AbortController().signal,
+)
+```
+
+Values must be JSON-compatible plain data. Creation snapshots and deeply freezes them. `parseExecutionContext()` validates untrusted or transported values and rejects unsupported protocol versions.
+
+## Models
+
+```ts
 import { defineModel } from '@hile/model'
 
-export default defineModel(async (input: { name: string }) => {
-  return { greeting: `Hello ${input.name}` }
-})
-```
-
-Use it:
-
-```ts
-const result = await loadModel(greetModel, { name: 'Ada' })
-```
-
-Action adapters can discover a model explicitly without changing how it executes:
-
-```ts
-import { defineActionModel } from '@hile/model'
-
-export default defineActionModel(async (input: { value: number }) => ({
-  value: input.value + 1,
+export default defineModel(async (input: { name: string }, invocation) => ({
+  greeting: `Hello ${input.name}`,
+  requestId: invocation.context.values.requestId,
 }))
 ```
 
-`ModelActionRegistry` extends `@hile/loader.Loader`, scans domain-organized `*.model.*` files, and registers only action-marked models. `RscPluginService.load(modelsDirectory)` owns this lifecycle for RSC plugins.
+Execute it with the explicit invocation:
+
+```ts
+const result = await loadModel(greetModel, { name: 'Ada' }, invocation)
+```
 
 ## More Examples
 
-```ts
-import { defineModel } from '@hile/model'
-import typeormService from '@hile/typeorm'
+Pipelines receive the same value as `ctx.invocation`:
 
+```ts
 export const findUser = defineModel({
-  services: [typeormService] as const,
   pipelines: [
     async (ctx, next) => {
-      if (!ctx.args.userId) throw new Error('userId is required')
+      requireExecutionContextValues(ctx.invocation.context, ['tenantId'])
       await next()
     },
   ],
-  async main([ds], input: { userId: string }) {
-    return ds.getRepository(User).findOneBy({ id: input.userId })
+  async main(input: { userId: string }, invocation) {
+    return findTenantUser(invocation.context.values.tenantId, input.userId)
   },
 })
 ```
 
-Context in HTTP:
+Action models use the same contract:
 
 ```ts
-http.use(contextHttp({
-  read: (ctx) => ({ requestId: String(ctx.headers['x-request-id'] ?? crypto.randomUUID()) }),
-  write: (context, ctx) => ctx.set('x-request-id', String(context.requestId ?? '')),
-}))
-```
-
-Context in model pipeline:
-
-```ts
-const withTenant = contextModel<{ tenantId: string }>({
-  read: (input) => ({ tenantId: input.tenantId }),
+export default defineActionModel(async (input: { value: number }, invocation) => {
+  invocation.signal.throwIfAborted()
+  return { value: input.value + 1 }
 })
 ```
 
 ## Compose With
 
-- `@hile/http` controllers should call `loadModel()`.
-- `@hile/redis-idempotency` and `@hile/redis-rate-limit` provide model pipeline middleware.
-- `@hile/micro` propagates context in message metadata.
-- `@hile/redis-stream-queue` snapshots context when enqueuing and restores it in workers.
+- HTTP ingress creates the context and request cancellation signal.
+- Model receives an `InvocationContext` in pipelines and `main`.
+- Micro and RSC carry the versioned context in message metadata.
+- Redis Stream Queue persists it with the job and restores it as an explicit handler argument.
+- Logger derives selected bindings from an explicitly supplied context.
+
+## Carry Context Across Boundaries
+
+```ts
+await application.call('billing', '/charge', payload, {
+  context: invocation.context,
+  signal: invocation.signal,
+})
+
+await queue.add(emailQueue, payload, {
+  context: invocation.context,
+})
+
+const worker = queue.worker(emailQueue, async (job, jobInvocation) => {
+  await loadModel(sendEmailModel, job.data, jobInvocation)
+}, workerOptions)
+```
+
+Micro business calls and queue enqueue operations fail before transport/storage when context is missing. Framework-only Micro control traffic uses the separate `requestControl()` and `pushControl()` APIs.
+
+Across Worker, VM, plugin, or bundle boundaries, send the `ExecutionContext` as structured-cloneable or serialized data and call `parseExecutionContext()` on the receiving side. Never expect ambient state to cross an execution boundary.
+
+## Derive, Restrict, And Log
+
+```ts
+const child = deriveExecutionContext(invocation.context, { operation: 'charge' })
+const carrier = pickExecutionContext(child, ['requestId', 'tenantId', 'operation'])
+const logger = withExecutionContextLogger(baseLogger, carrier, {
+  pick: ['requestId', 'tenantId'],
+})
+```
+
+Explicit `pick` lists keep secrets and internal-only values out of transport and logs.
 
 ## Runtime And Lifecycle Notes
 
-- `loadModel(model, input)` rejects if the first argument was not created by `defineModel()`.
-- `defineActionModel()` returns a normal model definition plus an explicit action capability marker.
-- Model input must be an object.
-- Services are loaded in the order of the `services` tuple.
-- Pipeline middleware follows Koa-style `await next()`.
-- The terminal model result is stored in `ctx.state.result` and returned by `loadModel()`.
-- `runWithContext()` merges with parent context by default; pass `{ merge: false }` to replace.
-- `getContext()` returns a frozen shallow snapshot.
-- `requireContext(keys)` throws when selected keys are missing.
+- Every business invocation has an explicit `ExecutionContext` and `AbortSignal`.
+- Establishment, derivation, transport, and consumption operate on versioned data rather than a shared module singleton.
+- Independently evaluated copies of `@hile/context` interoperate structurally.
+- Context is immutable and cannot leak between concurrent requests.
+- Missing or unsupported context fails with a stable diagnostic error instead of becoming `{}`.
+- Model pipeline and `main` receive the same invocation object.
 
 ## Anti-Patterns
 
-- Passing primitives to `loadModel()`.
-- Mutating context snapshots.
-- Logging whole context objects by default.
-- Assuming context propagation changes business payloads; it should stay in metadata or async storage.
-- Exposing every scanned model as a browser action; only action-marked models may be mounted.
+- Hiding context in module globals, singleton containers, or `AsyncLocalStorage`.
+- Calling `loadModel()` without an invocation.
+- Adding context fields to business payloads merely to compensate for missing transport support.
+- Sending the whole context when only a subset is required.
+- Logging entire context objects by default.
 
 ## Verification Checklist
 
-- Models export `defineModel(...)` results.
-- Browser-callable models explicitly use `defineActionModel(...)`.
-- Controllers and pages call `loadModel(model, objectInput)`.
-- Pipeline middleware writes derived state to `ctx.state`.
-- Context keys are app-defined and JSON-serializable when crossing process boundaries.
+- Create context once at each ingress boundary.
+- Pass it explicitly to Model, Micro, RSC, Queue, and Logger APIs.
+- Validate transported context with `parseExecutionContext()`.
+- Use structured-cloneable, JSON-compatible values only.
+- Assert missing context fails before side effects.
+- Test independent module instances and concurrent invocations.
 
 
 

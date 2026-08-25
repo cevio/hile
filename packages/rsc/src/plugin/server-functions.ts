@@ -1,33 +1,27 @@
-import { AsyncLocalStorage } from 'node:async_hooks';
 import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { RscServerFunctionInvocationContext, RscServerFunctionRuntime } from './types';
+import type {
+  RscServerFunctionApi,
+  RscServerFunctionInvocationContext,
+  RscServerFunctionRuntime,
+} from './types';
 
-interface RscServerFunctionExecutionContext {
-  signal: AbortSignal;
-  invokeModel(id: string, input: unknown): Promise<unknown>;
-}
+const RSC_SERVER_FUNCTION_DEFINITION = Symbol.for('@hile/rsc/server-function-definition');
+type DefinedRscServerFunction = ((api: RscServerFunctionApi, ...args: unknown[]) => Promise<unknown>) & {
+  [RSC_SERVER_FUNCTION_DEFINITION]: true;
+};
 
-const execution = new AsyncLocalStorage<RscServerFunctionExecutionContext>();
-
-function currentExecution(): RscServerFunctionExecutionContext {
-  const context = execution.getStore();
-  if (!context) {
-    throw new Error('RSC Server Function APIs can only be used while executing a Server Function');
-  }
-  return context;
-}
-
-export function getRscServerFunctionSignal(): AbortSignal {
-  return currentExecution().signal;
-}
-
-export function invokeRscModel(id: string, input: unknown): Promise<unknown> {
-  if (typeof id !== 'string' || id.length === 0) {
-    throw new TypeError('RSC Model id must not be empty');
-  }
-  return currentExecution().invokeModel(id, input);
+/**
+ * Defines a Server Function whose public React signature contains only wire arguments while
+ * the plugin runtime supplies the explicit request-scoped API before invoking the handler.
+ */
+export function defineRscServerFunction<TArgs extends unknown[], TResult>(
+  handler: (api: RscServerFunctionApi, ...args: TArgs) => Promise<TResult>,
+): (...args: TArgs) => Promise<TResult> {
+  const defined = async (...runtimeArgs: [RscServerFunctionApi, ...TArgs]) => handler(...runtimeArgs);
+  Object.defineProperty(defined, RSC_SERVER_FUNCTION_DEFINITION, { value: true });
+  return defined as unknown as (...args: TArgs) => Promise<TResult>;
 }
 
 export class RscArtifactServerFunctionRuntime implements RscServerFunctionRuntime {
@@ -73,15 +67,25 @@ export class RscArtifactServerFunctionRuntime implements RscServerFunctionRuntim
     }
     const module = await this.load(context.reference.module, context.reference.integrity);
     const callable = module[context.reference.exportName];
-    if (typeof callable !== 'function') {
+    if (
+      typeof callable !== 'function'
+      || (callable as Partial<DefinedRscServerFunction>)[RSC_SERVER_FUNCTION_DEFINITION] !== true
+    ) {
       throw new Error(
-        `RSC Server Function export is not callable: ${context.reference.id}`,
+        `RSC Server Function export was not created by defineRscServerFunction(): ${context.reference.id}`,
       );
     }
     context.signal.throwIfAborted();
-    return execution.run(
-      { signal: context.signal, invokeModel: context.invokeModel },
-      () => Promise.resolve(callable(...context.args)),
-    );
+    const api: RscServerFunctionApi = Object.freeze({
+      signal: context.signal,
+      context: context.context,
+      invokeModel(id: string, input: unknown) {
+        if (typeof id !== 'string' || id.length === 0) {
+          throw new TypeError('RSC Model id must not be empty');
+        }
+        return context.invokeModel(id, input);
+      },
+    });
+    return Promise.resolve(callable(api, ...context.args));
   }
 }

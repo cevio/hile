@@ -604,7 +604,7 @@ export class Registry extends Server {
     for (const key of entry.subscribers.values()) {
       try {
         if (this.clients.has(key)) {
-          this.clients.get(key)!.push(`/-/topic/update`, { topic, payload });
+          this.clients.get(key)!.pushControl(`/-/topic/update`, { topic, payload });
         }
       } catch {
         // 推送失败，disconnect 事件中会清理

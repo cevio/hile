@@ -32,13 +32,14 @@ Message handler file:
 
 ```ts
 // src/messages/ping.msg.ts
-import { defineMessage } from '@hile/message-loader'
+import { defineMicroMessage } from '@hile/micro'
 
-export default defineMessage(async ({ data, params }) => {
+export default defineMicroMessage(async ({ data, params, invocation }) => {
   return {
     type: 'pong',
     data,
     params,
+    requestId: invocation.context.values.requestId,
     timestamp: Date.now(),
   }
 })
@@ -71,7 +72,11 @@ export default defineService('micro.app', async (shutdown) => {
 Caller:
 
 ```ts
-const result = await app.call('example.service', '/ping', { hello: 'world' })
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext } from '@hile/context'
+
+const context = createExecutionContext({ requestId: randomUUID() })
+const result = await app.call('example.service', '/ping', { hello: 'world' }, { context })
 ```
 
 ## More Examples
@@ -80,11 +85,11 @@ Streaming handler:
 
 ```ts
 // src/messages/events.msg.ts
-import { defineMessage } from '@hile/message-loader'
+import { defineMicroMessage } from '@hile/micro'
 
-export default defineMessage(async function* () {
+export default defineMicroMessage(async function* ({ invocation }) {
   for (let i = 0; i < 3; i++) {
-    yield { seq: i }
+    yield { seq: i, requestId: invocation.context.values.requestId }
   }
 })
 ```
@@ -92,7 +97,7 @@ export default defineMessage(async function* () {
 Streaming caller:
 
 ```ts
-const stream = await app.stream('example.service', '/events', {})
+const stream = await app.stream('example.service', '/events', {}, { context })
 for await (const chunk of stream) {
   console.log(chunk)
 }
@@ -129,13 +134,13 @@ Use the message packages for request/response messaging over WebSocket, process 
 
 - Do not use `stream()` for normal single-result calls.
 - Do not rely on message IDs for business idempotency. They are transport IDs.
-- Do not bypass `defineMessage()` for file-loaded handlers.
+- Use `defineMicroMessage()` for Micro business handlers; reserve generic `defineMessage()` for transport-neutral loaders.
 - Do not pass zero, fractional, non-finite, or oversized message timeouts. Explicit timeout values must be safe integers from `1` through `2_147_483_647` milliseconds.
 
 ## Install
 
 ```bash
-pnpm add @hile/micro @hile/message-loader @hile/message-ws
+pnpm add @hile/context @hile/micro @hile/message-loader @hile/message-ws
 ```
 
 Use transport-specific packages only when you need to build custom IPC or worker-thread bridges.
@@ -144,7 +149,8 @@ Use transport-specific packages only when you need to build custom IPC or worker
 
 ```ts
 import { defineMessage, MessageLoader } from '@hile/message-loader'
-import { Application, Registry, Server } from '@hile/micro'
+import { createExecutionContext } from '@hile/context'
+import { Application, defineMicroMessage, Registry, Server } from '@hile/micro'
 import { MessageWs } from '@hile/message-ws'
 import { MessageIpc } from '@hile/message-ipc'
 import { MessageWorkerThread } from '@hile/message-worker-thread'
@@ -152,7 +158,7 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 
 ## Compose With
 
-- `@hile/context` propagates context in micro message metadata.
+- Pass `ExecutionContext` explicitly in every business call or stream option; the receiver gets it in `invocation.context`.
 - `@hile/redis-idempotency` protects retryable side effects in message handlers.
 - `@hile/redis-stream-queue` is better for durable background jobs.
 
@@ -167,8 +173,8 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 - Each modem schedules request, total-stream, and idle-stream deadlines through one internal deadline scheduler. This reduces active Node.js timers without changing timeout, cancellation, ordering, or error semantics.
 - `@hile/message-ws` keeps public `decodeMessageFrame()` payloads isolated from caller-owned input by default. Its owned WebSocket `RawData` path uses a zero-copy binary Flight payload view internally.
 - A stream request requires `exec()` to return an async iterable.
-- `Application.call(namespace, url, data, options?)` returns a promise.
-- `Application.stream(namespace, url, data, options?)` returns a readable stream.
+- `Application.call(namespace, url, data, options)` requires `options.context` and returns a promise.
+- `Application.stream(namespace, url, data, options)` requires `options.context` and returns a readable stream.
 - `Application.publish(topic, payload)` returns an object with `update()` and `unpublish()`.
 - `Application.subscribe(topic, callback)` returns an unsubscribe function.
 - `Registry` stores service addresses and retained config/topic state under `~/.registry`.
@@ -182,8 +188,8 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 
 ## Verification Checklist
 
-- Message files default-export `defineMessage(...)`.
-- RPC callers use `await app.call(...)`.
+- Micro message files default-export `defineMicroMessage(...)` and receive `invocation.context`.
+- RPC callers use `await app.call(..., { context })`.
 - Streaming handlers are async generators.
 - Custom modem timeout values use the documented safe-integer range.
 - Registry is started before application nodes need discovery.
@@ -203,10 +209,10 @@ Provider handler:
 
 ```ts
 // src/messages/charge.msg.ts
-import { defineMessage } from '@hile/message-loader'
+import { defineMicroMessage } from '@hile/micro'
 
-export default defineMessage(async ({ data }) => {
-  return { charged: true, input: data }
+export default defineMicroMessage(async ({ data, invocation }) => {
+  return { charged: true, input: data, requestId: invocation.context.values.requestId }
 })
 ```
 
@@ -234,10 +240,14 @@ export default defineService('billing.micro', async (shutdown) => {
 Consumer:
 
 ```ts
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext } from '@hile/context'
+
+const context = createExecutionContext({ requestId: randomUUID(), tenantId: 't1' })
 const result = await app.call('billing', '/charge', {
   tenantId: 't1',
   amount: 100,
-})
+}, { context })
 ```
 
 ## File Layout
@@ -257,16 +267,15 @@ Use this recipe when services communicate over Hile registry-backed RPC.
 ## Packages To Use
 
 - `@hile/micro`
-- `@hile/message-loader`
-- `@hile/context` when context must cross service boundaries
+- `@hile/context` for the required explicit execution context carrier
 - `@hile/redis-idempotency` for retryable side effects
 
 ## Implementation Steps
 
 1. Start a Registry with `hile registry`.
 2. Start providers with stable namespaces.
-3. Load `*.msg.ts` handlers through `app.load()`.
-4. Call providers with `await app.call(namespace, url, data)`.
+3. Default-export `defineMicroMessage()` handlers and load them through `app.load()`.
+4. Create context at ingress and call providers with `await app.call(namespace, url, data, { context })`.
 5. Use `app.stream()` only for async-generator handlers.
 
 ## Failure And Cleanup Behavior
@@ -279,8 +288,8 @@ Use this recipe when services communicate over Hile registry-backed RPC.
 
 - Registry is reachable.
 - Provider namespace matches consumer call.
-- Handlers default-export `defineMessage()`.
-- Consumer code awaits `app.call(...)` directly.
+- Handlers default-export `defineMicroMessage()` and consume explicit invocation context when needed.
+- Consumer code awaits `app.call(..., { context })` directly.
 
 
 

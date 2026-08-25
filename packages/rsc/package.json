@@ -101,6 +101,7 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
+    "@hile/context": "workspace:^",
     "@hile/model": "workspace:^",
     "react-server-dom-webpack": "19.2.8"
   },

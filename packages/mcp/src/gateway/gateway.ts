@@ -1,3 +1,4 @@
+import { parseExecutionContext, type ExecutionContext } from '@hile/context';
 import {
   McpServer,
   ResourceTemplate,
@@ -33,6 +34,8 @@ export interface McpGateway {
 
 export interface CreateMcpGatewayOptions {
   source: McpProviderSource;
+  /** Resolves the explicit Hile execution context owned by the ingress/runtime. */
+  executionContext: (request: McpRequestContext) => ExecutionContext;
   info: Implementation;
   instructions?: string;
   cacheHints?: ServerOptions['cacheHints'];
@@ -72,6 +75,7 @@ interface CatalogState {
 }
 interface LiveProjection {
   server: McpServer;
+  executionContext: ExecutionContext;
   authInfo?: AuthInfo;
   principal?: McpPrincipal;
   era: 'legacy' | 'modern';
@@ -326,9 +330,9 @@ export class McpGatewayRuntime implements McpGateway {
     return this.options.isCapabilityExposed?.(entry.view, currentPrincipal) ?? true;
   }
 
-  private invoke(entry: CatalogEntry, input: unknown, authInfo: AuthInfo | undefined, ctx: ServerContext) {
+  private invoke(entry: CatalogEntry, input: unknown, authInfo: AuthInfo | undefined, ctx: ServerContext, executionContext: ExecutionContext) {
     if (this.closed) return Promise.reject(new HileMcpError('GATEWAY_CLOSED', 'MCP gateway is closed'));
-    const invocation = this.invokeActive(entry, input, authInfo, ctx);
+    const invocation = this.invokeActive(entry, input, authInfo, ctx, executionContext);
     this.activeInvocations.add(invocation);
     void invocation.finally(() => { this.activeInvocations.delete(invocation); }).catch(() => undefined);
     return invocation;
@@ -340,9 +344,10 @@ export class McpGatewayRuntime implements McpGateway {
     value: string,
     context: { arguments?: Record<string, string> } | undefined,
     authInfo: AuthInfo | undefined,
+    executionContext: ExecutionContext,
   ) {
     if (this.closed) return Promise.reject(new HileMcpError('GATEWAY_CLOSED', 'MCP gateway is closed'));
-    const completion = this.completeActive(entry, argument, value, context, authInfo);
+    const completion = this.completeActive(entry, argument, value, context, authInfo, executionContext);
     this.activeInvocations.add(completion);
     void completion.finally(() => { this.activeInvocations.delete(completion); }).catch(() => undefined);
     return completion;
@@ -354,12 +359,14 @@ export class McpGatewayRuntime implements McpGateway {
     value: string,
     context: { arguments?: Record<string, string> } | undefined,
     authInfo: AuthInfo | undefined,
+    executionContext: ExecutionContext,
   ) {
     const signal = this.lifecycle.signal;
     signal.throwIfAborted();
     const instance = this.select(entry);
     const input = { argument, value, context };
     const descriptor = {
+      executionContext,
       providerId: entry.providerId,
       instanceId: instance.instanceId,
       fingerprint: entry.manifest.fingerprint,
@@ -375,7 +382,10 @@ export class McpGatewayRuntime implements McpGateway {
         ? await this.options.invocationSecurity.credentials.create(descriptor, principal(authInfo), signal)
         : undefined,
     };
-    const stream = await this.options.source.stream(instance, MCP_OPERATIONS.complete, request, { signal });
+    const stream = await this.options.source.stream(instance, MCP_OPERATIONS.complete, request, {
+      context: executionContext,
+      signal,
+    });
     let result: unknown;
     let completed = false;
     for await (const frame of stream) {
@@ -391,7 +401,7 @@ export class McpGatewayRuntime implements McpGateway {
     return result;
   }
 
-  private async invokeActive(entry: CatalogEntry, input: unknown, authInfo: AuthInfo | undefined, ctx: ServerContext) {
+  private async invokeActive(entry: CatalogEntry, input: unknown, authInfo: AuthInfo | undefined, ctx: ServerContext, executionContext: ExecutionContext) {
     const retries = entry.capability.execution?.retry === 'idempotent-failover' ? 1 : 0;
     const signal = AbortSignal.any([ctx.mcpReq.signal, this.lifecycle.signal]);
     const request = {
@@ -413,6 +423,7 @@ export class McpGatewayRuntime implements McpGateway {
         request.instanceId = instance.instanceId;
         request.credential = this.options.invocationSecurity.mode === 'credential'
           ? await this.options.invocationSecurity.credentials.create({
+          executionContext,
           providerId: entry.providerId,
           instanceId: instance.instanceId,
           fingerprint: entry.manifest.fingerprint,
@@ -422,6 +433,7 @@ export class McpGatewayRuntime implements McpGateway {
           }, principal(authInfo), signal)
           : undefined;
         const stream = await this.options.source.stream(instance, MCP_OPERATIONS.invoke, request, {
+          context: executionContext,
           timeout: entry.capability.execution?.timeoutMs,
           signal,
         });
@@ -479,6 +491,7 @@ export class McpGatewayRuntime implements McpGateway {
     });
     const projection: LiveProjection = {
       server,
+      executionContext: parseExecutionContext(this.options.executionContext(request)),
       authInfo: request.authInfo,
       principal: principal(request.authInfo),
       era: request.era ?? 'legacy',
@@ -555,7 +568,7 @@ export class McpGatewayRuntime implements McpGateway {
         annotations: entry.capability.annotations as any,
         icons: cloneIcons(entry.capability.icons),
         _meta: cloneMeta(entry.capability._meta),
-        }, (input, ctx) => this.invoke(entry, input, projection.authInfo, ctx)));
+        }, (input, ctx) => this.invoke(entry, input, projection.authInfo, ctx, projection.executionContext)));
       }
       for (const entry of resources) {
         const config = {
@@ -570,30 +583,30 @@ export class McpGatewayRuntime implements McpGateway {
         };
         if (entry.capability.uri) {
           projection.handles.push(projection.server.registerResource(entry.publicName, entry.capability.uri, config, (uri, ctx) =>
-            this.invoke(entry, uri.toString(), projection.authInfo, ctx)));
+            this.invoke(entry, uri.toString(), projection.authInfo, ctx, projection.executionContext)));
         } else if (entry.capability.uriTemplate) {
           const completionArguments = entry.capability.completionArguments ?? [];
           const template = completionArguments.length ? new ResourceTemplate(entry.capability.uriTemplate, {
             list: undefined,
             complete: Object.fromEntries(completionArguments.map(argument => [argument, (value: string, context?: { arguments?: Record<string, string> }) =>
-              this.complete(entry, argument, value, context, projection.authInfo)])),
+              this.complete(entry, argument, value, context, projection.authInfo, projection.executionContext)])),
           }) : entry.resourceTemplate!;
           projection.handles.push(projection.server.registerResource(entry.publicName, template, config, (_uri, variables, ctx) =>
-            this.invoke(entry, variables, projection.authInfo, ctx)));
+            this.invoke(entry, variables, projection.authInfo, ctx, projection.executionContext)));
         }
       }
       for (const entry of prompts) {
         const argsSchema = promptSchemaWithCompletions(
           entry.capability.inputSchema ?? { type: 'object' },
           entry.capability.completionArguments,
-          (argument, value, context) => this.complete(entry, argument, value, context, projection.authInfo),
+          (argument, value, context) => this.complete(entry, argument, value, context, projection.authInfo, projection.executionContext),
         );
         projection.handles.push(projection.server.registerPrompt(entry.publicName, {
           title: entry.capability.title, description: entry.capability.description,
           argsSchema,
           icons: cloneIcons(entry.capability.icons),
           _meta: cloneMeta(entry.capability._meta),
-        }, (input, ctx) => this.invoke(entry, input, projection.authInfo, ctx)));
+        }, (input, ctx) => this.invoke(entry, input, projection.authInfo, ctx, projection.executionContext)));
       }
       projection.names = next;
     } catch (error) {
@@ -653,6 +666,7 @@ export async function createMcpGateway(options: CreateMcpGatewayOptions): Promis
   }
   if (options.isCapabilityExposed !== undefined && typeof options.isCapabilityExposed !== 'function') throw new TypeError('MCP isCapabilityExposed must be a function');
   if (options.onError !== undefined && typeof options.onError !== 'function') throw new TypeError('MCP gateway onError must be a function');
+  if (typeof options.executionContext !== 'function') throw new TypeError('MCP gateway executionContext must be a function');
   const allowedCacheMethods = new Set(['tools/list', 'prompts/list', 'resources/list', 'resources/templates/list', 'resources/read', 'server/discover']);
   if (options.cacheHints !== undefined && (!options.cacheHints || typeof options.cacheHints !== 'object'
     || Object.entries(options.cacheHints).some(([method, hint]) => !allowedCacheMethods.has(method) || !hint || typeof hint !== 'object'

@@ -1,4 +1,9 @@
 import type { IncomingMessage } from 'node:http';
+import {
+  MissingExecutionContextError,
+  parseExecutionContext,
+  type ExecutionContext,
+} from '@hile/context';
 import type { RscPluginLocator } from '../transport';
 
 export interface RscHostActionRequest {
@@ -9,6 +14,7 @@ export interface RscHostActionRequest {
 }
 
 export interface RscActionRequestContext {
+  context: ExecutionContext;
   signal?: AbortSignal;
   headers?: Readonly<Record<string, string | string[] | undefined>>;
 }
@@ -110,20 +116,22 @@ export class RscActionGateway {
   }
 
   public async invoke(value: unknown, context: RscActionRequestContext): Promise<unknown> {
+    if (!context?.context) throw new MissingExecutionContextError('RSC action gateway');
+    context = { ...context, context: parseExecutionContext(context.context) };
     const request = parseRequest(value);
     if (!await this.authorize(request, context)) {
       throw new RscActionGatewayError('ERR_RSC_ACTION_FORBIDDEN', 'RSC action request was denied');
     }
     const lease = await this.locator.resolve(
       { pluginId: request.pluginId, buildId: request.buildId },
-      { signal: context.signal },
+      { context: context.context, signal: context.signal },
     );
     try {
       return await lease.client.action({
         buildId: request.buildId,
         actionId: request.actionId,
         input: request.input,
-      }, { signal: context.signal });
+      }, { context: context.context, signal: context.signal });
     } finally {
       await lease.release();
     }
@@ -208,13 +216,16 @@ export function createRscActionMiddleware(options: RscActionMiddlewareOptions) {
       return;
     }
     try {
+      if (!context.requestContext?.context) {
+        throw new MissingExecutionContextError('RSC action HTTP ingress');
+      }
       const body = await readJson(context, limit);
       const input = body && typeof body === 'object' && !Array.isArray(body)
         ? (body as { input?: unknown }).input
         : undefined;
       context.body = await options.gateway.invoke(
         { pluginId, buildId, actionId, input },
-        { ...context.requestContext, signal: context.signal ?? context.requestContext?.signal },
+        { ...context.requestContext, signal: context.signal ?? context.requestContext.signal },
       );
       context.status = 200;
       context.type = 'application/json; charset=utf-8';

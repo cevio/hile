@@ -129,6 +129,8 @@ pnpm exec hile-rsc verify
 Compose a host runtime:
 
 ```ts
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext } from '@hile/context'
 import { RscHostRuntime } from '@hile/rsc/host'
 
 const runtime = new RscHostRuntime({
@@ -139,6 +141,7 @@ const runtime = new RscHostRuntime({
 })
 
 const tree = await runtime.render({
+  context: createExecutionContext({ requestId: randomUUID() }),
   pluginId,
   request: { buildId, path, params, searchParams },
   signal,
@@ -272,13 +275,13 @@ The server, browser, and SSR esbuild contexts are reused. Browser and SSR contex
 
 A plugin-owned module-level `'use server'` directive creates immutable, build-scoped Server Function references. Client Components import those functions normally and may pass them to React `useActionState` or a form `action`. The browser sends one same-origin POST to the Host; the Host authorizes it, resolves the exact `{ pluginId, buildId }` lease, and forwards the invocation through the internal RSC transport to the plugin microservice.
 
-Server Functions are UI adapters, not another domain layer. Call an automatically loaded `defineActionModel()` with `invokeRscModel()` inside the Server Function. Inline closure-capturing `'use server'` functions, re-exports, synchronous exports, mixed `'use client'`/`'use server'` modules, and external dependency-owned `'use server'` modules fail at compile time. Arguments and return values use the RSC tagged wire codec, including `FormData`, dates, maps, sets, bigint, typed arrays, and promises; unsupported functions, class instances, non-global symbols, cyclic data, non-canonical binary encodings, and values outside configured depth/node/string/binary limits fail closed.
+Server Functions are UI adapters, not another domain layer. Define them with `defineRscServerFunction(async (api, ...args) => ...)`: Hile hides `api` from the public React call signature, then supplies that explicit request-scoped capability at runtime. Call an automatically loaded `defineActionModel()` with `api.invokeModel()`; the API also carries the request `signal` and `context`, without module-level ambient state. Inline closure-capturing `'use server'` functions, ordinary unwrapped async exports, re-exports, synchronous exports, mixed `'use client'`/`'use server'` modules, and external dependency-owned `'use server'` modules fail at compile time. Arguments and return values use the RSC tagged wire codec, including `FormData`, dates, maps, sets, bigint, typed arrays, and promises; unsupported functions, class instances, non-global symbols, cyclic data, non-canonical binary encodings, and values outside configured depth/node/string/binary limits fail closed.
 
 ### Do not confuse the two action paths
 
 | Path | Intended use | Browser API | Domain execution |
 |---|---|---|---|
-| React Server Function | Preferred for new plugin UI behavior | Import an async export from a module-level `'use server'` file; call it, pass it as `formAction`, or use `useActionState` | Call `invokeRscModel(actionId, input)`; the target must be a scanned `defineActionModel()` |
+| React Server Function | Preferred for new plugin UI behavior | Import a `defineRscServerFunction()` export from a module-level `'use server'` file; call it, pass it as `formAction`, or use `useActionState` | The definition callback receives `RscServerFunctionApi` first and calls `api.invokeModel(actionId, input)`; the target must be a scanned `defineActionModel()` |
 | Direct RSC Action Gateway | Lower-level compatibility/infrastructure integration | Explicit action POST through `RscActionGateway` | Resolves the same action-model registry, but does not provide React Server Function semantics |
 
 The word “Server Action” in React/Next documentation describes a Server Function used for mutations or forms. In this architecture, use the broader and less ambiguous term **Server Function** for the `'use server'` path.
@@ -296,7 +299,7 @@ The word “Server Action” in React/Next documentation describes a Server Func
 
 - A plugin component is a Server Component by default; it does not need `'use server'`.
 - A module-level `'use client'` marks the client boundary. Its transitive browser graph is built by the shared custom directive graph and esbuild pipeline, SSR-rendered with the Host React runtime, then hydrated from immutable same-origin assets.
-- A module-level `'use server'` marks all supported async exports as build-scoped Server Functions. This implementation intentionally does not support Next's inline closure-capturing form.
+- A module-level `'use server'` marks `defineRscServerFunction()` exports as build-scoped Server Functions. Ordinary async exports and Next's inline closure-capturing form are intentionally rejected.
 - Directive recognition parses the JavaScript directive prologue; it is not a substring or regular-expression check.
 - Imported CSS is emitted as integrity-declared plugin assets. CSS Modules and library CSS that esbuild can bundle follow the same path.
 - CSS-in-JS libraries that require an SSR collector must be composed at the correct owner. The Host owns its outer layout collector; a plugin owns providers inside its client boundary. Never create a second React runtime or assume a plugin can mutate the Host document head outside the declared asset/provider contracts.
@@ -457,7 +460,7 @@ Before writing code, preserve these invariants:
 1. Use `HileRscPluginRuntime` as the plugin lifecycle composition root.
 2. Use `HileRscDiscoveryHost` for automatic Host deployment.
 3. Use `RscHostRuntime` plus `decodePluginFlight()` inside a dynamic Next route.
-4. Use a module-level `'use server'` file for React Server Functions and call scanned `defineActionModel()` definitions through `invokeRscModel()`.
+4. Use a module-level `'use server'` file with `defineRscServerFunction()` and call scanned `defineActionModel()` definitions through its explicit API argument.
 5. Keep exact React/RSC versions identical across Host, plugin, and build config.
 6. Treat `buildId` and artifact directories as immutable. A changed artifact requires a new build ID or development revision.
 7. Choose discovery trust explicitly: bind each HMAC `keyId` to a plugin-ID allowlist, or use `trusted-internal` only when every internal Micro peer is trusted.
@@ -659,11 +662,10 @@ Minimal `src/plugin/plugin.css` for proving style delivery:
 Create `src/models/example/increment.model.ts`:
 
 ```ts
-import { defineActionModel, getModelExecutionContext } from '@hile/model'
+import { defineActionModel } from '@hile/model'
 
-export default defineActionModel(async (input: { value: number }) => {
-  const signal = getModelExecutionContext()?.signal
-  if (signal?.aborted) throw signal.reason
+export default defineActionModel(async (input: { value: number }, invocation) => {
+  if (invocation.signal.aborted) throw invocation.signal.reason
   if (!Number.isFinite(input.value)) throw new TypeError('value must be finite')
   return { value: input.value + 1 }
 })
@@ -674,22 +676,23 @@ Create `src/plugin/actions.ts`:
 ```ts
 'use server'
 
-import { invokeRscModel } from '@hile/rsc/plugin'
+import { defineRscServerFunction } from '@hile/rsc/plugin'
 
-export async function increment(
+export const increment = defineRscServerFunction(async (
+  api,
   _previous: { value: number; invoked: boolean },
   formData: FormData,
-) {
+) => {
   const raw = formData.get('value')
   if (typeof raw !== 'string' || raw.trim() === '') throw new TypeError('value is required')
   const value = Number(raw)
   if (!Number.isFinite(value)) throw new TypeError('value must be finite')
-  const result = await invokeRscModel('example/increment', { value }) as { value: number }
+  const result = await api.invokeModel('example/increment', { value }) as { value: number }
   return { ...result, invoked: true }
-}
+})
 ```
 
-This follows the React/Next module-level Server Function shape: the client imports an async export and `useActionState` adds previous state as the first argument. Hile compiles a build-scoped reference instead of using Next's application compiler. The request still enters the one public Host, is authorized there, acquires the exact build lease, runs in the plugin microservice, then invokes the Model.
+This follows the React/Next module-level Server Function shape: the client imports an async callable and `useActionState` supplies previous state and form data. `defineRscServerFunction()` keeps that public signature intact while its callback explicitly receives the request API first. Hile compiles a build-scoped reference instead of using Next's application compiler. The request still enters the one public Host, is authorized there, acquires the exact build lease, runs in the plugin microservice, then invokes the Model.
 
 The Client Component does not manually append `buildId` to the Server Function arguments. The compiled Server Function reference and `RscNextClientRuntime` carry the exact plugin/build identity to the Host gateway. Passing `rsc` into the Client Boundary remains useful for display, cache keys, diagnostics, and any lower-level direct Action request; it must match the active deployment and must never be replaced with the base config build ID.
 
@@ -702,7 +705,7 @@ Model rules:
 - Model pipelines and services remain supported because execution uses `@hile/model`.
 - Keep authentication/authorization in the Host policy and application layer; validate action input again in the Server Function or Model.
 
-Supported Hile Server Function syntax is deliberately narrower than Next: use a plugin-owned module-level `'use server'` file whose exports are async functions. Inline closure-capturing directives, re-exports, synchronous exports, mixed client/server directives, and dependency-owned directives fail during compilation.
+Supported Hile Server Function syntax is deliberately narrower than Next: use a plugin-owned module-level `'use server'` file whose exports are created by `defineRscServerFunction()`. Ordinary unwrapped async exports, inline closure-capturing directives, re-exports, synchronous exports, mixed client/server directives, and dependency-owned directives fail during compilation.
 
 ## 5. Start The Plugin Microservice
 
@@ -921,6 +924,8 @@ HMAC deployments should source discovery secrets from a secret manager. All depl
 Create `src/app/plugins/[pluginId]/[[...path]]/page.tsx`:
 
 ```tsx
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext } from '@hile/context'
 import { loadService } from '@hile/core'
 import { getHttpNextRequestSignal } from '@hile/http-next'
 import { RscClientRuntimeProvider } from '@hile/rsc/client'
@@ -946,6 +951,7 @@ export default async function PluginPage({ params, searchParams }: {
     decoder: { decode: (flight) => decodePluginFlight(flight) },
   })
   const tree = await runtime.render({
+    context: createExecutionContext({ requestId: randomUUID() }),
     pluginId,
     request: {
       buildId: active.buildId,
@@ -1271,7 +1277,7 @@ An implementation is not complete until tests prove:
 - [ ] Plugin and Host runtime pins match the compatibility tuple supported by their installed RSC packages.
 - [ ] Plugin process uses `--conditions=react-server` and creates no HTTP server.
 - [ ] Models load before `HileRscPluginRuntime.start()`.
-- [ ] New UI behavior uses module-level `'use server'` → `invokeRscModel()` → `defineActionModel()`.
+- [ ] New UI behavior uses module-level `'use server'` → `defineRscServerFunction()` → explicit API → `defineActionModel()`.
 - [ ] Host and plugin select the same explicit discovery trust mode; HMAC mode binds `keyId` to explicit plugin IDs.
 - [ ] Host mounts assets, Server Functions, and development SSE on its one HTTP server.
 - [ ] Dynamic Next route resolves and passes the exact active build ID and abort signal.

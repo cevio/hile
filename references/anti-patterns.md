@@ -43,7 +43,7 @@ Avoid assuming Zod coercion has rewritten Koa context values. The current contro
 
 Avoid putting business logic only in controllers or Next.js pages when it needs reuse. Put domain logic in `@hile/model`, then call `loadModel()`.
 
-Avoid calling `loadModel(model, primitive)`. Model input must be an object.
+Avoid calling `loadModel(model, primitive, invocation)`. Model input must be an object.
 
 ## Messaging
 
@@ -52,7 +52,7 @@ Avoid old message examples that append a second response getter after `request()
 Current APIs return the response promise directly:
 
 ```ts
-const result = await client.request('/x', data)
+const result = await client.request('/x', data, { context })
 ```
 
 Avoid `stream()` for single-value RPC. It requires the remote handler to return an async iterable.

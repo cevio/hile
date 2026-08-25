@@ -13,13 +13,14 @@ Message handler file:
 
 ```ts
 // src/messages/ping.msg.ts
-import { defineMessage } from '@hile/message-loader'
+import { defineMicroMessage } from '@hile/micro'
 
-export default defineMessage(async ({ data, params }) => {
+export default defineMicroMessage(async ({ data, params, invocation }) => {
   return {
     type: 'pong',
     data,
     params,
+    requestId: invocation.context.values.requestId,
     timestamp: Date.now(),
   }
 })
@@ -52,7 +53,11 @@ export default defineService('micro.app', async (shutdown) => {
 Caller:
 
 ```ts
-const result = await app.call('example.service', '/ping', { hello: 'world' })
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext } from '@hile/context'
+
+const context = createExecutionContext({ requestId: randomUUID() })
+const result = await app.call('example.service', '/ping', { hello: 'world' }, { context })
 ```
 
 ## More Examples
@@ -61,11 +66,11 @@ Streaming handler:
 
 ```ts
 // src/messages/events.msg.ts
-import { defineMessage } from '@hile/message-loader'
+import { defineMicroMessage } from '@hile/micro'
 
-export default defineMessage(async function* () {
+export default defineMicroMessage(async function* ({ invocation }) {
   for (let i = 0; i < 3; i++) {
-    yield { seq: i }
+    yield { seq: i, requestId: invocation.context.values.requestId }
   }
 })
 ```
@@ -73,7 +78,7 @@ export default defineMessage(async function* () {
 Streaming caller:
 
 ```ts
-const stream = await app.stream('example.service', '/events', {})
+const stream = await app.stream('example.service', '/events', {}, { context })
 for await (const chunk of stream) {
   console.log(chunk)
 }
@@ -108,10 +113,10 @@ Provider handler:
 
 ```ts
 // src/messages/charge.msg.ts
-import { defineMessage } from '@hile/message-loader'
+import { defineMicroMessage } from '@hile/micro'
 
-export default defineMessage(async ({ data }) => {
-  return { charged: true, input: data }
+export default defineMicroMessage(async ({ data, invocation }) => {
+  return { charged: true, input: data, requestId: invocation.context.values.requestId }
 })
 ```
 
@@ -139,10 +144,14 @@ export default defineService('billing.micro', async (shutdown) => {
 Consumer:
 
 ```ts
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext } from '@hile/context'
+
+const context = createExecutionContext({ requestId: randomUUID(), tenantId: 't1' })
 const result = await app.call('billing', '/charge', {
   tenantId: 't1',
   amount: 100,
-})
+}, { context })
 ```
 
 ## Anti-Patterns

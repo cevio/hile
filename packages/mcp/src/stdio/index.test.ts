@@ -1,4 +1,5 @@
 import { Client } from '@modelcontextprotocol/client';
+import { createExecutionContext } from '@hile/context';
 import { InMemoryTransport } from '@modelcontextprotocol/server';
 import { describe, expect, it } from 'vitest';
 import { createMcpGateway } from '../gateway/index.js';
@@ -19,6 +20,7 @@ describe('MCP stdio adapter', () => {
     };
     const gateway = await createMcpGateway({
       source: new InMemoryMcpProviderSource([manifest]),
+      executionContext: () => createExecutionContext({ requestId: 'mcp-stdio-test' }),
       info: { name: 'stdio-test', version: '1.0.0' },
       invocationSecurity: { mode: 'trusted-internal' },
     });

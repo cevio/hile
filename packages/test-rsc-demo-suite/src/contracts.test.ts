@@ -215,7 +215,7 @@ describe('private RSC demo package contracts', () => {
     expect(service).toContain('service.load(');
     expect(service).not.toContain('actions:');
     expect(actionModel).toContain('defineActionModel');
-    expect(actionModel).toContain('getModelExecutionContext');
+    expect(actionModel).toContain('invocation.signal');
     for (const version of ['v1', 'v2']) {
       const pluginRoot = `packages/test-rsc-plugin-capabilities-${version}/src/plugin`;
       const sources = version === 'v1'
@@ -236,7 +236,7 @@ describe('private RSC demo package contracts', () => {
     const clientRuntime = read('packages/test-rsc-host/src/app/rsc-client-runtime.tsx');
 
     expect(action.startsWith("'use server';")).toBe(true);
-    expect(action).toContain("invokeRscModel('increment'");
+    expect(action).toContain("api.invokeModel('increment'");
     expect(client).toContain('useActionState(incrementWithServerFunction');
     expect(client).toContain('action={formAction}');
     expect(client).not.toContain("fetch(");

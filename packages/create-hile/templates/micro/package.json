@@ -17,7 +17,6 @@
   "dependencies": {
     "@hile/core": "^4.0.0",
     "@hile/micro": "^4.0.0",
-    "@hile/message-loader": "^4.0.0",
     "detect-port": "^2.1.0"
   },
   "devDependencies": {

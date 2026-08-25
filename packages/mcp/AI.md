@@ -211,6 +211,8 @@ The provider uses one shared update publication per Micro `Application`. The sou
 Unified gateway and Streamable HTTP adapter:
 
 ```ts
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext } from '@hile/context'
 import {
   createMcpEd25519InvocationCredentialSigner,
 } from '@hile/mcp'
@@ -225,6 +227,10 @@ const source = createHileMcpProviderSource(application, {
 
 const gateway = await createMcpGateway({
   source,
+  executionContext: (request) => createExecutionContext({
+    requestId: randomUUID(),
+    ...(request.authInfo ? { clientId: request.authInfo.clientId } : {}),
+  }),
   info: { name: 'company-mcp', version: '1.0.0' },
   cacheHints: {
     'tools/list': { ttlMs: 30_000, cacheScope: 'public' },
@@ -364,7 +370,7 @@ import { InMemoryMcpProviderSource } from '@hile/mcp/testing'
 
 Names must match `[A-Za-z0-9._-]{1,128}`. Metadata is cloned and frozen when the definition is created. Invalid schemas, annotations, cache hints, completion keys, access policies, timer values, URIs, or retry combinations fail before publication.
 
-Every handler receives `McpInvocationContext`: an abort `signal`, a verified or explicitly trusted `principal`, optional `inputResponses`, `requestState`, and awaited `emit.progress()` / `emit.log()` methods. Treat `requestState` as untrusted unless the gateway configures the official SDK verifier. Template resource variables use the SDK `Variables` shape, so a variable may be a string or string array.
+Every handler receives `McpInvocationContext`: the ingress-owned Hile `executionContext`, an abort `signal`, a verified or explicitly trusted `principal`, optional `inputResponses`, `requestState`, and awaited `emit.progress()` / `emit.log()` methods. Completion handlers receive the same `executionContext`, and capability `access.authorize(principal, input, executionContext)` receives it as its third argument. Credential mode binds the serialized execution context into the signed invocation descriptor, so a carrier cannot be substituted after signing. Treat `requestState` as untrusted unless the gateway configures the official SDK verifier. Template resource variables use the SDK `Variables` shape, so a variable may be a string or string array.
 
 ### Provider and discovery APIs
 
@@ -383,6 +389,7 @@ One Application may attach multiple providers. The provider host shares one disp
 | Option | Meaning |
 |---|---|
 | `source` | Required `McpProviderSource`; production normally uses `createHileMcpProviderSource()` |
+| `executionContext` | Required ingress-owned resolver; its versioned carrier is validated and forwarded to every provider call |
 | `info` | Required official MCP server implementation name and version |
 | `instructions` | Optional server instructions returned to clients |
 | `cacheHints` | Optional official SDK cache hints for list/read responses |
@@ -573,6 +580,8 @@ Prompt arguments and RFC 6570 template variables may declare `completions`. Tool
 ### 2. Attach each provider after Micro listen
 
 ```ts
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext } from '@hile/context'
 import { defineService, loadService } from '@hile/core'
 import { createMcpEd25519InvocationCredentialVerifier } from '@hile/mcp'
 import { attachMcpProvider } from '@hile/mcp/micro'
@@ -619,6 +628,10 @@ export default defineService('mcp.gateway', async (shutdown) => {
   })
   const gateway = await createMcpGateway({
     source,
+    executionContext: (request) => createExecutionContext({
+      requestId: randomUUID(),
+      ...(request.authInfo ? { clientId: request.authInfo.clientId } : {}),
+    }),
     info: { name: 'company-mcp', version: '1.0.0' },
     instructions: 'Use provider-prefixed names and request confirmation before writes.',
     cacheHints: {

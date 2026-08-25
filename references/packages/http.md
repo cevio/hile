@@ -70,7 +70,7 @@ The second parse is intentional when you need parsed/coerced data. Hile's contro
 ## Compose With
 
 - Call `loadModel()` from controllers to keep business logic out of HTTP files.
-- Use `contextHttp()` before controllers to seed request context.
+- Create an `ExecutionContext` at controller ingress and explicitly pass its `InvocationContext` to models and its carrier to transports.
 - Use `rateLimitHttp()` for Redis-backed HTTP quotas.
 
 ## Runtime And Lifecycle Notes

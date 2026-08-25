@@ -178,7 +178,7 @@ describe('@hile/micro config file loading', () => {
     const subscriber = {
       host: '127.0.0.1',
       port: 12346,
-      push: vi.fn(),
+      pushControl: vi.fn(),
     };
     const registry = new Registry(testAdvertise);
     (registry as any).clients.set('127.0.0.1:12346', subscriber);
@@ -197,7 +197,7 @@ describe('@hile/micro config file loading', () => {
         expect(entry?.retained).toBe(true);
         expect(entry?.hasData).toBe(true);
         expect(entry?.data).toBe(101);
-        expect(subscriber.push).toHaveBeenCalledWith('/-/topic/update', { topic, payload: 101 });
+        expect(subscriber.pushControl).toHaveBeenCalledWith('/-/topic/update', { topic, payload: 101 });
       }, { timeout: 3000, interval: 100 });
     } finally {
       watcher?.close();
@@ -266,7 +266,7 @@ describe('@hile/micro config file loading', () => {
     const subscriber = {
       host: '127.0.0.1',
       port: 12345,
-      push: vi.fn(),
+      pushControl: vi.fn(),
     };
     const registry = new Registry(testAdvertise);
     (registry as any).clients.set('127.0.0.1:12345', subscriber);
@@ -282,7 +282,7 @@ describe('@hile/micro config file loading', () => {
       expect(entry?.retained).toBe(true);
       expect(entry?.hasData).toBe(true);
       expect(entry?.data).toBe(100);
-      expect(subscriber.push).toHaveBeenCalledWith('/-/topic/update', { topic, payload: 100 });
+      expect(subscriber.pushControl).toHaveBeenCalledWith('/-/topic/update', { topic, payload: 100 });
     } finally {
       watcher?.close();
     }

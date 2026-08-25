@@ -8,7 +8,9 @@ This README is intentionally short and example-first. The complete AI-facing gui
 
 ## When To Use
 
-Use `@hile/model` for reusable business logic and `@hile/context` for request/work-unit context that should flow through async calls, micro messages, and queue jobs.
+Use `@hile/model` for reusable business logic. Use `@hile/context` to create immutable, versioned context data that an application explicitly carries through HTTP ingress, models, Micro calls, RSC, and queue jobs.
+
+`@hile/context` has no ambient store and owns no `AsyncLocalStorage`. Context identity is protocol data, not module-instance identity.
 
 ## Install
 
@@ -19,49 +21,37 @@ pnpm add @hile/model
 ## Copy-Paste Example
 
 ```ts
-import { defineModel } from '@hile/model'
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext, createInvocationContext } from '@hile/context'
 
-export default defineModel(async (input: { name: string }) => {
-  return { greeting: `Hello ${input.name}` }
-})
+const invocation = createInvocationContext(
+  createExecutionContext({ requestId: randomUUID() }),
+  new AbortController().signal,
+)
 ```
 
-Use it:
-
-```ts
-const result = await loadModel(greetModel, { name: 'Ada' })
-```
-
-Action adapters can discover a model explicitly without changing how it executes:
-
-```ts
-import { defineActionModel } from '@hile/model'
-
-export default defineActionModel(async (input: { value: number }) => ({
-  value: input.value + 1,
-}))
-```
-
-`ModelActionRegistry` extends `@hile/loader.Loader`, scans domain-organized `*.model.*` files, and registers only action-marked models. `RscPluginService.load(modelsDirectory)` owns this lifecycle for RSC plugins.
+Values must be JSON-compatible plain data. Creation snapshots and deeply freezes them. `parseExecutionContext()` validates untrusted or transported values and rejects unsupported protocol versions.
 
 ## Boundaries
 
-- Do not put business logic only in controllers when it will be reused by jobs, pages, or message handlers.
-- Do not add fixed business fields to `@hile/context`; each app owns its context shape.
+- Do not use context as a mutable application state container.
+- Do not put business fields into a framework-owned global schema; each application owns its context values.
+- Do not use ambient state to cross a bundle, Worker, VM, plugin, or transport boundary.
 
-- Passing primitives to `loadModel()`.
-- Mutating context snapshots.
-- Logging whole context objects by default.
-- Assuming context propagation changes business payloads; it should stay in metadata or async storage.
-- Exposing every scanned model as a browser action; only action-marked models may be mounted.
+- Hiding context in module globals, singleton containers, or `AsyncLocalStorage`.
+- Calling `loadModel()` without an invocation.
+- Adding context fields to business payloads merely to compensate for missing transport support.
+- Sending the whole context when only a subset is required.
+- Logging entire context objects by default.
 
 ## Verify
 
-- Models export `defineModel(...)` results.
-- Browser-callable models explicitly use `defineActionModel(...)`.
-- Controllers and pages call `loadModel(model, objectInput)`.
-- Pipeline middleware writes derived state to `ctx.state`.
-- Context keys are app-defined and JSON-serializable when crossing process boundaries.
+- Create context once at each ingress boundary.
+- Pass it explicitly to Model, Micro, RSC, Queue, and Logger APIs.
+- Validate transported context with `parseExecutionContext()`.
+- Use structured-cloneable, JSON-compatible values only.
+- Assert missing context fails before side effects.
+- Test independent module instances and concurrent invocations.
 
 ## More Context
 

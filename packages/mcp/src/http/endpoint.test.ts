@@ -1,12 +1,21 @@
 import { createServer } from 'node:net';
 import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
+import { createExecutionContext } from '@hile/context';
 import { Http } from '@hile/http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createMcpGateway } from '../gateway/index.js';
+import { createMcpGateway as createMcpGatewayRuntime, type CreateMcpGatewayOptions } from '../gateway/index.js';
 import { InMemoryMcpProviderSource } from '../testing/index.js';
 import type { McpProviderManifest } from '../micro/index.js';
 import { createMcpProviderFingerprint } from '../micro/manifest.js';
 import { createMcpHttpEndpoint } from './index.js';
+
+const testExecutionContext = createExecutionContext({ requestId: 'mcp-http-test' });
+
+function createMcpGateway(
+  options: Omit<CreateMcpGatewayOptions, 'executionContext'> & Partial<Pick<CreateMcpGatewayOptions, 'executionContext'>>,
+) {
+  return createMcpGatewayRuntime({ executionContext: () => testExecutionContext, ...options });
+}
 
 async function freePort() {
   const server = createServer();

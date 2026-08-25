@@ -15,4 +15,6 @@ superpowers/
 .vscode
 .codex
 fixtures
+!packages/rsc-build/fixtures/
+!packages/rsc-build/fixtures/**
 test-fixtures

@@ -52,7 +52,7 @@ Hile uses `@hile/loader` conventions:
 ## Model Layer
 
 - `defineModel()` returns a definition.
-- `loadModel(model, input)` runs the model every call.
+- `loadModel(model, input, invocation)` runs the model every call with an explicit execution context and cancellation signal.
 - Model input must be an object.
 - If pipelines are present, the final return value is read from `ctx.state.result`.
 

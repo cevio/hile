@@ -1,5 +1,6 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import { createExecutionContext } from '@hile/context';
 import {
   createMcpEd25519InvocationCredentialSigner,
   createMcpEd25519InvocationCredentialVerifier,
@@ -7,7 +8,11 @@ import {
 } from './security.js';
 
 describe('MCP invocation credentials', () => {
-  const descriptor = { providerId: 'orders', instanceId: 'a', fingerprint: 'f'.repeat(64), kind: 'tool' as const, name: 'lookup', input: { id: '42' } };
+  const descriptor = {
+    executionContext: createExecutionContext({ requestId: 'mcp-security-test' }),
+    providerId: 'orders', instanceId: 'a', fingerprint: 'f'.repeat(64),
+    kind: 'tool' as const, name: 'lookup', input: { id: '42' },
+  };
 
   it('binds a signed principal to one exact invocation and rejects replay', () => {
     const codec = createMcpHmacInvocationCredentialCodec({ secret: 'x'.repeat(32) });
@@ -22,6 +27,10 @@ describe('MCP invocation credentials', () => {
     const credential = codec.create(descriptor, undefined) as string;
     expect(() => codec.verify(`${credential}x`, descriptor)).toThrow(/invalid/i);
     expect(() => codec.verify(credential, { ...descriptor, name: 'delete' })).toThrow(/invalid/i);
+    expect(() => codec.verify(credential, {
+      ...descriptor,
+      executionContext: createExecutionContext({ requestId: 'substituted' }),
+    })).toThrow(/invalid/i);
   });
 
   it('rejects malformed principals before signing', () => {

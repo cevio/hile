@@ -25,6 +25,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@hile/context": "workspace:^",
     "@hile/micro": "workspace:^",
     "@hile/rsc": "workspace:^",
     "@hile/rsc-discovery": "workspace:^"

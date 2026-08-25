@@ -1,8 +1,9 @@
-import type {
-  RscCallOptions,
-  RscPluginClient,
-  RscPluginLease,
-  RscPluginLocator,
+import {
+  requireRscCallOptions,
+  type RscCallOptions,
+  type RscPluginClient,
+  type RscPluginLease,
+  type RscPluginLocator,
 } from '../transport';
 
 export type RscDeploymentState = 'active' | 'draining' | 'inactive';
@@ -194,7 +195,7 @@ export class InMemoryRscDeploymentCatalog {
 }
 
 export interface RscDeploymentSnapshotSource {
-  snapshot(options?: RscCallOptions): Promise<RscDeploymentSnapshot[]>;
+  snapshot(options: RscCallOptions): Promise<RscDeploymentSnapshot[]>;
 }
 
 function validateSnapshot(value: unknown): RscDeploymentSnapshot[] {
@@ -237,8 +238,8 @@ export class RscDeploymentSnapshotCache {
     this.current = next;
   }
 
-  public async refresh(source: RscDeploymentSnapshotSource, options?: RscCallOptions): Promise<void> {
-    const next = await source.snapshot(options);
+  public async refresh(source: RscDeploymentSnapshotSource, options: RscCallOptions): Promise<void> {
+    const next = await source.snapshot(requireRscCallOptions(options, 'RSC deployment snapshot refresh'));
     this.update(next);
   }
 
@@ -254,7 +255,7 @@ export class RscDeploymentSnapshotCache {
 
 export type RscPluginConnector = (
   deployment: RscPluginDeployment,
-  options?: RscCallOptions,
+  options: RscCallOptions,
 ) => Promise<RscPluginClient>;
 
 export function createCatalogRscPluginLocator(
@@ -263,6 +264,7 @@ export function createCatalogRscPluginLocator(
 ): RscPluginLocator {
   return {
     async resolve(target, options): Promise<RscPluginLease> {
+      options = requireRscCallOptions(options, 'RSC catalog plugin resolution');
       const catalogLease = catalog.acquire(target);
       try {
         const client = await connect(catalogLease.deployment, options);

@@ -51,6 +51,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@hile/context": "workspace:^",
     "@hile/loader": "workspace:^",
     "@modelcontextprotocol/node": "^2.0.0",
     "@modelcontextprotocol/server": "^2.0.0",

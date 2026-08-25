@@ -81,12 +81,15 @@ Queue add with delayed retry policy:
 
 ```ts
 await queue.add(emailQueue, payload, {
+  context: invocation.context,
   jobId: `welcome:${payload.tenantId}:${payload.userId}`,
   delay: 10_000,
   maxAttempts: 5,
   backoff: { type: 'exponential', baseMs: 1_000, maxMs: 60_000 },
 })
 ```
+
+`invocation` is the explicit `InvocationContext` supplied by the HTTP, Micro, RSC, Model, or worker boundary that schedules the job.
 
 ## Use When
 
@@ -118,7 +121,7 @@ import { RedisStreamQueue, defineQueue } from '@hile/redis-stream-queue'
 
 - Use `@hile/ioredis` for the Redis client.
 - Use `idempotent()` and `rateLimitModel()` in `@hile/model` pipelines.
-- Use `@hile/context` with queues; active context is snapshotted during enqueue and restored in handlers.
+- Pass `ExecutionContext` explicitly when enqueueing; workers receive the persisted carrier as `invocation.context`.
 - Use `@hile/cache` singleflight to reduce stampedes.
 
 ## Runtime And Lifecycle Notes

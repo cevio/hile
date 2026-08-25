@@ -1,11 +1,25 @@
 import { Readable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
+import {
+  createExecutionContext,
+  MissingExecutionContextError,
+  type InvocationContext,
+} from '@hile/context';
 import type { RscPluginManifest } from './protocol';
 import { RscHostRuntime } from './host/runtime';
 import { createHileRscPluginClient } from './transport/hile';
 import { RscPluginService } from './plugin/service';
 import { attachRscPluginService } from './transport/registrar';
+
+const testContext = createExecutionContext({ requestId: 'composition-test' });
+
+function render(
+  runtime: RscHostRuntime,
+  request: Parameters<RscHostRuntime['render']>[0],
+) {
+  return runtime.render({ context: testContext, ...request });
+}
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -31,10 +45,32 @@ function manifest(): RscPluginManifest {
 }
 
 describe('RSC architecture composition', () => {
+  it('rejects missing context in the Hile transport adapter before calling the application', async () => {
+    const application = { call: vi.fn(), stream: vi.fn() };
+    const client = createHileRscPluginClient(application, 'plugin.runtime');
+
+    expect(() => (client.describe as any)()).toThrow(MissingExecutionContextError);
+    expect(application.call).not.toHaveBeenCalled();
+  });
+
+  it('fails before plugin resolution when host render context is missing', async () => {
+    const resolve = vi.fn();
+    const runtime = new RscHostRuntime({
+      locator: { resolve },
+      decoder: { decode: async () => null },
+    });
+
+    await expect(runtime.render({
+      pluginId: 'org.hile.fixture',
+      request: { buildId: 'build-a', path: '/fixture' },
+    } as never)).rejects.toBeInstanceOf(MissingExecutionContextError);
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
   it('attaches a plugin runtime to any registrar with configurable operation names', async () => {
-    const handlers = new Map<string, (input: { data: unknown; signal?: AbortSignal }) => unknown>();
+    const handlers = new Map<string, (input: { data: unknown; signal?: AbortSignal; invocation?: InvocationContext }) => unknown>();
     const registrar = {
-      register: vi.fn((operation: string, handler: (input: { data: unknown; signal?: AbortSignal }) => unknown) => {
+      register: vi.fn((operation: string, handler: (input: { data: unknown; signal?: AbortSignal; invocation?: InvocationContext }) => unknown) => {
         handlers.set(operation, handler);
         return () => { handlers.delete(operation); };
       }),
@@ -60,6 +96,10 @@ describe('RSC architecture composition', () => {
     expect(await handlers.get('contract.describe')!({ data: null })).toMatchObject({ buildId: 'build-a' });
     const stream = handlers.get('contract.render')!({
       data: { buildId: 'build-a', path: '/fixture' },
+      invocation: {
+        context: createExecutionContext({ requestId: 'composition-test' }),
+        signal: new AbortController().signal,
+      },
     }) as AsyncIterable<Uint8Array>;
     const chunks: Uint8Array[] = [];
     for await (const chunk of stream) chunks.push(chunk);
@@ -142,20 +182,21 @@ describe('RSC architecture composition', () => {
       serverFunction: 'server-function.invoke',
     });
     const signal = new AbortController().signal;
-    const streamOptions = { signal, timeout: 1_000, idleTimeout: 250, window: 8 };
+    const callOptions = { context: testContext, signal };
+    const streamOptions = { ...callOptions, timeout: 1_000, idleTimeout: 250, window: 8 };
 
-    await expect(client.describe({ signal })).resolves.toMatchObject({ pluginId: 'org.hile.fixture' });
+    await expect(client.describe(callOptions)).resolves.toMatchObject({ pluginId: 'org.hile.fixture' });
     await expect(client.render({ buildId: 'build-a', path: '/fixture' }, streamOptions))
       .resolves.toBeInstanceOf(Readable);
-    await expect(client.action({ buildId: 'build-a', actionId: 'fixture', input: {} }, { signal }))
+    await expect(client.action({ buildId: 'build-a', actionId: 'fixture', input: {} }, callOptions))
       .resolves.toEqual({ accepted: true });
     await expect(client.serverFunction({
       buildId: 'build-a', referenceId: 'org.hile.fixture/build-a/src/actions#run',
       args: { type: 'array', value: [] },
-    }, { signal })).resolves.toEqual({ accepted: true });
+    }, callOptions)).resolves.toEqual({ accepted: true });
 
     expect(application.call).toHaveBeenNthCalledWith(
-      1, 'plugin.runtime', 'manifest.read', {}, { signal },
+      1, 'plugin.runtime', 'manifest.read', {}, callOptions,
     );
     expect(application.stream).toHaveBeenCalledWith(
       'plugin.runtime', 'tree.render', { buildId: 'build-a', path: '/fixture' }, streamOptions,
@@ -165,7 +206,7 @@ describe('RSC architecture composition', () => {
       'plugin.runtime',
       'function.invoke',
       { buildId: 'build-a', actionId: 'fixture', input: {} },
-      { signal },
+      callOptions,
     );
     expect(application.call).toHaveBeenNthCalledWith(
       3,
@@ -175,7 +216,7 @@ describe('RSC architecture composition', () => {
         buildId: 'build-a', referenceId: 'org.hile.fixture/build-a/src/actions#run',
         args: { type: 'array', value: [] },
       },
-      { signal },
+      callOptions,
     );
   });
 
@@ -196,7 +237,7 @@ describe('RSC architecture composition', () => {
     const runtime = new RscHostRuntime({ locator, decoder });
     const signal = new AbortController().signal;
 
-    await expect(runtime.render({
+    await expect(render(runtime, {
       pluginId: 'org.hile.fixture',
       request: { buildId: 'build-a', path: '/fixture' },
       signal,
@@ -207,11 +248,11 @@ describe('RSC architecture composition', () => {
 
     expect(locator.resolve).toHaveBeenCalledWith(
       { pluginId: 'org.hile.fixture', buildId: 'build-a' },
-      { signal },
+      { context: testContext, signal },
     );
     expect(client.render).toHaveBeenCalledWith(
       { buildId: 'build-a', path: '/fixture' },
-      { signal, timeout: 10_000, idleTimeout: 2_000, window: 8 },
+      { context: testContext, signal, timeout: 10_000, idleTimeout: 2_000, window: 8 },
     );
     expect(decoder.decode).toHaveBeenCalledWith(expect.any(Object), {
       pluginId: 'org.hile.fixture',
@@ -251,7 +292,7 @@ describe('RSC architecture composition', () => {
       observe,
     });
 
-    await runtime.render({
+    await render(runtime, {
       pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/fixture' },
     });
     expect(release).toHaveBeenCalledOnce();
@@ -277,7 +318,7 @@ describe('RSC architecture composition', () => {
       verifyManifest: true,
     });
 
-    await expect(runtime.render({
+    await expect(render(runtime, {
       pluginId: 'org.hile.fixture',
       request: { buildId: 'build-a', path: '/fixture' },
     })).rejects.toThrow('identity mismatch');
@@ -301,14 +342,47 @@ describe('RSC architecture composition', () => {
       } },
     });
 
-    await runtime.render({
+    await render(runtime, {
       pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/fixture' },
     });
-    await runtime.render({
+    await render(runtime, {
       pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/fixture' },
     });
 
     expect(client.describe).toHaveBeenCalledOnce();
+  });
+
+  it('does not reuse manifest verification across distinct execution contexts', async () => {
+    const client = {
+      describe: vi.fn(async () => manifest()),
+      render: vi.fn(async () => Readable.from([])),
+      action: vi.fn(async () => undefined),
+      serverFunction: vi.fn(async () => ({ type: 'null' as const })),
+    };
+    const runtime = new RscHostRuntime({
+      locator: { resolve: async () => ({
+        client,
+        verificationKey: 'fixture.v1',
+        release: () => undefined,
+      }) },
+      decoder: { decode: async (source) => {
+        for await (const _chunk of source) { /* consume */ }
+        return null;
+      } },
+    });
+
+    await render(runtime, {
+      pluginId: 'org.hile.fixture',
+      request: { buildId: 'build-a', path: '/fixture' },
+      context: createExecutionContext({ tenantId: 'tenant-a' }),
+    });
+    await render(runtime, {
+      pluginId: 'org.hile.fixture',
+      request: { buildId: 'build-a', path: '/fixture' },
+      context: createExecutionContext({ tenantId: 'tenant-b' }),
+    });
+
+    expect(client.describe).toHaveBeenCalledTimes(2);
   });
 
   it('retries immutable manifest verification after a failed attempt', async () => {
@@ -328,10 +402,10 @@ describe('RSC architecture composition', () => {
       } },
     });
 
-    await expect(runtime.render({
+    await expect(render(runtime, {
       pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/fixture' },
     })).rejects.toThrow('temporary describe failure');
-    await expect(runtime.render({
+    await expect(render(runtime, {
       pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/fixture' },
     })).resolves.toBeNull();
     expect(client.describe).toHaveBeenCalledTimes(2);
@@ -353,7 +427,7 @@ describe('RSC architecture composition', () => {
       } },
     });
     const controller = new AbortController();
-    const rendering = runtime.render({
+    const rendering = render(runtime, {
       pluginId: 'org.hile.fixture',
       request: { buildId: 'build-a', path: '/fixture' },
       signal: controller.signal,
@@ -362,7 +436,7 @@ describe('RSC architecture composition', () => {
     await expect(rendering).rejects.toThrow('caller left');
     expect(release).toHaveBeenCalledOnce();
     verification.resolve(manifest());
-    await expect(runtime.render({
+    await expect(render(runtime, {
       pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/fixture' },
     })).resolves.toBeNull();
     expect(client.describe).toHaveBeenCalledOnce();
@@ -389,7 +463,7 @@ describe('RSC architecture composition', () => {
       verificationCacheSize: 2,
     });
     for (const buildId of ['build-a', 'build-b', 'build-c']) {
-      await runtime.render({ pluginId: 'org.hile.fixture', request: { buildId, path: '/' } });
+      await render(runtime, { pluginId: 'org.hile.fixture', request: { buildId, path: '/' } });
     }
     expect(cache.size).toBe(2);
   });
@@ -414,7 +488,7 @@ describe('RSC architecture composition', () => {
       observe,
     });
 
-    await runtime.render({
+    await render(runtime, {
       pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/fixture' },
     });
 
@@ -438,7 +512,7 @@ describe('RSC architecture composition', () => {
       observe,
     });
 
-    await expect(runtime.render({
+    await expect(render(runtime, {
       pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/fixture' },
     })).rejects.toBe(error);
     expect(observe).toHaveBeenCalledWith(expect.objectContaining({
@@ -467,7 +541,7 @@ describe('RSC architecture composition', () => {
       observe,
     });
 
-    await expect(runtime.render({
+    await expect(render(runtime, {
       pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/fixture' },
     })).rejects.toBe(error);
     expect(observe).toHaveBeenCalledOnce();
@@ -503,7 +577,7 @@ describe('RSC architecture composition', () => {
       observe,
     });
     try {
-      await expect(runtime.render({
+      await expect(render(runtime, {
         pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/' },
       })).rejects.toBe(error);
       await new Promise((resolve) => setImmediate(resolve));
@@ -539,7 +613,7 @@ describe('RSC architecture composition', () => {
       observe,
     });
 
-    await expect(runtime.render({
+    await expect(render(runtime, {
       pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/' },
     })).rejects.toBe(error);
     expect(release).toHaveBeenCalledTimes(2);
@@ -569,7 +643,7 @@ describe('RSC architecture composition', () => {
       } },
       observe,
     });
-    await expect(runtime.render({
+    await expect(render(runtime, {
       pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/' },
     })).rejects.toBe(cleanupError);
     expect(observe).toHaveBeenCalledOnce();
@@ -587,7 +661,7 @@ describe('RSC architecture composition', () => {
     const runtime = new RscHostRuntime({
       locator: { resolve }, decoder: { decode: async () => null }, observe,
     });
-    await expect(runtime.render({
+    await expect(render(runtime, {
       pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/' },
       signal: controller.signal,
     })).rejects.toBe(reason);
@@ -608,7 +682,7 @@ describe('RSC architecture composition', () => {
       decoder: { decode: async () => null },
       observe,
     });
-    const rendering = runtime.render({
+    const rendering = render(runtime, {
       pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/' },
       signal: controller.signal,
     });
@@ -649,7 +723,7 @@ describe('RSC architecture composition', () => {
       decoder: { decode: async () => null },
       observe,
     });
-    const rendering = runtime.render({
+    const rendering = render(runtime, {
       pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/' },
     });
     await expect(rendering).rejects.toSatisfy((error: unknown) =>
@@ -682,7 +756,7 @@ describe('RSC architecture composition', () => {
       } },
       decoder: { decode: async () => null },
     });
-    await expect(runtime.render({
+    await expect(render(runtime, {
       pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/' },
     })).rejects.toSatisfy((error: unknown) =>
       error instanceof AggregateError
@@ -722,7 +796,7 @@ describe('RSC architecture composition', () => {
           return null;
         } },
       });
-      await expect(runtime.render({
+      await expect(render(runtime, {
         pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/' },
       })).rejects.toSatisfy((error: unknown) =>
         error instanceof AggregateError
@@ -764,7 +838,7 @@ describe('RSC architecture composition', () => {
       } },
       observe,
     });
-    await expect(runtime.render({
+    await expect(render(runtime, {
       pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/' },
     })).resolves.toBeNull();
     expect(release).toHaveBeenCalledTimes(2);
@@ -804,7 +878,7 @@ describe('RSC architecture composition', () => {
       } },
       observe,
     });
-    await expect(runtime.render({
+    await expect(render(runtime, {
       pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/' },
     })).resolves.toBeNull();
     expect(release).toHaveBeenCalledTimes(2);
@@ -834,8 +908,8 @@ describe('RSC architecture composition', () => {
         return null;
       } },
     });
-    await runtime.render({ pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/' } });
-    await expect(runtime.render({
+    await render(runtime, { pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/' } });
+    await expect(render(runtime, {
       pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/' },
     })).rejects.toThrow('identity mismatch');
     expect(descriptions[0]).toHaveBeenCalledOnce();
@@ -852,7 +926,7 @@ describe('RSC architecture composition', () => {
       { idleTimeout: Number.MAX_SAFE_INTEGER },
       { window: 65 },
     ]) {
-      await expect(runtime.render({
+      await expect(render(runtime, {
         pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/' }, ...options,
       })).rejects.toThrow();
     }
@@ -883,8 +957,8 @@ describe('RSC architecture composition', () => {
         return null;
       } },
     });
-    await runtime.render({ pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/' } });
-    await runtime.render({ pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/' } });
+    await render(runtime, { pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/' } });
+    await render(runtime, { pluginId: 'org.hile.fixture', request: { buildId: 'build-a', path: '/' } });
     expect(describe[0]).toHaveBeenCalledOnce();
     expect(describe[1]).toHaveBeenCalledOnce();
   });

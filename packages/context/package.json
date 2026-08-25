@@ -1,11 +1,11 @@
 {
   "name": "@hile/context",
   "version": "4.0.1",
-  "description": "Typed async context propagation primitives for Hile applications",
+  "description": "Explicit immutable execution context carriers for Hile applications",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
-    "build": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -b --force && fix-esm-import-path --preserve-import-type ./dist",
     "dev": "tsc -b --watch",
     "test": "vitest run"
   },
@@ -22,8 +22,5 @@
     "@types/node": "^26.2.0",
     "fix-esm-import-path": "^1.10.3",
     "vitest": "^4.0.18"
-  },
-  "dependencies": {
-    "@hile/model": "workspace:^"
   }
 }

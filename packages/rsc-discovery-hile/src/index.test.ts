@@ -4,17 +4,29 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createExecutionContext } from '@hile/context';
 import type { RscPluginManifest } from '@hile/rsc/protocol';
 import { canonicalizeRscDiscoveryAnnouncement } from '@hile/rsc-discovery';
 import {
-  downloadHileRscArtifact,
+  downloadHileRscArtifact as downloadHileRscArtifactRuntime,
   createHmacRscDiscoveryAuthorizer,
   createTrustedInternalRscDiscoveryAuthorizer,
   readHileRscDiscoverySnapshot,
   registerHileRscPluginDiscovery,
 } from './index';
+import type { DownloadHileRscArtifactOptions, HileRscArtifactClient } from './downloader';
+import type { RscDiscoveryAnnouncement } from '@hile/rsc-discovery';
 
 const temporaryDirectories: string[] = [];
+const testContext = createExecutionContext({ requestId: 'rsc-artifact-download-test' });
+
+function downloadHileRscArtifact(
+  application: HileRscArtifactClient,
+  input: RscDiscoveryAnnouncement,
+  options: Omit<DownloadHileRscArtifactOptions, 'context'> & Partial<Pick<DownloadHileRscArtifactOptions, 'context'>>,
+) {
+  return downloadHileRscArtifactRuntime(application, input, { context: testContext, ...options });
+}
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((directory) =>
     rm(directory, { recursive: true, force: true })));
@@ -274,6 +286,14 @@ describe('Hile RSC discovery publisher', () => {
 });
 
 describe('Hile RSC discovery reader and artifact downloader', () => {
+  it('rejects a missing execution context before creating an artifact download', async () => {
+    await expect(downloadHileRscArtifactRuntime(
+      {} as HileRscArtifactClient,
+      {} as RscDiscoveryAnnouncement,
+      {} as DownloadHileRscArtifactOptions,
+    )).rejects.toThrow(/Missing execution context.*RSC artifact download/i);
+  });
+
   it('reads all instance topics and quarantines malformed announcements independently', async () => {
     const topics = [
       { topic: '@hile/rsc/discovery/v1/good', hasData: true },

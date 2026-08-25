@@ -1,4 +1,9 @@
 import { Server } from '@hile/micro';
+import {
+  createExecutionContext,
+  MissingExecutionContextError,
+  type InvocationContext,
+} from '@hile/context';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -10,7 +15,29 @@ import {
   encodeRscServerFunctionValue,
 } from '../server-functions/codec';
 import { attachRscPluginService } from '../transport/registrar';
-import { RscPluginService, RscPluginServiceError } from './service';
+import { RscPluginService as BaseRscPluginService, RscPluginServiceError } from './service';
+
+function testInvocation(value?: InvocationContext | AbortSignal): InvocationContext {
+  if (value && 'context' in value) return value;
+  return {
+    context: createExecutionContext({ requestId: 'rsc-plugin-test' }),
+    signal: value ?? new AbortController().signal,
+  };
+}
+
+class RscPluginService extends BaseRscPluginService {
+  public override render(value: unknown, invocation?: InvocationContext | AbortSignal) {
+    return super.render(value, testInvocation(invocation));
+  }
+
+  public override action(value: unknown, invocation?: InvocationContext | AbortSignal) {
+    return super.action(value, testInvocation(invocation));
+  }
+
+  public override serverFunction(value: unknown, invocation?: InvocationContext | AbortSignal) {
+    return super.serverFunction(value, testInvocation(invocation));
+  }
+}
 
 const temporaryModelDirectories: string[] = [];
 const modelModule = new URL('../../../model/src/index.ts', import.meta.url).href;
@@ -87,6 +114,16 @@ function expectServiceError(fn: () => unknown, code: string) {
 
 describe('RscPluginService', () => {
   const modelsDirectory = fileURLToPath(new URL('../../test-fixtures/models', import.meta.url));
+  it('fails directly with a stable error when invocation context is missing', () => {
+    const service = new BaseRscPluginService({
+      manifest: manifest(),
+      renderer: async function* () {},
+    });
+
+    expect(() => service.render({ buildId: 'build-1', path: '/dashboard' }, undefined as never))
+      .toThrow(MissingExecutionContextError);
+  });
+
   it('returns a defensive manifest snapshot', () => {
     const original = manifest();
     const service = new RscPluginService({
@@ -639,11 +676,13 @@ describe('RscPluginService', () => {
 
     expect(server.port).toBeUndefined();
     await expect(server.dispatch('/-/rsc/describe', {})).resolves.toMatchObject({ buildId: 'build-1' });
-    const stream = await server.dispatch('/-/rsc/render', { buildId: 'build-1', path: '/dashboard' });
+    const stream = await server.dispatch('/-/rsc/render', { buildId: 'build-1', path: '/dashboard' }, {
+      invocation: testInvocation(),
+    });
     expect((await collect(stream)).toString()).toBe('flight');
     await expect(server.dispatch('/-/rsc/action', {
       buildId: 'build-1', actionId: 'ping', input: {},
-    })).resolves.toBe('pong');
+    }, { invocation: testInvocation() })).resolves.toBe('pong');
   });
 
   it('prevents duplicate attachment and supports idempotent detach', async () => {

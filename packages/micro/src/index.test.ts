@@ -3,12 +3,14 @@ import { EventEmitter } from 'node:events';
 import { Readable } from 'node:stream';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import WebSocket from 'ws';
+import { createExecutionContext } from '@hile/context';
 import { selectRandomRegistryAddress, parseAddressKey, parseConfigFilename } from './registry';
 import { Application, type CircuitBreakerOptions } from './application';
 import { Registry } from './registry';
 import { Server } from './server';
 
 const testAdvertise = { advertiseHost: '127.0.0.1' as const };
+const testContext = createExecutionContext({ test: true });
 
 async function getAvailablePort(): Promise<number> {
   for (let attempt = 0; attempt < 20; attempt++) {
@@ -628,7 +630,7 @@ describe('@hile/micro application discovery', () => {
 
     try {
       const client = await consumer.get('provider');
-      const result = await client.request<{ value: string }>('/echo', { value: 'ok' });
+      const result = await client.request<{ value: string }>('/echo', { value: 'ok' }, { context: testContext });
       expect(result).toEqual({ value: 'ok' });
     } finally {
       unregisterEcho();
@@ -666,7 +668,7 @@ describe('@hile/micro application discovery', () => {
 
     try {
       const client = await app.get('peer');
-      const result = await client.request('/x', {});
+      const result = await client.request('/x', {}, { context: testContext });
       expect(result).toEqual({ ok: true });
     } finally {
       unregister();
@@ -906,7 +908,7 @@ describe('@hile/micro heartbeat', () => {
       try {
         // Establish consumer → provider connection
         const client = await consumer.get('peer-svc');
-        const result = await client.request('/echo', { value: 'ok' });
+        const result = await client.request('/echo', { value: 'ok' }, { context: testContext });
         expect(result).toEqual({ value: 'ok' });
 
         // Verify provider has the consumer's Client
@@ -941,11 +943,11 @@ describe('@hile/micro circuit breaker', () => {
     const peerB = createFakePeer(1002, vi.fn(async () => ({ ok: true })));
     const app = new CircuitBreakerTestApplication([peerA, peerB]);
 
-    await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
-    await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
-    await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+    await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('A fail');
+    await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('A fail');
+    await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('A fail');
 
-    const result = await app.call('svc', '/api', {}, { retries: 0 });
+    const result = await app.call('svc', '/api', {}, { context: testContext, retries: 0 });
 
     expect(result).toEqual({ ok: true });
     expect(peerA.request).toHaveBeenCalledTimes(3);
@@ -976,13 +978,13 @@ describe('@hile/micro circuit breaker', () => {
     });
 
     try {
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('A fail');
 
       vi.setSystemTime(new Date('2026-01-01T00:00:00.101Z'));
-      const halfOpenProbe = app.call<{ from: string }>('svc', '/api', {}, { retries: 0 });
+      const halfOpenProbe = app.call<{ from: string }>('svc', '/api', {}, { context: testContext, retries: 0 });
       await Promise.resolve();
 
-      const overflow = await app.call<{ from: string }>('svc', '/api', {}, { retries: 0 });
+      const overflow = await app.call<{ from: string }>('svc', '/api', {}, { context: testContext, retries: 0 });
       probe.resolve({ from: 'A' });
       await expect(halfOpenProbe).resolves.toEqual({ from: 'A' });
 
@@ -1016,14 +1018,14 @@ describe('@hile/micro circuit breaker', () => {
     });
 
     try {
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('A fail');
 
       vi.setSystemTime(new Date('2026-01-01T00:00:00.101Z'));
-      const halfOpenProbe = app.call<{ from: string }>('svc', '/api', {}, { retries: 0 });
+      const halfOpenProbe = app.call<{ from: string }>('svc', '/api', {}, { context: testContext, retries: 0 });
       await probeStarted.promise;
       expect(peerA.request).toHaveBeenCalledTimes(2);
 
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow();
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow();
       expect(peerA.request).toHaveBeenCalledTimes(2);
 
       probe.resolve({ from: 'A' });
@@ -1056,15 +1058,15 @@ describe('@hile/micro circuit breaker', () => {
     });
 
     try {
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('A fail');
 
       vi.setSystemTime(new Date('2026-01-01T00:00:00.101Z'));
-      const halfOpenProbe = app.call<{ from: string }>('svc', '/api', {}, { retries: 0 });
+      const halfOpenProbe = app.call<{ from: string }>('svc', '/api', {}, { context: testContext, retries: 0 });
       await probeStarted.promise;
       app.returnFirstPeerOnNextLookup();
       app.returnFirstPeerOnNextLookup();
 
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('Circuit breaker probe unavailable');
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('Circuit breaker probe unavailable');
       expect(peerA.request).toHaveBeenCalledTimes(2);
 
       probe.resolve({ from: 'A' });
@@ -1094,12 +1096,12 @@ describe('@hile/micro circuit breaker', () => {
     });
 
     try {
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('A fail');
 
       vi.setSystemTime(new Date('2026-01-01T00:00:00.101Z'));
       app.delayNextLookups(2);
-      const firstProbe = app.call<{ from: string }>('svc', '/api', {}, { retries: 0 });
-      const racedLookup = app.call<{ from: string }>('svc', '/api', {}, { retries: 0 });
+      const firstProbe = app.call<{ from: string }>('svc', '/api', {}, { context: testContext, retries: 0 });
+      const racedLookup = app.call<{ from: string }>('svc', '/api', {}, { context: testContext, retries: 0 });
 
       expect(app.pausedLookups).toBe(2);
       app.releasePausedLookups();
@@ -1130,16 +1132,16 @@ describe('@hile/micro circuit breaker', () => {
     });
 
     try {
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('A fail');
 
       vi.setSystemTime(new Date('2026-01-01T00:00:00.101Z'));
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('A fail');
 
       vi.setSystemTime(new Date('2026-01-01T00:00:00.250Z'));
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).resolves.toEqual({ from: 'B' });
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).resolves.toEqual({ from: 'B' });
 
       vi.setSystemTime(new Date('2026-01-01T00:00:00.302Z'));
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('A fail');
       expect(peerA.request).toHaveBeenCalledTimes(3);
     } finally {
       vi.useRealTimers();
@@ -1167,18 +1169,18 @@ describe('@hile/micro circuit breaker', () => {
     });
 
     try {
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('initial fail');
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('initial fail');
 
       vi.setSystemTime(new Date('2026-01-01T00:00:00.101Z'));
-      const staleSuccess = app.call<{ from: string }>('svc', '/api', {}, { retries: 0 });
+      const staleSuccess = app.call<{ from: string }>('svc', '/api', {}, { context: testContext, retries: 0 });
       await Promise.resolve();
 
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('probe fail');
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('probe fail');
       delayedSuccess.resolve({ from: 'A' });
       await expect(staleSuccess).resolves.toEqual({ from: 'A' });
 
       vi.setSystemTime(new Date('2026-01-01T00:00:00.250Z'));
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).resolves.toEqual({ from: 'B' });
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).resolves.toEqual({ from: 'B' });
       expect(app.lookupExcludes.at(-1)).toEqual(['127.0.0.1:1001']);
       expect(peerA.request).toHaveBeenCalledTimes(3);
     } finally {
@@ -1206,15 +1208,15 @@ describe('@hile/micro circuit breaker', () => {
     });
 
     try {
-      const oldSuccess = app.call<{ from: string }>('svc', '/api', {}, { retries: 0 });
+      const oldSuccess = app.call<{ from: string }>('svc', '/api', {}, { context: testContext, retries: 0 });
       await Promise.resolve();
 
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('A fail');
       staleSuccess.resolve({ from: 'A' });
       await expect(oldSuccess).resolves.toEqual({ from: 'A' });
 
       vi.setSystemTime(new Date('2026-01-01T00:00:00.050Z'));
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).resolves.toEqual({ from: 'B' });
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).resolves.toEqual({ from: 'B' });
       expect(peerA.request).toHaveBeenCalledTimes(2);
       expect(peerB.request).toHaveBeenCalledTimes(1);
       expect(app.lookupExcludes.at(-1)).toEqual(['127.0.0.1:1001']);
@@ -1243,15 +1245,15 @@ describe('@hile/micro circuit breaker', () => {
     });
 
     try {
-      const oldFailure = app.call<{ from: string }>('svc', '/api', {}, { retries: 0 });
+      const oldFailure = app.call<{ from: string }>('svc', '/api', {}, { context: testContext, retries: 0 });
       await Promise.resolve();
 
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('A fail');
       staleFailure.reject(new Error('late fail'));
       await expect(oldFailure).rejects.toThrow('late fail');
 
       vi.setSystemTime(new Date('2026-01-01T00:00:00.150Z'));
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).resolves.toEqual({ from: 'A' });
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).resolves.toEqual({ from: 'A' });
       expect(peerA.request).toHaveBeenCalledTimes(3);
       expect(peerB.request).not.toHaveBeenCalled();
     } finally {
@@ -1273,10 +1275,10 @@ describe('@hile/micro circuit breaker', () => {
       successThreshold: 1,
     });
 
-    await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+    await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('A fail');
     app.returnFirstPeerOnNextLookup();
 
-    await expect(app.call('svc', '/api', {}, { retries: 0 })).resolves.toEqual({ from: 'B' });
+    await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).resolves.toEqual({ from: 'B' });
     expect(peerA.request).toHaveBeenCalledTimes(1);
     expect(peerB.request).toHaveBeenCalledTimes(1);
     expect(app.lookupExcludes.at(-2)).toEqual(['127.0.0.1:1001']);
@@ -1291,7 +1293,7 @@ describe('@hile/micro circuit breaker', () => {
       failureThreshold: 1,
     });
 
-    await expect(app.call('svc', '/api', {})).rejects.toThrow('A fail');
+    await expect(app.call('svc', '/api', {}, { context: testContext })).rejects.toThrow('A fail');
 
     expect(peerA.request).toHaveBeenCalledTimes(1);
     expect(app.lookupExcludes[1]).toEqual(['127.0.0.1:1001']);
@@ -1310,17 +1312,17 @@ describe('@hile/micro circuit breaker', () => {
     });
 
     try {
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('A fail');
       vi.setSystemTime(new Date('2026-01-01T00:00:00.050Z'));
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('A fail');
 
       vi.setSystemTime(new Date('2026-01-01T00:00:00.151Z'));
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('A fail');
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('A fail');
       expect(peerB.request).not.toHaveBeenCalled();
 
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).resolves.toEqual({ ok: true });
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('A fail');
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).resolves.toEqual({ ok: true });
       expect(peerA.request).toHaveBeenCalledTimes(5);
       expect(peerB.request).toHaveBeenCalledTimes(1);
     } finally {
@@ -1338,8 +1340,8 @@ describe('@hile/micro circuit breaker', () => {
       shouldRecordFailure: (err: unknown) => !(err instanceof Error && err.message === 'business'),
     });
 
-    await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('business');
-    await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('business');
+    await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('business');
+    await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('business');
 
     expect(peerA.request).toHaveBeenCalledTimes(2);
     expect(peerB.request).not.toHaveBeenCalled();
@@ -1356,7 +1358,7 @@ describe('@hile/micro circuit breaker', () => {
       shouldRetry: (err: unknown) => !(err instanceof Error && err.message === 'non-retryable'),
     });
 
-    await expect(app.call('svc', '/api', {}, { retries: 3 })).rejects.toThrow('non-retryable');
+    await expect(app.call('svc', '/api', {}, { context: testContext, retries: 3 })).rejects.toThrow('non-retryable');
 
     expect(peerA.request).toHaveBeenCalledTimes(1);
     expect(peerB.request).not.toHaveBeenCalled();
@@ -1373,7 +1375,7 @@ describe('@hile/micro circuit breaker', () => {
       },
     });
 
-    await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('peer fail');
+    await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('peer fail');
   });
 
   it('does not mask the original failure when shouldRetry throws', async () => {
@@ -1388,7 +1390,7 @@ describe('@hile/micro circuit breaker', () => {
       },
     });
 
-    await expect(app.call('svc', '/api', {}, { retries: 3 })).rejects.toThrow('peer fail');
+    await expect(app.call('svc', '/api', {}, { context: testContext, retries: 3 })).rejects.toThrow('peer fail');
     expect(peerB.request).not.toHaveBeenCalled();
   });
 
@@ -1411,19 +1413,19 @@ describe('@hile/micro circuit breaker', () => {
     });
 
     try {
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('A fail');
 
       vi.setSystemTime(new Date('2026-01-01T00:00:00.101Z'));
-      const halfOpenStream = await app.stream('svc', '/api', {}, { retries: 0 });
+      const halfOpenStream = await app.stream('svc', '/api', {}, { context: testContext, retries: 0 });
       const closed = new Promise<void>(resolve => halfOpenStream.once('close', () => resolve()));
       halfOpenStream.destroy();
       await closed;
 
       vi.setSystemTime(new Date('2026-01-01T00:00:00.150Z'));
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('A fail');
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('A fail');
 
       vi.setSystemTime(new Date('2026-01-01T00:00:00.251Z'));
-      await expect(app.call('svc', '/api', {}, { retries: 0 })).resolves.toEqual({ from: 'B' });
+      await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).resolves.toEqual({ from: 'B' });
       expect(peerA.request).toHaveBeenCalledTimes(2);
       expect(peerB.request).toHaveBeenCalledTimes(1);
     } finally {
@@ -1450,14 +1452,14 @@ describe('@hile/micro circuit breaker', () => {
       failureThreshold: 1,
     });
 
-    const failingStream = await app.stream('svc', '/api', {}, { retries: 0 });
+    const failingStream = await app.stream('svc', '/api', {}, { context: testContext, retries: 0 });
     await expect(async () => {
       for await (const _chunk of failingStream) {
         // consume until the stream reports its async failure
       }
     }).rejects.toThrow('stream fail');
 
-    const recoveryStream = await app.stream('svc', '/api', {}, { retries: 0 });
+    const recoveryStream = await app.stream('svc', '/api', {}, { context: testContext, retries: 0 });
     const chunks: any[] = [];
     for await (const chunk of recoveryStream) {
       chunks.push(chunk);
@@ -1494,7 +1496,7 @@ describe('@hile/micro circuit breaker', () => {
     });
 
     try {
-      const result = await consumer.call('svc', '/echo', { value: 'ok' });
+      const result = await consumer.call('svc', '/echo', { value: 'ok' }, { context: testContext });
       expect(result).toEqual({ value: 'ok' });
     } finally {
       unregister();
@@ -1541,14 +1543,14 @@ describe('@hile/micro circuit breaker', () => {
 
     try {
       // First call → hits A (only option) → fails → A is excluded
-      await expect(consumer.call('svc', '/api', {})).rejects.toThrow('A fail');
+      await expect(consumer.call('svc', '/api', {}, { context: testContext })).rejects.toThrow('A fail');
 
       // Now register B (which succeeds)
       disposeB = await providerB.listen(portB);
       const unregisterB = providerB.register('/api', async () => ({ ok: true }));
 
       // Second call → A excluded → Registry picks B → succeeds
-      const result = await consumer.call('svc', '/api', {});
+      const result = await consumer.call('svc', '/api', {}, { context: testContext });
       expect(result).toEqual({ ok: true });
 
       unregisterB();
@@ -1589,7 +1591,7 @@ describe('@hile/micro circuit breaker', () => {
 
     try {
       // Single peer that fails → gets excluded → all excluded → reset
-      await expect(consumer.call('svc', '/api', {})).rejects.toThrow('A fail');
+      await expect(consumer.call('svc', '/api', {}, { context: testContext })).rejects.toThrow('A fail');
 
       // Now make it succeed
       unregisterA();
@@ -1597,7 +1599,7 @@ describe('@hile/micro circuit breaker', () => {
       const unregisterA2 = providerA.register('/api', async () => ({ ok: true }));
 
       // All peers excluded → reset → retries A → now succeeds
-      const result = await consumer.call('svc', '/api', {});
+      const result = await consumer.call('svc', '/api', {}, { context: testContext });
       expect(result).toEqual({ ok: true });
 
       unregisterA2();
@@ -1674,14 +1676,14 @@ describe('@hile/micro call retry', () => {
 
     try {
       // Only A exists, A fails, retry also hits A (only option), also fails
-      await expect(consumer.call('svc', '/api', {})).rejects.toThrow();
+      await expect(consumer.call('svc', '/api', {}, { context: testContext })).rejects.toThrow();
 
       // Now B exists and succeeds
       const disposeB = await providerB.listen(portB);
       const unregisterB = providerB.register('/api', async () => ({ ok: true }));
 
       // A is excluded from previous failure, retry should pick B
-      const result = await consumer.call<{ ok: boolean }>('svc', '/api', {});
+      const result = await consumer.call<{ ok: boolean }>('svc', '/api', {}, { context: testContext });
       expect(result).toEqual({ ok: true });
 
       unregisterB();
@@ -1719,7 +1721,7 @@ describe('@hile/micro call retry', () => {
     });
 
     try {
-      await expect(consumer.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('no-retry');
+      await expect(consumer.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('no-retry');
     } finally {
       unregister();
       await disposeConsumer();
@@ -1755,7 +1757,7 @@ describe('@hile/micro cache degradation', () => {
 
     try {
       // First call establishes cache
-      const result1 = await consumer.call('svc', '/api', {});
+      const result1 = await consumer.call('svc', '/api', {}, { context: testContext });
       expect(result1).toEqual({ ok: true });
 
       // Replace with failing handler
@@ -1765,7 +1767,7 @@ describe('@hile/micro cache degradation', () => {
       });
 
       // Call fails with retries=0; failure is recorded in circuit breaker
-      await expect(consumer.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('fail');
+      await expect(consumer.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('fail');
       unregisterFail();
 
       // Re-register working handler
@@ -1774,7 +1776,7 @@ describe('@hile/micro cache degradation', () => {
       // Second call: cached peer is excluded by circuit breaker → registry lookup
       // fails (find excludes the only peer) → cache degradation returns the
       // still-connected cached client → succeeds
-      const result2 = await consumer.call('svc', '/api', {}, { retries: 0 });
+      const result2 = await consumer.call('svc', '/api', {}, { context: testContext, retries: 0 });
       expect(result2).toEqual({ ok: true });
 
       unregisterOk();
@@ -1811,14 +1813,14 @@ describe('@hile/micro cache degradation', () => {
     let registryDisposed = false;
 
     try {
-      const result1 = await consumer.call('svc', '/api', {});
+      const result1 = await consumer.call('svc', '/api', {}, { context: testContext });
       expect(result1).toEqual({ ok: true });
 
       unregister();
       unregister = provider.register('/api', async () => {
         throw new Error('fail');
       });
-      await expect(consumer.call('svc', '/api', {}, { retries: 0 })).rejects.toThrow('fail');
+      await expect(consumer.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('fail');
 
       unregister();
       unregister = provider.register('/api', async () => ({ ok: true }));
@@ -1830,7 +1832,7 @@ describe('@hile/micro cache degradation', () => {
         'consumer did not observe registry disconnect',
       );
 
-      const result2 = await consumer.call('svc', '/api', {}, { retries: 0 });
+      const result2 = await consumer.call('svc', '/api', {}, { context: testContext, retries: 0 });
       expect(result2).toEqual({ ok: true });
     } finally {
       unregister?.();
@@ -1873,7 +1875,7 @@ describe('@hile/micro request timeout', () => {
     try {
       // timeout=50ms but handler takes 500ms → rejects
       await expect(
-        consumer.call('svc', '/slow', {}, { timeout: 50, retries: 0 })
+        consumer.call('svc', '/slow', {}, { context: testContext, timeout: 50, retries: 0 })
       ).rejects.toThrow('Timeout');
     } finally {
       unregister();
@@ -1908,7 +1910,7 @@ describe('@hile/micro request timeout', () => {
     });
 
     try {
-      const result = await consumer.call<{ value: string }>('svc', '/echo', { value: 'ok' }, { timeout: 5000 });
+      const result = await consumer.call<{ value: string }>('svc', '/echo', { value: 'ok' }, { context: testContext, timeout: 5000 });
       expect(result).toEqual({ value: 'ok' });
     } finally {
       unregister();
@@ -1957,7 +1959,7 @@ describe('@hile/micro stream', () => {
 
     try {
       // call() first to register circuit breaker exclusion for A
-      await expect(consumer.call('svc', '/api', {})).rejects.toThrow('A fail');
+      await expect(consumer.call('svc', '/api', {}, { context: testContext })).rejects.toThrow('A fail');
 
       // Now register B which succeeds
       disposeB = await providerB.listen(portB);
@@ -1967,7 +1969,7 @@ describe('@hile/micro stream', () => {
 
       // stream with circuit breaker active → get() with exclude fails
       // → catch resets breaker and retries → picks B → succeeds
-      const readable = await consumer.stream('svc', '/api', {});
+      const readable = await consumer.stream('svc', '/api', {}, { context: testContext });
       const chunks: any[] = [];
       for await (const chunk of readable) {
         chunks.push(chunk);
@@ -2022,7 +2024,7 @@ describe('@hile/micro stream', () => {
 
     try {
       // Only A is available → hits A → fails → circuit breaker excludes A
-      await expect(consumer.call('svc', '/api', {})).rejects.toThrow('A fail');
+      await expect(consumer.call('svc', '/api', {}, { context: testContext })).rejects.toThrow('A fail');
 
       // Now register B (succeeds) and take A offline
       disposeB = await providerB.listen(portB);
@@ -2036,7 +2038,7 @@ describe('@hile/micro stream', () => {
 
       // stream() with circuit breaker excludes A → get() with exclude fails
       // → catch resets breaker and retries → picks B → succeeds
-      const readable = await consumer.stream('svc', '/api', {});
+      const readable = await consumer.stream('svc', '/api', {}, { context: testContext });
       const chunks: any[] = [];
       for await (const chunk of readable) {
         chunks.push(chunk);
@@ -2078,7 +2080,7 @@ describe('@hile/micro stream', () => {
     });
 
     try {
-      const stream = await consumer.stream('stream-svc', '/stream', {});
+      const stream = await consumer.stream('stream-svc', '/stream', {}, { context: testContext });
       const chunks: any[] = [];
       for await (const chunk of stream) {
         chunks.push(chunk);
@@ -2112,8 +2114,18 @@ describe('@hile/micro stream', () => {
       let connections = 0;
       consumer.events.on('connect', () => { connections++; });
       const streams = await Promise.all([
-        consumer.streamPeer({ host: '127.0.0.1', port: providerBPort }, '/stream', {}),
-        consumer.streamPeer({ host: '127.0.0.1', port: providerBPort }, '/stream', {}),
+        consumer.streamPeer(
+          { host: '127.0.0.1', port: providerBPort },
+          '/stream',
+          {},
+          { context: testContext },
+        ),
+        consumer.streamPeer(
+          { host: '127.0.0.1', port: providerBPort },
+          '/stream',
+          {},
+          { context: testContext },
+        ),
       ]);
       const chunks = await Promise.all(streams.map(async stream => {
         const values: any[] = [];
@@ -2158,7 +2170,7 @@ describe('@hile/micro stream', () => {
     });
 
     try {
-      const stream = await consumer.stream('stream-svc', '/stream', {});
+      const stream = await consumer.stream('stream-svc', '/stream', {}, { context: testContext });
       const chunks: any[] = [];
       await expect(async () => {
         for await (const chunk of stream) {
@@ -3750,7 +3762,7 @@ describe('@hile/micro publish/subscribe edge cases', () => {
 
     try {
       const client = await consumer.get('svc');
-      const result = await client.request('/echo', { value: 'ok' });
+      const result = await client.request('/echo', { value: 'ok' }, { context: testContext });
       expect(result).toEqual({ value: 'ok' });
     } finally {
       unregister();

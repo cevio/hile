@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createExecutionContext, MissingExecutionContextError } from '@hile/context';
 import { Server } from '@hile/micro';
 import {
   InMemoryRscDeploymentCatalog,
@@ -11,6 +12,10 @@ import {
 
 const deployment = {
   pluginId: 'org.hile.fixture', buildId: 'build-a', namespace: 'runtime.fixture.a',
+};
+const callOptions = {
+  context: createExecutionContext({ requestId: 'rsc-catalog-service-test' }),
+  signal: new AbortController().signal,
 };
 
 describe('internal deployment catalog service', () => {
@@ -41,10 +46,8 @@ describe('internal deployment catalog service', () => {
       snapshot: 'catalog.read', active: 'catalog.active', install: 'catalog.install',
       activate: 'catalog.activate', deactivate: 'catalog.deactivate', remove: 'catalog.remove',
     });
-    const signal = new AbortController().signal;
-
-    await expect(client.snapshot({ signal })).resolves.toHaveLength(1);
-    expect(application.call).toHaveBeenCalledWith('catalog.runtime', 'catalog.read', {}, { signal });
+    await expect(client.snapshot(callOptions)).resolves.toHaveLength(1);
+    expect(application.call).toHaveBeenCalledWith('catalog.runtime', 'catalog.read', {}, callOptions);
   });
 
   it('rolls back partial catalog registration when an operation conflicts', () => {
@@ -64,6 +67,15 @@ describe('internal deployment catalog service', () => {
 });
 
 describe('RscDeploymentSnapshotCache', () => {
+  it('rejects missing context before reading the snapshot source', async () => {
+    const cache = new RscDeploymentSnapshotCache();
+    const source = { snapshot: vi.fn() };
+
+    await expect((cache.refresh as any)(source))
+      .rejects.toBeInstanceOf(MissingExecutionContextError);
+    expect(source.snapshot).not.toHaveBeenCalled();
+  });
+
   it('publishes defensive valid snapshots and resolves the active build', () => {
     const cache = new RscDeploymentSnapshotCache();
     cache.update([{ ...deployment, state: 'active', references: 0 }]);
@@ -76,11 +88,11 @@ describe('RscDeploymentSnapshotCache', () => {
   it('retains the last valid snapshot during source failure or invalid refresh', async () => {
     const cache = new RscDeploymentSnapshotCache();
     cache.update([{ ...deployment, state: 'active', references: 0 }]);
-    await expect(cache.refresh({ snapshot: async () => { throw new Error('catalog offline'); } }))
+    await expect(cache.refresh({ snapshot: async () => { throw new Error('catalog offline'); } }, callOptions))
       .rejects.toThrow('catalog offline');
     expect(cache.getActive(deployment.pluginId)).toEqual(deployment);
 
-    await expect(cache.refresh({ snapshot: async () => [{ ...deployment, state: 'broken' as any, references: 0 }] }))
+    await expect(cache.refresh({ snapshot: async () => [{ ...deployment, state: 'broken' as any, references: 0 }] }, callOptions))
       .rejects.toThrow('state');
     expect(cache.getActive(deployment.pluginId)).toEqual(deployment);
   });

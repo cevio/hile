@@ -3,6 +3,11 @@ import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
+import {
+  MissingExecutionContextError,
+  parseExecutionContext,
+  type ExecutionContext,
+} from '@hile/context';
 import { getRscPluginArtifactFiles, verifyRscPluginArtifact } from '@hile/rsc/artifact';
 import {
   validateRscPluginManifest,
@@ -19,11 +24,12 @@ export interface HileRscArtifactClient {
     namespace: string,
     operation: string,
     data: unknown,
-    options?: { signal?: AbortSignal },
+    options: { context: ExecutionContext; signal?: AbortSignal },
   ): Promise<AsyncIterable<Uint8Array>>;
 }
 
 export interface DownloadHileRscArtifactOptions {
+  context: ExecutionContext;
   runtime: RscRuntimeCompatibility;
   signal?: AbortSignal;
   maxFileBytes?: number;
@@ -45,6 +51,8 @@ export async function downloadHileRscArtifact(
   input: RscDiscoveryAnnouncement,
   options: DownloadHileRscArtifactOptions,
 ): Promise<DownloadedHileRscArtifact> {
+  if (!options?.context) throw new MissingExecutionContextError('RSC artifact download');
+  const context = parseExecutionContext(options.context);
   const announcement = validateRscDiscoveryAnnouncement(input);
   const maxManifestBytes = options.maxManifestBytes ?? 1024 * 1024;
   if (!Number.isSafeInteger(maxManifestBytes) || maxManifestBytes < 1) {
@@ -66,7 +74,7 @@ export async function downloadHileRscArtifact(
       announcement.namespace,
       announcement.artifactOperation,
       { pluginId: announcement.pluginId, buildId: announcement.buildId, path: 'plugin.json' },
-      { signal: options.signal },
+      { context, signal: options.signal },
     );
     let manifestBytes = 0;
     const boundedManifest = async function* () {
@@ -100,7 +108,7 @@ export async function downloadHileRscArtifact(
         announcement.namespace,
         announcement.artifactOperation,
         { pluginId: manifest.pluginId, buildId: manifest.buildId, path: artifactPath },
-        { signal: options.signal },
+        { context, signal: options.signal },
       );
       let fileBytes = 0;
       const bounded = async function* () {

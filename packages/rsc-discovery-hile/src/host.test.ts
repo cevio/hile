@@ -4,15 +4,26 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createExecutionContext } from '@hile/context';
 import { InMemoryRscArtifactCatalog } from '@hile/rsc/host/registry';
 import { InMemoryRscDeploymentCatalog } from '@hile/rsc/host/catalog';
 import { listActiveRscPlugins } from '@hile/rsc/host/plugin-metadata';
 import type { RscPluginManifest } from '@hile/rsc/protocol';
 import { createTrustedInternalRscDiscoveryAuthorizer } from './authentication';
-import { HileRscDiscoveryHost } from './host';
+import {
+  HileRscDiscoveryHost as HileRscDiscoveryHostRuntime,
+  type HileRscDiscoveryHostOptions,
+} from './host';
 import type { RscDiscoveryGenerationHighWater } from '@hile/rsc-discovery';
 
 const roots: string[] = [];
+const testContext = createExecutionContext({ requestId: 'rsc-discovery-host-test' });
+
+class HileRscDiscoveryHost extends HileRscDiscoveryHostRuntime {
+  constructor(options: Omit<HileRscDiscoveryHostOptions, 'context'> & Partial<Pick<HileRscDiscoveryHostOptions, 'context'>>) {
+    super({ context: testContext, ...options });
+  }
+}
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -71,6 +82,11 @@ function artifactStream(getArtifact: () => Awaited<ReturnType<typeof artifact>>)
 }
 
 describe('HileRscDiscoveryHost', () => {
+  it('rejects a missing execution context before starting discovery', () => {
+    expect(() => new HileRscDiscoveryHostRuntime({} as HileRscDiscoveryHostOptions))
+      .toThrow(/Missing execution context.*RSC discovery host/i);
+  });
+
   it('deploys an unsigned announcement only through the explicit trusted-internal policy', async () => {
     const value = await artifact('build-trusted');
     const discovered = {

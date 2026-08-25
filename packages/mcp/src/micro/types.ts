@@ -1,4 +1,5 @@
 import type { CacheHint, Icon, Variables } from '@modelcontextprotocol/server';
+import type { ExecutionContext, InvocationContext } from '@hile/context';
 import type { McpProviderDefinition } from '../types.js';
 
 export const MCP_PROVIDER_TOPIC_PREFIX = '@hile/mcp/providers/';
@@ -56,7 +57,11 @@ export interface HileMcpProviderApplication {
   readonly namespace: string;
   readonly host: string;
   readonly port?: number;
-  register(operation: string, handler: (input: { data: any; signal?: AbortSignal }) => unknown): () => void;
+  register(operation: string, handler: (input: {
+    data: any;
+    signal?: AbortSignal;
+    invocation?: InvocationContext;
+  }) => unknown): () => void;
   publish<T>(topic: string, payload: T): Promise<{ update(payload: T): Promise<unknown>; unpublish(): Promise<unknown> }>;
   unpublish(topic: string): Promise<void>;
 }
@@ -69,7 +74,8 @@ export interface HileMcpDiscoveryApplication {
     payload: unknown;
     publishers: Array<{ host: string; port: number }>;
   }>>;
-  streamPeer(address: { host: string; port: number }, operation: string, data: unknown, options?: {
+  streamPeer(address: { host: string; port: number }, operation: string, data: unknown, options: {
+    context: ExecutionContext;
     timeout?: number;
     idleTimeout?: number;
     signal?: AbortSignal;
@@ -92,7 +98,8 @@ export interface McpProviderSource {
   snapshot(): readonly McpProviderManifest[];
   subscribe(listener: McpProviderSnapshotListener): () => void;
   subscribeResourceUpdates(listener: McpResourceUpdateListener): () => void;
-  stream(instance: McpProviderManifest, operation: string, data: unknown, options?: {
+  stream(instance: McpProviderManifest, operation: string, data: unknown, options: {
+    context: ExecutionContext;
     timeout?: number;
     idleTimeout?: number;
     signal?: AbortSignal;

@@ -2,9 +2,18 @@ import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import {
+  createExecutionContext,
+  MissingExecutionContextError,
+  type InvocationContext,
+} from '@hile/context';
 import { ModelActionRegistry, ModelActionRegistryError } from './action-registry';
 
 const modelModule = new URL('./model.ts', import.meta.url).href;
+const invocation: InvocationContext = {
+  context: createExecutionContext({ requestId: 'action-registry-test' }),
+  signal: new AbortController().signal,
+};
 
 async function fixture(files: Record<string, string>): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'hile-model-actions-'));
@@ -17,6 +26,12 @@ async function fixture(files: Record<string, string>): Promise<string> {
 }
 
 describe('ModelActionRegistry', () => {
+  it('fails with a stable error when invocation context is missing', async () => {
+    const registry = new ModelActionRegistry();
+    await expect((registry.invoke as any)('missing', {}))
+      .rejects.toBeInstanceOf(MissingExecutionContextError);
+  });
+
   it('scans domain directories and mounts only defineActionModel exports', async () => {
     const root = await fixture({
       'counter/increment.model.mjs': `import { defineActionModel } from ${JSON.stringify(modelModule)}; export default defineActionModel(async ({ value }) => ({ value: value + 1 }));`,
@@ -26,8 +41,8 @@ describe('ModelActionRegistry', () => {
     await registry.load(root);
 
     expect(registry.ids()).toEqual(['counter/increment']);
-    await expect(registry.invoke('counter/increment', { value: 2 })).resolves.toEqual({ value: 3 });
-    await expect(registry.invoke('counter/read', { value: 2 })).rejects.toMatchObject({
+    await expect(registry.invoke('counter/increment', { value: 2 }, invocation)).resolves.toEqual({ value: 3 });
+    await expect(registry.invoke('counter/read', { value: 2 }, invocation)).rejects.toMatchObject({
       code: 'ERR_MODEL_ACTION_NOT_FOUND',
     });
   });
@@ -46,7 +61,7 @@ describe('ModelActionRegistry', () => {
 
   it.each([null, [], 'value', 1])('rejects non-object input: %j', async (input) => {
     const registry = new ModelActionRegistry();
-    await expect(registry.invoke('missing', input)).rejects.toMatchObject({
+    await expect(registry.invoke('missing', input, invocation)).rejects.toMatchObject({
       code: 'ERR_MODEL_ACTION_INVALID_INPUT',
     });
   });
@@ -71,7 +86,7 @@ describe('ModelActionRegistry', () => {
     await registry.load(root);
     const controller = new AbortController();
     controller.abort(new Error('cancelled'));
-    await expect(registry.invoke('run', {}, { signal: controller.signal })).rejects.toThrow('cancelled');
+    await expect(registry.invoke('run', {}, { ...invocation, signal: controller.signal })).rejects.toThrow('cancelled');
   });
 
   it('rejects duplicate ids atomically', async () => {

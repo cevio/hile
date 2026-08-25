@@ -3,7 +3,7 @@ import type {
   RscDeploymentSnapshot,
   RscPluginDeployment,
 } from '../host/catalog';
-import type { RscCallOptions } from './contracts';
+import { requireRscCallOptions, type RscCallOptions } from './contracts';
 import { registerRscOperations, type RscOperationRegistrar } from './registrar';
 
 export interface RscCatalogOperationMap {
@@ -61,17 +61,17 @@ export interface HileRscCatalogApplication {
     namespace: string,
     operation: string,
     data: unknown,
-    options?: RscCallOptions,
+    options: RscCallOptions,
   ): Promise<T>;
 }
 
 export interface RscDeploymentCatalogClient {
-  snapshot(options?: RscCallOptions): Promise<RscDeploymentSnapshot[]>;
-  getActive(pluginId: string, options?: RscCallOptions): Promise<RscPluginDeployment | undefined>;
-  install(deployment: RscPluginDeployment, activate?: boolean, options?: RscCallOptions): Promise<boolean>;
-  activate(deployment: RscPluginDeployment, options?: RscCallOptions): Promise<boolean>;
-  deactivate(deployment: RscPluginDeployment, options?: RscCallOptions): Promise<boolean>;
-  remove(deployment: RscPluginDeployment, options?: RscCallOptions): Promise<boolean>;
+  snapshot(options: RscCallOptions): Promise<RscDeploymentSnapshot[]>;
+  getActive(pluginId: string, options: RscCallOptions): Promise<RscPluginDeployment | undefined>;
+  install(deployment: RscPluginDeployment, activate: boolean, options: RscCallOptions): Promise<boolean>;
+  activate(deployment: RscPluginDeployment, options: RscCallOptions): Promise<boolean>;
+  deactivate(deployment: RscPluginDeployment, options: RscCallOptions): Promise<boolean>;
+  remove(deployment: RscPluginDeployment, options: RscCallOptions): Promise<boolean>;
 }
 
 export function createHileRscDeploymentCatalogClient(
@@ -80,12 +80,24 @@ export function createHileRscDeploymentCatalogClient(
   operations: RscCatalogOperationMap = DEFAULT_RSC_CATALOG_OPERATIONS,
 ): RscDeploymentCatalogClient {
   return {
-    snapshot: (options) => application.call(namespace, operations.snapshot, {}, options),
-    getActive: (pluginId, options) => application.call(namespace, operations.active, { pluginId }, options),
-    install: (deployment, activate = false, options) =>
-      application.call(namespace, operations.install, { deployment, activate }, options),
-    activate: (deployment, options) => application.call(namespace, operations.activate, deployment, options),
-    deactivate: (deployment, options) => application.call(namespace, operations.deactivate, deployment, options),
-    remove: (deployment, options) => application.call(namespace, operations.remove, deployment, options),
+    snapshot: (options) => application.call(
+      namespace, operations.snapshot, {}, requireRscCallOptions(options, 'RSC catalog snapshot'),
+    ),
+    getActive: (pluginId, options) => application.call(
+      namespace, operations.active, { pluginId }, requireRscCallOptions(options, 'RSC catalog active lookup'),
+    ),
+    install: (deployment, activate, options) =>
+      application.call(
+        namespace, operations.install, { deployment, activate }, requireRscCallOptions(options, 'RSC catalog install'),
+      ),
+    activate: (deployment, options) => application.call(
+      namespace, operations.activate, deployment, requireRscCallOptions(options, 'RSC catalog activate'),
+    ),
+    deactivate: (deployment, options) => application.call(
+      namespace, operations.deactivate, deployment, requireRscCallOptions(options, 'RSC catalog deactivate'),
+    ),
+    remove: (deployment, options) => application.call(
+      namespace, operations.remove, deployment, requireRscCallOptions(options, 'RSC catalog remove'),
+    ),
   };
 }

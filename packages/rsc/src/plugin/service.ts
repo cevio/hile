@@ -1,4 +1,5 @@
 import type { RscPluginManifest } from '../protocol';
+import { createInvocationContext, type InvocationContext } from '@hile/context';
 import { rscRouteParameterName, splitRscRoutePath } from '../protocol/route-pattern';
 import {
   decodeRscServerFunctionValue,
@@ -255,7 +256,12 @@ export class RscPluginService {
     };
   }
 
-  public render(value: unknown, remoteSignal?: AbortSignal): AsyncIterable<Uint8Array> {
+  public render(value: unknown, invocation: InvocationContext): AsyncIterable<Uint8Array> {
+    invocation = createInvocationContext(
+      invocation?.context,
+      invocation?.signal,
+      'RSC plugin render',
+    );
     this.assertActive();
     assertRecord(value, 'render request');
     assertBuildId(value.buildId);
@@ -289,13 +295,14 @@ export class RscPluginService {
       async *[Symbol.asyncIterator]() {
         service.assertActive();
         const leave = service.entered();
-        const combined = combineSignals(remoteSignal, service.shutdown.signal);
+        const combined = combineSignals(invocation.signal, service.shutdown.signal);
         try {
           const iterable = await renderer({
             manifest,
             routeEntry: route.entry,
             request,
             signal: combined.signal,
+            context: invocation.context,
           });
           for await (const chunk of iterable) {
             if (combined.signal.aborted) {
@@ -325,7 +332,12 @@ export class RscPluginService {
     };
   }
 
-  public async action(value: unknown, remoteSignal?: AbortSignal): Promise<unknown> {
+  public async action(value: unknown, invocation: InvocationContext): Promise<unknown> {
+    invocation = createInvocationContext(
+      invocation?.context,
+      invocation?.signal,
+      'RSC plugin action',
+    );
     this.assertActive();
     assertRecord(value, 'action request');
     assertBuildId(value.buildId);
@@ -338,10 +350,13 @@ export class RscPluginService {
     this.requiredRevision(value.buildId);
     const request = value as unknown as RscActionRequest;
     const leave = this.entered();
-    const combined = combineSignals(remoteSignal, this.shutdown.signal);
+    const combined = combineSignals(invocation.signal, this.shutdown.signal);
     try {
       try {
-        return await this.actionModels.invoke(request.actionId, request.input, { signal: combined.signal });
+        return await this.actionModels.invoke(request.actionId, request.input, {
+          context: invocation.context,
+          signal: combined.signal,
+        });
       } catch (error) {
         if (
           error instanceof ModelActionRegistryError &&
@@ -362,8 +377,13 @@ export class RscPluginService {
 
   public async serverFunction(
     value: unknown,
-    remoteSignal?: AbortSignal,
+    invocation: InvocationContext,
   ): Promise<RscServerFunctionWireValue> {
+    invocation = createInvocationContext(
+      invocation?.context,
+      invocation?.signal,
+      'RSC plugin server function',
+    );
     this.assertActive();
     assertRecord(value, 'server function request');
     assertBuildId(value.buildId);
@@ -384,7 +404,7 @@ export class RscPluginService {
       );
     }
     const leave = this.entered();
-    const combined = combineSignals(remoteSignal, this.shutdown.signal);
+    const combined = combineSignals(invocation.signal, this.shutdown.signal);
     try {
       const decoded = await decodeRscServerFunctionValue(request.args);
       combined.signal.throwIfAborted();
@@ -400,7 +420,11 @@ export class RscPluginService {
         reference,
         args: decoded,
         signal: combined.signal,
-        invokeModel: (id, input) => models.invoke(id, input, { signal: combined.signal }),
+        context: invocation.context,
+        invokeModel: (id, input) => models.invoke(id, input, {
+          context: invocation.context,
+          signal: combined.signal,
+        }),
       });
       return encodeRscServerFunctionValue(result);
     } finally {

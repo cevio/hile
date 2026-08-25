@@ -131,12 +131,18 @@ API controller:
 
 ```ts
 // src/controllers/post.controller.ts
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext, createInvocationContext } from '@hile/context'
 import { defineController } from '@hile/http'
 import { loadModel } from '@hile/model'
 import { getPost } from '../models/post/get-post.model'
 
 export default defineController('GET', async () => {
-  return loadModel(getPost, { id: 'demo' })
+  const invocation = createInvocationContext(
+    createExecutionContext({ requestId: randomUUID() }),
+    new AbortController().signal,
+  )
+  return loadModel(getPost, { id: 'demo' }, invocation)
 })
 ```
 
@@ -144,13 +150,19 @@ Next.js page:
 
 ```tsx
 // src/app/page.tsx
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext, createInvocationContext } from '@hile/context'
 import { loadModel } from '@hile/model'
 import { getPost } from '../models/post/get-post.model'
 
 export const dynamic = 'force-dynamic'
 
 export default async function Page() {
-  const post = await loadModel(getPost, { id: 'demo' })
+  const invocation = createInvocationContext(
+    createExecutionContext({ requestId: randomUUID() }),
+    new AbortController().signal,
+  )
+  const post = await loadModel(getPost, { id: 'demo' }, invocation)
   return <main>{post.title}</main>
 }
 ```

@@ -22,8 +22,8 @@ The generated files select HMAC discovery by default. A deployment where every p
 ## Add interactive server behavior
 
 1. Put a default-exported `defineActionModel()` in `src/models/<domain>/<name>.model.ts`.
-2. Put module-level `'use server'` in a plugin-owned actions file and export only async functions.
-3. Call the path-derived model ID with `invokeRscModel()`; for example `example/increment.model.ts` is `example/increment`.
+2. Put module-level `'use server'` in a plugin-owned actions file and export `defineRscServerFunction(async (api, ...args) => ...)` definitions.
+3. Call the path-derived model ID with `api.invokeModel()`; for example `example/increment.model.ts` is `example/increment`.
 4. Import that Server Function from a `'use client'` component and call it, pass it to a form, or use `useActionState`.
 
 Do not add an action map, public HTTP endpoint, or Next dependency. For a complete example including Host authorization and development, read `docs/ai/recipes/rsc-plugin-host.md` in the Hile repository.

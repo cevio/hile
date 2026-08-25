@@ -10,6 +10,7 @@ import type {
   ToolAnnotations,
   Variables,
 } from '@modelcontextprotocol/server';
+import type { ExecutionContext } from '@hile/context';
 
 export type MaybePromise<T> = T | Promise<T>;
 export type McpSchema<Input = unknown, Output = Input> = StandardSchemaV1<Input, Output> & StandardJSONSchemaV1<Input, Output>;
@@ -23,6 +24,7 @@ export interface McpPrincipal {
 }
 
 export interface McpInvocationDescriptor {
+  executionContext: ExecutionContext;
   providerId: string;
   instanceId: string;
   fingerprint: string;
@@ -37,6 +39,7 @@ export interface McpInvocationCredentialCodec {
 }
 
 export interface McpInvocationContext {
+  executionContext: ExecutionContext;
   signal: AbortSignal;
   principal?: McpPrincipal;
   inputResponses?: Readonly<Record<string, unknown>>;
@@ -50,7 +53,11 @@ export interface McpInvocationContext {
 
 export interface McpCapabilityAccess<Input = unknown> {
   scopes?: readonly string[];
-  authorize?: (principal: McpPrincipal | undefined, input: Input) => MaybePromise<boolean>;
+  authorize?: (
+    principal: McpPrincipal | undefined,
+    input: Input,
+    executionContext: ExecutionContext,
+  ) => MaybePromise<boolean>;
 }
 
 export interface McpToolExecution {
@@ -66,6 +73,7 @@ export interface McpCapabilityMetadata {
 }
 
 export interface McpCompletionContext {
+  executionContext: ExecutionContext;
   signal: AbortSignal;
   principal?: McpPrincipal;
   arguments?: Readonly<Record<string, string>>;

@@ -1,4 +1,5 @@
 import type { IncomingMessage } from 'node:http';
+import { MissingExecutionContextError, parseExecutionContext } from '@hile/context';
 import type { RscServerFunctionWireValue } from '../server-functions/codec';
 import type { RscPluginLocator } from '../transport';
 import type { RscActionRequestContext } from './actions';
@@ -51,19 +52,22 @@ export class RscServerFunctionGateway {
   }) {}
 
   public async invoke(value: unknown, context: RscActionRequestContext): Promise<RscServerFunctionWireValue> {
+    if (!context?.context) throw new MissingExecutionContextError('RSC Server Function gateway');
+    context = { ...context, context: parseExecutionContext(context.context) };
     const request = parseRequest(value);
     if (!await this.options.authorize(request, context)) {
       throw new RscServerFunctionGatewayError('ERR_RSC_SERVER_FUNCTION_FORBIDDEN', 'RSC Server Function request was denied');
     }
     const lease = await this.options.locator.resolve(
-      { pluginId: request.pluginId, buildId: request.buildId }, { signal: context.signal },
+      { pluginId: request.pluginId, buildId: request.buildId },
+      { context: context.context, signal: context.signal },
     );
     try {
       return await lease.client.serverFunction({
         buildId: request.buildId,
         referenceId: request.referenceId,
         args: request.args,
-      }, { signal: context.signal });
+      }, { context: context.context, signal: context.signal });
     } finally {
       await lease.release();
     }
@@ -126,9 +130,12 @@ export function createRscServerFunctionMiddleware(options: RscServerFunctionMidd
       return;
     }
     try {
+      if (!context.requestContext?.context) {
+        throw new MissingExecutionContextError('RSC Server Function HTTP ingress');
+      }
       const value = await options.gateway.invoke(await readJson(context, limit), {
         ...context.requestContext,
-        signal: context.signal ?? context.requestContext?.signal,
+        signal: context.signal ?? context.requestContext.signal,
       });
       context.status = 200;
       context.type = 'application/json; charset=utf-8';

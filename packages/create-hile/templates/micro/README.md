@@ -34,7 +34,7 @@ src/
 
 ## Boundaries
 
-- Message handlers live in `src/messages` and default-export `defineMessage(...)`.
+- Micro message handlers live in `src/messages` and default-export `defineMicroMessage(...)`.
 - `Application.call()` returns a promise; do not append a secondary response getter.
 - Use `@hile/redis-stream-queue` instead when work must be durable.
 

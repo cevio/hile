@@ -6,10 +6,10 @@ Provider handler:
 
 ```ts
 // src/messages/charge.msg.ts
-import { defineMessage } from '@hile/message-loader'
+import { defineMicroMessage } from '@hile/micro'
 
-export default defineMessage(async ({ data }) => {
-  return { charged: true, input: data }
+export default defineMicroMessage(async ({ data, invocation }) => {
+  return { charged: true, input: data, requestId: invocation.context.values.requestId }
 })
 ```
 
@@ -37,10 +37,14 @@ export default defineService('billing.micro', async (shutdown) => {
 Consumer:
 
 ```ts
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext } from '@hile/context'
+
+const context = createExecutionContext({ requestId: randomUUID(), tenantId: 't1' })
 const result = await app.call('billing', '/charge', {
   tenantId: 't1',
   amount: 100,
-})
+}, { context })
 ```
 
 ## File Layout
@@ -60,16 +64,15 @@ Use this recipe when services communicate over Hile registry-backed RPC.
 ## Packages To Use
 
 - `@hile/micro`
-- `@hile/message-loader`
-- `@hile/context` when context must cross service boundaries
+- `@hile/context` for the required explicit execution context carrier
 - `@hile/redis-idempotency` for retryable side effects
 
 ## Implementation Steps
 
 1. Start a Registry with `hile registry`.
 2. Start providers with stable namespaces.
-3. Load `*.msg.ts` handlers through `app.load()`.
-4. Call providers with `await app.call(namespace, url, data)`.
+3. Default-export `defineMicroMessage()` handlers and load them through `app.load()`.
+4. Create context at ingress and call providers with `await app.call(namespace, url, data, { context })`.
 5. Use `app.stream()` only for async-generator handlers.
 
 ## Failure And Cleanup Behavior
@@ -82,5 +85,5 @@ Use this recipe when services communicate over Hile registry-backed RPC.
 
 - Registry is reachable.
 - Provider namespace matches consumer call.
-- Handlers default-export `defineMessage()`.
-- Consumer code awaits `app.call(...)` directly.
+- Handlers default-export `defineMicroMessage()` and consume explicit invocation context when needed.
+- Consumer code awaits `app.call(..., { context })` directly.

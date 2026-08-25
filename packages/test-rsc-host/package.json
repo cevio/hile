@@ -12,6 +12,7 @@
     "start": "hile start --env-file .env.prod"
   },
   "dependencies": {
+    "@hile/context": "workspace:^",
     "@ant-design/nextjs-registry": "1.3.0",
     "@ant-design/icons": "6.3.2",
     "@hile/cli": "workspace:^",

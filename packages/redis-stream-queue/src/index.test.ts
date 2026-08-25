@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { getContext, runWithContext } from '@hile/context';
+import { createExecutionContext, MissingExecutionContextError } from '@hile/context';
 import {
   QueueSchemaError,
   RedisStreamQueue,
@@ -249,6 +249,8 @@ const EmailSchema = {
   },
 };
 
+const testContext = createExecutionContext({ test: true });
+
 describe('@hile/redis-stream-queue', () => {
   it('adds and processes a typed job through a Redis consumer group', async () => {
     const redis = new MemoryRedis();
@@ -260,6 +262,7 @@ describe('@hile/redis-stream-queue', () => {
       template: 'welcome',
       userId: 'user-1',
     }, {
+      context: testContext,
       jobId: 'welcome:user-1',
       maxAttempts: 3,
     });
@@ -296,9 +299,9 @@ describe('@hile/redis-stream-queue', () => {
     const emailQueue = defineQueue('email', EmailSchema);
     const handled = vi.fn();
 
-    await expect(queue.add(emailQueue, { template: 'welcome', userId: 'user-1' }, { jobId: 'welcome:user-1' }))
+    await expect(queue.add(emailQueue, { template: 'welcome', userId: 'user-1' }, { context: testContext, jobId: 'welcome:user-1' }))
       .resolves.toMatchObject({ accepted: true, duplicate: false });
-    await expect(queue.add(emailQueue, { template: 'receipt', userId: 'user-1' }, { jobId: 'welcome:user-1' }))
+    await expect(queue.add(emailQueue, { template: 'receipt', userId: 'user-1' }, { context: testContext, jobId: 'welcome:user-1' }))
       .resolves.toMatchObject({ accepted: false, duplicate: true, jobId: 'welcome:user-1' });
 
     const worker = queue.worker(emailQueue, handled, { group: 'workers', consumer: 'worker-1' });
@@ -315,6 +318,7 @@ describe('@hile/redis-stream-queue', () => {
     const handled = vi.fn();
 
     await queue.add(emailQueue, { template: 'welcome', userId: 'user-1' }, {
+      context: testContext,
       delay: 500,
     });
 
@@ -335,7 +339,7 @@ describe('@hile/redis-stream-queue', () => {
     const emailQueue = defineQueue('email', EmailSchema);
     const handled = vi.fn();
 
-    await queue.add(emailQueue, { template: 'welcome', userId: 'user-1' }, { delay: 100 });
+    await queue.add(emailQueue, { template: 'welcome', userId: 'user-1' }, { context: testContext, delay: 100 });
     const worker = queue.worker(emailQueue, handled, { group: 'workers', consumer: 'worker-1' });
 
     redis.now = 100;
@@ -351,7 +355,7 @@ describe('@hile/redis-stream-queue', () => {
     const queue = new RedisStreamQueue(redis, { prefix: 'test:', now: () => redis.now });
     const emailQueue = defineQueue('email', EmailSchema);
 
-    await queue.add(emailQueue, { template: 'welcome', userId: 'user-1' });
+    await queue.add(emailQueue, { template: 'welcome', userId: 'user-1' }, { context: testContext });
     const worker = queue.worker(emailQueue, async () => {}, {
       group: 'workers',
       consumer: 'worker-1',
@@ -369,7 +373,7 @@ describe('@hile/redis-stream-queue', () => {
     const handled = vi.fn();
     const onError = vi.fn();
 
-    await queue.add(emailQueue, { template: 'welcome', userId: 'user-1' });
+    await queue.add(emailQueue, { template: 'welcome', userId: 'user-1' }, { context: testContext });
     redis.failNextXgroup = true;
     const worker = queue.worker(emailQueue, handled, {
       group: 'workers',
@@ -405,6 +409,7 @@ describe('@hile/redis-stream-queue', () => {
     });
 
     await queue.add(emailQueue, { template: 'welcome', userId: 'user-1' }, {
+      context: testContext,
       jobId: 'welcome:user-1',
       maxAttempts: 2,
       backoff: { type: 'fixed', delay: 1_000 },
@@ -444,6 +449,7 @@ describe('@hile/redis-stream-queue', () => {
     });
 
     await queue.add(emailQueue, { template: 'welcome', userId: 'user-1' }, {
+      context: testContext,
       maxAttempts: 3,
       backoff: { type: 'exponential', baseMs: 100, maxMs: 150 },
     });
@@ -472,7 +478,7 @@ describe('@hile/redis-stream-queue', () => {
     const handled = vi.fn();
     const streamKey = 'test:queue:email:stream';
 
-    await queue.add(emailQueue, { template: 'welcome', userId: 'user-1' });
+    await queue.add(emailQueue, { template: 'welcome', userId: 'user-1' }, { context: testContext });
     await redis.xgroup('CREATE', streamKey, 'workers', '0', 'MKSTREAM');
     await redis.xreadgroup('GROUP', 'workers', 'dead-worker', 'COUNT', 1, 'STREAMS', streamKey, '>');
 
@@ -494,9 +500,9 @@ describe('@hile/redis-stream-queue', () => {
     const release = createDeferred<void>();
     const started: string[] = [];
 
-    await queue.add(emailQueue, { template: 'welcome', userId: 'user-1' });
-    await queue.add(emailQueue, { template: 'welcome', userId: 'user-2' });
-    await queue.add(emailQueue, { template: 'welcome', userId: 'user-3' });
+    await queue.add(emailQueue, { template: 'welcome', userId: 'user-1' }, { context: testContext });
+    await queue.add(emailQueue, { template: 'welcome', userId: 'user-2' }, { context: testContext });
+    await queue.add(emailQueue, { template: 'welcome', userId: 'user-3' }, { context: testContext });
 
     const worker = queue.worker(emailQueue, async (job) => {
       started.push(job.data.userId);
@@ -518,19 +524,20 @@ describe('@hile/redis-stream-queue', () => {
     expect(started).toEqual(['user-1', 'user-2', 'user-3']);
   });
 
-  it('stores context when enqueueing and restores it while handling the job', async () => {
+  it('stores explicit context when enqueueing and passes it to the worker invocation', async () => {
     const redis = new MemoryRedis();
     const queue = new RedisStreamQueue(redis, { prefix: 'test:', now: () => redis.now });
     const emailQueue = defineQueue('email', EmailSchema);
     type AppContext = { shopId: string; channel: 'web' | 'wechat' };
     const observed: Array<Partial<AppContext>> = [];
 
-    await runWithContext<AppContext>({ shopId: 'shop-1', channel: 'wechat' }, async () => {
-      await queue.add(emailQueue, { template: 'welcome', userId: 'user-1' });
+    const context = createExecutionContext<AppContext>({ shopId: 'shop-1', channel: 'wechat' });
+    await queue.add(emailQueue, { template: 'welcome', userId: 'user-1' }, {
+      context,
     });
 
-    const worker = queue.worker(emailQueue, async () => {
-      observed.push(getContext<AppContext>());
+    const worker = queue.worker(emailQueue, async (_job, invocation) => {
+      observed.push(invocation.context.values);
     }, {
       group: 'workers',
       consumer: 'worker-1',
@@ -540,12 +547,24 @@ describe('@hile/redis-stream-queue', () => {
     expect(observed).toEqual([{ shopId: 'shop-1', channel: 'wechat' }]);
   });
 
+  it('fails before writing when enqueue context is missing', async () => {
+    const redis = new MemoryRedis();
+    const queue = new RedisStreamQueue(redis, { prefix: 'test:' });
+    const emailQueue = defineQueue('email', EmailSchema);
+
+    await expect((queue.add as any)(emailQueue, {
+      template: 'welcome',
+      userId: 'user-1',
+    }, {})).rejects.toBeInstanceOf(MissingExecutionContextError);
+    expect(redis.streamLength('test:queue:email:stream')).toBe(0);
+  });
+
   it('validates payloads before enqueueing', async () => {
     const redis = new MemoryRedis();
     const queue = new RedisStreamQueue(redis, { prefix: 'test:', now: () => redis.now });
     const emailQueue = defineQueue('email', EmailSchema);
 
-    await expect(queue.add(emailQueue, { template: 'unknown', userId: 'user-1' } as never))
+    await expect(queue.add(emailQueue, { template: 'unknown', userId: 'user-1' } as never, { context: testContext }))
       .rejects.toBeInstanceOf(QueueSchemaError);
     expect(redis.streamLength('test:queue:email:stream')).toBe(0);
   });
@@ -557,7 +576,7 @@ describe('@hile/redis-stream-queue', () => {
     const circular: Record<string, unknown> = {};
     circular['self'] = circular;
 
-    await expect(queue.add(brokenQueue, { value: circular }, { jobId: 'bad-json' }))
+    await expect(queue.add(brokenQueue, { value: circular }, { context: testContext, jobId: 'bad-json' }))
       .rejects.toThrow(/JSON-serializable/);
 
     expect(redis.hasValue('test:queue:broken:job:bad-json')).toBe(false);
@@ -569,7 +588,7 @@ describe('@hile/redis-stream-queue', () => {
     const emailQueue = defineQueue('email', EmailSchema);
     redis.failNextXadd = true;
 
-    await expect(queue.add(emailQueue, { template: 'welcome', userId: 'user-1' }, { jobId: 'welcome:user-1' }))
+    await expect(queue.add(emailQueue, { template: 'welcome', userId: 'user-1' }, { context: testContext, jobId: 'welcome:user-1' }))
       .rejects.toThrow('xadd failed');
 
     expect(redis.hasValue('test:queue:email:job:welcome:user-1')).toBe(false);

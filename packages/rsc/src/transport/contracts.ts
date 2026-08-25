@@ -1,4 +1,9 @@
 import type { ReactNode } from 'react';
+import {
+  MissingExecutionContextError,
+  parseExecutionContext,
+  type ExecutionContext,
+} from '@hile/context';
 import type {
   RscActionRequest,
   RscRenderRequest,
@@ -22,6 +27,7 @@ export const DEFAULT_RSC_OPERATIONS: Readonly<RscOperationMap> = Object.freeze({
 });
 
 export interface RscCallOptions {
+  context: ExecutionContext;
   signal?: AbortSignal;
   /** Maximum total RPC or Flight stream lifetime in milliseconds. */
   timeout?: number;
@@ -31,20 +37,31 @@ export interface RscCallOptions {
   window?: number;
 }
 
+export function requireRscCallOptions(
+  options: RscCallOptions | undefined,
+  boundary: string,
+): RscCallOptions {
+  if (!options?.context) throw new MissingExecutionContextError(boundary);
+  return Object.freeze({
+    ...options,
+    context: parseExecutionContext(options.context),
+  });
+}
+
 export interface RscPluginClient {
-  describe(options?: RscCallOptions): Promise<RscPluginManifest>;
-  render(request: RscRenderRequest, options?: RscCallOptions): Promise<AsyncIterable<Uint8Array>>;
-  action(request: RscActionRequest, options?: RscCallOptions): Promise<unknown>;
+  describe(options: RscCallOptions): Promise<RscPluginManifest>;
+  render(request: RscRenderRequest, options: RscCallOptions): Promise<AsyncIterable<Uint8Array>>;
+  action(request: RscActionRequest, options: RscCallOptions): Promise<unknown>;
   serverFunction(
     request: RscServerFunctionRequest,
-    options?: RscCallOptions,
+    options: RscCallOptions,
   ): Promise<RscServerFunctionWireValue>;
 }
 
 export interface RscPluginLocator {
   resolve(
     target: { pluginId: string; buildId: string },
-    options?: RscCallOptions,
+    options: RscCallOptions,
   ): Promise<RscPluginLease>;
 }
 

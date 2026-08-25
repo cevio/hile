@@ -12,9 +12,9 @@ describe('inspectModule', () => {
   });
 
   it.each([
-    [`'use server';\nexport async function save() {}`, ['save']],
-    [`"use server"\nexport const save = async () => 1`, ['save']],
-    [`// comment\n'use server';\nexport default async function save() {}`, ['default']],
+    [`"use server"\nexport const save = defineRscServerFunction(async (_api, value) => value)`, ['save']],
+    [`// comment\n'use server';\nexport default defineRscServerFunction(async () => 1)`, ['default']],
+    [`'use server';\nconst save = defineRscServerFunction(async () => 1); export { save }`, ['save']],
   ])('recognizes use server modules and their callable exports', (source, exports) => {
     const inspection = inspectModule(source, 'actions.ts');
     expect(inspection.useServer).toBe(true);
@@ -26,14 +26,14 @@ describe('inspectModule', () => {
     `function useClient() {}\nexport { useClient }`,
     `const text = 'use client';\nexport default text`,
     "`use client`; export default 1",
-    `'use server';\nexport async function action() {}`,
+    `'use server';\nexport const action = defineRscServerFunction(async () => 1)`,
   ])('does not treat non-directives as a client boundary', (source) => {
     expect(inspectModule(source, 'module.tsx').useClient).toBe(false);
   });
 
   it('rejects modules that declare both client and server boundaries', () => {
     expect(() => inspectModule(
-      `'use client';\n'use server';\nexport async function save() {}`,
+      `'use client';\n'use server';\nexport const save = defineRscServerFunction(async () => 1)`,
       'mixed.ts',
     )).toThrow('both');
   });
@@ -41,9 +41,11 @@ describe('inspectModule', () => {
   it.each([
     `'use server'; export function save() {}`,
     `'use server'; export const save = () => 1`,
+    `'use server'; export async function save() {}`,
+    `'use server'; export const save = async () => 1`,
     `'use server'; export class Save {}`,
-  ])('requires every use server export to be an async function', (source) => {
-    expect(() => inspectModule(source, 'actions.ts')).toThrow('async function');
+  ])('requires every use server export to use the explicit definition API', (source) => {
+    expect(() => inspectModule(source, 'actions.ts')).toThrow('defineRscServerFunction');
   });
 
   it('rejects use server re-exports because the local callable cannot be verified', () => {

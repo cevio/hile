@@ -24,6 +24,7 @@
     "typescript": "^6.0.3"
   },
   "dependencies": {
+    "@hile/context": "^4.0.1",
     "@hile/cli": "^4.0.0",
     "@hile/core": "^4.0.0",
     "@hile/http": "^4.0.0",

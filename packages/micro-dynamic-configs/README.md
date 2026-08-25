@@ -22,13 +22,14 @@ Message handler file:
 
 ```ts
 // src/messages/ping.msg.ts
-import { defineMessage } from '@hile/message-loader'
+import { defineMicroMessage } from '@hile/micro'
 
-export default defineMessage(async ({ data, params }) => {
+export default defineMicroMessage(async ({ data, params, invocation }) => {
   return {
     type: 'pong',
     data,
     params,
+    requestId: invocation.context.values.requestId,
     timestamp: Date.now(),
   }
 })
@@ -61,14 +62,18 @@ export default defineService('micro.app', async (shutdown) => {
 Caller:
 
 ```ts
-const result = await app.call('example.service', '/ping', { hello: 'world' })
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext } from '@hile/context'
+
+const context = createExecutionContext({ requestId: randomUUID() })
+const result = await app.call('example.service', '/ping', { hello: 'world' }, { context })
 ```
 
 ## Boundaries
 
 - Do not use `stream()` for normal single-result calls.
 - Do not rely on message IDs for business idempotency. They are transport IDs.
-- Do not bypass `defineMessage()` for file-loaded handlers.
+- Use `defineMicroMessage()` for Micro business handlers; reserve generic `defineMessage()` for transport-neutral loaders.
 - Do not pass zero, fractional, non-finite, or oversized message timeouts. Explicit timeout values must be safe integers from `1` through `2_147_483_647` milliseconds.
 
 - Appending a secondary response getter to `client.request('/x', data)`
@@ -78,8 +83,8 @@ const result = await app.call('example.service', '/ping', { hello: 'world' })
 
 ## Verify
 
-- Message files default-export `defineMessage(...)`.
-- RPC callers use `await app.call(...)`.
+- Micro message files default-export `defineMicroMessage(...)` and receive `invocation.context`.
+- RPC callers use `await app.call(..., { context })`.
 - Streaming handlers are async generators.
 - Custom modem timeout values use the documented safe-integer range.
 - Registry is started before application nodes need discovery.

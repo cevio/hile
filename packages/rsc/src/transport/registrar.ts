@@ -1,9 +1,24 @@
 import type { RscPluginService } from '../plugin/service';
+import {
+  createInvocationContext,
+  MissingExecutionContextError,
+  type InvocationContext,
+} from '@hile/context';
 import { DEFAULT_RSC_OPERATIONS, type RscOperationMap } from './contracts';
 
 export interface RscOperationInput {
   data: unknown;
   signal?: AbortSignal;
+  invocation?: InvocationContext;
+}
+
+function requireInvocation(input: RscOperationInput, operation: string): InvocationContext {
+  if (!input.invocation) throw new MissingExecutionContextError(`RSC ${operation}`);
+  return createInvocationContext(
+    input.invocation.context,
+    input.invocation.signal,
+    `RSC ${operation}`,
+  );
 }
 
 export interface RscOperationRegistrar {
@@ -59,9 +74,9 @@ export function attachRscPluginService(
   if (attachments.has(service)) throw new Error('RSC plugin service is already attached');
   const unregister = registerRscOperations(registrar, [
     [operations.describe, () => service.describe()],
-    [operations.render, ({ data, signal }) => service.render(data, signal)],
-    [operations.action, ({ data, signal }) => service.action(data, signal)],
-    [operations.serverFunction, ({ data, signal }) => service.serverFunction(data, signal)],
+    [operations.render, (input) => service.render(input.data, requireInvocation(input, 'render'))],
+    [operations.action, (input) => service.action(input.data, requireInvocation(input, 'action'))],
+    [operations.serverFunction, (input) => service.serverFunction(input.data, requireInvocation(input, 'server function'))],
   ]);
   let detached = false;
   let unsubscribe: () => void = () => undefined;

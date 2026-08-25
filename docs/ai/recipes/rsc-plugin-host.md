@@ -79,7 +79,7 @@ Before writing code, preserve these invariants:
 1. Use `HileRscPluginRuntime` as the plugin lifecycle composition root.
 2. Use `HileRscDiscoveryHost` for automatic Host deployment.
 3. Use `RscHostRuntime` plus `decodePluginFlight()` inside a dynamic Next route.
-4. Use a module-level `'use server'` file for React Server Functions and call scanned `defineActionModel()` definitions through `invokeRscModel()`.
+4. Use a module-level `'use server'` file with `defineRscServerFunction()` and call scanned `defineActionModel()` definitions through its explicit API argument.
 5. Keep exact React/RSC versions identical across Host, plugin, and build config.
 6. Treat `buildId` and artifact directories as immutable. A changed artifact requires a new build ID or development revision.
 7. Choose discovery trust explicitly: bind each HMAC `keyId` to a plugin-ID allowlist, or use `trusted-internal` only when every internal Micro peer is trusted.
@@ -281,11 +281,10 @@ Minimal `src/plugin/plugin.css` for proving style delivery:
 Create `src/models/example/increment.model.ts`:
 
 ```ts
-import { defineActionModel, getModelExecutionContext } from '@hile/model'
+import { defineActionModel } from '@hile/model'
 
-export default defineActionModel(async (input: { value: number }) => {
-  const signal = getModelExecutionContext()?.signal
-  if (signal?.aborted) throw signal.reason
+export default defineActionModel(async (input: { value: number }, invocation) => {
+  if (invocation.signal.aborted) throw invocation.signal.reason
   if (!Number.isFinite(input.value)) throw new TypeError('value must be finite')
   return { value: input.value + 1 }
 })
@@ -296,22 +295,23 @@ Create `src/plugin/actions.ts`:
 ```ts
 'use server'
 
-import { invokeRscModel } from '@hile/rsc/plugin'
+import { defineRscServerFunction } from '@hile/rsc/plugin'
 
-export async function increment(
+export const increment = defineRscServerFunction(async (
+  api,
   _previous: { value: number; invoked: boolean },
   formData: FormData,
-) {
+) => {
   const raw = formData.get('value')
   if (typeof raw !== 'string' || raw.trim() === '') throw new TypeError('value is required')
   const value = Number(raw)
   if (!Number.isFinite(value)) throw new TypeError('value must be finite')
-  const result = await invokeRscModel('example/increment', { value }) as { value: number }
+  const result = await api.invokeModel('example/increment', { value }) as { value: number }
   return { ...result, invoked: true }
-}
+})
 ```
 
-This follows the React/Next module-level Server Function shape: the client imports an async export and `useActionState` adds previous state as the first argument. Hile compiles a build-scoped reference instead of using Next's application compiler. The request still enters the one public Host, is authorized there, acquires the exact build lease, runs in the plugin microservice, then invokes the Model.
+This follows the React/Next module-level Server Function shape: the client imports an async callable and `useActionState` supplies previous state and form data. `defineRscServerFunction()` keeps that public signature intact while its callback explicitly receives the request API first. Hile compiles a build-scoped reference instead of using Next's application compiler. The request still enters the one public Host, is authorized there, acquires the exact build lease, runs in the plugin microservice, then invokes the Model.
 
 The Client Component does not manually append `buildId` to the Server Function arguments. The compiled Server Function reference and `RscNextClientRuntime` carry the exact plugin/build identity to the Host gateway. Passing `rsc` into the Client Boundary remains useful for display, cache keys, diagnostics, and any lower-level direct Action request; it must match the active deployment and must never be replaced with the base config build ID.
 
@@ -324,7 +324,7 @@ Model rules:
 - Model pipelines and services remain supported because execution uses `@hile/model`.
 - Keep authentication/authorization in the Host policy and application layer; validate action input again in the Server Function or Model.
 
-Supported Hile Server Function syntax is deliberately narrower than Next: use a plugin-owned module-level `'use server'` file whose exports are async functions. Inline closure-capturing directives, re-exports, synchronous exports, mixed client/server directives, and dependency-owned directives fail during compilation.
+Supported Hile Server Function syntax is deliberately narrower than Next: use a plugin-owned module-level `'use server'` file whose exports are created by `defineRscServerFunction()`. Ordinary unwrapped async exports, inline closure-capturing directives, re-exports, synchronous exports, mixed client/server directives, and dependency-owned directives fail during compilation.
 
 ## 5. Start The Plugin Microservice
 
@@ -543,6 +543,8 @@ HMAC deployments should source discovery secrets from a secret manager. All depl
 Create `src/app/plugins/[pluginId]/[[...path]]/page.tsx`:
 
 ```tsx
+import { randomUUID } from 'node:crypto'
+import { createExecutionContext } from '@hile/context'
 import { loadService } from '@hile/core'
 import { getHttpNextRequestSignal } from '@hile/http-next'
 import { RscClientRuntimeProvider } from '@hile/rsc/client'
@@ -568,6 +570,7 @@ export default async function PluginPage({ params, searchParams }: {
     decoder: { decode: (flight) => decodePluginFlight(flight) },
   })
   const tree = await runtime.render({
+    context: createExecutionContext({ requestId: randomUUID() }),
     pluginId,
     request: {
       buildId: active.buildId,
@@ -893,7 +896,7 @@ An implementation is not complete until tests prove:
 - [ ] Plugin and Host runtime pins match the compatibility tuple supported by their installed RSC packages.
 - [ ] Plugin process uses `--conditions=react-server` and creates no HTTP server.
 - [ ] Models load before `HileRscPluginRuntime.start()`.
-- [ ] New UI behavior uses module-level `'use server'` → `invokeRscModel()` → `defineActionModel()`.
+- [ ] New UI behavior uses module-level `'use server'` → `defineRscServerFunction()` → explicit API → `defineActionModel()`.
 - [ ] Host and plugin select the same explicit discovery trust mode; HMAC mode binds `keyId` to explicit plugin IDs.
 - [ ] Host mounts assets, Server Functions, and development SSE on its one HTTP server.
 - [ ] Dynamic Next route resolves and passes the exact active build ID and abort signal.

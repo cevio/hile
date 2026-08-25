@@ -107,12 +107,15 @@ Queue add with delayed retry policy:
 
 ```ts
 await queue.add(emailQueue, payload, {
+  context: invocation.context,
   jobId: `welcome:${payload.tenantId}:${payload.userId}`,
   delay: 10_000,
   maxAttempts: 5,
   backoff: { type: 'exponential', baseMs: 1_000, maxMs: 60_000 },
 })
 ```
+
+`invocation` is the explicit `InvocationContext` supplied by the HTTP, Micro, RSC, Model, or worker boundary that schedules the job.
 
 ## Use When
 
@@ -144,7 +147,7 @@ import { RedisStreamQueue, defineQueue } from '@hile/redis-stream-queue'
 
 - Use `@hile/ioredis` for the Redis client.
 - Use `idempotent()` and `rateLimitModel()` in `@hile/model` pipelines.
-- Use `@hile/context` with queues; active context is snapshotted during enqueue and restored in handlers.
+- Pass `ExecutionContext` explicitly when enqueueing; workers receive the persisted carrier as `invocation.context`.
 - Use `@hile/cache` singleflight to reduce stampedes.
 
 ## Runtime And Lifecycle Notes
@@ -304,15 +307,20 @@ export default defineService('email.worker', async (shutdown) => {
 Enqueue:
 
 ```ts
-await queue.add(emailQueue, {
-  tenantId: 't1',
-  userId: 'u1',
-  template: 'welcome',
-}, {
-  jobId: 'welcome:t1:u1',
-  maxAttempts: 5,
-  backoff: { type: 'exponential', baseMs: 1_000, maxMs: 60_000 },
-})
+import type { InvocationContext } from '@hile/context'
+
+async function enqueueWelcome(invocation: InvocationContext) {
+  await queue.add(emailQueue, {
+    tenantId: 't1',
+    userId: 'u1',
+    template: 'welcome',
+  }, {
+    context: invocation.context,
+    jobId: 'welcome:t1:u1',
+    maxAttempts: 5,
+    backoff: { type: 'exponential', baseMs: 1_000, maxMs: 60_000 },
+  })
+}
 ```
 
 ## File Layout
@@ -330,6 +338,7 @@ Use this recipe for at-least-once background work where side effects must surviv
 ## Packages To Use
 
 - `@hile/redis-stream-queue`
+- `@hile/context`
 - `@hile/redis-idempotency`
 - `@hile/ioredis`
 - `@hile/core`
@@ -337,7 +346,7 @@ Use this recipe for at-least-once background work where side effects must surviv
 ## Implementation Steps
 
 1. Define the queue and payload type.
-2. Enqueue with a stable `jobId`.
+2. Enqueue with the caller's explicit `ExecutionContext` and a stable `jobId`.
 3. Wrap side effects with `RedisIdempotency.run()`.
 4. Use business identifiers in idempotency keys.
 5. Monitor DLQ with `readDeadLetters()`.
@@ -352,6 +361,7 @@ Use this recipe for at-least-once background work where side effects must surviv
 ## Verification Checklist
 
 - Handler is idempotent.
+- Enqueue passes `invocation.context` explicitly.
 - Idempotency key is business-derived.
 - Worker stop is registered with `shutdown`.
 - DLQ read path exists.

@@ -37,6 +37,7 @@
     "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@hile/context": "workspace:^",
     "@hile/http-next": "workspace:^",
     "@hile/micro": "workspace:^",
     "@hile/rsc-build": "workspace:^",

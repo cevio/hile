@@ -12,6 +12,7 @@
     "start": "hile start --env-file .env.prod"
   },
   "dependencies": {
+    "@hile/context": "^4.0.1",
     "@hile/cli": "^4.0.0",
     "@hile/core": "^4.0.0",
     "@hile/http-next": "^4.0.0",

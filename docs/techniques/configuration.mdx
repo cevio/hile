@@ -86,8 +86,8 @@ await configs.save({ featureCheckout: true })
 - Each modem schedules request, total-stream, and idle-stream deadlines through one internal deadline scheduler. This reduces active Node.js timers without changing timeout, cancellation, ordering, or error semantics.
 - `@hile/message-ws` keeps public `decodeMessageFrame()` payloads isolated from caller-owned input by default. Its owned WebSocket `RawData` path uses a zero-copy binary Flight payload view internally.
 - A stream request requires `exec()` to return an async iterable.
-- `Application.call(namespace, url, data, options?)` returns a promise.
-- `Application.stream(namespace, url, data, options?)` returns a readable stream.
+- `Application.call(namespace, url, data, options)` requires `options.context` and returns a promise.
+- `Application.stream(namespace, url, data, options)` requires `options.context` and returns a readable stream.
 - `Application.publish(topic, payload)` returns an object with `update()` and `unpublish()`.
 - `Application.subscribe(topic, callback)` returns an unsubscribe function.
 - `Registry` stores service addresses and retained config/topic state under `~/.registry`.

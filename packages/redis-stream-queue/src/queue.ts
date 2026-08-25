@@ -1,10 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import {
-  isContextData,
-  runWithContext,
-  snapshotContext,
-  type ContextData,
-  type ContextInput,
+  createInvocationContext,
+  MissingExecutionContextError,
+  parseExecutionContext,
 } from '@hile/context';
 import { QueueSerializationError } from './errors';
 import { parsePayload } from './define';
@@ -57,8 +55,9 @@ export class RedisStreamQueue {
   public async add<TData>(
     definition: QueueDefinition<TData>,
     payload: TData,
-    options: QueueAddOptions = {},
+    options: QueueAddOptions,
   ): Promise<QueueAddResult> {
+    if (!options?.context) throw new MissingExecutionContextError(`queue enqueue ${definition.name}`);
     const data = parsePayload(definition, payload);
     const now = this.now();
     const delay = assertNonNegativeInteger(options.delay ?? 0, 'delay');
@@ -66,7 +65,7 @@ export class RedisStreamQueue {
     const runAt = now + delay;
     const id = randomUUID();
     const jobId = options.jobId;
-    const context = snapshotContext();
+    const context = parseExecutionContext(options.context);
     const job: StoredQueueJob = {
       v: 1,
       id,
@@ -78,7 +77,7 @@ export class RedisStreamQueue {
       maxAttempts,
       backoff: normalizeBackoff(options.backoff),
       ...(jobId ? { jobId } : {}),
-      ...(Object.keys(context).length > 0 ? { context } : {}),
+      context,
     };
     const encoded = this.encodeJob(definition, job);
     let reservedDedupe = false;
@@ -160,7 +159,7 @@ export class RedisStreamQueue {
         ...(stored.jobId ? { jobId: stored.jobId } : {}),
         createdAt: stored.createdAt,
         runAt: stored.runAt,
-        ...(stored.context ? { context: stored.context } : {}),
+        context: parseExecutionContext(stored.context),
         ...(stored.firstFailureReason ? { firstFailureReason: stored.firstFailureReason } : {}),
         ...(stored.lastFailureReason ? { lastFailureReason: stored.lastFailureReason } : {}),
       };
@@ -194,12 +193,12 @@ export class RedisStreamQueue {
 
     try {
       const job = this.createJob(definition, stored, streamId, attempt);
-      const run = () => Promise.resolve(handler(job));
-      if (stored.context && isContextData(stored.context)) {
-        await runWithContext<ContextData, Promise<void>>(stored.context, run);
-      } else {
-        await run();
-      }
+      const context = parseExecutionContext(stored.context);
+      await handler(job, createInvocationContext(
+        context,
+        new AbortController().signal,
+        `queue worker ${definition.name}`,
+      ));
     } catch (err) {
       await this.handleFailure(definition, stored, streamId, attempt, options, err);
       return;
@@ -262,7 +261,7 @@ export class RedisStreamQueue {
       ...(stored.jobId ? { jobId: stored.jobId } : {}),
       createdAt: stored.createdAt,
       runAt: stored.runAt,
-      ...(stored.context ? { context: stored.context } : {}),
+      context: parseExecutionContext(stored.context),
     };
   }
 

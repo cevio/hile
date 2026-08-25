@@ -1,197 +1,189 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  MissingContextError,
-  contextBindings,
-  contextHttp,
-  contextModel,
-  getContext,
-  hasContext,
-  requireContext,
-  requireContextModel,
-  runWithContext,
-  snapshotContext,
-  withContextLogger,
+  createExecutionContext,
+  createInvocationContext,
+  deriveExecutionContext,
+  executionContextBindings,
+  InvalidExecutionContextError,
+  MissingExecutionContextValueError,
+  MissingExecutionContextError,
+  parseExecutionContext,
+  pickExecutionContext,
+  requireExecutionContextValues,
+  UnsupportedExecutionContextVersionError,
+  withExecutionContextLogger,
+  type ExecutionContext,
 } from './index';
 
 type ShopContext = {
   shopId: string;
-  memberId: string;
   channel: 'web' | 'wechat';
-  featureFlag?: boolean;
-  secret?: string;
 };
 
-describe('@hile/context core', () => {
-  it('stores user-defined fields without requiring predefined business dimensions', async () => {
-    await runWithContext<ShopContext>({
+describe('@hile/context explicit execution context', () => {
+  it('creates immutable versioned protocol data without ambient state', () => {
+    const context = createExecutionContext<ShopContext>({
       shopId: 'shop-1',
-      memberId: 'member-1',
       channel: 'wechat',
-    }, async () => {
-      await Promise.resolve();
-      expect(getContext<ShopContext>()).toEqual({
+    });
+
+    expect(context).toEqual({
+      version: 1,
+      values: {
         shopId: 'shop-1',
-        memberId: 'member-1',
         channel: 'wechat',
-      });
-      expect(hasContext()).toBe(true);
-    });
-
-    expect(getContext<ShopContext>()).toEqual({});
-    expect(hasContext()).toBe(false);
-  });
-
-  it('isolates concurrent async executions', async () => {
-    const seen = await Promise.all([
-      runWithContext<ShopContext>({ shopId: 'a', memberId: 'm1', channel: 'web' }, async () => {
-        await new Promise(resolve => setTimeout(resolve, 10));
-        return getContext<ShopContext>().shopId;
-      }),
-      runWithContext<ShopContext>({ shopId: 'b', memberId: 'm2', channel: 'wechat' }, async () => {
-        await new Promise(resolve => setTimeout(resolve, 1));
-        return getContext<ShopContext>().shopId;
-      }),
-    ]);
-
-    expect(seen).toEqual(['a', 'b']);
-  });
-
-  it('merges nested context by default and restores the parent afterwards', async () => {
-    await runWithContext<ShopContext>({ shopId: 'shop-1', memberId: 'member-1', channel: 'web' }, async () => {
-      await runWithContext<ShopContext>({ channel: 'wechat' }, async () => {
-        expect(getContext<ShopContext>()).toEqual({
-          shopId: 'shop-1',
-          memberId: 'member-1',
-          channel: 'wechat',
-        });
-      });
-
-      expect(getContext<ShopContext>()).toEqual({
-        shopId: 'shop-1',
-        memberId: 'member-1',
-        channel: 'web',
-      });
-    });
-  });
-
-  it('can replace parent context when merge is disabled', async () => {
-    await runWithContext<ShopContext>({ shopId: 'shop-1', memberId: 'member-1', channel: 'web' }, async () => {
-      await runWithContext<ShopContext>({ channel: 'wechat' }, async () => {
-        expect(getContext<ShopContext>()).toEqual({ channel: 'wechat' });
-      }, { merge: false });
-    });
-  });
-
-  it('returns readonly snapshots so callers cannot mutate the active store', async () => {
-    await runWithContext<ShopContext>({ shopId: 'shop-1', memberId: 'member-1', channel: 'web' }, async () => {
-      const snapshot = getContext<ShopContext>();
-      expect(() => {
-        (snapshot as Record<string, unknown>)['shopId'] = 'changed';
-      }).toThrow(TypeError);
-      expect(snapshotContext<ShopContext>()).toEqual({
-        shopId: 'shop-1',
-        memberId: 'member-1',
-        channel: 'web',
-      });
-    });
-  });
-
-  it('requires only the fields selected by the application', async () => {
-    await runWithContext<ShopContext>({ shopId: 'shop-1', memberId: 'member-1', channel: 'web' }, async () => {
-      const context = requireContext<ShopContext>(['shopId', 'channel']);
-      expect(context.shopId).toBe('shop-1');
-      expect(context.channel).toBe('web');
-    });
-
-    await runWithContext<ShopContext>({ shopId: 'shop-1' }, async () => {
-      expect(() => requireContext<ShopContext>(['shopId', 'memberId'])).toThrow(MissingContextError);
-      try {
-        requireContext<ShopContext>(['shopId', 'memberId']);
-      } catch (err) {
-        expect(err).toBeInstanceOf(MissingContextError);
-        expect((err as MissingContextError).keys).toEqual(['memberId']);
-      }
-    });
-  });
-});
-
-describe('@hile/context adapters', () => {
-  it('builds HTTP middleware from caller-owned read and write mappings', async () => {
-    const ctx = {
-      requestHeaders: new Map([['x-shop', 'shop-1'], ['x-channel', 'wechat']]),
-      responseHeaders: new Map<string, string>(),
-      get(name: string) {
-        return this.requestHeaders.get(name.toLowerCase());
       },
-      set(name: string, value: string) {
-        this.responseHeaders.set(name, value);
-      },
+    });
+    expect(Object.isFrozen(context)).toBe(true);
+    expect(Object.isFrozen(context.values)).toBe(true);
+    expect(() => {
+      (context.values as Record<string, unknown>).shopId = 'changed';
+    }).toThrow(TypeError);
+  });
+
+  it('accepts structurally compatible context created by another module instance', () => {
+    const foreignContext = Object.freeze({
+      version: 1 as const,
+      values: Object.freeze({ shopId: 'shop-2', channel: 'web' as const }),
+    });
+
+    const parsed: ExecutionContext<ShopContext> = parseExecutionContext<ShopContext>(foreignContext);
+
+    expect(parsed.values.shopId).toBe('shop-2');
+    expect(parsed.values.channel).toBe('web');
+  });
+
+  it('works across independently evaluated module instances', async () => {
+    const producer = await import('./execution-context?producer');
+    const consumer = await import('./execution-context?consumer');
+
+    expect(producer).not.toBe(consumer);
+    const context = producer.createExecutionContext({ requestId: 'cross-instance' });
+    expect(consumer.parseExecutionContext(context).values.requestId).toBe('cross-instance');
+  });
+
+  it('survives structured clone boundaries used by workers and message ports', () => {
+    const context = createExecutionContext({ requestId: 'worker-boundary', roles: ['reader'] });
+    const cloned = structuredClone(context);
+
+    expect(parseExecutionContext(cloned)).toEqual(context);
+    expect(cloned).not.toBe(context);
+  });
+
+  it('creates and validates an explicit invocation context', () => {
+    const signal = new AbortController().signal;
+    const invocation = createInvocationContext(
+      createExecutionContext({ requestId: 'invocation' }),
+      signal,
+    );
+
+    expect(invocation.context.values.requestId).toBe('invocation');
+    expect(invocation.signal).toBe(signal);
+    expect(Object.isFrozen(invocation)).toBe(true);
+  });
+
+  it('reports a stable error when invocation context is missing', () => {
+    expect(() => createInvocationContext(undefined as never, new AbortController().signal))
+      .toThrow(MissingExecutionContextError);
+  });
+
+  it('deeply snapshots and freezes JSON-compatible values', () => {
+    const source = {
+      request: { id: 'request-1' },
+      roles: ['reader', 'writer'],
     };
 
-    const middleware = contextHttp<ShopContext, typeof ctx>({
-      read: httpCtx => ({
-        shopId: httpCtx.get('x-shop')!,
-        channel: httpCtx.get('x-channel') as ShopContext['channel'],
-      }),
-      write: (context, httpCtx) => {
-        httpCtx.set('x-current-shop', context.shopId ?? '');
-      },
-    });
+    const context = createExecutionContext(source);
+    source.request.id = 'changed';
+    source.roles.push('admin');
 
-    await middleware(ctx, async () => {
-      expect(getContext<ShopContext>()).toMatchObject({
-        shopId: 'shop-1',
-        channel: 'wechat',
-      });
+    expect(context.values).toEqual({
+      request: { id: 'request-1' },
+      roles: ['reader', 'writer'],
     });
-
-    expect(ctx.responseHeaders.get('x-current-shop')).toBe('shop-1');
+    expect(Object.isFrozen(context.values.request)).toBe(true);
+    expect(Object.isFrozen(context.values.roles)).toBe(true);
   });
 
-  it('does not mask the original HTTP middleware error when write also fails', async () => {
-    const middleware = contextHttp<ShopContext, Record<string, never>>({
-      read: () => ({ shopId: 'shop-1' }),
-      write: () => {
-        throw new Error('write failed');
-      },
-    });
+  it('preserves prototype-looking JSON keys as inert own properties', () => {
+    const values = JSON.parse('{"__proto__":{"polluted":true},"constructor":"plain"}');
+    const context = createExecutionContext(values);
 
-    await expect(middleware({}, async () => {
-      throw new Error('handler failed');
-    })).rejects.toThrow('handler failed');
+    expect(Object.prototype.hasOwnProperty.call(context.values, '__proto__')).toBe(true);
+    expect(context.values.__proto__).toEqual({ polluted: true });
+    expect(context.values.constructor).toBe('plain');
+    expect(Object.getPrototypeOf(context.values)).toBe(Object.prototype);
+    expect(({} as { polluted?: boolean }).polluted).toBeUndefined();
   });
 
-  it('seeds model pipelines from caller-owned input mappings', async () => {
-    const middleware = contextModel<{ store: string; source: 'web' | 'wechat' }, ShopContext>({
-      read: input => ({
-        shopId: input.store,
-        channel: input.source,
-      }),
-    });
+  it('safely picks and requires prototype-looking keys', () => {
+    const context = createExecutionContext(JSON.parse('{"__proto__":{"role":"reader"}}'));
+    const picked = pickExecutionContext(context, ['__proto__']);
+    const required = requireExecutionContextValues(context, ['__proto__']);
 
-    await middleware({ args: { store: 'shop-1', source: 'web' }, state: {} }, async () => {
-      expect(getContext<ShopContext>()).toMatchObject({
-        shopId: 'shop-1',
-        channel: 'web',
-      });
-    });
+    expect(Object.prototype.hasOwnProperty.call(picked.values, '__proto__')).toBe(true);
+    expect(picked.values.__proto__).toEqual({ role: 'reader' });
+    expect(Object.getPrototypeOf(picked.values)).toBe(Object.prototype);
+    expect(Object.prototype.hasOwnProperty.call(required, '__proto__')).toBe(true);
+    expect(required.__proto__).toEqual({ role: 'reader' });
+    expect(Object.getPrototypeOf(required)).toBe(Object.prototype);
   });
 
-  it('can enforce required context inside a model pipeline', async () => {
-    const next = vi.fn();
-    const middleware = requireContextModel<{ ok: boolean }, ShopContext>(['shopId']);
-
-    await expect(middleware({ args: { ok: true }, state: {} }, next)).rejects.toThrow(MissingContextError);
-    expect(next).not.toHaveBeenCalled();
-
-    await runWithContext<ShopContext>({ shopId: 'shop-1' }, async () => {
-      await middleware({ args: { ok: true }, state: {} }, next);
-    });
-
-    expect(next).toHaveBeenCalledOnce();
+  it.each([
+    ['non-finite number', { value: Number.NaN }],
+    ['function', { value: () => undefined }],
+    ['symbol', { value: Symbol('invalid') }],
+    ['class instance', { value: new Date() }],
+  ])('rejects %s values', (_name, values) => {
+    expect(() => createExecutionContext(values)).toThrow(InvalidExecutionContextError);
   });
 
-  it('only exposes explicitly selected context fields to logger bindings', async () => {
+  it('rejects cyclic values with the invalid field path', () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+
+    expect(() => createExecutionContext({ cyclic })).toThrowError(
+      expect.objectContaining({ path: '$.cyclic.self' }),
+    );
+  });
+
+  it('rejects unsupported protocol versions separately from malformed input', () => {
+    expect(() => parseExecutionContext({ version: 2, values: {} })).toThrow(
+      UnsupportedExecutionContextVersionError,
+    );
+    expect(() => parseExecutionContext({ version: 1, values: [] })).toThrow(
+      InvalidExecutionContextError,
+    );
+  });
+
+  it('derives and picks immutable context values without mutating the parent', () => {
+    const parent = createExecutionContext({
+      shopId: 'shop-1',
+      channel: 'web',
+      secret: 'hidden',
+    });
+
+    const derived = deriveExecutionContext(parent, { channel: 'wechat' });
+    const picked = pickExecutionContext(derived, ['shopId', 'channel']);
+
+    expect(parent.values.channel).toBe('web');
+    expect(derived.values).toEqual({ shopId: 'shop-1', channel: 'wechat', secret: 'hidden' });
+    expect(picked.values).toEqual({ shopId: 'shop-1', channel: 'wechat' });
+  });
+
+  it('requires selected values and reports missing keys', () => {
+    const context = createExecutionContext({ shopId: 'shop-1' });
+
+    expect(requireExecutionContextValues(context, ['shopId'])).toEqual({ shopId: 'shop-1' });
+    expect(() => requireExecutionContextValues(context, ['shopId', 'channel'])).toThrowError(
+      expect.objectContaining({ keys: ['channel'] }),
+    );
+    expect(() => requireExecutionContextValues(context, ['channel'])).toThrow(
+      MissingExecutionContextValueError,
+    );
+  });
+
+  it('derives logger bindings only from an explicitly supplied execution context', () => {
     const calls: Array<Record<string, unknown>> = [];
     const logger = {
       child(bindings: Record<string, unknown>) {
@@ -202,35 +194,37 @@ describe('@hile/context adapters', () => {
         };
       },
       info() {
-        throw new Error('expected child logger to be used');
+        throw new Error('expected child logger');
       },
     };
-
-    const wrapped = withContextLogger<ShopContext, typeof logger>(logger, {
-      pick: ['shopId', 'channel'],
-    });
-
-    await runWithContext<ShopContext>({
-      shopId: 'shop-1',
-      memberId: 'member-1',
-      channel: 'wechat',
+    const context = createExecutionContext({
+      requestId: 'request-1',
+      tenantId: 'tenant-1',
       secret: 'hidden',
-    }, async () => {
-      wrapped.info({ event: 'checkout' });
     });
+    const wrapped = withExecutionContextLogger(logger, context, {
+      pick: ['requestId', 'tenantId'],
+    });
+
+    wrapped.info({ event: 'checkout' });
 
     expect(calls).toEqual([{
-      shopId: 'shop-1',
-      channel: 'wechat',
+      requestId: 'request-1',
+      tenantId: 'tenant-1',
       event: 'checkout',
     }]);
-    expect(calls[0]).not.toHaveProperty('memberId');
-    expect(calls[0]).not.toHaveProperty('secret');
   });
 
-  it('does not create logger bindings until a picker or mapper is provided', async () => {
-    await runWithContext<ShopContext>({ shopId: 'shop-1', memberId: 'member-1', channel: 'web' }, async () => {
-      expect(contextBindings<ShopContext>()).toEqual({});
+  it('preserves prototype-looking logger binding keys without changing the prototype', () => {
+    const context = createExecutionContext(JSON.parse('{"__proto__":"picked"}'));
+    const mapped = JSON.parse('{"__proto__":"mapped"}');
+    const bindings = executionContextBindings(context, {
+      pick: ['__proto__'],
+      map: () => mapped,
     });
+
+    expect(Object.prototype.hasOwnProperty.call(bindings, '__proto__')).toBe(true);
+    expect(bindings.__proto__).toBe('mapped');
+    expect(Object.getPrototypeOf(bindings)).toBe(Object.prototype);
   });
 });

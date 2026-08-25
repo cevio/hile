@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+import { createExecutionContext } from '@hile/context';
 import { getHttpNextRequestSignal } from '@hile/http-next';
 import { decodePluginFlight } from '@hile/rsc-next';
 import { RscHostRuntime } from '@hile/rsc/host/runtime';
@@ -33,6 +35,7 @@ export default async function PluginPage({
     }),
   });
   const tree = await runtime.render({
+    context: createExecutionContext({ requestId: randomUUID() }),
     pluginId,
     request: {
       buildId: active.buildId,

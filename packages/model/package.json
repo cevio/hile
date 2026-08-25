@@ -23,6 +23,7 @@
     "vitest": "^4.0.18"
   },
   "dependencies": {
+    "@hile/context": "workspace:^",
     "@hile/core": "workspace:^",
     "@hile/loader": "workspace:^"
   }

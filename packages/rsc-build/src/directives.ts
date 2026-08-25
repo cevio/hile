@@ -51,6 +51,15 @@ function isAsync(node: ts.Node): boolean {
     && (ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ?? false);
 }
 
+function isServerFunctionDefinition(node: ts.Expression): boolean {
+  return ts.isCallExpression(node)
+    && ts.isIdentifier(node.expression)
+    && node.expression.text === 'defineRscServerFunction'
+    && node.arguments.length === 1
+    && (ts.isArrowFunction(node.arguments[0]) || ts.isFunctionExpression(node.arguments[0]))
+    && isAsync(node.arguments[0]);
+}
+
 function hasDirective(statements: readonly ts.Statement[], directive: string): boolean {
   for (const statement of statements) {
     if (ts.isExpressionStatement(statement) && ts.isStringLiteral(statement.expression)) {
@@ -108,19 +117,16 @@ export function inspectModule(source: string, filename: string): ModuleInspectio
   }
 
   const exports: string[] = [];
-  const localAsyncFunctions = new Set<string>();
+  const localServerFunctionDefinitions = new Set<string>();
   for (const statement of file.statements) {
-    if (ts.isFunctionDeclaration(statement) && statement.name && isAsync(statement)) {
-      localAsyncFunctions.add(statement.name.text);
-    } else if (ts.isVariableStatement(statement)) {
+    if (ts.isVariableStatement(statement)) {
       for (const declaration of statement.declarationList.declarations) {
         if (
           ts.isIdentifier(declaration.name)
           && declaration.initializer
-          && (ts.isArrowFunction(declaration.initializer) || ts.isFunctionExpression(declaration.initializer))
-          && isAsync(declaration.initializer)
+          && isServerFunctionDefinition(declaration.initializer)
         ) {
-          localAsyncFunctions.add(declaration.name.text);
+          localServerFunctionDefinitions.add(declaration.name.text);
         }
       }
     }
@@ -136,9 +142,7 @@ export function inspectModule(source: string, filename: string): ModuleInspectio
     if (hasDefault && isExported(statement)) add('default');
 
     if (useServer && hasDefault && isExported(statement)) {
-      if (!ts.isFunctionDeclaration(statement) || !isAsync(statement)) {
-        throw new Error(`${filename}: every 'use server' export must be an async function`);
-      }
+      throw new Error(`${filename}: every 'use server' export must use defineRscServerFunction()`);
     }
 
     if (
@@ -147,15 +151,15 @@ export function inspectModule(source: string, filename: string): ModuleInspectio
       && !hasDefault
       && statement.name
     ) {
-      if (useServer && (!ts.isFunctionDeclaration(statement) || !isAsync(statement))) {
-        throw new Error(`${filename}: every 'use server' export must be an async function`);
+      if (useServer) {
+        throw new Error(`${filename}: every 'use server' export must use defineRscServerFunction()`);
       }
       add(statement.name.text);
     } else if (ts.isVariableStatement(statement) && isExported(statement)) {
       for (const declaration of statement.declarationList.declarations) {
         if (useServer) {
-          if (!ts.isIdentifier(declaration.name) || !localAsyncFunctions.has(declaration.name.text)) {
-            throw new Error(`${filename}: every 'use server' export must be an async function`);
+          if (!ts.isIdentifier(declaration.name) || !localServerFunctionDefinitions.has(declaration.name.text)) {
+            throw new Error(`${filename}: every 'use server' export must use defineRscServerFunction()`);
           }
         }
         for (const name of bindingNames(declaration.name)) add(name);
@@ -163,18 +167,11 @@ export function inspectModule(source: string, filename: string): ModuleInspectio
     } else if (ts.isExportAssignment(statement)) {
       if (
         useServer
-        && (!ts.isArrowFunction(statement.expression)
-          && !ts.isFunctionExpression(statement.expression)
-          && !(ts.isIdentifier(statement.expression) && localAsyncFunctions.has(statement.expression.text)))
+        && !isServerFunctionDefinition(statement.expression)
+        && !(ts.isIdentifier(statement.expression)
+          && localServerFunctionDefinitions.has(statement.expression.text))
       ) {
-        throw new Error(`${filename}: every 'use server' export must be an async function`);
-      }
-      if (
-        useServer
-        && (ts.isArrowFunction(statement.expression) || ts.isFunctionExpression(statement.expression))
-        && !isAsync(statement.expression)
-      ) {
-        throw new Error(`${filename}: every 'use server' export must be an async function`);
+        throw new Error(`${filename}: every 'use server' export must use defineRscServerFunction()`);
       }
       add('default');
     } else if (ts.isExportDeclaration(statement)) {
@@ -186,13 +183,13 @@ export function inspectModule(source: string, filename: string): ModuleInspectio
       }
       if (ts.isNamedExports(statement.exportClause)) {
         if (useServer && statement.moduleSpecifier) {
-          throw new Error(`${filename}: a 'use server' re-export is unsupported; export a local async function`);
+          throw new Error(`${filename}: a 'use server' re-export is unsupported; export a local defineRscServerFunction() value`);
         }
         for (const element of statement.exportClause.elements) add(element.name.text);
         if (useServer) {
           for (const element of statement.exportClause.elements) {
-            if (!localAsyncFunctions.has(element.propertyName?.text ?? element.name.text)) {
-              throw new Error(`${filename}: every 'use server' export must be an async function`);
+            if (!localServerFunctionDefinitions.has(element.propertyName?.text ?? element.name.text)) {
+              throw new Error(`${filename}: every 'use server' export must use defineRscServerFunction()`);
             }
           }
         }

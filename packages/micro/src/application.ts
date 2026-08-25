@@ -1,3 +1,8 @@
+import {
+  MissingExecutionContextError,
+  parseExecutionContext,
+  type ExecutionContext,
+} from '@hile/context';
 import { Client, type ClientStreamOptions } from './client';
 import { Server, type MicroServerProps } from './server';
 import type {
@@ -198,6 +203,17 @@ export type ApplicationProps = {
   /** 本地内存熔断策略配置 */
   circuitBreaker?: CircuitBreakerOptions;
 } & MicroServerProps;
+
+export type ApplicationCallOptions = {
+  context: ExecutionContext;
+  timeout?: number;
+  retries?: number;
+  signal?: AbortSignal;
+};
+
+export type ApplicationStreamOptions = ClientStreamOptions & {
+  retries?: number;
+};
 
 type TopicSnapshot<T = any> = {
   hasData: boolean;
@@ -434,7 +450,7 @@ export class Application extends Server {
       if (preserveRevision && this.publishedTopicRevisions.has(topic)) {
         request.revision = this.publishedTopicRevisions.get(topic);
       }
-      const revision = await registry.request<number>('/-/declare', request, this.registryRequestOptions());
+      const revision = await registry.requestControl<number>('/-/declare', request, this.registryRequestOptions());
       if (
         this.publishedTopics.has(topic) &&
         this.publishedTopicVersions.get(topic) === version &&
@@ -448,13 +464,13 @@ export class Application extends Server {
 
   private syncUnpublishedTopic(topic: string, options: { propagateError?: boolean } = {}) {
     return this.enqueueTopicSync(topic, async (registry) => {
-      await registry.request<number>('/-/undeclare', { topic }, this.registryRequestOptions());
+      await registry.requestControl<number>('/-/undeclare', { topic }, this.registryRequestOptions());
     }, options);
   }
 
   private syncUnsubscribedTopic(topic: string, options: { propagateError?: boolean } = {}) {
     return this.enqueueTopicSync(topic, async (registry) => {
-      await registry.request<number>('/-/unsubscribe', { topic }, this.registryRequestOptions());
+      await registry.requestControl<number>('/-/unsubscribe', { topic }, this.registryRequestOptions());
     }, options);
   }
 
@@ -477,7 +493,7 @@ export class Application extends Server {
     requireLocal = true,
   ) {
     const replayBaseVersion = this.topicUpdateVersions.get(topic) ?? 0;
-    const snapshot = await registry.request<TopicSnapshot<T>>(
+    const snapshot = await registry.requestControl<TopicSnapshot<T>>(
       '/-/subscribe',
       { topic },
       this.registryRequestOptions(),
@@ -834,7 +850,7 @@ export class Application extends Server {
 
   private async findFromRegistry(namespace: string, exclude?: string[]) {
     if (!this.registry) throw new Error('Registry not found');
-    const promise = this.registry.request<{ host: string, port: number } | undefined>('/-/find', { namespace, exclude });
+    const promise = this.registry.requestControl<{ host: string, port: number } | undefined>('/-/find', { namespace, exclude });
     return await withTimeout(promise, this._registryLookupTimeoutMs, 'Registry /-/find');
   }
 
@@ -910,12 +926,10 @@ export class Application extends Server {
     })
   }
 
-  public async call<T = any>(namespace: string, url: string, data: any, options?: {
-    timeout?: number,
-    retries?: number,
-    signal?: AbortSignal
-  }): Promise<T> {
-    const { timeout = this._requestTimeoutMs, retries = 1, signal } = options || {};
+  public async call<T = any>(namespace: string, url: string, data: any, options: ApplicationCallOptions): Promise<T> {
+    if (!options?.context) throw new MissingExecutionContextError(`micro call ${namespace}${url}`);
+    const context = parseExecutionContext(options.context);
+    const { timeout = this._requestTimeoutMs, retries = 1, signal } = options;
     let remainingRetries = retries;
     let retrySourceError: unknown;
     let hasRetrySourceError = false;
@@ -931,6 +945,7 @@ export class Application extends Server {
       const { client, probe } = selected;
       try {
         const result = await client.request<T>(url, data, {
+          context,
           timeout: timeout ?? this._requestTimeoutMs,
           signal,
         });
@@ -955,9 +970,11 @@ export class Application extends Server {
     namespace: string,
     url: string,
     data: any,
-    options?: ClientStreamOptions & { retries?: number },
+    options: ApplicationStreamOptions,
   ): Promise<import('stream').Readable> {
-    const { signal, retries = 1, timeout, idleTimeout, window } = options || {};
+    if (!options?.context) throw new MissingExecutionContextError(`micro stream ${namespace}${url}`);
+    const context = parseExecutionContext(options.context);
+    const { signal, retries = 1, timeout, idleTimeout, window } = options;
     let remainingRetries = retries;
     let retrySourceError: unknown;
     let hasRetrySourceError = false;
@@ -972,7 +989,7 @@ export class Application extends Server {
       }
       const { client, probe } = selected;
       try {
-        const readable = client.stream(url, data, { signal, timeout, idleTimeout, window });
+        const readable = client.stream(url, data, { context, signal, timeout, idleTimeout, window });
         return this.trackCircuitStream(namespace, client.host, client.port, probe, readable);
       } catch (err) {
         this.recordFailure(namespace, client.host, client.port, err, probe);
@@ -993,8 +1010,10 @@ export class Application extends Server {
     address: RegistryAddress,
     url: string,
     data: any,
-    options?: ClientStreamOptions,
+    options: ClientStreamOptions,
   ): Promise<import('stream').Readable> {
+    if (!options?.context) throw new MissingExecutionContextError(`micro peer stream ${address.host}:${address.port}${url}`);
+    const context = parseExecutionContext(options.context);
     assertValidRegistrySocket('peer address', address.host, address.port);
     if (options?.timeout !== undefined && (!Number.isSafeInteger(options.timeout) || options.timeout < 1 || options.timeout > 2_147_483_647)) {
       throw new TypeError('Stream timeout must be a positive safe integer not exceeding 2147483647');
@@ -1004,7 +1023,7 @@ export class Application extends Server {
     const timeout = options?.timeout === undefined
       ? undefined
       : Math.max(1, options.timeout - (Date.now() - startedAt));
-    return client.stream(url, data, { ...options, timeout });
+    return client.stream(url, data, { ...options, context, timeout });
   }
 
   public async publish<T = any>(topic: string, data: T) {
@@ -1063,7 +1082,7 @@ export class Application extends Server {
       this.ensureRegistryReconnectScheduled();
       throw new Error('Registry is not connected');
     }
-    const result = await registry.request<RegistryTopicsResult>(
+    const result = await registry.requestControl<RegistryTopicsResult>(
       '/-/topics',
       prefix === undefined ? {} : { prefix },
       { ...this.registryRequestOptions(), signal: options?.signal },
@@ -1078,7 +1097,7 @@ export class Application extends Server {
       this.ensureRegistryReconnectScheduled();
       throw new Error('Registry is not connected');
     }
-    const result = await registry.request<RegistryTopicSnapshotsResult>(
+    const result = await registry.requestControl<RegistryTopicSnapshotsResult>(
       '/-/topic/snapshots',
       prefix === undefined ? {} : { prefix },
       { ...this.registryRequestOptions(), signal: options?.signal },
@@ -1096,7 +1115,7 @@ export class Application extends Server {
       this.ensureRegistryReconnectScheduled();
       throw new Error('Registry is not connected');
     }
-    const snapshot = await registry.request<RegistryTopicSnapshot & { payload: T } | undefined>(
+    const snapshot = await registry.requestControl<RegistryTopicSnapshot & { payload: T } | undefined>(
       '/-/topic/get',
       { topic },
       { ...this.registryRequestOptions(), signal: options?.signal },
@@ -1151,7 +1170,7 @@ export class Application extends Server {
     let synced = false;
     await this.enqueueTopicSync(topic, async (registry) => {
       if (!this.topics.get(topic)?.has(callback)) return;
-      snapshot = await registry.request<TopicSnapshot<T>>(
+      snapshot = await registry.requestControl<TopicSnapshot<T>>(
         '/-/subscribe',
         { topic },
         this.registryRequestOptions(),
