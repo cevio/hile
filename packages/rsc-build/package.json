@@ -1,7 +1,7 @@
 {
   "name": "@hile/rsc-build",
   "description": "Production compiler and artifact CLI for Hile RSC plugins",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
