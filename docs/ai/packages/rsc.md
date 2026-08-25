@@ -119,6 +119,19 @@ const tree = await runtime.render({
 })
 ```
 
+`pluginId` accepts either one lowercase identifier such as `analytics` or a
+lowercase namespaced identifier such as `org.example.analytics`.
+
+Manifest route paths may contain named single-segment parameters such as
+`/items/[itemId]`. Parameter names begin with an ASCII letter and continue with
+ASCII letters, digits, or underscores. The runtime adds captured values to
+`RscRouteProps.params`; an existing caller-supplied parameter with the same name
+fails closed. Exact routes take precedence over parameterized routes, then the
+route with more static segments wins. Manifest validation rejects repeated
+parameter names and equal-specificity patterns that can match the same path.
+Presentation metadata navigation must reference a declared static route because
+a parameter pattern does not identify a concrete destination.
+
 Every route entry receives framework-owned `RscRouteProps`. The `rsc`
 field is the exact immutable deployment identity selected for that render,
 including development revision suffixes. Pass this serializable value into

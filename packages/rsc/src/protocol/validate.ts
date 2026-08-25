@@ -6,6 +6,9 @@ import {
   type RscProtocolErrorCode,
   type RscRuntimeCompatibility,
 } from './types';
+import { rscRouteParameterName, splitRscRoutePath } from './route-pattern';
+
+const PLUGIN_ID_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/;
 
 export class RscProtocolError extends Error {
   public readonly code: RscProtocolErrorCode;
@@ -78,8 +81,10 @@ function validateClientReferenceId(value: unknown, field: string): string {
 
 function validateServerFunctionReferenceId(value: unknown, field: string): string {
   const id = requireString(value, field);
+  const reference = /^([^/]+)\/[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9@_./+-]+#[A-Za-z_$][A-Za-z0-9_$]*$/.exec(id);
   if (
-    !/^[a-z0-9]+(?:[.-][a-z0-9]+)+\/[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9@_./+-]+#[A-Za-z_$][A-Za-z0-9_$]*$/.test(id)
+    !reference
+    || !PLUGIN_ID_PATTERN.test(reference[1])
     || id.includes('..')
     || id.includes('//')
   ) {
@@ -144,7 +149,7 @@ function validateRoutePath(
     fail(errorCode, `${field} must be a non-empty string`);
   }
   const routePath = value;
-  const segments = routePath.slice(1).split('/');
+  const segments = splitRscRoutePath(routePath);
   if (
     !routePath.startsWith('/')
     || routePath.startsWith('//')
@@ -155,11 +160,36 @@ function validateRoutePath(
     || /[\0-\x1F\x7F]/.test(routePath)
     || (routePath !== '/' && segments.some((segment) => segment === ''))
     || segments.some((segment) => segment === '.' || segment === '..')
-    || segments.some((segment) => segment !== '' && !/^[A-Za-z0-9._~-]+$/.test(segment))
+    || segments.some((segment) => segment !== ''
+      && !/^[A-Za-z0-9._~-]+$/.test(segment)
+      && rscRouteParameterName(segment) === undefined)
   ) {
     fail(errorCode, `${field} must be a normalized absolute route path`);
   }
+  const parameterNames = segments
+    .map(rscRouteParameterName)
+    .filter((name): name is string => name !== undefined);
+  if (new Set(parameterNames).size !== parameterNames.length) {
+    fail(errorCode, `${field} must not repeat a route parameter name`);
+  }
   return routePath;
+}
+
+function isRouteParameter(segment: string): boolean {
+  return rscRouteParameterName(segment) !== undefined;
+}
+
+function staticRouteSegmentCount(path: string): number {
+  return splitRscRoutePath(path).filter((segment) => !isRouteParameter(segment)).length;
+}
+
+function routesOverlap(left: string, right: string): boolean {
+  const leftSegments = splitRscRoutePath(left);
+  const rightSegments = splitRscRoutePath(right);
+  return leftSegments.length === rightSegments.length
+    && leftSegments.every((segment, index) => segment === rightSegments[index]
+      || isRouteParameter(segment)
+      || isRouteParameter(rightSegments[index]));
 }
 
 const INVALID_METADATA_TEXT_PATTERN = /[\p{Cc}\p{Cs}\p{Zl}\p{Zp}\u061C\u200B\u200E\u200F\u202A-\u202E\u2060\u2066-\u2069]/u;
@@ -237,10 +267,13 @@ function validatePluginMetadata(
       `metadata.navigation[${index}].path`,
       'ERR_RSC_INVALID_METADATA',
     );
-    if (!routePaths.has(navigationPath)) {
+    if (
+      !routePaths.has(navigationPath)
+      || splitRscRoutePath(navigationPath).some(isRouteParameter)
+    ) {
       fail(
         'ERR_RSC_INVALID_METADATA',
-        `metadata.navigation[${index}].path must reference a declared route`,
+        `metadata.navigation[${index}].path must reference a declared static route`,
       );
     }
     if (
@@ -291,8 +324,8 @@ export function validateRscPluginManifest(
   }
 
   const pluginId = requireString(manifest.pluginId, 'pluginId');
-  if (!/^[a-z0-9]+(?:[.-][a-z0-9]+)+$/.test(pluginId)) {
-    fail('ERR_RSC_INVALID_MANIFEST', 'pluginId must be a lowercase namespaced identifier');
+  if (!PLUGIN_ID_PATTERN.test(pluginId)) {
+    fail('ERR_RSC_INVALID_MANIFEST', 'pluginId must be a lowercase identifier');
   }
   const buildId = requireString(manifest.buildId, 'buildId');
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(buildId)) {
@@ -395,6 +428,21 @@ export function validateRscPluginManifest(
       entry: validateEntryName(route.entry, `routes[${index}].entry`),
     };
   });
+  for (let left = 0; left < routes.length; left++) {
+    for (let right = left + 1; right < routes.length; right++) {
+      const leftPath = routes[left].path;
+      const rightPath = routes[right].path;
+      if (
+        routesOverlap(leftPath, rightPath)
+        && staticRouteSegmentCount(leftPath) === staticRouteSegmentCount(rightPath)
+      ) {
+        fail(
+          'ERR_RSC_DUPLICATE_ROUTE',
+          `ambiguous parameterized routes: ${leftPath} and ${rightPath}`,
+        );
+      }
+    }
+  }
   const metadata = manifest.metadata === undefined
     ? undefined
     : validatePluginMetadata(manifest.metadata, routePaths);

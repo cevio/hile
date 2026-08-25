@@ -18,11 +18,12 @@ Core has no dependency on esbuild, TypeScript, filesystem watchers, EventSource 
 3. A plugin is compiled independently and its registered microservice is automatically enabled without rebuilding
    the host Next build.
 4. Every request is pinned to one immutable `{ pluginId, buildId }` until the decoder consumes or closes the Flight stream.
-5. A `'use client'` directive defines a transitive client graph. The graph shares the host React singleton and hydrates from the same host origin.
-6. A module-level `'use server'` directive defines build-scoped Server Functions. The Host authorizes one same-origin endpoint and forwards execution to the exact plugin microservice revision.
-7. Server Functions adapt UI intent to automatically loaded `defineActionModel()` methods; they do not replace or duplicate the model layer.
-8. Production modules contain protocol and infrastructure behavior only. Domain routing, authorization decisions, and product state belong to composition roots or applications.
-9. Optional presentation metadata is immutable build data. The Host derives it from the active deployment and matching artifact manifest; discovery does not carry a second copy and plugins do not control public URLs or visibility. Next.js pages import the lightweight `@hile/rsc/host/plugin-metadata` entry so artifact verification and streaming stay outside their dependency graph.
+5. Manifest route patterns are transport-neutral: exact routes precede named single-segment parameters, captured values enter `RscRouteProps.params`, and ambiguous equal-specificity patterns fail validation.
+6. A `'use client'` directive defines a transitive client graph. The graph shares the host React singleton and hydrates from the same host origin.
+7. A module-level `'use server'` directive defines build-scoped Server Functions. The Host authorizes one same-origin endpoint and forwards execution to the exact plugin microservice revision.
+8. Server Functions adapt UI intent to automatically loaded `defineActionModel()` methods; they do not replace or duplicate the model layer.
+9. Production modules contain protocol and infrastructure behavior only. Domain routing, authorization decisions, and product state belong to composition roots or applications.
+10. Optional presentation metadata is immutable build data. The Host derives it from the active deployment and matching artifact manifest; discovery does not carry a second copy and plugins do not control public URLs or visibility. Next.js pages import the lightweight `@hile/rsc/host/plugin-metadata` entry so artifact verification and streaming stay outside their dependency graph.
 
 ## Dependency direction
 

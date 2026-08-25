@@ -145,6 +145,20 @@ describe('validateRscPluginManifest', () => {
     );
   });
 
+  it('rejects navigation metadata that targets a parameterized route pattern', () => {
+    const manifest = createManifest();
+    manifest.routes = [{ path: '/items/[itemId]', entry: 'itemDetail' }];
+    (manifest as unknown as { metadata: unknown }).metadata = {
+      displayName: 'Items',
+      navigation: [{ id: 'item', label: 'Item', path: '/items/[itemId]' }],
+    };
+
+    expectProtocolError(
+      () => validateRscPluginManifest(manifest, hostRuntime),
+      'ERR_RSC_INVALID_METADATA',
+    );
+  });
+
   it.each([undefined, null, 1, {}])(
     'classifies a non-string navigation path as invalid metadata: %j',
     (path) => {
@@ -219,6 +233,23 @@ describe('validateRscPluginManifest', () => {
     expect(manifest).toEqual(before);
   });
 
+  it('accepts a single lowercase plugin identifier', () => {
+    const manifest = { ...createManifest(), pluginId: 'analytics' };
+
+    expect(validateRscPluginManifest(manifest, hostRuntime).pluginId).toBe('analytics');
+  });
+
+  it('accepts a server function reference owned by a single-identifier plugin', () => {
+    const manifest = { ...createManifest(), pluginId: 'analytics' };
+    manifest.serverFunctions[0] = {
+      ...manifest.serverFunctions[0],
+      id: 'analytics/2026-08-12.1/src/actions#save',
+    };
+
+    expect(validateRscPluginManifest(manifest, hostRuntime).serverFunctions[0].id)
+      .toBe('analytics/2026-08-12.1/src/actions#save');
+  });
+
   it.each([
     null,
     undefined,
@@ -254,7 +285,6 @@ describe('validateRscPluginManifest', () => {
 
   it.each([
     '',
-    'plugin',
     'Com.Example.Plugin',
     'com..plugin',
     '.com.plugin',
@@ -585,6 +615,62 @@ describe('validateRscPluginManifest', () => {
       () => validateRscPluginManifest(manifest, hostRuntime),
       'ERR_RSC_DUPLICATE_ROUTE',
     );
+  });
+
+  it('accepts named single-segment route parameters', () => {
+    const manifest = createManifest();
+    manifest.routes = [
+      { path: '/items/new', entry: 'newItem' },
+      { path: '/items/[itemId]', entry: 'itemDetail' },
+    ];
+
+    expect(validateRscPluginManifest(manifest, hostRuntime).routes).toEqual(manifest.routes);
+  });
+
+  it.each([
+    '/items/[]',
+    '/items/[1item]',
+    '/items/[item-id]',
+    '/items/[itemId',
+    '/items/itemId]',
+    '/items/[itemId]/[itemId]',
+  ])('rejects an invalid or repeated route parameter in %s', (path) => {
+    const manifest = createManifest();
+    manifest.routes = [{ path, entry: 'itemDetail' }];
+
+    expectProtocolError(
+      () => validateRscPluginManifest(manifest, hostRuntime),
+      'ERR_RSC_INVALID_ROUTE',
+    );
+  });
+
+  it.each([
+    { routes: [
+      { path: '/items/[itemId]', entry: 'itemById' },
+      { path: '/items/[slug]', entry: 'itemBySlug' },
+    ] },
+    { routes: [
+      { path: '/[collection]/new', entry: 'collectionNew' },
+      { path: '/items/[itemId]', entry: 'itemDetail' },
+    ] },
+  ])('rejects equal-specificity parameterized routes that can match the same path', ({ routes }) => {
+    const manifest = createManifest();
+    manifest.routes = routes;
+
+    expectProtocolError(
+      () => validateRscPluginManifest(manifest, hostRuntime),
+      'ERR_RSC_DUPLICATE_ROUTE',
+    );
+  });
+
+  it('allows overlapping routes when one is strictly more specific', () => {
+    const manifest = createManifest();
+    manifest.routes = [
+      { path: '/items/[itemId]', entry: 'itemDetail' },
+      { path: '/[collection]/[itemId]', entry: 'collectionItem' },
+    ];
+
+    expect(validateRscPluginManifest(manifest, hostRuntime).routes).toEqual(manifest.routes);
   });
 
   it.each(['', '../dashboard', 'dashboard entry', 'dashboard?raw'])

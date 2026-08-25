@@ -183,6 +183,115 @@ describe('RscPluginService', () => {
     expect(renderer).toHaveBeenCalledTimes(1);
   });
 
+  it('matches a parameterized route and merges the captured value into request params', async () => {
+    const parameterizedManifest = manifest();
+    parameterizedManifest.routes = [{ path: '/items/[itemId]', entry: 'itemDetail' }];
+    const renderer = vi.fn(async function* ({ routeEntry, request }) {
+      expect(routeEntry).toBe('itemDetail');
+      expect(request.params).toEqual({ locale: 'zh-CN', itemId: 'item-42' });
+      yield Buffer.from('item');
+    });
+    const service = new RscPluginService({ manifest: parameterizedManifest, renderer });
+
+    await expect(collect(service.render({
+      buildId: 'build-1',
+      path: '/items/item-42',
+      params: { locale: 'zh-CN' },
+    }))).resolves.toEqual(Buffer.from('item'));
+  });
+
+  it('treats parameter syntax in a concrete path as a captured value, not an exact route', async () => {
+    const parameterizedManifest = manifest();
+    parameterizedManifest.routes = [{ path: '/items/[itemId]', entry: 'itemDetail' }];
+    const renderer = vi.fn(async function* ({ request }) {
+      expect(request.params).toEqual({ itemId: '[itemId]' });
+      yield Buffer.from('literal-parameter');
+    });
+    const service = new RscPluginService({ manifest: parameterizedManifest, renderer });
+
+    await expect(collect(service.render({
+      buildId: 'build-1',
+      path: '/items/[itemId]',
+    }))).resolves.toEqual(Buffer.from('literal-parameter'));
+  });
+
+  it('does not capture an empty path segment', () => {
+    const parameterizedManifest = manifest();
+    parameterizedManifest.routes = [{ path: '/items/[itemId]', entry: 'itemDetail' }];
+    const renderer = vi.fn(async function* () {});
+    const service = new RscPluginService({ manifest: parameterizedManifest, renderer });
+
+    expectServiceError(() => service.render({
+      buildId: 'build-1',
+      path: '/items/',
+    }), 'ERR_RSC_ROUTE_NOT_FOUND');
+    expect(renderer).not.toHaveBeenCalled();
+  });
+
+  it('prefers an exact route over a parameterized route', async () => {
+    const routedManifest = manifest();
+    routedManifest.routes = [
+      { path: '/items/[itemId]', entry: 'itemDetail' },
+      { path: '/items/new', entry: 'newItem' },
+    ];
+    const renderer = vi.fn(async function* ({ routeEntry, request }) {
+      expect(routeEntry).toBe('newItem');
+      expect(request.params).toEqual({});
+      yield Buffer.from('new');
+    });
+    const service = new RscPluginService({ manifest: routedManifest, renderer });
+
+    await expect(collect(service.render({ buildId: 'build-1', path: '/items/new' })))
+      .resolves.toEqual(Buffer.from('new'));
+  });
+
+  it('prefers the parameterized route with more static segments', async () => {
+    const routedManifest = manifest();
+    routedManifest.routes = [
+      { path: '/[collection]/[itemId]', entry: 'collectionItem' },
+      { path: '/items/[itemId]', entry: 'itemDetail' },
+    ];
+    const renderer = vi.fn(async function* ({ routeEntry, request }) {
+      expect(routeEntry).toBe('itemDetail');
+      expect(request.params).toEqual({ itemId: 'item-42' });
+      yield Buffer.from('specific');
+    });
+    const service = new RscPluginService({ manifest: routedManifest, renderer });
+
+    await expect(collect(service.render({ buildId: 'build-1', path: '/items/item-42' })))
+      .resolves.toEqual(Buffer.from('specific'));
+  });
+
+  it('rejects a captured route parameter that conflicts with caller params', () => {
+    const parameterizedManifest = manifest();
+    parameterizedManifest.routes = [{ path: '/items/[itemId]', entry: 'itemDetail' }];
+    const renderer = vi.fn(async function* () {});
+    const service = new RscPluginService({ manifest: parameterizedManifest, renderer });
+
+    expectServiceError(() => service.render({
+      buildId: 'build-1',
+      path: '/items/item-42',
+      params: { itemId: 'caller-value' },
+    }), 'ERR_RSC_INVALID_REQUEST');
+    expect(renderer).not.toHaveBeenCalled();
+  });
+
+  it('fails closed if an unvalidated manifest contains ambiguous parameterized routes', () => {
+    const ambiguousManifest = manifest();
+    ambiguousManifest.routes = [
+      { path: '/items/[itemId]', entry: 'itemById' },
+      { path: '/items/[slug]', entry: 'itemBySlug' },
+    ];
+    const renderer = vi.fn(async function* () {});
+    const service = new RscPluginService({ manifest: ambiguousManifest, renderer });
+
+    expectServiceError(() => service.render({
+      buildId: 'build-1',
+      path: '/items/item-42',
+    }), 'ERR_RSC_INVALID_REQUEST');
+    expect(renderer).not.toHaveBeenCalled();
+  });
+
   it.each([
     null,
     [],

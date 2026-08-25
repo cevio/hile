@@ -1,4 +1,5 @@
 import type { RscPluginManifest } from '../protocol';
+import { rscRouteParameterName, splitRscRoutePath } from '../protocol/route-pattern';
 import {
   decodeRscServerFunctionValue,
   encodeRscServerFunctionValue,
@@ -44,6 +45,56 @@ function assertBuildId(value: unknown): asserts value is string {
   if (typeof value !== 'string' || value.length === 0) {
     throw new RscPluginServiceError('ERR_RSC_INVALID_REQUEST', 'buildId must be a string');
   }
+}
+
+function resolveRoute(
+  routes: RscPluginManifest['routes'],
+  requestedPath: string,
+): { route: RscPluginManifest['routes'][number]; params: Record<string, string> } | undefined {
+  const requestedSegments = splitRscRoutePath(requestedPath);
+  const matches: Array<{
+    route: RscPluginManifest['routes'][number];
+    params: Record<string, string>;
+    dynamicSegments: number;
+  }> = [];
+  for (const route of routes) {
+    const routeSegments = splitRscRoutePath(route.path);
+    const parameterNames = routeSegments.map(rscRouteParameterName);
+    if (route.path === requestedPath && parameterNames.every((name) => name === undefined)) {
+      return { route, params: {} };
+    }
+    if (routeSegments.length !== requestedSegments.length) continue;
+    const params: Record<string, string> = {};
+    let dynamicSegments = 0;
+    let matched = true;
+    for (let index = 0; index < routeSegments.length; index++) {
+      const parameterName = parameterNames[index];
+      if (parameterName !== undefined) {
+        if (requestedSegments[index].length === 0) {
+          matched = false;
+          break;
+        }
+        params[parameterName] = requestedSegments[index];
+        dynamicSegments++;
+        continue;
+      }
+      if (routeSegments[index] !== requestedSegments[index]) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) matches.push({ route, params, dynamicSegments });
+  }
+  matches.sort((left, right) => left.dynamicSegments - right.dynamicSegments);
+  const selected = matches[0];
+  if (!selected) return undefined;
+  if (matches[1]?.dynamicSegments === selected.dynamicSegments) {
+    throw new RscPluginServiceError(
+      'ERR_RSC_INVALID_REQUEST',
+      `ambiguous parameterized RSC route: ${requestedPath}`,
+    );
+  }
+  return { route: selected.route, params: selected.params };
 }
 
 function combineSignals(primary: AbortSignal | undefined, shutdown: AbortSignal): {
@@ -212,11 +263,26 @@ export class RscPluginService {
       throw new RscPluginServiceError('ERR_RSC_INVALID_REQUEST', 'path must be absolute');
     }
     const revision = this.requiredRevision(value.buildId);
-    const route = revision.manifest.routes.find(({ path }) => path === value.path);
-    if (!route) {
+    const resolvedRoute = resolveRoute(revision.manifest.routes, value.path);
+    if (!resolvedRoute) {
       throw new RscPluginServiceError('ERR_RSC_ROUTE_NOT_FOUND', `unknown RSC route: ${value.path}`);
     }
-    const request = value as unknown as RscRenderRequest;
+    const existingParams = value.params && typeof value.params === 'object' && !Array.isArray(value.params)
+      ? value.params as Record<string, unknown>
+      : {};
+    for (const key of Object.keys(resolvedRoute.params)) {
+      if (Object.hasOwn(existingParams, key)) {
+        throw new RscPluginServiceError(
+          'ERR_RSC_INVALID_REQUEST',
+          `RSC route parameter conflicts with request params: ${key}`,
+        );
+      }
+    }
+    const request = {
+      ...value,
+      params: { ...existingParams, ...resolvedRoute.params },
+    } as unknown as RscRenderRequest;
+    const route = resolvedRoute.route;
     const { renderer, manifest } = revision;
     const service = this;
     return {

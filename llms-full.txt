@@ -2354,6 +2354,19 @@ const tree = await runtime.render({
 })
 ```
 
+`pluginId` accepts either one lowercase identifier such as `analytics` or a
+lowercase namespaced identifier such as `org.example.analytics`.
+
+Manifest route paths may contain named single-segment parameters such as
+`/items/[itemId]`. Parameter names begin with an ASCII letter and continue with
+ASCII letters, digits, or underscores. The runtime adds captured values to
+`RscRouteProps.params`; an existing caller-supplied parameter with the same name
+fails closed. Exact routes take precedence over parameterized routes, then the
+route with more static segments wins. Manifest validation rejects repeated
+parameter names and equal-specificity patterns that can match the same path.
+Presentation metadata navigation must reference a declared static route because
+a parameter pattern does not identify a concrete destination.
+
 Every route entry receives framework-owned `RscRouteProps`. The `rsc`
 field is the exact immutable deployment identity selected for that render,
 including development revision suffixes. Pass this serializable value into
@@ -3663,7 +3676,7 @@ Create `hile-rsc.json`:
 }
 ```
 
-`pluginId` is the stable logical plugin identity. The omitted `buildId` is generated for each immutable build, while the omitted `outdir` defaults to `.hile-rsc`; set `RSC_BUILD_ID` when a deployment system must provide the identity. Explicit `buildId` and `outdir` remain supported. `routes` maps plugin-internal paths to exports from the server entry. Optional `metadata` travels in the same immutable manifest: each navigation path must reference one declared route. The Host URL prefix, authorization, visibility, localization, and final navigation components remain Host policy and are not configured here.
+`pluginId` is the stable logical plugin identity. It may be one lowercase identifier such as `analytics` or a lowercase namespaced identifier such as `org.example.analytics`. The omitted `buildId` is generated for each immutable build, while the omitted `outdir` defaults to `.hile-rsc`; set `RSC_BUILD_ID` when a deployment system must provide the identity. Explicit `buildId` and `outdir` remain supported. `routes` maps plugin-internal paths to exports from the server entry and may use named single-segment parameters such as `/items/[itemId]`. Captured values are supplied through `RscRouteProps.params`; exact routes win over parameterized routes, and ambiguous equal-specificity patterns are rejected during manifest validation. Optional `metadata` travels in the same immutable manifest; each navigation path must reference a declared static route because a parameter pattern is not a concrete destination. The Host URL prefix, authorization, visibility, localization, and final navigation components remain Host policy and are not configured here.
 
 With the example Host catch-all, this route is opened at `/plugins/org.example.rsc-plugin/page`. The later `/plugins/demo.rsc.capabilities` and `/details` URLs belong to the richer private test suite, whose build config declares those routes; they are not routes from this minimal config.
 
