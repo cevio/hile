@@ -24,6 +24,7 @@ Core has no dependency on esbuild, TypeScript, filesystem watchers, EventSource 
 8. Server Functions adapt UI intent to automatically loaded `defineActionModel()` methods; they do not replace or duplicate the model layer.
 9. Production modules contain protocol and infrastructure behavior only. Domain routing, authorization decisions, and product state belong to composition roots or applications.
 10. Optional presentation metadata is immutable build data. The Host derives it from the active deployment and matching artifact manifest; discovery does not carry a second copy and plugins do not control public URLs or visibility. Next.js pages import the lightweight `@hile/rsc/host/plugin-metadata` entry so artifact verification and streaming stay outside their dependency graph.
+11. Build-scoped styles use the same exact `{ pluginId, buildId }` identity as Flight. A Host may resolve their public URLs before rendering the remote client boundary so the HTML head can discover CSS before plugin markup, but it must fail closed when that exact artifact is absent.
 
 ## Dependency direction
 

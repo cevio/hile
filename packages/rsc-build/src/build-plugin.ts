@@ -14,6 +14,7 @@ import {
 import { isPathInside, RscModuleGraph, type RscGraphEntry } from './module-graph';
 import {
   assembleRscClientArtifacts,
+  assembleRscSharedStyleArtifacts,
   buildRscServerFunctionArtifacts,
   createRscClientBuildOptions,
   RSC_BUILD_EXTERNALS,
@@ -28,6 +29,8 @@ export interface BuildRscPluginOptions {
   entry: string;
   outdir: string;
   routes: RscRouteDefinition[];
+  /** Build-scoped CSS copied once into the immutable artifact. Package export specifiers are supported. */
+  styles?: string[];
   metadata?: RscPluginMetadata;
   runtime: RscRuntimeCompatibility;
 }
@@ -71,6 +74,7 @@ async function buildRscPluginIntoEmptyDirectory(options: BuildRscPluginOptions):
   if ((await readdir(outdir)).length > 0) {
     throw new Error('RSC plugin outdir must be empty so immutable builds cannot retain stale files');
   }
+  const sharedStyles = await assembleRscSharedStyleArtifacts(cwd, outdir, options.styles);
 
   const graph = new RscModuleGraph({
     pluginId: options.pluginId,
@@ -113,7 +117,7 @@ async function buildRscPluginIntoEmptyDirectory(options: BuildRscPluginOptions):
     'ssr',
     [graph.boundaryPlugin('client')],
   );
-  const { clients, styles } = await assembleRscClientArtifacts(
+  const { clients, styles: clientStyles } = await assembleRscClientArtifacts(
     outdir,
     entries,
     browserBuild.metafile,
@@ -136,7 +140,7 @@ async function buildRscPluginIntoEmptyDirectory(options: BuildRscPluginOptions):
     },
     serverFunctions,
     clients,
-    styles,
+    styles: [...sharedStyles, ...clientStyles],
     routes: options.routes,
     metadata: options.metadata,
   }, options.runtime);

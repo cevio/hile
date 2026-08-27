@@ -187,7 +187,15 @@ Create `hile-rsc.json`:
 }
 ```
 
-`pluginId` is the stable logical plugin identity. It may be one lowercase identifier such as `analytics` or a lowercase namespaced identifier such as `org.example.analytics`. The omitted `buildId` is generated for each immutable build, while the omitted `outdir` defaults to `.hile-rsc`; set `RSC_BUILD_ID` when a deployment system must provide the identity. Explicit `buildId` and `outdir` remain supported. `routes` maps plugin-internal paths to exports from the server entry and may use named single-segment parameters such as `/items/[itemId]`. Captured values are supplied through `RscRouteProps.params`; exact routes win over parameterized routes, and ambiguous equal-specificity patterns are rejected during manifest validation. Optional `metadata` travels in the same immutable manifest; each navigation path must reference a declared static route because a parameter pattern is not a concrete destination. The Host URL prefix, authorization, visibility, localization, and final navigation components remain Host policy and are not configured here.
+`pluginId` is the stable logical plugin identity. It may be one lowercase identifier such as `analytics` or a lowercase namespaced identifier such as `org.example.analytics`. The omitted `buildId` is generated for each immutable build, while the omitted `outdir` defaults to `.hile-rsc`; set `RSC_BUILD_ID` when a deployment system must provide the identity. Explicit `buildId` and `outdir` remain supported. Optional `styles` entries are build-scoped CSS files: use an explicit relative path such as `./src/plugin/theme.css`, an absolute path, or a package CSS export such as `@example/ui/theme.css`. The compiler content-hashes, deduplicates, copies, and integrity-declares them once per immutable build. These raw static inputs must be self-contained because relative `url()` dependencies and external `@import` files are not copied or rewritten. `routes` maps plugin-internal paths to exports from the server entry and may use named single-segment parameters such as `/items/[itemId]`. Captured values are supplied through `RscRouteProps.params`; exact routes win over parameterized routes, and ambiguous equal-specificity patterns are rejected during manifest validation. Optional `metadata` travels in the same immutable manifest; each navigation path must reference a declared static route because a parameter pattern is not a concrete destination. The Host URL prefix, authorization, visibility, localization, and final navigation components remain Host policy and are not configured here.
+
+For a shared or generated stylesheet that is not imported by the client graph, add the optional field to the same config:
+
+```json
+{
+  "styles": ["./src/plugin/theme.css", "@example/ui/theme.css"]
+}
+```
 
 With the example Host catch-all, this route is opened at `/plugins/org.example.rsc-plugin/page`. The later `/plugins/demo.rsc.capabilities` and `/details` URLs belong to the richer private test suite, whose build config declares those routes; they are not routes from this minimal config.
 
@@ -410,6 +418,8 @@ The complete maintained implementation is `packages/create-hile/templates/rsc-ho
 - `RscServerFunctionGateway` with application authentication/authorization;
 - asset, Server Function, and optional development middleware;
 - exactly one `HttpNext` instance.
+
+Use `resolveRscStyleAssets(artifacts, pluginId, buildId, assetUrls)` when the Host page must expose plugin CSS before rendering the remote boundary. Emit the returned integrity-declared stylesheet links, or equivalent framework preload metadata, in the HTML head before the decoded plugin tree. Use exactly the same `{ pluginId, buildId }` passed to `RscHostRuntime.render()`; an unregistered build fails closed so CSS from one immutable revision cannot be paired with Flight from another.
 
 For a fully trusted internal Micro mesh, use the matching explicit policy and keep the trust assumption next to the code:
 
@@ -777,6 +787,8 @@ On first reconciliation the Host:
 ## 10. Development Mode
 
 Use `hile-rsc-dev` plus the plugin service. For deterministic cold startup, run `pnpm dev:rsc`, wait until `.hile-rsc/development.json` contains a revision for the configured namespace, then run `pnpm dev:service` in a second terminal. The current template `scripts/dev.mjs` is a convenience process owner that starts both children and propagates exit/signals; if a cold machine exposes a first-state race, use the deterministic two-terminal order or replace the supervisor with an explicit state-readiness gate.
+
+The development compiler consumes the same optional `styles` configuration as production and includes those files in every immutable revision. A relative style under the plugin `cwd` triggers the normal source watcher; after changing an absolute or package-export style outside `cwd`, invoke a rebuild or reload the config explicitly.
 
 Development binding belongs in the generated plugin boot: `bindRscModelDevelopment()` watches the models directory, while `bindRscPluginDevelopmentState()` activates a verified revision and calls the runtime-supplied publisher only after activation. The Host `onEnabled` observer publishes `RscDevelopmentEvents`, its middleware serves SSE, and the Host root layout renders `RscDevelopmentReload` only in development.
 

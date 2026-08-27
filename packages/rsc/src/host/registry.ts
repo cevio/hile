@@ -22,6 +22,11 @@ export interface RscAssetUrls {
   file(pluginId: string, buildId: string, artifactPath: string): string;
 }
 
+export interface RscResolvedStyleAsset {
+  href: string;
+  integrity: string;
+}
+
 export type RemoteClientResolver = (
   descriptor: Omit<RemoteClientBoundaryProps, 'props'>,
   target: 'ssr' | 'browser',
@@ -101,6 +106,22 @@ export class InMemoryRscArtifactCatalog implements MutableRscArtifactCatalog {
       registration: value.registration,
     };
   }
+}
+
+export function resolveRscStyleAssets(
+  catalog: RscArtifactCatalog,
+  pluginId: string,
+  buildId: string,
+  urls: RscAssetUrls = createRscAssetUrls(),
+): RscResolvedStyleAsset[] {
+  const registered = catalog.get(pluginId, buildId);
+  if (!registered) {
+    throw new Error(`RSC plugin artifacts are not registered: ${pluginId}@${buildId}`);
+  }
+  return registered.manifest.styles.map((style) => ({
+    href: urls.file(pluginId, buildId, style.path),
+    integrity: style.integrity,
+  }));
 }
 
 export function createRemoteClientResolver(

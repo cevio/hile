@@ -127,6 +127,28 @@ describe('hile-rsc CLI', () => {
     expect(sink.read().stderr).toContain('RSC outdir must be a string');
   });
 
+  it('rejects a non-string optional buildId at the config boundary', async () => {
+    const { config } = await configFile();
+    const value = JSON.parse(await readFile(config, 'utf8'));
+    value.buildId = 42;
+    await writeFile(config, `${JSON.stringify(value, null, 2)}\n`);
+    const sink = output();
+
+    expect(await runRscCli(['build', '--config', config], sink.io)).toBe(1);
+    expect(sink.read().stderr).toContain('RSC buildId must be a string');
+  });
+
+  it('trims an explicit buildId before returning the loaded config', async () => {
+    const { config, artifact } = await configFile();
+    const value = JSON.parse(await readFile(config, 'utf8'));
+    value.buildId = '  build-a  ';
+    await writeFile(config, `${JSON.stringify(value, null, 2)}\n`);
+    const sink = output();
+
+    expect(await runRscCli(['build', '--config', config], sink.io)).toBe(0);
+    expect(JSON.parse(sink.read().stdout)).toMatchObject({ buildId: 'build-a', artifact });
+  });
+
   it('rejects a null runtime instead of treating it as omitted', async () => {
     const { config } = await configFile();
     const value = JSON.parse(await readFile(config, 'utf8'));
@@ -135,6 +157,17 @@ describe('hile-rsc CLI', () => {
     const sink = output();
     expect(await runRscCli(['build', '--config', config], sink.io)).toBe(1);
     expect(sink.read().stderr).toContain('RSC runtime must be an object');
+  });
+
+  it('rejects invalid build-scoped style configuration', async () => {
+    const { config } = await configFile();
+    const value = JSON.parse(await readFile(config, 'utf8'));
+    value.styles = ['src/counter.css', '  '];
+    await writeFile(config, `${JSON.stringify(value, null, 2)}\n`);
+    const sink = output();
+
+    expect(await runRscCli(['build', '--config', config], sink.io)).toBe(1);
+    expect(sink.read().stderr).toContain('RSC styles must be an array of non-empty strings');
   });
 
   it('uses RSC_BUILD_ID when buildId is omitted', async () => {

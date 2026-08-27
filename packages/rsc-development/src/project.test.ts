@@ -53,6 +53,25 @@ async function setup() {
 }
 
 describe('RSC development project', () => {
+  it('uses a stable development build identity when config omits buildId', async () => {
+    const value = await setup();
+    const project = await createRscDevelopmentProject({
+      configFile: value.configFile,
+      stateFile: value.stateFile,
+      outdir: value.outdir,
+      namespace: 'fixture.dev',
+      sessionId: 'project-default-build',
+      loadConfig: async () => {
+        const { buildId: _buildId, ...config } = await value.loadConfig();
+        return config;
+      },
+    });
+
+    expect(project.current().manifest.buildId)
+      .toBe('development-dev-project-default-build-r1');
+    await project.dispose();
+  });
+
   it('classifies source, model, config and generated changes independently', async () => {
     const value = await setup();
     const roots = { cwd: value.cwd, configFile: value.configFile, stateFile: value.stateFile, outdir: value.outdir };

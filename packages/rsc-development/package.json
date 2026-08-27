@@ -52,6 +52,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@hile/context": "workspace:^",
     "@hile/rsc": "workspace:^",
     "@hile/rsc-build": "workspace:^",
     "esbuild": "^0.28.2"

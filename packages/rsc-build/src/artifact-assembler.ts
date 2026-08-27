@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { build, type BuildOptions, type Metafile, type Plugin } from 'esbuild';
 import type {
@@ -105,6 +106,43 @@ export function createRscClientBuildOptions(
 export interface RscClientArtifactAssembly {
   clients: RscClientReference[];
   styles: RscPluginManifest['styles'];
+}
+
+export async function assembleRscSharedStyleArtifacts(
+  cwd: string,
+  root: string,
+  configuredInputs: readonly string[] = [],
+): Promise<RscPluginManifest['styles']> {
+  if (!Array.isArray(configuredInputs)
+    || configuredInputs.some((input) => typeof input !== 'string' || input.trim() === '')) {
+    throw new TypeError('RSC styles must be an array of non-empty strings');
+  }
+  const directory = path.join(root, 'styles');
+  await rm(directory, { recursive: true, force: true });
+  if (configuredInputs.length === 0) return [];
+  const require = createRequire(path.join(cwd, 'package.json'));
+  const emitted = new Map<string, RscPluginManifest['styles'][number]>();
+  await mkdir(directory, { recursive: true });
+  for (const configuredInput of configuredInputs) {
+    const input = configuredInput.trim();
+    const resolved = input.startsWith('.') || path.isAbsolute(input)
+      ? path.resolve(cwd, input)
+      : require.resolve(input);
+    const source = realpathSync(resolved);
+    if (path.extname(source) !== '.css') {
+      throw new TypeError(`RSC shared style must resolve to a CSS file: ${input}`);
+    }
+    const content = await readFile(source);
+    const digest = createHash('sha256').update(content).digest('hex');
+    if (emitted.has(digest)) continue;
+    const target = path.join(directory, `${digest}.css`);
+    await writeFile(target, content);
+    emitted.set(digest, {
+      path: relativeArtifactPath(root, target),
+      integrity: await integrity(target),
+    });
+  }
+  return [...emitted.values()];
 }
 
 export async function assembleRscClientArtifacts(

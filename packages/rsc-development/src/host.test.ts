@@ -148,8 +148,10 @@ describe('RSC development events', () => {
 
   it('aborts a hanging readiness call and cleans installed development state on close', async () => {
     const file = await stateFile();
+    const readinessContexts: unknown[] = [];
     const hangingApplication = {
-      call(_namespace: string, _operation: string, _data: unknown, options?: { signal?: AbortSignal }) {
+      call(_namespace: string, _operation: string, _data: unknown, options?: { context?: unknown; signal?: AbortSignal }) {
+        readinessContexts.push(options?.context);
         return new Promise((_resolve, reject) => {
           options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
         });
@@ -166,6 +168,11 @@ describe('RSC development events', () => {
       readinessTimeoutMs: 20,
       verify: async () => ({ manifest: manifest(), files: [] }),
     })).rejects.toThrow('did not activate');
+    expect(readinessContexts.length).toBeGreaterThan(0);
+    expect(readinessContexts[0]).toMatchObject({
+      version: 1,
+      values: { component: 'rsc-development-readiness', buildId: 'dev-r1' },
+    });
 
     const artifacts = new InMemoryRscArtifactCatalog();
     const deployments = new InMemoryRscDeploymentCatalog();

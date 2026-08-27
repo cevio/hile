@@ -47,7 +47,7 @@ export interface RscDevelopmentProjectOptions {
   sessionId?: string;
   debounceMs?: number;
   pollMs?: number;
-  loadConfig(): Promise<BuildRscPluginOptions>;
+  loadConfig(): Promise<Omit<BuildRscPluginOptions, 'buildId'> & { buildId?: string }>;
   writeRevision?: (record: RscDevelopmentRevisionRecord) => void | Promise<void>;
   onRevision?: (revision: RscDevelopmentRevision) => void | Promise<void>;
   onError?: (error: unknown) => void;
@@ -165,7 +165,11 @@ export async function createRscDevelopmentProject(
   };
 
   const configure = async (): Promise<RscDevelopmentRevision> => {
-    const loaded = await options.loadConfig();
+    const loadedConfig = await options.loadConfig();
+    const loaded: BuildRscPluginOptions = {
+      ...loadedConfig,
+      buildId: loadedConfig.buildId?.trim() || 'development',
+    };
     assertStableRuntime(config, loaded);
     const nextCompiler = await createRscDevelopmentCompiler({
       ...loaded,

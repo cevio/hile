@@ -18,6 +18,7 @@ import {
 } from '@hile/rsc/protocol';
 import {
   assembleRscClientArtifacts,
+  assembleRscSharedStyleArtifacts,
   buildRscServerFunctionArtifacts,
   createRscClientBuildOptions,
   isPathInside,
@@ -34,6 +35,7 @@ export interface RscDevelopmentCompilerOptions {
   entry: string;
   outdir: string;
   routes: readonly RscRouteDefinition[];
+  styles?: string[];
   metadata?: RscPluginMetadata;
   runtime: RscRuntimeCompatibility;
   sessionId?: string;
@@ -218,6 +220,7 @@ export async function createRscDevelopmentCompiler(
   const compile = async (): Promise<RscDevelopmentRevision> => {
     const revision = successfulRevision + 1;
     activeBuildId = `${options.buildId}-dev-${sessionId}-r${revision}`;
+    const sharedStyles = await assembleRscSharedStyleArtifacts(cwd, workdir, options.styles);
     const server = await execute('server', 'server', {
       absWorkingDir: cwd, entryPoints: [entry], outfile: serverFile, bundle: true, format: 'esm', platform: 'node',
       target: 'node20', jsx: 'automatic', external: EXTERNAL, plugins: [graph.boundaryPlugin('server')], logLevel: 'silent',
@@ -262,7 +265,7 @@ export async function createRscDevelopmentCompiler(
         ]);
     const browserMeta = browser.result.metafile!;
     const ssrMeta = ssr.result.metafile!;
-    const { clients, styles } = await assembleRscClientArtifacts(workdir, entries, browserMeta, ssrMeta);
+    const { clients, styles: clientStyles } = await assembleRscClientArtifacts(workdir, entries, browserMeta, ssrMeta);
     const serverFunctions = await buildRscServerFunctionArtifacts({
       cwd,
       root: workdir,
@@ -279,7 +282,7 @@ export async function createRscDevelopmentCompiler(
       },
       serverFunctions,
       clients,
-      styles,
+      styles: [...sharedStyles, ...clientStyles],
       routes: [...options.routes],
       metadata: options.metadata,
     }, options.runtime);

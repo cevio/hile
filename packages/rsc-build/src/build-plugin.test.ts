@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { validateRscPluginManifest } from '@hile/rsc/protocol';
 import { buildRscPlugin } from './build-plugin';
+import { assembleRscSharedStyleArtifacts } from './artifact-assembler';
 
 const fixtureDir = path.resolve(import.meta.dirname, '../fixtures/plugin-basic');
 const tempDirs: string[] = [];
@@ -45,6 +46,19 @@ function sri(bytes: Buffer | string): string {
 }
 
 describe('buildRscPlugin', () => {
+  it('uses a bounded content-addressed filename for long shared-style source names', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'hile-rsc-style-source-'));
+    const outdir = await mkdtemp(path.join(tmpdir(), 'hile-rsc-style-output-'));
+    tempDirs.push(cwd, outdir);
+    const filename = `${'a'.repeat(240)}.css`;
+    await writeFile(path.join(cwd, filename), '.long-name { display: block; }\n');
+
+    const [style] = await assembleRscSharedStyleArtifacts(cwd, outdir, [`./${filename}`]);
+
+    expect(style.path).toMatch(/^styles\/[a-f0-9]{64}\.css$/);
+    expect(path.basename(style.path).length).toBe(68);
+  });
+
   it('emits server RSC, browser client, SSR client, CSS, chunks, and plugin manifest', async () => {
     const { outdir, manifest } = await build();
 
@@ -194,6 +208,69 @@ describe('buildRscPlugin', () => {
     expect(manifest.styles.length).toBeGreaterThan(0);
     const css = await readFile(path.join(outdir, manifest.styles[0].path), 'utf8');
     expect(css).toContain('.counter');
+  });
+
+  it('copies build-scoped CSS from relative paths and package exports once', async () => {
+    const cwd = await mkdtemp(path.join(import.meta.dirname, '../.tmp-style-source-'));
+    const outdir = await mkdtemp(path.join(tmpdir(), 'hile-rsc-build-'));
+    tempDirs.push(cwd, outdir);
+    await mkdir(path.join(cwd, 'src'), { recursive: true });
+    await mkdir(path.join(cwd, 'node_modules/@fixture/theme'), { recursive: true });
+    await writeFile(path.join(cwd, 'package.json'), '{"type":"module"}\n');
+    await writeFile(path.join(cwd, 'src/client.tsx'),
+      `'use client'; export default function Client() { return <button>ready</button>; }\n`);
+    await writeFile(path.join(cwd, 'src/page.tsx'),
+      `import Client from './client'; export default function Page() { return <Client />; }\n`);
+    await writeFile(path.join(cwd, 'src/theme.css'), '.shared-theme { color: rebeccapurple; }\n');
+    await writeFile(path.join(cwd, 'node_modules/@fixture/theme/package.json'), JSON.stringify({
+      name: '@fixture/theme',
+      type: 'module',
+      exports: { './theme.css': './theme.css' },
+    }));
+    await writeFile(
+      path.join(cwd, 'node_modules/@fixture/theme/theme.css'),
+      '.shared-theme { color: rebeccapurple; }\n',
+    );
+
+    const manifest = await buildRscPlugin({
+      pluginId: 'org.hile.shared-style', buildId: 'build-a', cwd, entry: 'src/page.tsx', outdir,
+      styles: ['./src/theme.css', '@fixture/theme/theme.css'],
+      routes: [{ path: '/', entry: 'default' }],
+      runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
+    });
+
+    expect(manifest.styles).toHaveLength(1);
+    expect(manifest.styles[0].path).toMatch(/^styles\/[a-f0-9]{64}\.css$/);
+    expect(await readFile(path.join(outdir, manifest.styles[0].path), 'utf8'))
+      .toBe('.shared-theme { color: rebeccapurple; }\n');
+    expect(manifest.styles[0].integrity)
+      .toBe(sri('.shared-theme { color: rebeccapurple; }\n'));
+  });
+
+  it('rejects a build-scoped style that does not resolve to CSS', async () => {
+    const outdir = await mkdtemp(path.join(tmpdir(), 'hile-rsc-build-'));
+    tempDirs.push(outdir);
+
+    await expect(buildRscPlugin({
+      pluginId: 'com.example.basic', buildId: 'build-invalid-style', cwd: fixtureDir,
+      entry: 'src/page.tsx', outdir, styles: ['./src/helper.ts'],
+      routes: [{ path: '/basic', entry: 'default' }],
+      runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
+    })).rejects.toThrow('RSC shared style must resolve to a CSS file: ./src/helper.ts');
+    expect(await readdir(outdir)).toEqual([]);
+  });
+
+  it('rejects invalid build-scoped styles through the programmatic API', async () => {
+    const outdir = await mkdtemp(path.join(tmpdir(), 'hile-rsc-build-'));
+    tempDirs.push(outdir);
+
+    await expect(buildRscPlugin({
+      pluginId: 'com.example.basic', buildId: 'build-invalid-style-config', cwd: fixtureDir,
+      entry: 'src/page.tsx', outdir, styles: ['  '],
+      routes: [{ path: '/basic', entry: 'default' }],
+      runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
+    })).rejects.toThrow('RSC styles must be an array of non-empty strings');
+    expect(await readdir(outdir)).toEqual([]);
   });
 
   it('writes correct integrity for every primary artifact', async () => {

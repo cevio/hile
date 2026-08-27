@@ -1,4 +1,5 @@
 import { Readable } from 'node:stream';
+import { createExecutionContext } from '@hile/context';
 import { watchRscDevelopmentState } from './state';
 import { verifyRscPluginArtifact } from '@hile/rsc/artifact';
 import type { RscRuntimeCompatibility } from '@hile/rsc/protocol';
@@ -131,10 +132,15 @@ async function waitForBuild(
   }, timeoutMs);
   timeout.unref?.();
   let lastError: unknown;
+  const context = createExecutionContext({
+    component: 'rsc-development-readiness',
+    namespace,
+    buildId,
+  });
   try {
     while (Date.now() < deadline && !controller.signal.aborted) {
       try {
-        if ((await client.describe({ signal: controller.signal })).buildId === buildId) return;
+        if ((await client.describe({ context, signal: controller.signal })).buildId === buildId) return;
       } catch (error) {
         lastError = error;
         if (controller.signal.aborted) break;

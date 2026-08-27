@@ -6,6 +6,7 @@ import {
   createRscAssetUrls,
   createRemoteClientResolver,
   installRemoteClientResolver,
+  resolveRscStyleAssets,
 } from './registry';
 
 function manifest(pluginId = 'org.hile.fixture', buildId = 'build-a'): RscPluginManifest {
@@ -82,6 +83,29 @@ describe('RscArtifactCatalog composition', () => {
     expect(browser.styles[0].href).toBe('/assets-v2/org.hile.fixture/build-a/file/client-browser/interactive.css');
     const ssr = await resolver(descriptor, 'ssr');
     expect(ssr.moduleUrl).toMatch(/^file:\/\/\/tmp\/plugin-root\/client-ssr\/interactive\.js$/);
+  });
+
+  it('resolves styles for the exact registered build through the public URL policy', () => {
+    const catalog = new InMemoryRscArtifactCatalog();
+    const value = manifest('org.hile/theme', 'build one');
+    value.styles = [{
+      path: 'styles/theme dark.css',
+      integrity: 'sha256-DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD=',
+    }];
+    catalog.register('/tmp/plugin-root', value);
+
+    expect(resolveRscStyleAssets(catalog, value.pluginId, value.buildId, createRscAssetUrls('/assets-v2')))
+      .toEqual([{
+        href: '/assets-v2/org.hile%2Ftheme/build%20one/file/styles/theme%20dark.css',
+        integrity: value.styles[0].integrity,
+      }]);
+  });
+
+  it('fails closed when styles are requested for an unregistered build', () => {
+    const catalog = new InMemoryRscArtifactCatalog();
+
+    expect(() => resolveRscStyleAssets(catalog, 'org.hile.fixture', 'missing-build'))
+      .toThrow('RSC plugin artifacts are not registered: org.hile.fixture@missing-build');
   });
 
   it('keeps the newest resolver installed when nested hosts uninstall out of order', () => {

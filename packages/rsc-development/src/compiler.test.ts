@@ -46,6 +46,29 @@ async function exists(file: string) {
 }
 
 describe('createRscDevelopmentCompiler', () => {
+  it('emits build-scoped styles into every immutable development revision', async () => {
+    const { cwd, outdir } = await fixture();
+    const sharedStyle = path.join(cwd, 'src/shared.css');
+    await writeFile(sharedStyle, '.shared { color: red; }\n');
+    const compiler = await createRscDevelopmentCompiler({
+      ...options(cwd, outdir),
+      styles: ['./src/shared.css'],
+    });
+
+    const first = await compiler.rebuild();
+    const firstStyle = first.manifest.styles.find(({ path: stylePath }) => stylePath.startsWith('styles/'))!;
+    expect(await readFile(path.join(first.artifactRoot, firstStyle.path), 'utf8'))
+      .toBe('.shared { color: red; }\n');
+
+    await writeFile(sharedStyle, '.shared { color: blue; }\n');
+    const second = await compiler.rebuild();
+    const secondStyle = second.manifest.styles.find(({ path: stylePath }) => stylePath.startsWith('styles/'))!;
+    expect(secondStyle.path).not.toBe(firstStyle.path);
+    expect(await readFile(path.join(second.artifactRoot, secondStyle.path), 'utf8'))
+      .toBe('.shared { color: blue; }\n');
+    await compiler.dispose();
+  });
+
   it('reuses every esbuild context for a warm rebuild without changing client boundaries', async () => {
     const { cwd, outdir } = await fixture();
     const compiler = await createRscDevelopmentCompiler(options(cwd, outdir));

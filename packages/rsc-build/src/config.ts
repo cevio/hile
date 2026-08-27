@@ -26,12 +26,21 @@ export async function loadRscBuildConfig(configInput: string): Promise<BuildRscP
   if (config.outdir !== undefined && typeof config.outdir !== 'string') {
     throw new TypeError('RSC outdir must be a string');
   }
+  if (config.buildId !== undefined && typeof config.buildId !== 'string') {
+    throw new TypeError('RSC buildId must be a string');
+  }
   if (config.runtime !== undefined && (
     config.runtime === null
     || typeof config.runtime !== 'object'
     || Array.isArray(config.runtime)
   )) {
     throw new TypeError('RSC runtime must be an object');
+  }
+  if (config.styles !== undefined && (
+    !Array.isArray(config.styles)
+    || config.styles.some((style) => typeof style !== 'string' || style.trim() === '')
+  )) {
+    throw new TypeError('RSC styles must be an array of non-empty strings');
   }
   const configuredBuildId = typeof config.buildId === 'string' && config.buildId.trim() !== ''
     ? config.buildId.trim()
@@ -42,6 +51,8 @@ export async function loadRscBuildConfig(configInput: string): Promise<BuildRscP
   const configDirectory = path.dirname(configPath);
   return {
     ...config,
+    buildId: configuredBuildId,
+    styles: config.styles?.map((style) => style.trim()),
     cwd: path.resolve(configDirectory, config.cwd),
     outdir: path.resolve(configDirectory, outdir),
     runtime: config.runtime ?? { ...HILE_RSC_RUNTIME },

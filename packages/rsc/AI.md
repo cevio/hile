@@ -122,7 +122,7 @@ pnpm exec hile-rsc inspect
 pnpm exec hile-rsc verify
 ```
 
-`buildId`, `outdir`, and `runtime` are optional in `hile-rsc.json`. Without them, the CLI generates an immutable build ID, writes the artifact below `.hile-rsc`, and uses the compatibility tuple supported by the installed `@hile/rsc`. `RSC_BUILD_ID` provides an explicit deployment identity without coupling builds to Git. Explicit config values and the complete `verify --react ... --react-dom ... --rsc ...` tuple remain available for compatibility checks.
+`buildId`, `outdir`, `runtime`, and `styles` are optional in `hile-rsc.json`. Without the first three, the CLI generates an immutable build ID, writes the artifact below `.hile-rsc`, and uses the compatibility tuple supported by the installed `@hile/rsc`. `RSC_BUILD_ID` provides an explicit deployment identity without coupling builds to Git. Explicit config values and the complete `verify --react ... --react-dom ... --rsc ...` tuple remain available for compatibility checks. `styles` accepts non-empty CSS paths or package export specifiers; relative paths must be explicit, such as `./src/theme.css`. The compiler content-hashes and deduplicates these build-scoped files before recording them in the immutable manifest.
 
 `resolveRscPluginArtifact()` from `@hile/rsc/artifact` is the shared path resolver for either one artifact directory or a build root. It validates an optional explicit build ID, ignores development, hidden, incomplete, and corrupt candidates, and otherwise selects the newest internally valid artifact. `resolveVerifiedRscPluginArtifact()` additionally evaluates candidates against the supplied Host runtime and returns the selected root plus its reusable verification result; verification and plugin boot code should use this form to skip incompatible builds without hashing the selected artifact twice.
 
@@ -267,7 +267,7 @@ const revision = await compiler.rebuild()
 await compiler.dispose()
 ```
 
-The server, browser, and SSR esbuild contexts are reused. Browser and SSR contexts are recreated only when the set of `'use client'` entries or their exports changes. Server-only edits reuse emitted browser/SSR artifacts when their input fingerprint and the Server Function graph are unchanged; build-scoped Server Function graphs rebuild client artifacts conservatively. Failed rebuilds leave the last successful revision intact. Development output retention is bounded per session and across stale sessions; keep at least two revisions and size `maxRevisions` for the maximum activation/download overlap your environment permits. The mutable `.work/<session>` directory is removed on compiler disposal.
+The server, browser, and SSR esbuild contexts are reused. Browser and SSR contexts are recreated only when the set of `'use client'` entries or their exports changes. Server-only edits reuse emitted browser/SSR artifacts when their input fingerprint and the Server Function graph are unchanged; build-scoped Server Function graphs rebuild client artifacts conservatively. Build-scoped `styles` are reassembled into every immutable development revision even when the browser graph is cached. Relative styles inside `cwd` participate in source observation; package-export or absolute styles require an explicit rebuild or config reload after their external source changes. Failed rebuilds leave the last successful revision intact. Development output retention is bounded per session and across stale sessions; keep at least two revisions and size `maxRevisions` for the maximum activation/download overlap your environment permits. The mutable `.work/<session>` directory is removed on compiler disposal.
 
 `HileRscPluginRuntime` is the reusable Hile composition root for a plugin process. It owns transport attachment, the internal listener, explicitly secured discovery registration, optional development binding, auxiliary watcher cleanup, renderer drain, and rollback. Plugin packages provide declarative namespace/port/trust/artifact configuration; they do not duplicate lifecycle ordering.
 
@@ -302,6 +302,7 @@ The word “Server Action” in React/Next documentation describes a Server Func
 - A module-level `'use server'` marks `defineRscServerFunction()` exports as build-scoped Server Functions. Ordinary async exports and Next's inline closure-capturing form are intentionally rejected.
 - Directive recognition parses the JavaScript directive prologue; it is not a substring or regular-expression check.
 - Imported CSS is emitted as integrity-declared plugin assets. CSS Modules and library CSS that esbuild can bundle follow the same path.
+- Large shared or generated styles that should exist once per plugin build may be declared through `hile-rsc.json` `styles` instead of importing them from every client boundary. Package CSS exports are resolved from the plugin project, copied into the immutable artifact, deduplicated by content, and listed before client-graph CSS. These files must be self-contained; relative `url()` dependencies and external `@import` files are not copied or rewritten by this raw static-style path.
 - CSS-in-JS libraries that require an SSR collector must be composed at the correct owner. The Host owns its outer layout collector; a plugin owns providers inside its client boundary. Never create a second React runtime or assume a plugin can mutate the Host document head outside the declared asset/provider contracts.
 
 The semantic baseline for Server Functions is the official [Next.js `use server` reference](https://nextjs.org/docs/app/api-reference/directives/use-server), [Next.js forms guide](https://nextjs.org/docs/app/guides/forms), and [React `useActionState` reference](https://react.dev/reference/react/useActionState). Those documents describe framework behavior; Hile deliberately supports the module-level async-export subset listed above and routes it through the independent plugin build/transport instead of Next's application compiler.
@@ -568,7 +569,15 @@ Create `hile-rsc.json`:
 }
 ```
 
-`pluginId` is the stable logical plugin identity. It may be one lowercase identifier such as `analytics` or a lowercase namespaced identifier such as `org.example.analytics`. The omitted `buildId` is generated for each immutable build, while the omitted `outdir` defaults to `.hile-rsc`; set `RSC_BUILD_ID` when a deployment system must provide the identity. Explicit `buildId` and `outdir` remain supported. `routes` maps plugin-internal paths to exports from the server entry and may use named single-segment parameters such as `/items/[itemId]`. Captured values are supplied through `RscRouteProps.params`; exact routes win over parameterized routes, and ambiguous equal-specificity patterns are rejected during manifest validation. Optional `metadata` travels in the same immutable manifest; each navigation path must reference a declared static route because a parameter pattern is not a concrete destination. The Host URL prefix, authorization, visibility, localization, and final navigation components remain Host policy and are not configured here.
+`pluginId` is the stable logical plugin identity. It may be one lowercase identifier such as `analytics` or a lowercase namespaced identifier such as `org.example.analytics`. The omitted `buildId` is generated for each immutable build, while the omitted `outdir` defaults to `.hile-rsc`; set `RSC_BUILD_ID` when a deployment system must provide the identity. Explicit `buildId` and `outdir` remain supported. Optional `styles` entries are build-scoped CSS files: use an explicit relative path such as `./src/plugin/theme.css`, an absolute path, or a package CSS export such as `@example/ui/theme.css`. The compiler content-hashes, deduplicates, copies, and integrity-declares them once per immutable build. These raw static inputs must be self-contained because relative `url()` dependencies and external `@import` files are not copied or rewritten. `routes` maps plugin-internal paths to exports from the server entry and may use named single-segment parameters such as `/items/[itemId]`. Captured values are supplied through `RscRouteProps.params`; exact routes win over parameterized routes, and ambiguous equal-specificity patterns are rejected during manifest validation. Optional `metadata` travels in the same immutable manifest; each navigation path must reference a declared static route because a parameter pattern is not a concrete destination. The Host URL prefix, authorization, visibility, localization, and final navigation components remain Host policy and are not configured here.
+
+For a shared or generated stylesheet that is not imported by the client graph, add the optional field to the same config:
+
+```json
+{
+  "styles": ["./src/plugin/theme.css", "@example/ui/theme.css"]
+}
+```
 
 With the example Host catch-all, this route is opened at `/plugins/org.example.rsc-plugin/page`. The later `/plugins/demo.rsc.capabilities` and `/details` URLs belong to the richer private test suite, whose build config declares those routes; they are not routes from this minimal config.
 
@@ -791,6 +800,8 @@ The complete maintained implementation is `packages/create-hile/templates/rsc-ho
 - `RscServerFunctionGateway` with application authentication/authorization;
 - asset, Server Function, and optional development middleware;
 - exactly one `HttpNext` instance.
+
+Use `resolveRscStyleAssets(artifacts, pluginId, buildId, assetUrls)` when the Host page must expose plugin CSS before rendering the remote boundary. Emit the returned integrity-declared stylesheet links, or equivalent framework preload metadata, in the HTML head before the decoded plugin tree. Use exactly the same `{ pluginId, buildId }` passed to `RscHostRuntime.render()`; an unregistered build fails closed so CSS from one immutable revision cannot be paired with Flight from another.
 
 For a fully trusted internal Micro mesh, use the matching explicit policy and keep the trust assumption next to the code:
 
@@ -1158,6 +1169,8 @@ On first reconciliation the Host:
 ## 10. Development Mode
 
 Use `hile-rsc-dev` plus the plugin service. For deterministic cold startup, run `pnpm dev:rsc`, wait until `.hile-rsc/development.json` contains a revision for the configured namespace, then run `pnpm dev:service` in a second terminal. The current template `scripts/dev.mjs` is a convenience process owner that starts both children and propagates exit/signals; if a cold machine exposes a first-state race, use the deterministic two-terminal order or replace the supervisor with an explicit state-readiness gate.
+
+The development compiler consumes the same optional `styles` configuration as production and includes those files in every immutable revision. A relative style under the plugin `cwd` triggers the normal source watcher; after changing an absolute or package-export style outside `cwd`, invoke a rebuild or reload the config explicitly.
 
 Development binding belongs in the generated plugin boot: `bindRscModelDevelopment()` watches the models directory, while `bindRscPluginDevelopmentState()` activates a verified revision and calls the runtime-supplied publisher only after activation. The Host `onEnabled` observer publishes `RscDevelopmentEvents`, its middleware serves SSE, and the Host root layout renders `RscDevelopmentReload` only in development.
 
