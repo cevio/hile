@@ -82,7 +82,7 @@ const packageConfigs = {
     purpose: 'Build and run independently deployed React Server Component plugins behind one composable Next.js host.',
     cards: ['packages/rsc.md'],
     recipes: ['recipes/rsc-plugin-host.md'],
-    readmeSections: ['### Client navigation'],
+    readmeSections: ['### Client navigation', '### Suspense ownership'],
   },
   '@hile/ioredis': {
     dir: 'ioredis',

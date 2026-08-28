@@ -93,6 +93,32 @@ transport, artifact, and general client-runtime imports fail during artifact com
 append `_rsc` or construct Flight headers in a plugin. The framework adapter owns navigation,
 and Next generates its private RSC request.
 
+## Suspense ownership
+
+`RscClientRuntimeProvider` defaults to `suspensePolicy="remote"`, which gives every remote
+Client Boundary its own fallback and enables the Host-owned `renderLoading` callback. This is
+the backward-compatible choice for independently revealed plugin regions.
+
+Use `suspensePolicy="host"` when the surrounding Host must coordinate those remote boundaries:
+
+```tsx
+<Suspense fallback={<span>Loading initial route…</span>}>
+  <RscClientRuntimeProvider
+    assetMountPath={assetMountPath}
+    suspensePolicy="host"
+  >
+    {children}
+  </RscClientRuntimeProvider>
+</Suspense>
+```
+
+Host ownership propagates remote lazy-module and precedence-stylesheet suspension to the nearest
+ancestor Suspense boundary. To retain a previously revealed page during navigation, keep that
+ancestor boundary mounted above changing route content and use a transition-aware router such as
+the Next adapter. The Host boundary defines cold-entry fallback behavior; nested Suspense
+boundaries declared by plugin UI retain their own reveal sequence. Do not pass `renderLoading`
+in `host` mode. `renderError(error, identity, retry)` remains available in both modes.
+
 ## Boundaries
 
 - A static Next application can include every route at host build time.
@@ -107,6 +133,7 @@ and Next generates its private RSC request.
 - Detecting `'use client'` with string search instead of directive-prologue AST parsing.
 - Bundling a second React copy into plugin browser or SSR artifacts.
 - Importing Next, `@hile/rsc/client`, or Host/transport RSC APIs from a remote Client Component; use only `@hile/rsc/client/navigation` for browser navigation.
+- Passing `renderLoading` with `suspensePolicy="host"`, or claiming Host-owned suspension retains old content without a stable ancestor Suspense boundary and a transition-aware router update.
 - Switching a mutable global build id while a request is streaming.
 - Handwriting a second `actions` handler map or exposing ordinary models automatically.
 

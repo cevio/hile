@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   clearRscClientCaches,
   clearRscClientBuildCache,
+  renderRemoteClientSuspense,
   renderRemoteClientErrorFallback,
   resolveRemoteClientAssets,
 } from './remote-client-boundary';
+import React, { Suspense } from 'react';
 
 afterEach(() => {
   clearRscClientCaches();
@@ -22,6 +24,36 @@ function manifest(referenceId = 'src/counter#default') {
 }
 
 describe('remote RSC client asset cache', () => {
+  it('delegates remote loading suspension to the Host without rendering a local fallback', () => {
+    const child = React.createElement('span', { 'data-ready': true });
+    const renderLoading = vi.fn(() => React.createElement('span', null, 'loading'));
+    const identity = {
+      pluginId: 'org.hile.fixture',
+      buildId: 'build-a',
+      referenceId: 'src/counter#default',
+      exportName: 'default',
+    };
+
+    expect(renderRemoteClientSuspense('host', identity, child, renderLoading)).toBe(child);
+    expect(renderLoading).not.toHaveBeenCalled();
+  });
+
+  it('keeps the backward-compatible remote Suspense boundary by default', () => {
+    const child = React.createElement('span', { 'data-ready': true });
+    const loading = React.createElement('span', null, 'loading');
+    const identity = {
+      pluginId: 'org.hile.fixture',
+      buildId: 'build-a',
+      referenceId: 'src/counter#default',
+      exportName: 'default',
+    };
+    const result = renderRemoteClientSuspense('remote', identity, child, () => loading);
+
+    expect(React.isValidElement(result)).toBe(true);
+    expect((result as React.ReactElement).type).toBe(Suspense);
+    expect((result as React.ReactElement<{ fallback: React.ReactNode }>).props.fallback).toBe(loading);
+  });
+
   it('invokes the Host error renderer with immutable remote identity and retry', () => {
     const error = new Error('remote import failed');
     const retry = vi.fn();

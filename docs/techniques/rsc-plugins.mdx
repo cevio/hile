@@ -99,6 +99,7 @@ Before writing code, preserve these invariants:
 10. Do not expose server bundles, artifact paths, namespaces, or internal message addresses to the browser.
 11. Configure bounded render timeouts/window and Registry snapshot concurrency for production.
 12. Keep loading/error renderer functions inside a Host Client Component.
+13. Choose remote or Host Suspense ownership explicitly; keep a Host-owned boundary stable across navigation when the product must retain the previous page until the delegated remote boundaries are ready.
 
 ## Recommended Project Layout
 
@@ -620,7 +621,40 @@ export default async function PluginPage({ params, searchParams }: {
 
 The total timeout bounds the complete internal Flight stream, the idle timeout resets after every valid chunk, and `window` bounds chunks in transit (1 through 64). The Host should reuse one `verificationCache` across requests and attach an `observe` callback for render outcome, duration, and byte metrics; observer failures do not affect rendering.
 
-For product loading and failure UI, wrap `RscNextClientRuntime` and `RscClientRuntimeProvider` in a Host-owned file with `'use client'`, then pass `renderLoading` and `renderError(error, identity, retry)` there. Do not define these function props in this Server Component: functions may not cross the RSC serialization boundary. The default error UI is safe but intentionally minimal.
+For product loading and failure UI, wrap `RscNextClientRuntime` and `RscClientRuntimeProvider` in a Host-owned file with `'use client'`, then pass `renderLoading` and `renderError(error, identity, retry)` there. Do not define these function props in this Server Component: functions may not cross the RSC serialization boundary. The default `suspensePolicy="remote"` preserves this per-component fallback behavior, and the default error UI is safe but intentionally minimal.
+
+When navigation must keep the previously revealed route visible and replace it only after all remote Client Boundaries and their precedence styles are ready, move the runtime wrapper above changing route content so it remains mounted across navigations:
+
+```tsx
+'use client'
+
+import { Suspense, type ReactNode } from 'react'
+import { RscClientRuntimeProvider } from '@hile/rsc/client'
+import { RscNextClientRuntime } from '@hile/rsc-next/client'
+
+export function HostRscRuntime({
+  assetMountPath,
+  children,
+}: {
+  assetMountPath: string
+  children: ReactNode
+}) {
+  return (
+    <RscNextClientRuntime>
+      <RscClientRuntimeProvider
+        assetMountPath={assetMountPath}
+        suspensePolicy="host"
+      >
+        <Suspense fallback={<span>Loading initial route…</span>}>
+          {children}
+        </Suspense>
+      </RscClientRuntimeProvider>
+    </RscNextClientRuntime>
+  )
+}
+```
+
+Render `HostRscRuntime` from a persistent Host layout, not from the changing plugin page, and pass the same `assetMountPath` used by the Host asset middleware. In `host` mode each remote lazy import propagates suspension instead of committing a local empty/loading fallback. Next navigation is transition-aware, so an already revealed stable boundary keeps the previous route until all delegated remote boundaries in that coordinated region are ready, then React commits that replacement together. Plugin-owned nested Suspense boundaries keep their own intentional reveal sequence. The Host fallback still defines cold-entry behavior when there is no previously revealed route. Do not pass `renderLoading` with `suspensePolicy="host"`; the provider rejects that contradictory configuration. Keep `renderError` when the product needs per-component retry and failure isolation.
 
 `RscNextClientRuntime` also installs the Host browser navigation adapter. A remote plugin uses
 the framework-neutral entry and never imports Next:

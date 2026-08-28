@@ -7,6 +7,8 @@ import * as JsxRuntime from 'react/jsx-runtime';
 import {
   useRscClientRuntime,
   type RscClientErrorRenderer,
+  type RscClientLoadingRenderer,
+  type RscClientSuspensePolicy,
   type RscRemoteComponentIdentity,
 } from './runtime-provider';
 
@@ -196,6 +198,24 @@ export function renderRemoteClientErrorFallback(
   }, 'Remote component failed to load');
 }
 
+export function renderRemoteClientSuspense(
+  suspensePolicy: RscClientSuspensePolicy,
+  identity: RscRemoteComponentIdentity,
+  children: ReactNode,
+  renderLoading?: RscClientLoadingRenderer,
+): ReactNode {
+  if (suspensePolicy === 'host') return children;
+  return React.createElement(
+    Suspense,
+    {
+      fallback: renderLoading
+        ? renderLoading(identity)
+        : React.createElement('span', { 'data-hile-rsc-loading': identity.referenceId }),
+    },
+    children,
+  );
+}
+
 interface RemoteClientErrorBoundaryProps {
   identity: RscRemoteComponentIdentity;
   renderError?: RscClientErrorRenderer;
@@ -238,7 +258,7 @@ export default function RemoteClientBoundary({
   exportName,
   props,
 }: RemoteClientBoundaryProps) {
-  const { assetMountPath, renderLoading, renderError } = useRscClientRuntime();
+  const { assetMountPath, suspensePolicy, renderLoading, renderError } = useRscClientRuntime();
   const identity = { pluginId, buildId, referenceId, exportName };
   const key = componentKey(identity, assetMountPath);
   const [attempt, setAttempt] = useState(0);
@@ -250,14 +270,11 @@ export default function RemoteClientBoundary({
   return React.createElement(
     RemoteClientErrorBoundary,
     { key, identity, renderError, onRetry: retry },
-    React.createElement(
-      Suspense,
-      {
-        fallback: renderLoading
-          ? renderLoading(identity)
-          : React.createElement('span', { 'data-hile-rsc-loading': referenceId }),
-      },
+    renderRemoteClientSuspense(
+      suspensePolicy,
+      identity,
       React.createElement(Component, { ...props, key: attempt }),
+      renderLoading,
     ),
   );
 }

@@ -12,6 +12,7 @@ export interface RscRemoteComponentIdentity {
 }
 
 export type RscClientLoadingRenderer = (identity: RscRemoteComponentIdentity) => ReactNode;
+export type RscClientSuspensePolicy = 'remote' | 'host';
 export type RscClientErrorRenderer = (
   error: unknown,
   identity: RscRemoteComponentIdentity,
@@ -20,12 +21,14 @@ export type RscClientErrorRenderer = (
 
 interface RscClientRuntime {
   assetMountPath: string;
+  suspensePolicy: RscClientSuspensePolicy;
   renderLoading?: RscClientLoadingRenderer;
   renderError?: RscClientErrorRenderer;
 }
 
 const RscClientRuntimeContext = createContext<RscClientRuntime>({
   assetMountPath: DEFAULT_ASSET_MOUNT_PATH,
+  suspensePolicy: 'remote',
 });
 
 function normalizeAssetMountPath(value: string): string {
@@ -35,8 +38,14 @@ function normalizeAssetMountPath(value: string): string {
   return normalized;
 }
 
+function normalizeSuspensePolicy(value: unknown): RscClientSuspensePolicy {
+  if (value === 'remote' || value === 'host') return value;
+  throw new TypeError('RSC suspensePolicy must be "remote" or "host"');
+}
+
 export interface RscClientRuntimeProviderProps {
   assetMountPath?: string;
+  suspensePolicy?: RscClientSuspensePolicy;
   renderLoading?: RscClientLoadingRenderer;
   renderError?: RscClientErrorRenderer;
   children: ReactNode;
@@ -44,15 +53,23 @@ export interface RscClientRuntimeProviderProps {
 
 export function RscClientRuntimeProvider({
   assetMountPath = DEFAULT_ASSET_MOUNT_PATH,
+  suspensePolicy = 'remote',
   renderLoading,
   renderError,
   children,
 }: RscClientRuntimeProviderProps) {
-  const value = useMemo(() => ({
-    assetMountPath: normalizeAssetMountPath(assetMountPath),
-    renderLoading,
-    renderError,
-  }), [assetMountPath, renderLoading, renderError]);
+  const value = useMemo(() => {
+    const normalizedSuspensePolicy = normalizeSuspensePolicy(suspensePolicy);
+    if (normalizedSuspensePolicy === 'host' && renderLoading !== undefined) {
+      throw new TypeError('RSC renderLoading is unavailable when suspensePolicy is "host"');
+    }
+    return {
+      assetMountPath: normalizeAssetMountPath(assetMountPath),
+      suspensePolicy: normalizedSuspensePolicy,
+      renderLoading,
+      renderError,
+    };
+  }, [assetMountPath, suspensePolicy, renderLoading, renderError]);
   return React.createElement(
     RscClientRuntimeContext.Provider,
     { value },

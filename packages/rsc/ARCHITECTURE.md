@@ -99,6 +99,7 @@ Configurable policy:
 - public asset/action/Server Function mount paths;
 - deployment selection and retention;
 - public navigation URL composition, localization, visibility, and authorization;
+- remote-versus-Host Suspense ownership and the Host's cold-entry fallback;
 - action origin, CSRF, authentication, and authorization;
 - error-to-route/status mapping;
 - Next decoder implementation for a supported Next version.
