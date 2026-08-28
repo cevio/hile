@@ -1,7 +1,7 @@
 {
   "name": "@hile/rsc-development",
   "description": "Incremental development and hot-reload orchestration for Hile RSC plugins",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
