@@ -1,7 +1,7 @@
 {
   "name": "@hile/rsc-next",
   "description": "Optional Next.js Flight decoder adapter for Hile RSC hosts",
-  "version": "1.0.13",
+  "version": "1.0.14",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
