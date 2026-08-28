@@ -134,6 +134,52 @@ test.describe.serial('Registry-driven single HTTP RSC topology', () => {
     expect(consoleErrors).toEqual([]);
   });
 
+  test('navigates from a remote plugin through the Host router without replacing the document', async ({ page }) => {
+    const flightRequests: Array<{
+      url: string;
+      headers: Record<string, string>;
+    }> = [];
+    page.on('request', (request) => {
+      const url = new URL(request.url());
+      if (url.searchParams.has('_rsc')) {
+        flightRequests.push({ url: request.url(), headers: request.headers() });
+      }
+    });
+
+    await page.goto('/plugins/demo.rsc.capabilities?label=navigation-source');
+    const token = await page.evaluate(() => {
+      const value = crypto.randomUUID();
+      const browser = globalThis as typeof globalThis & {
+        __hileDocumentToken?: string;
+        __hileBeforeUnload?: boolean;
+      };
+      browser.__hileDocumentToken = value;
+      browser.__hileBeforeUnload = false;
+      addEventListener('beforeunload', () => { browser.__hileBeforeUnload = true; });
+      return value;
+    });
+
+    flightRequests.length = 0;
+    await page.getByTestId('remote-rsc-navigation').click();
+    await expect(page).toHaveURL(/\/plugins\/demo\.rsc\.capabilities\/details\?source=remote-link$/);
+    await expect(page.getByTestId('plugin-details')).toContainText('Server-only details route · v2');
+    await expect.poll(() => flightRequests.find(({ url }) =>
+      new URL(url).pathname === '/plugins/demo.rsc.capabilities/details'))
+      .toEqual(expect.objectContaining({
+        headers: expect.objectContaining({
+          rsc: '1',
+          'next-router-state-tree': expect.any(String),
+        }),
+      }));
+    expect(await page.evaluate(() => {
+      const browser = globalThis as typeof globalThis & {
+        __hileDocumentToken?: string;
+        __hileBeforeUnload?: boolean;
+      };
+      return { token: browser.__hileDocumentToken, unloaded: browser.__hileBeforeUnload };
+    })).toEqual({ token, unloaded: false });
+  });
+
   test('isolates another automatically discovered plugin under the same public origin', async ({ page }) => {
     await page.goto('/plugins/demo.rsc.isolation?marker=independent');
     await expect(page.getByTestId('plugin-isolation')).toHaveAttribute('data-build', 'isolation-v1');
@@ -159,13 +205,19 @@ test.describe.serial('Registry-driven single HTTP RSC topology', () => {
       }
     });
     await page.goto('/plugins/demo.rsc.capabilities?label=retry-boundary');
-    const fallback = page.locator('[data-demo-rsc-error]');
-    await expect(fallback).toHaveAttribute('data-plugin-id', 'demo.rsc.capabilities');
-    await expect(fallback).toHaveAttribute('data-demo-rsc-error', /#/);
+    const fallbacks = page.locator('[data-demo-rsc-error]');
+    await expect(fallbacks).toHaveCount(2);
+    for (let index = 0; index < 2; index++) {
+      await expect(fallbacks.nth(index)).toHaveAttribute('data-plugin-id', 'demo.rsc.capabilities');
+      await expect(fallbacks.nth(index)).toHaveAttribute('data-demo-rsc-error', /#/);
+    }
     allowManifest = true;
-    await fallback.getByRole('button', { name: 'Retry' }).click();
+    await fallbacks.first().getByRole('button', { name: 'Retry' }).click();
+    await expect(fallbacks).toHaveCount(1);
+    await fallbacks.getByRole('button', { name: 'Retry' }).click();
     await expect(page.getByTestId('v2-hydration')).toHaveText('hydrated-v2');
-    await expect(fallback).toHaveCount(0);
+    await expect(page.getByTestId('remote-rsc-navigation')).toBeVisible();
+    await expect(fallbacks).toHaveCount(0);
     expect(failures).toBeGreaterThan(0);
   });
 

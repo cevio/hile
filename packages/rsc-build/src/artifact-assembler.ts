@@ -10,6 +10,7 @@ import type {
   RscServerFunctionReference,
 } from '@hile/rsc/protocol';
 import { createSharedReactPlugin } from './shared-react';
+import { createRscClientImportsPlugin } from './rsc-client-imports';
 import type { RscGraphEntry } from './module-graph';
 
 export const RSC_BUILD_EXTERNALS = [
@@ -94,8 +95,9 @@ export function createRscClientBuildOptions(
     entryNames: '[name]-[hash]',
     chunkNames: 'chunks/[name]-[hash]',
     assetNames: 'assets/[name]-[hash]',
-    external: RSC_BUILD_EXTERNALS.filter((specifier) => !specifier.startsWith('react')),
-    plugins: [...plugins, createSharedReactPlugin()],
+    external: RSC_BUILD_EXTERNALS.filter((specifier) =>
+      !specifier.startsWith('react') && !specifier.startsWith('@hile/rsc')),
+    plugins: [...plugins, createSharedReactPlugin(), createRscClientImportsPlugin()],
     metafile: true,
     write: true,
     sourcemap: false,

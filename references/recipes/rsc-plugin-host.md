@@ -611,6 +611,24 @@ The total timeout bounds the complete internal Flight stream, the idle timeout r
 
 For product loading and failure UI, wrap `RscNextClientRuntime` and `RscClientRuntimeProvider` in a Host-owned file with `'use client'`, then pass `renderLoading` and `renderError(error, identity, retry)` there. Do not define these function props in this Server Component: functions may not cross the RSC serialization boundary. The default error UI is safe but intentionally minimal.
 
+`RscNextClientRuntime` also installs the Host browser navigation adapter. A remote plugin uses
+the framework-neutral entry and never imports Next:
+
+```tsx
+import { RscLink } from '@hile/rsc/client/navigation'
+
+export function PluginPage() {
+  return <RscLink href="/plugins/catalog/details">Details</RscLink>
+}
+```
+
+`RscLink` delegates eligible same-origin clicks to the Host router after hydration and otherwise
+remains a normal anchor. Client Components may use `useRscNavigation()` from the same entry for
+imperative `push`, `replace`, `refresh`, or `prefetch`; imperative destinations accept only HTTP(S),
+and cross-origin navigation remains a full browser navigation. Do not append `_rsc`, send Flight headers,
+or depend on `next/link` or `next/navigation` from a plugin; Next owns its private navigation
+request when the Host adapter calls the public router.
+
 `@hile/rsc-next` supports exactly Next 16.3.0 with React 19.2.8 and checks the installed package tuple before decoding through its isolated private Next modules. Do not widen the Next peer range without rerunning the full production SSR/hydration suite.
 
 Do not add `cache()`, `unstable_cache`, or route revalidation around tenant/user-specific plugin rendering by default. Cross-request caching is an application policy; it requires an explicit authorization-safe key and invalidation contract.

@@ -530,4 +530,30 @@ describe('buildRscPlugin', () => {
       runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
     })).rejects.toThrow('External use server');
   });
+
+  it('rejects Host and transport RSC imports from remote browser components', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'hile-rsc-source-'));
+    const outdir = await mkdtemp(path.join(tmpdir(), 'hile-rsc-build-'));
+    tempDirs.push(cwd, outdir);
+    await mkdir(path.join(cwd, 'src'), { recursive: true });
+    await mkdir(path.join(cwd, 'node_modules/@hile'), { recursive: true });
+    await symlink(path.resolve(import.meta.dirname, '../../rsc'), path.join(cwd, 'node_modules/@hile/rsc'));
+    await writeFile(path.join(cwd, 'src/client.tsx'), `
+      'use client';
+      import { useRscNavigation } from '@hile/rsc/client';
+      export default function Client() { return <button onClick={() => useRscNavigation().refresh()}>run</button>; }
+    `);
+    await writeFile(path.join(cwd, 'src/page.tsx'), `
+      import Client from './client';
+      export default function Page() { return <Client />; }
+    `);
+
+    await expect(buildRscPlugin({
+      pluginId: 'org.hile.client-import', buildId: 'build-a', cwd, entry: 'src/page.tsx', outdir,
+      routes: [{ path: '/', entry: 'default' }],
+      runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
+    })).rejects.toThrow(
+      'Remote RSC client components may only import @hile/rsc/client/navigation',
+    );
+  });
 });

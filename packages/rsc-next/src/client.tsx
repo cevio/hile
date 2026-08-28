@@ -1,10 +1,13 @@
 'use client';
 
-import type { ReactNode } from 'react';
+import { useEffect, useMemo, type ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 import { createServerReference } from 'next/dist/compiled/react-server-dom-turbopack/client.browser.js';
 import {
   configureRscServerFunctionClient,
   installRscServerReferenceRuntime,
+  installRscNavigationRuntime,
+  type RscClientNavigation,
   type RscServerFunctionClientOptions,
 } from '@hile/rsc/client';
 
@@ -17,8 +20,16 @@ export interface RscNextClientRuntimeProps {
   serverFunctions?: RscServerFunctionClientOptions;
 }
 
-/** Installs the Next/Turbopack Server Reference adapter before remote client modules load. */
+/** Installs the Next Server Reference and browser navigation adapters for remote client modules. */
 export function RscNextClientRuntime({ children, serverFunctions }: RscNextClientRuntimeProps) {
+  const router = useRouter();
+  const navigation = useMemo<RscClientNavigation>(() => ({
+    push: (href, options) => router.push(href, options),
+    replace: (href, options) => router.replace(href, options),
+    refresh: () => router.refresh(),
+    prefetch: (href) => router.prefetch(href),
+  }), [router]);
+  useEffect(() => installRscNavigationRuntime(navigation), [navigation]);
   if (serverFunctions) configureRscServerFunctionClient(serverFunctions);
   return children;
 }

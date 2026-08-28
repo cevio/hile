@@ -12,6 +12,7 @@ import {
   type RscRuntimeCompatibility,
 } from '@hile/rsc/protocol';
 import { isPathInside, RscModuleGraph, type RscGraphEntry } from './module-graph';
+import { createRscServerImportsPlugin } from './rsc-client-imports';
 import {
   assembleRscClientArtifacts,
   assembleRscSharedStyleArtifacts,
@@ -94,8 +95,8 @@ async function buildRscPluginIntoEmptyDirectory(options: BuildRscPluginOptions):
     platform: 'node',
     target: 'node20',
     jsx: 'automatic',
-    external: [...RSC_BUILD_EXTERNALS],
-    plugins: [graph.boundaryPlugin('server')],
+    external: RSC_BUILD_EXTERNALS.filter((specifier) => !specifier.startsWith('@hile/rsc')),
+    plugins: [graph.boundaryPlugin('server'), createRscServerImportsPlugin()],
     logLevel: 'silent',
   });
 

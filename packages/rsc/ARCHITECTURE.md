@@ -25,6 +25,7 @@ Core has no dependency on esbuild, TypeScript, filesystem watchers, EventSource 
 9. Production modules contain protocol and infrastructure behavior only. Domain routing, authorization decisions, and product state belong to composition roots or applications.
 10. Optional presentation metadata is immutable build data. The Host derives it from the active deployment and matching artifact manifest; discovery does not carry a second copy and plugins do not control public URLs or visibility. Next.js pages import the lightweight `@hile/rsc/host/plugin-metadata` entry so artifact verification and streaming stay outside their dependency graph.
 11. Build-scoped styles use the same exact `{ pluginId, buildId }` identity as Flight. A Host may resolve their public URLs before rendering the remote client boundary so the HTML head can discover CSS before plugin markup, but it must fail closed when that exact artifact is absent.
+12. Remote browser navigation is a framework-neutral Host port. Plugin artifacts may bundle only the portable `@hile/rsc/client/navigation` entry; the Host adapter owns router integration, and links retain native browser fallback before hydration or without an adapter.
 
 ## Dependency direction
 
@@ -49,6 +50,7 @@ artifact  transport contracts ← Hile adapter
 - `RscHostRuntime` knows only locator and decoder ports. It does not import Next or Hile.
 - `host/flight.ts` is the sole Next-private decoder adapter.
 - `client` knows logical artifact descriptors, not plugin source paths or host catalog implementation.
+- `client/navigation` knows browser link semantics and a Host-installed navigation port, not public route inventories or framework request formats. `@hile/rsc-next` installs the Next implementation; Next alone generates its private Flight navigation requests.
 
 ## Composition sequence
 
@@ -87,6 +89,7 @@ Fixed ABI:
 - bounded plugin presentation metadata and plugin-internal navigation paths;
 - exact React/React DOM/RSC runtime identity;
 - the logical `RemoteClientBoundary` reference;
+- the framework-neutral browser navigation port and its ownership-safe Host installation;
 - Flight binary semantics and client-reference descriptors.
 
 Configurable policy:

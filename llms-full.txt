@@ -2439,6 +2439,33 @@ export function PluginPage({ rsc }: RscRouteProps) {
 }
 ```
 
+### Client navigation
+
+Remote plugins do not import Next. Render `RscLink` directly from a Server or Client Component
+when a same-origin destination should use the public Host router:
+
+```tsx
+import { RscLink } from '@hile/rsc/client/navigation'
+
+export function PluginPage() {
+  return <RscLink href="/plugins/catalog/details">Details</RscLink>
+}
+```
+
+For imperative navigation inside a Client Component, call `useRscNavigation()` and use its
+`push`, `replace`, `refresh`, or `prefetch` operation. This is a framework-neutral browser port:
+`RscNextClientRuntime` installs the Next implementation, while another Host may install a
+different adapter. `RscLink` preserves native behavior for modifier keys, downloads, non-self
+targets, external URLs, and consumer-cancelled events. Before the Host adapter hydrates, an
+ordinary link remains a native anchor; imperative operations fall back to browser navigation.
+Imperative destinations accept only HTTP(S) URLs, and cross-origin `push` or `replace` uses a
+full browser navigation instead of passing an untrusted URL to the framework router.
+
+Plugin browser graphs may import only `@hile/rsc/client/navigation` from `@hile/rsc`; Host,
+transport, artifact, and general client-runtime imports fail during artifact compilation. Never
+append `_rsc` or construct Flight headers in a plugin. The framework adapter owns navigation,
+and Next generates its private RSC request.
+
 ### Immutable plugin presentation metadata
 
 An RSC plugin may declare optional Host-agnostic presentation metadata in its immutable manifest. `displayName`, `description`, and navigation labels are bounded display strings. Navigation IDs are stable plugin-local identifiers, and every navigation `path` must match a declared plugin route. The Host still owns public URL composition, authorization, visibility, ordering overrides, localization policy, and the rendered component library.
@@ -2498,6 +2525,7 @@ import { createHileRscPluginClient } from '@hile/rsc/transport'
 import { RscHostRuntime, InMemoryRscDeploymentCatalog } from '@hile/rsc/host'
 import { listActiveRscPlugins } from '@hile/rsc/host/plugin-metadata'
 import { RscClientRuntimeProvider } from '@hile/rsc/client'
+import { RscLink, useRscNavigation } from '@hile/rsc/client/navigation'
 import { verifyRscPluginArtifact } from '@hile/rsc/artifact'
 import { decodePluginFlight } from '@hile/rsc-next'
 import { RscNextClientRuntime } from '@hile/rsc-next/client'
@@ -2606,6 +2634,7 @@ The core package root exports only the transport-neutral protocol. Build, develo
 - `HileRscDiscoveryHost` exposes bounded transfer settings: `maxManifestBytes`, `maxFileBytes`, `maxTotalBytes`, `maxArtifactFiles`, `maxPathBytes`, `maxPathDepth`, and `operationTimeoutMs`. Configure them for the deployment environment instead of assuming defaults are an application quota.
 - `@hile/rsc-next` validates the installed Next 16.3.0 + React 19.2.8 + React DOM 19.2.8 package tuple before decoding through its isolated Next-private modules. These peer dependencies are intentionally exact, not ranges.
 - `RscClientRuntimeProvider` accepts Host-owned `renderLoading` and `renderError(error, identity, retry)` policies. Define those functions inside a Host Client Component so they never cross the RSC serialization boundary.
+- `RscNextClientRuntime` installs the browser navigation adapter for remote `RscLink` and `useRscNavigation()` calls. It does not expose Next to plugin packages or generate `_rsc` itself.
 - Hile does not enable cross-request Next Cache/revalidation for rendered plugin trees. Tenant/user-specific RSC caching is an application policy and requires an explicit safe cache key and invalidation design.
 
 ## Anti-Patterns
@@ -2616,6 +2645,7 @@ The core package root exports only the transport-neutral protocol. Build, develo
 - Treating `'use server'` as the Server Component marker.
 - Detecting `'use client'` with string search instead of directive-prologue AST parsing.
 - Bundling a second React copy into plugin browser or SSR artifacts.
+- Importing Next, `@hile/rsc/client`, or Host/transport RSC APIs from a remote Client Component; use only `@hile/rsc/client/navigation` for browser navigation.
 - Switching a mutable global build id while a request is streaming.
 - Handwriting a second `actions` handler map or exposing ordinary models automatically.
 
@@ -4191,6 +4221,24 @@ export default async function PluginPage({ params, searchParams }: {
 The total timeout bounds the complete internal Flight stream, the idle timeout resets after every valid chunk, and `window` bounds chunks in transit (1 through 64). The Host should reuse one `verificationCache` across requests and attach an `observe` callback for render outcome, duration, and byte metrics; observer failures do not affect rendering.
 
 For product loading and failure UI, wrap `RscNextClientRuntime` and `RscClientRuntimeProvider` in a Host-owned file with `'use client'`, then pass `renderLoading` and `renderError(error, identity, retry)` there. Do not define these function props in this Server Component: functions may not cross the RSC serialization boundary. The default error UI is safe but intentionally minimal.
+
+`RscNextClientRuntime` also installs the Host browser navigation adapter. A remote plugin uses
+the framework-neutral entry and never imports Next:
+
+```tsx
+import { RscLink } from '@hile/rsc/client/navigation'
+
+export function PluginPage() {
+  return <RscLink href="/plugins/catalog/details">Details</RscLink>
+}
+```
+
+`RscLink` delegates eligible same-origin clicks to the Host router after hydration and otherwise
+remains a normal anchor. Client Components may use `useRscNavigation()` from the same entry for
+imperative `push`, `replace`, `refresh`, or `prefetch`; imperative destinations accept only HTTP(S),
+and cross-origin navigation remains a full browser navigation. Do not append `_rsc`, send Flight headers,
+or depend on `next/link` or `next/navigation` from a plugin; Next owns its private navigation
+request when the Host adapter calls the public router.
 
 `@hile/rsc-next` supports exactly Next 16.3.0 with React 19.2.8 and checks the installed package tuple before decoding through its isolated private Next modules. Do not widen the Next peer range without rerunning the full production SSR/hydration suite.
 

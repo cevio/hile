@@ -16,7 +16,7 @@
     }
   },
   "scripts": {
-    "build": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
+    "build": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc -b --force && fix-esm-import-path --preserve-import-type ./dist",
     "dev": "tsc -b --watch",
     "test": "vitest run --passWithNoTests"
   },

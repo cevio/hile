@@ -1,4 +1,5 @@
 import UpdatePanel from './update-panel';
+import { RscLink } from '@hile/rsc/client/navigation';
 import type { RscRouteProps } from '@hile/rsc/plugin';
 
 type PluginProps = RscRouteProps;
@@ -19,6 +20,12 @@ export async function CapabilitiesPage({ searchParams, rsc }: PluginProps) {
           <div><dt>Resolved build</dt><dd>{rsc.buildId}</dd></div>
           <div><dt>Transport</dt><dd>React Flight stream</dd></div>
         </dl>
+        <RscLink
+          data-testid="remote-rsc-navigation"
+          href="/plugins/demo.rsc.capabilities/details?source=remote-link"
+        >
+          Open remote details
+        </RscLink>
       </header>
       <UpdatePanel initialValue={10} rsc={rsc} />
     </article>

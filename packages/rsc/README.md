@@ -66,6 +66,33 @@ announcements. New readers remain compatible with signed announcements, while ol
 not understand the unsigned wire shape. After all Hosts are upgraded, plugin replicas may roll
 independently without a shared discovery secret.
 
+## Client navigation
+
+Remote plugins do not import Next. Render `RscLink` directly from a Server or Client Component
+when a same-origin destination should use the public Host router:
+
+```tsx
+import { RscLink } from '@hile/rsc/client/navigation'
+
+export function PluginPage() {
+  return <RscLink href="/plugins/catalog/details">Details</RscLink>
+}
+```
+
+For imperative navigation inside a Client Component, call `useRscNavigation()` and use its
+`push`, `replace`, `refresh`, or `prefetch` operation. This is a framework-neutral browser port:
+`RscNextClientRuntime` installs the Next implementation, while another Host may install a
+different adapter. `RscLink` preserves native behavior for modifier keys, downloads, non-self
+targets, external URLs, and consumer-cancelled events. Before the Host adapter hydrates, an
+ordinary link remains a native anchor; imperative operations fall back to browser navigation.
+Imperative destinations accept only HTTP(S) URLs, and cross-origin `push` or `replace` uses a
+full browser navigation instead of passing an untrusted URL to the framework router.
+
+Plugin browser graphs may import only `@hile/rsc/client/navigation` from `@hile/rsc`; Host,
+transport, artifact, and general client-runtime imports fail during artifact compilation. Never
+append `_rsc` or construct Flight headers in a plugin. The framework adapter owns navigation,
+and Next generates its private RSC request.
+
 ## Boundaries
 
 - A static Next application can include every route at host build time.
@@ -79,6 +106,7 @@ independently without a shared discovery secret.
 - Treating `'use server'` as the Server Component marker.
 - Detecting `'use client'` with string search instead of directive-prologue AST parsing.
 - Bundling a second React copy into plugin browser or SSR artifacts.
+- Importing Next, `@hile/rsc/client`, or Host/transport RSC APIs from a remote Client Component; use only `@hile/rsc/client/navigation` for browser navigation.
 - Switching a mutable global build id while a request is streaming.
 - Handwriting a second `actions` handler map or exposing ordinary models automatically.
 

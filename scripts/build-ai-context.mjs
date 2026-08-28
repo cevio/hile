@@ -82,6 +82,7 @@ const packageConfigs = {
     purpose: 'Build and run independently deployed React Server Component plugins behind one composable Next.js host.',
     cards: ['packages/rsc.md'],
     recipes: ['recipes/rsc-plugin-host.md'],
+    readmeSections: ['### Client navigation'],
   },
   '@hile/ioredis': {
     dir: 'ioredis',
@@ -869,7 +870,7 @@ function writePackageReadme(packageName, config) {
     sectionBody(primary, '## Copy-Paste Example'),
     '',
     ...(config.readmeSections ?? []).flatMap((heading) => [
-      heading,
+      heading.replace(/^### /, '## '),
       '',
       sectionBody(primary, heading),
       '',

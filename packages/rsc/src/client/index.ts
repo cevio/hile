@@ -9,5 +9,7 @@ export type {
   RemoteClientAssetResolution,
   RemoteClientBoundaryProps,
 } from './remote-client-boundary';
+export * from './navigation';
+export * from './navigation-runtime';
 export * from './runtime-provider';
 export * from './server-reference';
