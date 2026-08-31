@@ -42,6 +42,80 @@ describe('Hile MCP provider source', () => {
     await source.close();
   });
 
+  it('reuses an unchanged validated manifest across discovery polls', async () => {
+    const item = manifest('a');
+    const application = subscribedApplication({
+      listRegistryTopicSnapshots: vi.fn(async () => [{
+        topic: '@hile/mcp/providers/orders/a',
+        payload: structuredClone(item),
+        publishers: [item.address],
+      }]),
+      streamPeer: vi.fn(),
+    });
+    const source = createHileMcpProviderSource(application, { pollIntervalMs: 60_000 });
+
+    await source.start();
+    const initial = source.snapshot()[0];
+    await source.refresh();
+    await source.refresh();
+
+    expect(source.snapshot()[0]).toBe(initial);
+    await source.close();
+  });
+
+  it('revalidates a changed payload even when its provider identity is unchanged', async () => {
+    const item = manifest('a');
+    let payload: unknown = structuredClone(item);
+    const application = subscribedApplication({
+      listRegistryTopicSnapshots: vi.fn(async () => [{
+        topic: '@hile/mcp/providers/orders/a',
+        payload,
+        publishers: [item.address],
+      }]),
+      streamPeer: vi.fn(),
+    });
+    const source = createHileMcpProviderSource(application, { pollIntervalMs: 60_000 });
+
+    await source.start();
+    payload = {
+      ...item,
+      capabilities: { ...item.capabilities, tools: [{ name: 'invalid' }] },
+    };
+    await source.refresh();
+
+    expect(source.snapshot()).toEqual([]);
+    await source.close();
+  });
+
+  it('rechecks topic and publisher ownership when a cached payload is unchanged', async () => {
+    const item = manifest('a');
+    let topic = '@hile/mcp/providers/orders/a';
+    let publishers = [item.address];
+    const application = subscribedApplication({
+      listRegistryTopicSnapshots: vi.fn(async () => [{
+        topic,
+        payload: structuredClone(item),
+        publishers,
+      }]),
+      streamPeer: vi.fn(),
+    });
+    const source = createHileMcpProviderSource(application, { pollIntervalMs: 60_000 });
+
+    await source.start();
+    publishers = [{ ...item.address, port: item.address.port + 1 }];
+    await source.refresh();
+    expect(source.snapshot()).toEqual([]);
+
+    publishers = [item.address];
+    await source.refresh();
+    expect(source.snapshot()).toHaveLength(1);
+
+    topic = '@hile/mcp/providers/orders/spoofed';
+    await source.refresh();
+    expect(source.snapshot()).toEqual([]);
+    await source.close();
+  });
+
   it('rejects a manifest whose address differs from its Registry publisher', async () => {
     const item = manifest('a');
     const application = subscribedApplication({

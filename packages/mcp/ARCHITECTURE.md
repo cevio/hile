@@ -71,6 +71,8 @@ Each instance publishes one retained manifest. A source periodically asks Regist
 
 The source commits a complete next snapshot atomically. Listener failures are reported but do not prevent other listeners from receiving the committed snapshot. Closing the source aborts an in-flight Registry request and clears polling and subscriptions.
 
+An unchanged Registry payload reuses its previously validated immutable manifest by structural equality. This check happens before schema parsing, so periodic discovery does not repeatedly compile equivalent JSON Schema validators into the MCP SDK's process-lifetime validation cache. Payload changes still run complete manifest validation, while topic and publisher ownership remain independently checked on every poll; every disagreement fails closed.
+
 Discovery is not in the invocation hot path. The gateway builds and caches a catalog only when the source snapshot changes.
 
 Resource changes use a separate application-scoped retained topic. The event is bound to provider ID, instance ID, fingerprint, event ID, and expanded URI. Sources validate and deduplicate it against the committed discovery snapshot. One publisher/subscriber pair is reused per Application rather than multiplying pub/sub work by provider instance.

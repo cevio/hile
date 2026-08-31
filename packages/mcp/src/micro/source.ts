@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import { HileMcpError } from '../errors.js';
 import { assertTimerMs } from '../limits.js';
 import { compareText } from '../ordering.js';
@@ -102,7 +103,18 @@ export class HileMcpProviderSource implements McpProviderSource {
       const topics = await this.application.listRegistryTopicSnapshots(MCP_PROVIDER_TOPIC_PREFIX, { signal: this.lifecycle.signal });
       const next = new Map<string, McpProviderManifest>();
       for (const { topic, payload, publishers } of topics) {
-        const manifest = parseMcpProviderManifest(payload, topic);
+        const record = payload && typeof payload === 'object' && !Array.isArray(payload)
+          ? payload as Record<string, unknown>
+          : undefined;
+        const key = typeof record?.providerId === 'string' && typeof record.instanceId === 'string'
+          ? `${record.providerId}/${record.instanceId}`
+          : undefined;
+        const previous = key ? this.instances.get(key) : undefined;
+        const manifest = previous
+          && topic === `${MCP_PROVIDER_TOPIC_PREFIX}${previous.providerId}/${previous.instanceId}`
+          && isDeepStrictEqual(payload, previous)
+          ? previous
+          : parseMcpProviderManifest(payload, topic);
         const publisher = publishers.length === 1 ? publishers[0] : undefined;
         if (manifest && publisher && manifest.address.host === publisher.host && manifest.address.port === publisher.port) {
           next.set(`${manifest.providerId}/${manifest.instanceId}`, manifest);
