@@ -1,6 +1,6 @@
 {
   "name": "@hile/micro-dynamic-configs",
-  "version": "4.0.3",
+  "version": "4.0.4",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
