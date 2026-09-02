@@ -11,6 +11,7 @@ const server = Object.assign(new EventEmitter(), {
 const closeHttpMock = vi.fn(async () => {
   lifecycle.push('http:closed')
 })
+const httpConstructorMock = vi.fn()
 const loadMock = vi.fn().mockResolvedValue(undefined)
 const useMock = vi.fn((middleware: unknown) => {
   lifecycle.push('http:use')
@@ -26,6 +27,9 @@ const listenMock = vi.fn(async (prepare?: (server: Server) => void | Promise<voi
 
 vi.mock('@hile/http', () => ({
   Http: class {
+    constructor(options: unknown) {
+      httpConstructorMock(options)
+    }
     use = useMock
     load = loadMock
     listen = listenMock
@@ -56,6 +60,7 @@ describe('HttpNext', () => {
   beforeEach(() => {
     vi.stubEnv('NODE_ENV', 'development')
     lifecycle.length = 0
+    httpConstructorMock.mockClear()
     loadMock.mockClear()
     useMock.mockClear()
     listenMock.mockClear()
@@ -104,6 +109,29 @@ describe('HttpNext', () => {
       `${process.cwd()}/src/controllers`,
       expect.objectContaining({ prefix: '/-' }),
     )
+  })
+
+  it('将完整 HTTP 配置透传给共享 Http 实例', () => {
+    new HttpNext({
+      port: 3000,
+      cwd: '/proj',
+      proxy: true,
+      proxyIpHeader: 'X-Real-Forwarded-For',
+      maxIpsCount: 1,
+      env: 'production',
+      asyncLocalStorage: true,
+      caseSensitive: false,
+    })
+
+    expect(httpConstructorMock).toHaveBeenCalledWith({
+      port: 3000,
+      proxy: true,
+      proxyIpHeader: 'X-Real-Forwarded-For',
+      maxIpsCount: 1,
+      env: 'production',
+      asyncLocalStorage: true,
+      caseSensitive: false,
+    })
   })
 
   it('use() 委托给内部 Http 并保持链式 API', () => {

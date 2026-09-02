@@ -42,6 +42,7 @@ src/controllers/users/[id].controller.ts -> /users/:id
 - Setting `ctx.body` and returning a value from the same controller.
 - Loading controllers after starting only because an old example does it; prefer load before listen in new code.
 - Using old validation examples that assume Zod coercion rewrote `ctx.query`.
+- Enabling `proxy` on a listener that untrusted clients can reach directly, or allowing an edge proxy to preserve client-supplied forwarded headers.
 
 ## Verify
 
@@ -49,6 +50,7 @@ src/controllers/users/[id].controller.ts -> /users/:id
 - Controllers return response values.
 - Boot service awaits `http.load()` before `http.listen()`.
 - Zod schemas are used for validation, and parsed data is explicitly parsed when needed.
+- Reverse-proxy deployments replace forwarded headers, protect the direct listener, and set `maxIpsCount` to the known proxy-hop count.
 
 ## More Context
 

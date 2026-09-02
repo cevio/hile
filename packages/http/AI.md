@@ -94,6 +94,24 @@ export default defineController(
 
 The second parse is intentional when you need parsed/coerced data. Hile's controller validation does not write `safeParse().data` back to `ctx.request.body`.
 
+### Trusted reverse proxy
+
+`Http` does not trust forwarded headers by default. When the listener is reachable only through a controlled reverse proxy, enable Koa's proxy semantics explicitly and bound the number of proxy IPs that may be read:
+
+```ts
+const http = new Http({
+  port: 3000,
+  proxy: true,
+  maxIpsCount: 1,
+})
+```
+
+The edge proxy must replace, not append untrusted input to, `X-Forwarded-Proto` and the configured client-IP header. It must send `X-Forwarded-Proto: https` after TLS termination so `ctx.protocol`, `ctx.secure`, and Secure Cookie handling reflect the public connection. Keep the Hile listener inaccessible to untrusted direct clients: `proxy: true` trusts these headers and is not itself a network trust boundary.
+
+Use `proxyIpHeader` only when the deployment uses a client-IP header other than `X-Forwarded-For`. `maxIpsCount` bounds the proxy chain read from that header; set it to the known number of trusted hops instead of relying on Koa's unbounded default.
+
+`HttpProps` composes Koa's complete constructor options with Hile's `port` and `find-my-way` options. Koa settings such as `env`, `subdomainOffset`, `keys`, `asyncLocalStorage`, `proxy`, `proxyIpHeader`, and `maxIpsCount` are passed through without a Hile-owned mirror or a second Hile-specific option contract.
+
 ## Compose With
 
 - Call `loadModel()` from controllers to keep business logic out of HTTP files.
@@ -102,7 +120,8 @@ The second parse is intentional when you need parsed/coerced data. Hile's contro
 
 ## Runtime And Lifecycle Notes
 
-- `new Http({ port })` creates a Koa app and a `find-my-way` router.
+- `new Http({ port })` creates a Koa app from the complete `HttpProps` object and a `find-my-way` router.
+- `proxy` defaults to `false`. When enabled, `proxyIpHeader` and `maxIpsCount` are passed to Koa before any middleware or controller handles requests.
 - `http.use(middleware)` registers Koa middleware before `listen()`.
 - `http.listen()` returns a close function.
 - `http.load(directory, options)` scans `*.controller.{ts,js,tsx,jsx,mjs}` by suffix.
@@ -114,6 +133,7 @@ The second parse is intentional when you need parsed/coerced data. Hile's contro
 - Setting `ctx.body` and returning a value from the same controller.
 - Loading controllers after starting only because an old example does it; prefer load before listen in new code.
 - Using old validation examples that assume Zod coercion rewrote `ctx.query`.
+- Enabling `proxy` on a listener that untrusted clients can reach directly, or allowing an edge proxy to preserve client-supplied forwarded headers.
 
 ## Verification Checklist
 
@@ -121,6 +141,7 @@ The second parse is intentional when you need parsed/coerced data. Hile's contro
 - Controllers return response values.
 - Boot service awaits `http.load()` before `http.listen()`.
 - Zod schemas are used for validation, and parsed data is explicitly parsed when needed.
+- Reverse-proxy deployments replace forwarded headers, protect the direct listener, and set `maxIpsCount` to the known proxy-hop count.
 
 
 

@@ -44,6 +44,7 @@ export default defineService('http.next', async (shutdown) => {
 - Serving Next.js `public/` or `/_next/static` through a separate Koa static middleware.
 - Trying to override `distDir` at runtime instead of configuring it in `next.config`.
 - Forgetting `cwd`; controller and Next project paths depend on it.
+- Treating `proxy: true` as a substitute for restricting direct listener access and sanitizing forwarded headers at the edge.
 
 ## Verify
 
@@ -52,6 +53,7 @@ export default defineService('http.next', async (shutdown) => {
 - API routes use the fixed `/-` prefix.
 - Next.js static assets and `public/` are served by Next.js itself.
 - Next.js production build runs before `hile start` in production.
+- Reverse-proxy settings describe the actual trusted hop topology and apply consistently to Koa and Next requests on the shared server.
 
 ## More Context
 

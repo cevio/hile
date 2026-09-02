@@ -5,11 +5,15 @@ import FindMyWay, { Instance, HTTPMethod, HTTPVersion } from './find-my-way';
 import { createServer, Server } from 'node:http';
 import { Loader, LoaderFromOptions } from './loader';
 
+type KoaProps = NonNullable<ConstructorParameters<
+  typeof Koa<Koa.DefaultState, Koa.DefaultContext>
+>[0]>
+
 // Http 配置
 export type HttpProps = {
   port: number,
-  keys?: string[],
-} & Omit<Config<HTTPVersion.V1>, 'defaultRoute'>;
+} & KoaProps
+  & Omit<Config<HTTPVersion.V1>, 'defaultRoute'>;
 
 /**
  * Http 服务类
@@ -38,7 +42,7 @@ export type HttpProps = {
  * console.log('Server is running on port 3000');
  */
 export class Http {
-  private readonly koa = new Koa();
+  private readonly koa: Koa;
   private readonly loader = new Loader(this);
   private readonly router: Instance;
   private server?: Server;
@@ -47,7 +51,7 @@ export class Http {
     if (!this.props.keys) {
       this.props.keys = [randomBytes(32).toString(), randomBytes(64).toString()];
     }
-    this.koa.keys = this.props.keys;
+    this.koa = new Koa<Koa.DefaultState, Koa.DefaultContext>(props);
     this.router = FindMyWay({
       ignoreDuplicateSlashes: this.props.ignoreDuplicateSlashes ?? true,
       ignoreTrailingSlash: this.props.ignoreTrailingSlash ?? true,

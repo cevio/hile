@@ -25,6 +25,21 @@ describe('Http - HTTP 服务类', () => {
       const http = new Http({ port: 3002, keys: ['key1', 'key2'] })
       expect(http.port).toBe(3002)
     })
+
+    it('将完整 Koa 构造配置交给底层应用', async () => {
+      const http = new Http({ port: 4014, env: 'http-test', asyncLocalStorage: true })
+      http.get('/koa-options', async (ctx) => {
+        ctx.body = {
+          env: ctx.app.env,
+          hasCurrentContext: ctx.app.currentContext === ctx,
+        }
+      })
+      closeServer = await http.listen()
+
+      const res = await fetch('http://127.0.0.1:4014/koa-options')
+
+      expect(await res.json()).toEqual({ env: 'http-test', hasCurrentContext: true })
+    })
   })
 
   describe('use - 注册中间件', () => {
@@ -127,6 +142,48 @@ describe('Http - HTTP 服务类', () => {
       const text = await res.text()
       expect(res.status).toBe(200)
       expect(text).toBe('world')
+    })
+
+    it('默认不信任客户端伪造的代理头', async () => {
+      const http = new Http({ port: 4012 })
+      http.get('/request', async (ctx) => {
+        ctx.body = { protocol: ctx.protocol, secure: ctx.secure }
+      })
+      closeServer = await http.listen()
+
+      const res = await fetch('http://127.0.0.1:4012/request', {
+        headers: { 'x-forwarded-proto': 'https' },
+      })
+
+      expect(await res.json()).toEqual({ protocol: 'http', secure: false })
+    })
+
+    it('显式信任反向代理时识别 HTTPS 并可写入 Secure Cookie', async () => {
+      const http = new Http({ port: 4013, proxy: true, maxIpsCount: 1 })
+      http.get('/session', async (ctx) => {
+        ctx.cookies.set('session', 'token', {
+          httpOnly: true,
+          secure: true,
+          sameSite: 'lax',
+        })
+        ctx.body = { protocol: ctx.protocol, secure: ctx.secure, ip: ctx.ip }
+      })
+      closeServer = await http.listen()
+
+      const res = await fetch('http://127.0.0.1:4013/session', {
+        headers: {
+          'x-forwarded-for': '198.51.100.7',
+          'x-forwarded-proto': 'https',
+        },
+      })
+
+      expect(res.status).toBe(200)
+      expect(res.headers.get('set-cookie')).toContain('secure')
+      expect(await res.json()).toEqual({
+        protocol: 'https',
+        secure: true,
+        ip: '198.51.100.7',
+      })
     })
 
     it('支持多个路由方法', async () => {

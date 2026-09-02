@@ -1,5 +1,5 @@
 import NextServer from 'next'
-import { Http } from '@hile/http'
+import { Http, type HttpProps } from '@hile/http'
 import type { Middleware } from 'koa'
 import { resolve } from 'node:path'
 import type { IncomingMessage, Server } from 'node:http'
@@ -21,9 +21,7 @@ export function getHttpNextRequestSignal(): AbortSignal | undefined {
   return requestSignals.getStore()
 }
 
-export type HttpNextProps = {
-  /** 共享的 Hile 与 Next.js HTTP 端口。 */
-  port: number
+export type HttpNextProps = HttpProps & {
   /** Next.js 项目根目录，默认使用 `process.cwd()`。 */
   cwd?: string
 }
@@ -42,10 +40,10 @@ export class HttpNext {
   private stopUpgradeTracking?: () => void
 
   constructor(options: HttpNextProps) {
-    const { cwd, port } = options
+    const { cwd, ...httpOptions } = options
     this.isDevelopment = process.env.NODE_ENV === 'development'
     this.cwd = cwd || process.cwd()
-    this.http = new Http({ port })
+    this.http = new Http(httpOptions)
   }
 
   private createForwardToNextMiddleware(): Middleware {

@@ -22,7 +22,17 @@ describe('HttpNext integration', () => {
     const fixture = resolve(packageRoot, 'fixtures/app')
 
     let origin = ''
-    const app = new HttpNext({ port: 0, cwd: fixture })
+    const app = new HttpNext({
+      port: 0,
+      cwd: fixture,
+      proxy: true,
+      maxIpsCount: 1,
+    })
+    app.use(async (ctx, next) => {
+      if (ctx.path !== '/proxy-session') return next()
+      ctx.cookies.set('session', 'token', { httpOnly: true, secure: true, sameSite: 'lax' })
+      ctx.body = { protocol: ctx.protocol, secure: ctx.secure, ip: ctx.ip }
+    })
     stop = await app.start((server) => {
       const address = server.address() as AddressInfo
       origin = `http://127.0.0.1:${address.port}`
@@ -43,6 +53,20 @@ describe('HttpNext integration', () => {
     const publicFile = await fetch(`${origin}/probe.txt`)
     expect(publicFile.status).toBe(200)
     expect(await publicFile.text()).toBe('public-value\n')
+
+    const proxiedSession = await fetch(`${origin}/proxy-session`, {
+      headers: {
+        'x-forwarded-for': '198.51.100.8',
+        'x-forwarded-proto': 'https',
+      },
+    })
+    expect(proxiedSession.status).toBe(200)
+    expect(proxiedSession.headers.get('set-cookie')).toContain('secure')
+    expect(await proxiedSession.json()).toEqual({
+      protocol: 'https',
+      secure: true,
+      ip: '198.51.100.8',
+    })
 
     socket = new WebSocket(`${origin.replace('http:', 'ws:')}/_next/hmr?id=http-next-stop-test`)
     await waitForWebSocket(socket, 'open')

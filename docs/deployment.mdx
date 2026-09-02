@@ -29,6 +29,7 @@ NODE_ENV=production pnpm run start
 ## Runtime And Lifecycle Notes
 
 - `HttpNext` keeps its internal `Http` instance private and exposes only `use()`, `load()`, and `start()`.
+- Except for `cwd`, constructor options are the `HttpProps` passed unchanged to the shared `Http` instance, including complete Koa options, bounded reverse-proxy trust, and router options.
 - Hile middleware and controllers run first; unmatched requests are passed to Next.js with the original Node request and response.
 - Development mode is determined by `process.env.NODE_ENV === 'development'`.
 - Controllers use `{cwd}/src/controllers` in development and `{cwd}/dist/controllers` in production with prefix `/-`.

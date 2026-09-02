@@ -61,6 +61,19 @@ Use `loadModel()` from pages or controllers for domain logic. If a Next.js page 
 export const dynamic = 'force-dynamic'
 ```
 
+`HttpNextProps` composes the complete `HttpProps` contract. A deployment behind one trusted TLS-terminating reverse proxy can therefore configure the shared Koa/Next listener directly:
+
+```ts
+const app = new HttpNext({
+  port: 3000,
+  cwd: process.cwd(),
+  proxy: true,
+  maxIpsCount: 1,
+})
+```
+
+The proxy must replace forwarded headers, set `X-Forwarded-Proto: https`, and be the only network path to the Hile listener. Hile middleware and controllers use the configured Koa proxy semantics; unmatched requests still reach Next.js as the original Node request with the same sanitized headers. This is transport configuration, not application policy.
+
 ## Compose With
 
 - Use `@hile/model` for business logic shared by controllers and pages.
@@ -70,6 +83,7 @@ export const dynamic = 'force-dynamic'
 ## Runtime And Lifecycle Notes
 
 - `HttpNext` keeps its internal `Http` instance private and exposes only `use()`, `load()`, and `start()`.
+- Except for `cwd`, constructor options are the `HttpProps` passed unchanged to the shared `Http` instance, including complete Koa options, bounded reverse-proxy trust, and router options.
 - Hile middleware and controllers run first; unmatched requests are passed to Next.js with the original Node request and response.
 - Development mode is determined by `process.env.NODE_ENV === 'development'`.
 - Controllers use `{cwd}/src/controllers` in development and `{cwd}/dist/controllers` in production with prefix `/-`.
@@ -87,6 +101,7 @@ export const dynamic = 'force-dynamic'
 - Serving Next.js `public/` or `/_next/static` through a separate Koa static middleware.
 - Trying to override `distDir` at runtime instead of configuring it in `next.config`.
 - Forgetting `cwd`; controller and Next project paths depend on it.
+- Treating `proxy: true` as a substitute for restricting direct listener access and sanitizing forwarded headers at the edge.
 
 ## Verification Checklist
 
@@ -95,3 +110,4 @@ export const dynamic = 'force-dynamic'
 - API routes use the fixed `/-` prefix.
 - Next.js static assets and `public/` are served by Next.js itself.
 - Next.js production build runs before `hile start` in production.
+- Reverse-proxy settings describe the actual trusted hop topology and apply consistently to Koa and Next requests on the shared server.
