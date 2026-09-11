@@ -1,6 +1,6 @@
 {
   "name": "test-rsc-demo-suite",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,12 +14,12 @@
     "test:e2e:dev": "pnpm build:dev && node scripts/demo.mjs test-dev"
   },
   "devDependencies": {
-    "@modelcontextprotocol/client": "^2.0.0",
-    "@types/node": "^26.2.0",
     "@hile/rsc": "workspace:^",
     "@hile/rsc-build": "workspace:^",
     "@hile/rsc-development": "workspace:^",
+    "@modelcontextprotocol/client": "^2.0.0",
     "@playwright/test": "^1.62.1",
+    "@types/node": "^26.2.0",
     "vitest": "^4.1.9"
   }
 }

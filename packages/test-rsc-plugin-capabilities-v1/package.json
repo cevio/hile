@@ -1,6 +1,6 @@
 {
   "name": "test-rsc-plugin-capabilities-v1",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,8 +15,8 @@
   "dependencies": {
     "@hile/cli": "workspace:^",
     "@hile/core": "workspace:^",
-    "@hile/micro": "workspace:^",
     "@hile/mcp": "workspace:^",
+    "@hile/micro": "workspace:^",
     "@hile/model": "workspace:^",
     "@hile/rsc": "workspace:^",
     "@hile/rsc-build": "workspace:^",
