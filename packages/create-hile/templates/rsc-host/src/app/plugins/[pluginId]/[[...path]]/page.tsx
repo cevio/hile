@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createExecutionContext } from '@hile/context';
 import { loadService } from '@hile/core';
-import { getHttpNextRequestSignal } from '@hile/http-next';
+import { getHttpNextRequestSignal } from '@hile/http-next/request-signal';
 import { RscHostRuntime } from '@hile/rsc/host/runtime';
 import { decodePluginFlight } from '@hile/rsc-next';
 import { notFound } from 'next/navigation';

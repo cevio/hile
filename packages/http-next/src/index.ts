@@ -4,22 +4,12 @@ import type { Middleware } from 'koa'
 import { resolve } from 'node:path'
 import type { IncomingMessage, Server } from 'node:http'
 import type { Duplex } from 'node:stream'
-import { AsyncLocalStorage } from 'node:async_hooks'
+import { requestSignals } from './request-signal-storage'
+
+export { getHttpNextRequestSignal } from './request-signal'
 
 type NextApplication = ReturnType<typeof NextServer>
 type NextRequestHandler = ReturnType<NextApplication['getRequestHandler']>
-
-const requestSignalStorageKey = Symbol.for('@hile/http-next/request-signals')
-const requestSignals = (
-  globalThis as typeof globalThis & {
-    [requestSignalStorageKey]?: AsyncLocalStorage<AbortSignal>
-  }
-)[requestSignalStorageKey] ??= new AsyncLocalStorage<AbortSignal>()
-
-/** 返回当前 HttpNext 请求的取消信号；仅在请求异步上下文内有值。 */
-export function getHttpNextRequestSignal(): AbortSignal | undefined {
-  return requestSignals.getStore()
-}
 
 export type HttpNextProps = HttpProps & {
   /** Next.js 项目根目录，默认使用 `process.cwd()`。 */

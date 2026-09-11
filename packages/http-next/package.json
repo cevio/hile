@@ -4,6 +4,19 @@
   "version": "4.0.5",
   "type": "module",
   "main": "./dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./request-signal": {
+      "types": "./dist/request-signal.d.ts",
+      "import": "./dist/request-signal.js"
+    },
+    "./dist/index.js": "./dist/index.js",
+    "./dist/index.d.ts": "./dist/index.d.ts",
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "build": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
     "dev": "tsc -b --watch",

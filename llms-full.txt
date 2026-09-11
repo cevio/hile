@@ -666,6 +666,18 @@ import HttpNext from '@hile/http-next'
 import { defineService } from '@hile/core'
 ```
 
+Next.js App Router modules that need the request cancellation signal must use
+the lightweight subpath so their page bundle does not traverse the custom
+server entrypoint:
+
+```ts
+import { getHttpNextRequestSignal } from '@hile/http-next/request-signal'
+```
+
+The package root re-exports `getHttpNextRequestSignal` for existing server-side
+consumers, but App Router modules must not import the root because it owns the
+runtime `next` custom-server dependency.
+
 ## Copy-Paste Example
 
 ```ts
@@ -726,6 +738,8 @@ The proxy must replace forwarded headers, set `X-Forwarded-Proto: https`, and be
 - `HttpNext` keeps its internal `Http` instance private and exposes only `use()`, `load()`, and `start()`.
 - Except for `cwd`, constructor options are the `HttpProps` passed unchanged to the shared `Http` instance, including complete Koa options, bounded reverse-proxy trust, and router options.
 - Hile middleware and controllers run first; unmatched requests are passed to Next.js with the original Node request and response.
+- `@hile/http-next/request-signal` is the Next-free App Router entrypoint for reading the current request's cancellation signal.
+- Concurrent requests, multiple `HttpNext` instances, and compatible package copies in one JavaScript realm share one storage identity while retaining isolated asynchronous contexts. Separate PM2 processes, Workers, or VM realms intentionally keep independent request signals.
 - Development mode is determined by `process.env.NODE_ENV === 'development'`.
 - Controllers use `{cwd}/src/controllers` in development and `{cwd}/dist/controllers` in production with prefix `/-`.
 - `load(directory)` explicitly loads an additional controller directory with the same fixed conventions.
@@ -738,6 +752,7 @@ The proxy must replace forwarded headers, set `X-Forwarded-Proto: https`, and be
 ## Anti-Patterns
 
 - Putting API routes in Next.js when the app is intentionally using Hile controllers.
+- Importing the `@hile/http-next` root from an App Router module; import request cancellation from `@hile/http-next/request-signal` instead.
 - Calling `loadService()` at module top level in Next.js files.
 - Serving Next.js `public/` or `/_next/static` through a separate Koa static middleware.
 - Trying to override `distDir` at runtime instead of configuring it in `next.config`.
@@ -751,6 +766,7 @@ The proxy must replace forwarded headers, set `X-Forwarded-Proto: https`, and be
 - API routes use the fixed `/-` prefix.
 - Next.js static assets and `public/` are served by Next.js itself.
 - Next.js production build runs before `hile start` in production.
+- App Router modules that read the request signal compile without Next.js's `import-next` warning.
 - Reverse-proxy settings describe the actual trusted hop topology and apply consistently to Koa and Next requests on the shared server.
 
 ---
@@ -4569,7 +4585,7 @@ Create `src/app/plugins/[pluginId]/[[...path]]/page.tsx`:
 import { randomUUID } from 'node:crypto'
 import { createExecutionContext } from '@hile/context'
 import { loadService } from '@hile/core'
-import { getHttpNextRequestSignal } from '@hile/http-next'
+import { getHttpNextRequestSignal } from '@hile/http-next/request-signal'
 import { RscClientRuntimeProvider } from '@hile/rsc/client'
 import { RscHostRuntime } from '@hile/rsc/host/runtime'
 import { decodePluginFlight } from '@hile/rsc-next'

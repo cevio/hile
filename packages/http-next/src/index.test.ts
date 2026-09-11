@@ -54,7 +54,11 @@ vi.mock('next', () => ({
 }))
 
 import NextServer from 'next'
-import { getHttpNextRequestSignal, HttpNext } from './index'
+import {
+  getHttpNextRequestSignal as getHttpNextRequestSignalFromRoot,
+  HttpNext,
+} from './index'
+import { getHttpNextRequestSignal } from './request-signal'
 
 describe('HttpNext', () => {
   beforeEach(() => {
@@ -72,6 +76,10 @@ describe('HttpNext', () => {
     NextServer.mockClear()
     closeAllConnections.mockClear()
     server.removeAllListeners('upgrade')
+  })
+
+  it('keeps the root request signal export backward compatible', () => {
+    expect(getHttpNextRequestSignalFromRoot).toBe(getHttpNextRequestSignal)
   })
 
   it('开发模式按约定加载 cwd/src/controllers 到 /-', async () => {

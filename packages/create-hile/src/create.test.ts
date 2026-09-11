@@ -117,6 +117,20 @@ describe('RSC project templates', () => {
     expect(plugin.dependencies.next).toBeUndefined();
   });
 
+  it('keeps the HttpNext custom-server entrypoint out of generated App Router modules', () => {
+    const pluginPage = readFileSync(
+      path.join(templates, 'rsc-host/src/app/plugins/[pluginId]/[[...path]]/page.tsx'),
+      'utf8',
+    );
+
+    expect(pluginPage).toContain(
+      "from '@hile/http-next/request-signal'",
+    );
+    expect(pluginPage).not.toContain(
+      "from '@hile/http-next';",
+    );
+  });
+
   it('declares immutable presentation metadata in the RSC plugin build', () => {
     const config = JSON.parse(readFileSync(
       path.join(templates, 'rsc-plugin/hile-rsc.json'),

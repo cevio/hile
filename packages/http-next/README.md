@@ -40,6 +40,7 @@ export default defineService('http.next', async (shutdown) => {
 - Do not put Hile controllers inside `src/app`; the default convention is `src/controllers`.
 
 - Putting API routes in Next.js when the app is intentionally using Hile controllers.
+- Importing the `@hile/http-next` root from an App Router module; import request cancellation from `@hile/http-next/request-signal` instead.
 - Calling `loadService()` at module top level in Next.js files.
 - Serving Next.js `public/` or `/_next/static` through a separate Koa static middleware.
 - Trying to override `distDir` at runtime instead of configuring it in `next.config`.
@@ -53,6 +54,7 @@ export default defineService('http.next', async (shutdown) => {
 - API routes use the fixed `/-` prefix.
 - Next.js static assets and `public/` are served by Next.js itself.
 - Next.js production build runs before `hile start` in production.
+- App Router modules that read the request signal compile without Next.js's `import-next` warning.
 - Reverse-proxy settings describe the actual trusted hop topology and apply consistently to Koa and Next requests on the shared server.
 
 ## More Context
