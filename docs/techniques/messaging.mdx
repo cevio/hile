@@ -195,5 +195,6 @@ const result = await app.call('billing', '/charge', {
 - Appending a secondary response getter to `client.request('/x', data)`
 - Returning a plain object from a handler called through `stream()`.
 - Retrying a consumed request stream or hiding it inside a replay-unsafe factory.
+- Branching business code on whether a Micro target namespace is local or remote.
 - Using pub/sub as a durable queue.
 - Forgetting to register `shutdown(await app.listen(...))`.

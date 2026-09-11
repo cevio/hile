@@ -255,6 +255,9 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 - `defineMicroMessage()` handlers receive request streams as `input: Readable | undefined`, separately from structured `data` and `invocation`.
 - `Application.call(namespace, url, data, options)` requires `options.context` and returns a promise. It accepts `options.input` for a streamed request with a normal response.
 - `Application.stream(namespace, url, data, options)` requires `options.context` and returns a readable response stream; it can carry a request input stream at the same time.
+- `Application.call()` and `Application.stream()` may target the application's own namespace. Self calls use the same Registry-discovered WebSocket and modem protocol as remote calls, so Context validation, request and response streams, cancellation, timeout, retry, circuit-breaker, and backpressure behavior stay uniform; business handlers do not need a local-call branch.
+- A peer address (`host:port`) is the routing and reuse identity, not an individual WebSocket identity. If both peers dial each other concurrently, including an application dialing itself, the server preserves both physical connections while they are active instead of replacing a connection that may carry an in-flight request. Later calls still reuse the cached peer connection.
+- This connection bookkeeping does not add or change wire frames; request, response, stream, credit, cancel, and abort protocol fields remain unchanged.
 - `Application.call()` and `Application.stream()` default retries to `0` when request input is streamed. Explicit nonzero retries fail before service discovery because streamed input is non-replayable.
 - A caller-owned request input source failure is surfaced as `MessageInputError`, aborts the peer invocation, and is not counted against that peer's circuit-breaker health.
 - `Application.publish(topic, payload)` returns an object with `update()` and `unpublish()`.
@@ -266,6 +269,7 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 - Appending a secondary response getter to `client.request('/x', data)`
 - Returning a plain object from a handler called through `stream()`.
 - Retrying a consumed request stream or hiding it inside a replay-unsafe factory.
+- Branching business code on whether a Micro target namespace is local or remote.
 - Using pub/sub as a durable queue.
 - Forgetting to register `shutdown(await app.listen(...))`.
 
@@ -273,6 +277,7 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 
 - Micro message files default-export `defineMicroMessage(...)` and receive `invocation.context`.
 - RPC callers use `await app.call(..., { context })`.
+- Same-namespace `call()` and `stream()` use normal Registry discovery, while `streamPeer()` keeps its exact-address selection; all three use the normal WebSocket/modem transport path and callers do not branch on locality.
 - Streaming handlers are async generators.
 - Request-stream handlers consume `input` and callers either pass `options.input` alongside metadata or pass a stream directly as `data`.
 - Streamed request calls do not configure nonzero retries.

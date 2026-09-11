@@ -80,6 +80,7 @@ const result = await app.call('example.service', '/ping', { hello: 'world' }, { 
 - Appending a secondary response getter to `client.request('/x', data)`
 - Returning a plain object from a handler called through `stream()`.
 - Retrying a consumed request stream or hiding it inside a replay-unsafe factory.
+- Branching business code on whether a Micro target namespace is local or remote.
 - Using pub/sub as a durable queue.
 - Forgetting to register `shutdown(await app.listen(...))`.
 
@@ -87,6 +88,7 @@ const result = await app.call('example.service', '/ping', { hello: 'world' }, { 
 
 - Micro message files default-export `defineMicroMessage(...)` and receive `invocation.context`.
 - RPC callers use `await app.call(..., { context })`.
+- Same-namespace `call()` and `stream()` use normal Registry discovery, while `streamPeer()` keeps its exact-address selection; all three use the normal WebSocket/modem transport path and callers do not branch on locality.
 - Streaming handlers are async generators.
 - Request-stream handlers consume `input` and callers either pass `options.input` alongside metadata or pass a stream directly as `data`.
 - Streamed request calls do not configure nonzero retries.

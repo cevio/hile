@@ -29,6 +29,7 @@ export class Server extends MessageLoader {
   public readonly logger: Logger | Console;
   public readonly clients = new Map<string, Client>();
   private readonly clientExtras = new Map<string, string[]>();
+  private readonly connections = new Map<Client, { key: string; extras: string[] }>();
   private readonly pendingConnections = new Map<string, {
     promise: Promise<Client>;
     controller: AbortController;
@@ -78,30 +79,49 @@ export class Server extends MessageLoader {
     ) {
       return ws.close();
     }
-    this.createClient(ws, host, portNum, extras);
+    this.createClient(ws, host, portNum, extras, 'inbound');
   }
 
-  private createClient(ws: WebSocket, host: string, port: number, extras: string[] = []) {
-    const key = `${host}:${port}`;
-    const previous = this.clients.get(key);
-    if (previous) {
-      const previousExtras = this.clientExtras.get(key) ?? [];
+  private removeClient(client: Client, fallback?: { key: string; extras: string[] }) {
+    const connection = this.connections.get(client) ?? fallback;
+    if (!connection) return;
+    const { key, extras } = connection;
+    this.connections.delete(client);
+    if (this.clients.get(key) === client) {
       this.clients.delete(key);
       this.clientExtras.delete(key);
-      previous.dispose();
-      this.events.emit('disconnect', previous, previousExtras);
+    }
+    client.dispose();
+    this.events.emit('disconnect', client, extras);
+  }
+
+  private createClient(
+    ws: WebSocket,
+    host: string,
+    port: number,
+    extras: string[] = [],
+    direction: 'inbound' | 'outbound',
+  ) {
+    const key = `${host}:${port}`;
+    // host:port identifies a peer, not an individual WebSocket. When both peers
+    // dial at the same time (including a server dialing itself), the inbound
+    // half arrives while an outbound connection for the same peer is pending.
+    // Keep that inbound half alive for requests already using it, but reserve
+    // the peer cache slot for the outbound half that connect() will return.
+    const isDialCollision = direction === 'inbound' && this.pendingConnections.has(key);
+    if (!isDialCollision) {
+      const previous = this.clients.get(key);
+      if (previous) {
+        this.removeClient(previous, { key, extras: this.clientExtras.get(key) ?? [] });
+      }
     }
     const client = new Client({ server: this, ws, host, port });
-    ws.on('close', () => {
-      if (this.clients.get(key) === client) {
-        this.clients.delete(key);
-        this.clientExtras.delete(key);
-        client.dispose();
-        this.events.emit('disconnect', client, extras);
-      }
-    });
-    this.clients.set(key, client);
-    this.clientExtras.set(key, extras);
+    this.connections.set(client, { key, extras });
+    ws.on('close', () => this.removeClient(client));
+    if (!isDialCollision) {
+      this.clients.set(key, client);
+      this.clientExtras.set(key, extras);
+    }
     this.events.emit('connect', client, extras);
     return client;
   }
@@ -116,7 +136,7 @@ export class Server extends MessageLoader {
     if (!pending) {
       const controller = new AbortController();
       const promise = this.openConnection(host, port, controller.signal)
-        .then(ws => this.createClient(ws, host, port))
+        .then(ws => this.createClient(ws, host, port, [], 'outbound'))
         .finally(() => { this.pendingConnections.delete(key); });
       promise.catch(() => undefined);
       pending = { promise, controller, waiters: 0 };
@@ -221,16 +241,15 @@ export class Server extends MessageLoader {
           });
         })
       }
-      const toDispose = [...this.clients.entries()];
-      for (const [key, client] of toDispose) {
-        const extras = this.clientExtras.get(key) ?? [];
-        this.clients.delete(key);
-        this.clientExtras.delete(key);
-        client.dispose();
-        this.events.emit('disconnect', client, extras);
+      for (const client of [...this.connections.keys()]) {
+        this.removeClient(client);
+      }
+      for (const [key, client] of [...this.clients.entries()]) {
+        this.removeClient(client, { key, extras: this.clientExtras.get(key) ?? [] });
       }
       this.clients.clear();
       this.clientExtras.clear();
+      this.connections.clear();
       this.wss = undefined;
       this.port = undefined;
     }
