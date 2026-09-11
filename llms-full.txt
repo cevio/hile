@@ -59,6 +59,7 @@ Use this map to decide what to read.
 | Start an app, manage lifecycle, graceful shutdown | `@hile/core`, `@hile/cli`, `@hile/bootstrap` | `packages/core-lifecycle.md` |
 | Create an HTTP endpoint or Koa middleware | `@hile/http` | `packages/http.md`, `recipes/http-api-model-typeorm.md` |
 | Run Next.js and API controllers on one port | `@hile/http-next` | `packages/http-next.md`, `recipes/http-next-fullstack.md` |
+| Preserve HTTP semantics across a Micro call | `@hile/http-over-micro` | `packages/http-over-micro.md`, `packages/messaging-micro.md` |
 | Run independently built RSC plugins through one Host | `@hile/rsc` | `packages/rsc.md`, `recipes/rsc-plugin-host.md` |
 | Compile immutable production RSC plugin artifacts | `@hile/rsc-build` | `packages/rsc.md` |
 | Add incremental RSC development and hot reload | `@hile/rsc-development` | `packages/rsc.md` |
@@ -87,6 +88,7 @@ Use this map to decide what to read.
 ## Common Selection Rules
 
 - If the task is a user-facing API, start with `@hile/http` or `@hile/http-next`.
+- If a public HTTP gateway delegates that API to an internal Micro service, compose it with `@hile/http-over-micro` instead of inventing a per-domain wire envelope.
 - If the task is reusable business behavior, put it in `@hile/model` even if the caller is HTTP, Next.js, queue, or micro.
 - If the task may retry or redeliver and has side effects, add `@hile/redis-idempotency`.
 - If the task is background work, use `@hile/redis-stream-queue`; do not use micro RPC as a queue.
@@ -121,6 +123,8 @@ Read `packages/http.md` when the task mentions:
 - file-system routes
 
 Packages: `@hile/http`, `@hile/loader`.
+
+For an HTTP gateway that delegates to a Micro service, also read `packages/http-over-micro.md`. The gateway keeps the public listener and policy; the package preserves the selected HTTP semantics across Micro.
 
 ## Next.js On The Same Port
 
@@ -181,7 +185,7 @@ Read `packages/messaging-micro.md` when the task mentions:
 - streaming RPC
 - pub/sub topics
 
-Packages: `@hile/message-modem`, `@hile/message-ws`, `@hile/message-ipc`, `@hile/message-worker-thread`, `@hile/message-loader`, `@hile/micro`, `@hile/micro-dynamic-configs`, `@hile/reloader`.
+Packages: `@hile/message-modem`, `@hile/message-ws`, `@hile/message-ipc`, `@hile/message-worker-thread`, `@hile/message-loader`, `@hile/micro`, `@hile/http-over-micro`, `@hile/micro-dynamic-configs`, `@hile/reloader`.
 
 ## Distributed MCP Capabilities
 
@@ -323,6 +327,8 @@ Hile uses `@hile/loader` conventions:
 - Current message APIs return promises or streams directly.
 - Do not append a secondary response getter to `request()`, `_send()`, or `Application.call()`.
 - Use `call()` for single values and `stream()` only when the handler returns an async iterable.
+- HTTP-over-Micro is the exception to that last selection rule: use `callHttpOverMicro()`, which internally opens one response stream so response metadata can precede an optional streamed body.
+- Preserve duplicate HTTP headers as ordered tuples across Micro. Keep public authentication, cookie, redirect, and forwarded-header policy at the HTTP gateway.
 
 ## Distributed Guarantees
 
@@ -343,6 +349,7 @@ Hile uses `@hile/loader` conventions:
 - Do not assume `@hile/http` Zod validation mutates or coerces `ctx.query`, `ctx.params`, or `ctx.request.body`.
 - Do not put reusable business logic only in controllers, pages, queue workers, or message handlers.
 - Do not use old message examples that append a secondary response getter; current request APIs return promises directly.
+- Do not invent service-specific HTTP-in-Micro envelopes or Base64 file bodies; use `@hile/http-over-micro` and its request/response streams.
 - Do not claim exactly-once delivery or execution from Redis locks, queues, idempotency, or rate limits.
 - Do not use queue `jobId` as the only side-effect idempotency boundary.
 - Do not log the entire async context by default.
@@ -391,6 +398,8 @@ const result = await client.request('/x', data, { context })
 ```
 
 Avoid `stream()` for single-value RPC. It requires the remote handler to return an async iterable.
+
+For HTTP-over-Micro, call `callHttpOverMicro()` instead of choosing `call()` or consuming protocol frames directly. The adapter always uses a response stream because HTTP status and headers must arrive before an optional streamed body.
 
 ## Redis
 
@@ -743,6 +752,214 @@ The proxy must replace forwarded headers, set `X-Forwarded-Proto: https`, and be
 - Next.js static assets and `public/` are served by Next.js itself.
 - Next.js production build runs before `hile start` in production.
 - Reverse-proxy settings describe the actual trusted hop topology and apply consistently to Koa and Next requests on the shared server.
+
+---
+
+# HTTP Over Micro
+
+Package: `@hile/http-over-micro`.
+
+## Use When
+
+Use this package when one HTTP ingress must project a request to a Registry-discovered Hile microservice while preserving HTTP method, duplicate headers, query values, status, cookies, redirects, JSON bodies, and streamed file bodies.
+
+The package defines the transport contract only. The public listener and its authentication, authorization, route selection, header policy, and final Koa response remain owned by the gateway.
+
+## Do Not Use When
+
+- Do not use it for ordinary in-process HTTP controllers that do not cross a Micro boundary.
+- Do not use it as a durable queue or retry layer.
+- Do not use it for RSC Flight, MCP, WebSocket upgrades, HTTP trailers, or informational `1xx` responses; those protocols keep their own transports.
+- Do not put business logic in the gateway merely because the gateway performs the HTTP projection.
+
+## Install
+
+```bash
+pnpm add @hile/http-over-micro @hile/micro zod
+```
+
+## Imports
+
+```ts
+import {
+  callHttpOverMicro,
+  defineHttpOverMicroMessage,
+} from '@hile/http-over-micro'
+import { z } from 'zod'
+```
+
+## Copy-Paste Example
+
+Provider message:
+
+```ts
+// src/messages/posts/[slug].msg.ts
+import { defineHttpOverMicroMessage } from '@hile/http-over-micro'
+import { z } from 'zod'
+
+export default defineHttpOverMicroMessage({
+  method: 'POST',
+  schema: {
+    headers: z.object({ authorization: z.string().startsWith('Bearer ') }),
+    query: z.object({ draft: z.enum(['true', 'false']).default('false') }),
+    params: z.object({ slug: z.string().min(1) }),
+    body: z.object({ title: z.string().min(1), content: z.string() }),
+  },
+}, async ({ request, params, invocation }) => {
+  // Call a model here; the example only shows the transport result.
+  return {
+    status: 201,
+    headers: {
+      location: `/posts/${params.slug}`,
+      'set-cookie': ['flash=created; Path=/; HttpOnly', 'draft=; Max-Age=0; Path=/'],
+    },
+    body: {
+      created: true,
+      draft: request.query.draft === 'true',
+      requestId: invocation.context.values.requestId,
+    },
+  }
+})
+```
+
+Gateway-side call:
+
+```ts
+const response = await callHttpOverMicro(
+  app,
+  'cn.zlooks.blog.server',
+  '/posts/hello',
+  {
+    method: ctx.method,
+    headers: ctx.headers,
+    query: Object.entries(ctx.query).flatMap(([name, value]) =>
+      Array.isArray(value) ? value.map(item => [name, item] as const) : [[name, String(value)] as const],
+    ),
+    body: ctx.request.body,
+  },
+  { context: executionContext },
+)
+
+ctx.status = response.status
+for (const [name, value] of response.headers) ctx.append(name, value)
+return response.body
+```
+
+Pass only gateway-approved end-to-end request headers. The sample assumes a body parser has already produced `ctx.request.body`; use the untouched incoming `Readable` instead for raw uploads.
+
+## More Examples
+
+### Upload and download without a transport switch
+
+The caller supplies a normal JSON value or an `AsyncIterable`, `Uint8Array`, or `ArrayBuffer`. `callHttpOverMicro()` snapshots JSON values into the request envelope and automatically moves binary or iterable bodies into Micro request input.
+
+```ts
+import { createReadStream } from 'node:fs'
+
+const response = await callHttpOverMicro(app, 'files.server', '/files', {
+  method: 'PUT',
+  headers: { 'content-type': 'application/octet-stream' },
+  body: createReadStream('/tmp/archive.tar'),
+}, { context })
+
+if (response.bodyKind === 'stream') {
+  for await (const chunk of response.body) consumeDownloadedChunk(chunk)
+}
+```
+
+Provider:
+
+```ts
+import { Readable } from 'node:stream'
+
+export default defineHttpOverMicroMessage({ method: ['GET', 'PUT'] }, async ({ request }) => {
+  if (request.method === 'PUT') {
+    if (!(request.body instanceof Readable)) {
+      return { status: 400, body: { error: 'stream required' } }
+    }
+    await saveUpload(request.body)
+    return { status: 204 }
+  }
+
+  return {
+    status: 200,
+    headers: { 'content-type': 'application/octet-stream' },
+    body: openDownloadStream(),
+  }
+})
+```
+
+Streaming request bodies are non-replayable. Leave retries unset or set `retries: 0`; an explicit nonzero value fails before dispatch.
+
+### Response metadata before response bytes
+
+Every HTTP-over-Micro call uses one Micro response stream. Its first chunk is a response head; body chunks follow only when `body.kind` is `stream`:
+
+```ts
+type RequestEnvelope = {
+  protocol: '@hile/http-over-micro'
+  version: 1
+  type: 'request'
+  method: string
+  headers: Array<[string, string]>
+  query: Array<[string, string]>
+  body: { kind: 'empty' } | { kind: 'inline'; value: unknown } | { kind: 'stream' }
+}
+
+type ResponseHead = {
+  protocol: '@hile/http-over-micro'
+  version: 1
+  type: 'response'
+  status: number
+  headers: Array<[string, string]>
+  body: { kind: 'empty' } | { kind: 'inline'; value: unknown } | { kind: 'stream' }
+}
+```
+
+Header tuples deliberately preserve order and duplicate fields such as `Set-Cookie`. Header names are canonical lowercase on the wire. Query tuples preserve repeated query values without inventing an object serialization rule.
+
+### Zod parses, not merely checks
+
+`schema.headers`, `schema.query`, `schema.params`, and `schema.body` each receive the logical value seen by the handler. Schema transforms and coercions are returned to the handler.
+
+For a streamed request, `schema.body` receives the `Readable`. Use a Zod custom or union schema only when that endpoint intentionally accepts a stream; a JSON-object body schema rejects the stream naturally.
+
+## Compose With
+
+- Use `@hile/http` or `@hile/http-next` for the one public HTTP listener and file-system Controller.
+- Use `@hile/micro` for Registry discovery, context propagation, cancellation, timeouts, and credit-based input/output flow control.
+- Use `@hile/model` behind the provider handler for reusable business behavior.
+- Use the gateway's own policy to select which headers and cookies may cross the boundary; this package preserves selected values but does not authorize them.
+
+## Runtime And Lifecycle Notes
+
+- `defineHttpOverMicroMessage()` returns a normal `defineMicroMessage()` definition and is loaded or registered through the standard Micro message loader.
+- The Micro route remains the file/message path. HTTP method is protocol data and one definition may accept one method or a method list. Unsupported methods return `405` plus `Allow` without invoking the handler.
+- Inline bodies use JSON serialization semantics and default to a 1 MiB bound. Override `limits.maxInlineBodyBytes` explicitly on both ends when a deployment requires another limit; use streams for files and large byte bodies.
+- Final response statuses are `200..599`. `HEAD`, `204`, `205`, and `304` responses reject bodies. `1xx`, protocol upgrades, and trailers are intentionally out of scope.
+- Destroying the returned streamed body cancels the underlying Micro response. `signal`, total timeout, idle timeout, and stream window are passed to `Application.stream()`.
+- Credit-based backpressure bounds buffered chunks, not the total number of transferred bytes. The HTTP ingress and provider handler must each enforce their endpoint-specific upload/download byte limit while consuming a stream.
+- The caller owns the returned response stream and must consume or destroy it. The package fully consumes empty and inline responses before resolving.
+- Cookies and `Location` are opaque response headers. The public gateway remains responsible for cookie ownership, security attributes, redirect policy, and hop-by-hop header removal.
+- Treat `namespace` and `url` as routing authority. A public gateway must resolve them through its validated provider catalog or an equivalent allow policy; never dispatch an arbitrary client-supplied namespace directly.
+
+## Anti-Patterns
+
+- Do not handcraft the request envelope or consume the response-head frame yourself; use `callHttpOverMicro()`.
+- Do not call `Application.call()` for this protocol. A response may need headers followed by a body stream, so the package intentionally uses `Application.stream()` for every result.
+- Do not encode files as Base64 inside an inline JSON body.
+- Do not collapse response headers into a plain object when duplicate `Set-Cookie` values matter.
+- Do not enable retries for an upload stream.
+- Do not forward every inbound header, raw cookie, or identity credential merely because the protocol can carry it.
+
+## Verification Checklist
+
+- Unit tests cover inline, empty, malformed, method-mismatch, and Zod-coercion cases.
+- A real Registry-discovered WebSocket test carries request and response streams at the same time.
+- Duplicate response headers survive in order.
+- Invalid request metadata fails with HTTP status `400`; invalid upstream response metadata fails locally with `502`.
+- Inline bodies are bounded and JSON-serializable; files use stream bodies.
+- Cancellation, timeout, idle timeout, and backpressure remain owned by `@hile/micro` and `@hile/message-modem`.
 
 ---
 
@@ -1542,6 +1759,42 @@ for await (const chunk of stream) {
 }
 ```
 
+Streaming request body with a normal response:
+
+```ts
+// src/messages/upload.msg.ts
+import { defineMicroMessage } from '@hile/micro'
+
+export default defineMicroMessage(async ({ data, input, invocation }) => {
+  if (!input) throw new Error('upload body is required')
+
+  let bytes = 0
+  for await (const chunk of input) bytes += Buffer.byteLength(chunk)
+
+  return {
+    filename: data.filename,
+    bytes,
+    requestId: invocation.context.values.requestId,
+  }
+})
+```
+
+```ts
+import { createReadStream } from 'node:fs'
+
+const result = await app.call(
+  'example.service',
+  '/upload',
+  { filename: 'archive.tar' },
+  { context, input: createReadStream('/tmp/archive.tar') },
+)
+```
+
+If no structured metadata is needed, pass an `AsyncIterable`, `Uint8Array`, or
+`ArrayBuffer` directly as `data`; Hile sends it as the request input stream and
+the handler receives `data === undefined`. `app.stream()` accepts the same
+request input forms when both request and response need to stream.
+
 Custom WebSocket modem:
 
 ```ts
@@ -1565,6 +1818,68 @@ class RpcWs extends MessageWs {
 
 Notice that `request()` returns a `Promise<T>`. Await it directly.
 
+## Stream Wire Model
+
+One request ID owns the structured request and both optional stream directions:
+
+```ts
+type RequestFrame = {
+  id: number
+  mode: MESSAGE_MODEM_TYPE.REQUEST
+  twoway: boolean
+  data?: unknown
+  streams?: {
+    input?: true
+    output?: { window?: number }
+  }
+}
+
+type StreamDataFrame = {
+  id: number
+  mode: MESSAGE_MODEM_TYPE.STREAM_DATA
+  twoway: false
+  data: {
+    direction: 'input' | 'output'
+    seq: number
+    payload?: unknown
+    final: boolean
+    status?: string | number
+    message?: string
+  }
+}
+
+type StreamCreditFrame = {
+  id: number
+  mode: MESSAGE_MODEM_TYPE.STREAM_CREDIT
+  twoway: false
+  data: {
+    direction: 'input' | 'output'
+    seq: number
+    window?: number
+  }
+}
+
+type StreamCancelFrame = {
+  id: number
+  mode: MESSAGE_MODEM_TYPE.STREAM_CANCEL
+  twoway: false
+  data: {
+    direction: 'input' | 'output'
+    status?: string | number
+    message?: string
+  }
+}
+```
+
+`data` is the structured message payload; stream chunks never get embedded in
+it. The request frame declares the active directions, and every later stream
+frame reuses the request ID. Input and output sequence numbers, credits, and
+cancellation are independent.
+
+A non-final stream frame must carry a payload other than `null` or `undefined`.
+Node `Readable` reserves those values for its own end/no-op semantics, so Hile
+rejects them instead of silently losing a credit or ending a stream early.
+
 ## Use When
 
 Use the message packages for request/response messaging over WebSocket, process IPC, worker threads, file-system message handlers, service discovery, streaming RPC, and registry-backed pub/sub.
@@ -1572,6 +1887,7 @@ Use the message packages for request/response messaging over WebSocket, process 
 ## Do Not Use When
 
 - Do not use `stream()` for normal single-result calls.
+- Do not enable retries for a streamed request input. Input streams are consumed once and cannot be replayed safely.
 - Do not rely on message IDs for business idempotency. They are transport IDs.
 - Use `defineMicroMessage()` for Micro business handlers; reserve generic `defineMessage()` for transport-neutral loaders.
 - Do not pass zero, fractional, non-finite, or oversized message timeouts. Explicit timeout values must be safe integers from `1` through `2_147_483_647` milliseconds.
@@ -1606,14 +1922,21 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 - `MessageLoader` maps `*.msg.*` files to routes using `@hile/loader`.
 - `MessageLoader.dispatch(path, data, extras?)` invokes the matched handler.
 - `MessageModem._send()` returns a `Promise`.
+- `_send()` and `_stream()` accept `options.input` as an `AsyncIterable`, `Uint8Array`, or `ArrayBuffer`. Passing one of those values directly as `data` automatically selects request streaming and leaves the handler's structured `data` undefined.
 - `MessageModem._send()` and `_push()` use a `30_000` ms timeout when none is provided. An explicit timeout must be a safe integer from `1` through `2_147_483_647`; invalid values throw `TypeError` before a message is sent.
 - `MessageModem._stream()` returns a Node `Readable` in object mode.
-- Stream `timeout` and `idleTimeout` values use the same `1` through `2_147_483_647` ms range. The stream `window` must be a safe integer from `1` through `64` and defaults to `1`.
+- Stream `timeout` and `idleTimeout` values use the same `1` through `2_147_483_647` ms range. Idle timeout is refreshed by valid input or output stream activity. The response stream `window` must be a safe integer from `1` through `64` and defaults to `1`; request input uses receiver-issued credit with a window of `1`.
 - Each modem schedules request, total-stream, and idle-stream deadlines through one internal deadline scheduler. This reduces active Node.js timers without changing timeout, cancellation, ordering, or error semantics.
-- `@hile/message-ws` keeps public `decodeMessageFrame()` payloads isolated from caller-owned input by default. Its owned WebSocket `RawData` path uses a zero-copy binary Flight payload view internally.
+- Request and response chunks share `STREAM_DATA` frames and carry an explicit `direction: 'input' | 'output'`; each direction has independent sequence and credit state. `STREAM_CANCEL` stops one direction. A cancel carrying `status` fails the owning request immediately; `ABORT` cancels the whole invocation.
+- This frame model replaces the former response-only `stream`, `streamVersion`, and `streamWindow` fields. All peers on one transport connection must use compatible `@hile/message-modem` and transport package versions; do not mix old and new peers during a rolling deployment.
+- `@hile/message-ws` sends `Uint8Array` and `ArrayBuffer` request and response chunks as native binary frames rather than JSON/base64. Public `decodeMessageFrame()` payloads remain isolated from caller-owned input by default; the owned WebSocket `RawData` path uses a zero-copy binary view internally.
+- `@hile/message-ipc` transparently Base64-wraps only binary `STREAM_DATA` payloads so request and response streams survive Node child-process IPC's default JSON serialization. Other IPC frames keep their ordinary object representation.
 - A stream request requires `exec()` to return an async iterable.
-- `Application.call(namespace, url, data, options)` requires `options.context` and returns a promise.
-- `Application.stream(namespace, url, data, options)` requires `options.context` and returns a readable stream.
+- `defineMicroMessage()` handlers receive request streams as `input: Readable | undefined`, separately from structured `data` and `invocation`.
+- `Application.call(namespace, url, data, options)` requires `options.context` and returns a promise. It accepts `options.input` for a streamed request with a normal response.
+- `Application.stream(namespace, url, data, options)` requires `options.context` and returns a readable response stream; it can carry a request input stream at the same time.
+- `Application.call()` and `Application.stream()` default retries to `0` when request input is streamed. Explicit nonzero retries fail before service discovery because streamed input is non-replayable.
+- A caller-owned request input source failure is surfaced as `MessageInputError`, aborts the peer invocation, and is not counted against that peer's circuit-breaker health.
 - `Application.publish(topic, payload)` returns an object with `update()` and `unpublish()`.
 - `Application.subscribe(topic, callback)` returns an unsubscribe function.
 - `Registry` stores service addresses and retained config/topic state under `~/.registry`.
@@ -1622,6 +1945,7 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 
 - Appending a secondary response getter to `client.request('/x', data)`
 - Returning a plain object from a handler called through `stream()`.
+- Retrying a consumed request stream or hiding it inside a replay-unsafe factory.
 - Using pub/sub as a durable queue.
 - Forgetting to register `shutdown(await app.listen(...))`.
 
@@ -1630,6 +1954,8 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 - Micro message files default-export `defineMicroMessage(...)` and receive `invocation.context`.
 - RPC callers use `await app.call(..., { context })`.
 - Streaming handlers are async generators.
+- Request-stream handlers consume `input` and callers either pass `options.input` alongside metadata or pass a stream directly as `data`.
+- Streamed request calls do not configure nonzero retries.
 - Custom modem timeout values use the documented safe-integer range.
 - Registry is started before application nodes need discovery.
 - Micro apps use stable namespaces and advertise reachable hosts.
@@ -3395,10 +3721,13 @@ Use this recipe when services communicate over Hile registry-backed RPC.
 3. Default-export `defineMicroMessage()` handlers and load them through `app.load()`.
 4. Create context at ingress and call providers with `await app.call(namespace, url, data, { context })`.
 5. Use `app.stream()` only for async-generator handlers.
+6. For streamed request bodies, consume `input` in the `defineMicroMessage()` handler and pass the source through `options.input`; pass the stream as `data` only when no structured metadata is needed.
 
 ## Failure And Cleanup Behavior
 
 - `Application.call()` may retry; side-effecting handlers need idempotency.
+- A streamed request body is non-replayable. Its retry default is `0`, and an explicit nonzero retry count is rejected before discovery.
+- Request input and response output have independent credit-based backpressure and may be active together.
 - Registry disconnect triggers reconnect; apps re-declare topics and subscriptions.
 - Circuit breaker excludes failing nodes for cooldown.
 
@@ -3408,6 +3737,7 @@ Use this recipe when services communicate over Hile registry-backed RPC.
 - Provider namespace matches consumer call.
 - Handlers default-export `defineMicroMessage()` and consume explicit invocation context when needed.
 - Consumer code awaits `app.call(..., { context })` directly.
+- Streamed request handlers consume `input: Readable`, preserve structured metadata in `data`, and do not enable retries.
 
 ---
 

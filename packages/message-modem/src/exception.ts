@@ -17,3 +17,14 @@ export class AbortException extends Exception {
     super(AbortException.code, msg);
   }
 }
+
+/** A failure raised by the caller-owned request input source, not by the peer. */
+export class MessageInputError extends Error {
+  public readonly cause: unknown;
+
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : 'Request input stream failed');
+    this.name = 'MessageInputError';
+    this.cause = cause;
+  }
+}

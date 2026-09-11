@@ -228,6 +228,34 @@ importers:
         specifier: ^4.0.18
         version: 4.1.9(@types/node@26.2.0)(@vitest/coverage-v8@4.1.9)(vite@8.1.0(@types/node@26.2.0)(esbuild@0.28.2)(terser@5.50.0)(tsx@4.22.4)(yaml@2.9.0))
 
+  packages/http-over-micro:
+    dependencies:
+      '@hile/message-loader':
+        specifier: workspace:^
+        version: link:../message-loader
+      '@hile/message-modem':
+        specifier: workspace:^
+        version: link:../message-modem
+      '@hile/micro':
+        specifier: workspace:^
+        version: link:../micro
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
+    devDependencies:
+      '@hile/context':
+        specifier: workspace:^
+        version: link:../context
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      fix-esm-import-path:
+        specifier: ^1.10.3
+        version: 1.10.3(supports-color@8.1.1)
+      vitest:
+        specifier: ^4.0.18
+        version: 4.1.9(@types/node@26.2.0)(@vitest/coverage-v8@4.1.9)(vite@8.1.0(@types/node@26.2.0)(esbuild@0.28.2)(terser@5.50.0)(tsx@4.22.4)(yaml@2.9.0))
+
   packages/ioredis:
     dependencies:
       '@hile/core':
@@ -418,6 +446,9 @@ importers:
       '@hile/message-loader':
         specifier: workspace:^
         version: link:../message-loader
+      '@hile/message-modem':
+        specifier: workspace:^
+        version: link:../message-modem
       '@hile/message-ws':
         specifier: workspace:^
         version: link:../message-ws

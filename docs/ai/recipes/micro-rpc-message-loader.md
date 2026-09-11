@@ -74,10 +74,13 @@ Use this recipe when services communicate over Hile registry-backed RPC.
 3. Default-export `defineMicroMessage()` handlers and load them through `app.load()`.
 4. Create context at ingress and call providers with `await app.call(namespace, url, data, { context })`.
 5. Use `app.stream()` only for async-generator handlers.
+6. For streamed request bodies, consume `input` in the `defineMicroMessage()` handler and pass the source through `options.input`; pass the stream as `data` only when no structured metadata is needed.
 
 ## Failure And Cleanup Behavior
 
 - `Application.call()` may retry; side-effecting handlers need idempotency.
+- A streamed request body is non-replayable. Its retry default is `0`, and an explicit nonzero retry count is rejected before discovery.
+- Request input and response output have independent credit-based backpressure and may be active together.
 - Registry disconnect triggers reconnect; apps re-declare topics and subscriptions.
 - Circuit breaker excludes failing nodes for cooldown.
 
@@ -87,3 +90,4 @@ Use this recipe when services communicate over Hile registry-backed RPC.
 - Provider namespace matches consumer call.
 - Handlers default-export `defineMicroMessage()` and consume explicit invocation context when needed.
 - Consumer code awaits `app.call(..., { context })` directly.
+- Streamed request handlers consume `input: Readable`, preserve structured metadata in `data`, and do not enable retries.

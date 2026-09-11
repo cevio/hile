@@ -26,6 +26,7 @@ The docs in this repository are generated from the same AI context that powers `
 | Start an app, manage lifecycle, graceful shutdown | `@hile/core`, `@hile/cli`, `@hile/bootstrap` | [Core lifecycle](/packages/core) |
 | Create an HTTP endpoint or Koa middleware | `@hile/http` | [HTTP API](/packages/http), [HTTP, Model, and TypeORM](/techniques/database) |
 | Run Next.js and API controllers on one port | `@hile/http-next` | [HttpNext](/packages/http-next), [HttpNext fullstack](/fundamentals/http-next-pipeline) |
+| Preserve HTTP semantics across a Micro call | `@hile/http-over-micro` | [HTTP over Micro](/packages/http-over-micro), [Messaging and Micro](/packages/micro) |
 | Run independently built RSC plugins through one Host | `@hile/rsc` | [RSC packages](/packages/rsc), [Complete RSC plugin guide](/techniques/rsc-plugins) |
 | Compile immutable production RSC plugin artifacts | `@hile/rsc-build` | [RSC packages](/packages/rsc) |
 | Add incremental RSC development and hot reload | `@hile/rsc-development` | [RSC packages](/packages/rsc) |
@@ -54,6 +55,7 @@ The docs in this repository are generated from the same AI context that powers `
 ## Common Selection Rules
 
 - If the task is a user-facing API, start with `@hile/http` or `@hile/http-next`.
+- If a public HTTP gateway delegates that API to an internal Micro service, compose it with `@hile/http-over-micro` instead of inventing a per-domain wire envelope.
 - If the task is reusable business behavior, put it in `@hile/model` even if the caller is HTTP, Next.js, queue, or micro.
 - If the task may retry or redeliver and has side effects, add `@hile/redis-idempotency`.
 - If the task is background work, use `@hile/redis-stream-queue`; do not use micro RPC as a queue.

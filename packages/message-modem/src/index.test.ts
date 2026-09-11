@@ -1,10 +1,13 @@
+import { Readable } from 'node:stream'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   MessageModem,
   MESSAGE_MODEM_TYPE,
+  type MessageInput,
   type MessageTransferFormat,
   Exception,
   AbortException,
+  MessageInputError,
   TimeoutException,
 } from './index'
 
@@ -19,15 +22,23 @@ class TestModem extends MessageModem {
     }
   }
 
-  protected async exec(data: any): Promise<any> {
+  protected async exec(data: any, _signal?: AbortSignal, _input?: Readable): Promise<any> {
     return data;
   }
 
-  public send<T>(data: T, options?: number | { timeout?: number; signal?: AbortSignal }) {
+  public send<T>(data: T, options?: number | {
+    timeout?: number;
+    signal?: AbortSignal;
+    input?: MessageInput;
+  }) {
     if (typeof options === 'number') {
       return super._send(data, { timeout: options });
     }
-    return super._send(data, { timeout: options?.timeout, signal: options?.signal });
+    return super._send(data, {
+      timeout: options?.timeout,
+      signal: options?.signal,
+      input: options?.input,
+    });
   }
 
   public push<T>(data: T, options?: number | { timeout?: number; signal?: AbortSignal }): void {
@@ -43,6 +54,7 @@ class TestModem extends MessageModem {
     timeout?: number;
     idleTimeout?: number;
     window?: number;
+    input?: MessageInput;
   }) {
     return super._stream(data, options);
   }
@@ -333,21 +345,41 @@ describe('@hile/message-modem', () => {
         });
       }).not.toThrow();
     });
+
+    it('rejects a pending request with an explicit protocol error for a malformed response', async () => {
+      const modem = new TestModem();
+      const request = modem.send('data');
+
+      modem.receive({
+        id: 0,
+        mode: MESSAGE_MODEM_TYPE.RESPONSE,
+        twoway: false,
+        data: null,
+      });
+
+      await expect(request).rejects.toMatchObject({
+        status: 502,
+        message: 'Invalid response frame',
+      });
+      expect(modem['stacks'].size).toBe(0);
+    });
   });
 
   describe('stream', () => {
-    it('appends STREAM_CREDIT without changing existing message type values', () => {
+    it('appends stream frame types without changing existing message type values', () => {
       expect(MESSAGE_MODEM_TYPE.REQUEST).toBe(0);
       expect(MESSAGE_MODEM_TYPE.RESPONSE).toBe(1);
       expect(MESSAGE_MODEM_TYPE.ABORT).toBe(2);
       expect(MESSAGE_MODEM_TYPE.STREAM_CREDIT).toBe(3);
+      expect(MESSAGE_MODEM_TYPE.STREAM_DATA).toBe(4);
+      expect(MESSAGE_MODEM_TYPE.STREAM_CANCEL).toBe(5);
     });
 
-    it('sends REQUEST with stream flag', () => {
+    it('declares streamed output on the REQUEST frame', () => {
       const modem = new TestModem();
       modem.stream('data');
       const msg = modem.posted.find(m => m.mode === MESSAGE_MODEM_TYPE.REQUEST);
-      expect(msg?.stream).toBe(true);
+      expect(msg?.streams).toEqual({ output: {} });
       expect(msg?.twoway).toBe(true);
     });
 
@@ -487,7 +519,7 @@ describe('@hile/message-modem', () => {
       await new Promise<void>(r => stream.on('close', () => r()));
 
       const errorResp = b.posted.find(
-        m => m.mode === MESSAGE_MODEM_TYPE.RESPONSE && m.stream && m.data?.status === 500
+        m => m.mode === MESSAGE_MODEM_TYPE.STREAM_DATA && m.data?.status === 500
       );
       expect(errorResp).toBeDefined();
       expect(errorResp!.data.payload).toBe('plain error');
@@ -534,6 +566,22 @@ describe('@hile/message-modem', () => {
 
       expect(chunks).toEqual(['ok']);
       expect(errorSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([null, undefined])('rejects an output stream chunk that Node Readable cannot represent: %s', async (value) => {
+      const { a, b } = createPair();
+      b['exec'] = async function* () {
+        yield value;
+      };
+
+      const stream = a.stream('data');
+      const error = new Promise<Error>((resolve) => stream.once('error', resolve));
+      stream.resume();
+
+      await expect(error).resolves.toMatchObject({
+        status: 500,
+        message: expect.stringContaining('null or undefined'),
+      });
     });
 
     it('external abort during stream stops chunk delivery early', async () => {
@@ -639,7 +687,7 @@ describe('@hile/message-modem', () => {
       await new Promise((resolve) => setTimeout(resolve, 30));
 
       expect(nextCalls).toBe(1);
-      expect(b.posted.filter((msg) => msg.mode === MESSAGE_MODEM_TYPE.RESPONSE)).toHaveLength(1);
+      expect(b.posted.filter((msg) => msg.mode === MESSAGE_MODEM_TYPE.STREAM_DATA)).toHaveLength(1);
       stream.destroy();
     });
 
@@ -665,7 +713,7 @@ describe('@hile/message-modem', () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(a.posted.find(({ mode }) => mode === MESSAGE_MODEM_TYPE.REQUEST))
-        .toMatchObject({ streamWindow: 4 });
+        .toMatchObject({ streams: { output: { window: 4 } } });
       expect(nextCalls).toBe(4);
 
       expect(stream.read()).toBe(1);
@@ -680,11 +728,9 @@ describe('@hile/message-modem', () => {
       const error = new Promise<Error>((resolve) => stream.once('error', resolve));
       const response = (seq: number) => modem.receive({
         id: 0,
-        mode: MESSAGE_MODEM_TYPE.RESPONSE,
-        stream: true,
-        streamVersion: 1,
+        mode: MESSAGE_MODEM_TYPE.STREAM_DATA,
         twoway: false,
-        data: { status: 200, seq, payload: seq, final: false },
+        data: { direction: 'output', status: 200, seq, payload: seq, final: false },
       });
 
       response(0);
@@ -707,7 +753,7 @@ describe('@hile/message-modem', () => {
       ])).resolves.toBeInstanceOf(TimeoutException);
       expect(modem.posted).toContainEqual(expect.objectContaining({
         mode: MESSAGE_MODEM_TYPE.ABORT,
-        data: 0,
+        id: 0,
       }));
     });
 
@@ -748,29 +794,21 @@ describe('@hile/message-modem', () => {
       expect(chunks).toEqual(['first', 'second']);
     });
 
-    it('rejects legacy uncredited streams that do not negotiate version 1', async () => {
+    it('rejects an invalid output window on the request frame', async () => {
       const modem = new TestModem();
-      modem['exec'] = async () => ({
-        async *[Symbol.asyncIterator]() {
-          yield 1;
-          yield 2;
-          yield 3;
-        },
-      });
 
       modem.receive({
         id: 7,
         mode: MESSAGE_MODEM_TYPE.REQUEST,
         twoway: true,
-        stream: true,
+        streams: { output: { window: 65 } },
         data: 'legacy',
       });
       await new Promise((resolve) => setTimeout(resolve, 20));
 
-      expect(modem.posted.filter(({ mode }) => mode === MESSAGE_MODEM_TYPE.RESPONSE))
+      expect(modem.posted.filter(({ mode }) => mode === MESSAGE_MODEM_TYPE.STREAM_DATA))
         .toEqual([expect.objectContaining({
-          streamVersion: 1,
-          data: expect.objectContaining({ status: 400, final: true }),
+          data: expect.objectContaining({ direction: 'output', status: 400, final: true }),
         })]);
     });
 
@@ -846,6 +884,33 @@ describe('@hile/message-modem', () => {
       expect(b['aborts'].size).toBe(0);
     });
 
+    it('releases a producer immediately when iterator.next never settles', async () => {
+      const a = new TestModem();
+      const b = new TestModem();
+      a.peer = b;
+      b.peer = a;
+      const iteratorReturn = vi.fn(async () => ({ done: true, value: undefined }));
+      b['exec'] = async () => ({
+        [Symbol.asyncIterator]() {
+          return {
+            next: () => new Promise<IteratorResult<unknown>>(() => {}),
+            return: iteratorReturn,
+          };
+        },
+      });
+
+      const stream = a.stream('stuck-next');
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(b['streamProducers'].size).toBe(1);
+
+      stream.destroy();
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(iteratorReturn).toHaveBeenCalledTimes(1);
+      expect(b['streamProducers'].size).toBe(0);
+      expect(b['aborts'].size).toBe(0);
+    });
+
     it('aborts the producer when a for-await consumer breaks early', async () => {
       const a = new TestModem();
       const b = new TestModem();
@@ -899,7 +964,7 @@ describe('@hile/message-modem', () => {
         id: 100,
         mode: MESSAGE_MODEM_TYPE.STREAM_CREDIT,
         twoway: false,
-        data: { id: 999, seq: 0 },
+        data: { direction: 'output', seq: 0, window: 1 },
       })).not.toThrow();
       expect(modem['streamProducers'].size).toBe(0);
     });
@@ -924,8 +989,8 @@ describe('@hile/message-modem', () => {
       stream.on('error', () => {});
       await new Promise((resolve) => setTimeout(resolve, 20));
 
-      b.receive({ id: 10, mode: MESSAGE_MODEM_TYPE.STREAM_CREDIT, twoway: false, data: { id: 0, seq: 0 } });
-      b.receive({ id: 11, mode: MESSAGE_MODEM_TYPE.STREAM_CREDIT, twoway: false, data: { id: 0, seq: 0 } });
+      b.receive({ id: 0, mode: MESSAGE_MODEM_TYPE.STREAM_CREDIT, twoway: false, data: { direction: 'output', seq: 0, window: 1 } });
+      b.receive({ id: 0, mode: MESSAGE_MODEM_TYPE.STREAM_CREDIT, twoway: false, data: { direction: 'output', seq: 0, window: 1 } });
       await new Promise((resolve) => setTimeout(resolve, 20));
 
       expect(nextCalls).toBe(2);
@@ -951,14 +1016,341 @@ describe('@hile/message-modem', () => {
     });
   });
 
+  describe('request input stream', () => {
+    it('streams request input and resolves a normal response', async () => {
+      const { a, b } = createPair();
+      b['exec'] = async (data: unknown, _signal: AbortSignal, input?: Readable) => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of input ?? []) chunks.push(Buffer.from(chunk));
+        return { data, body: Buffer.concat(chunks).toString('utf8') };
+      };
+
+      const result = await a.send(
+        { filename: 'hello.txt' },
+        { input: Readable.from([Buffer.from('hello'), Buffer.from(' world')]) },
+      );
+
+      expect(result).toEqual({
+        data: { filename: 'hello.txt' },
+        body: 'hello world',
+      });
+      expect(a.posted[0]).toMatchObject({
+        mode: MESSAGE_MODEM_TYPE.REQUEST,
+        streams: { input: true },
+      });
+    });
+
+    it('automatically treats an async iterable argument as request input', async () => {
+      const { a, b } = createPair();
+      b['exec'] = async (data: unknown, _signal: AbortSignal, input?: Readable) => {
+        const chunks: string[] = [];
+        for await (const chunk of input ?? []) chunks.push(String(chunk));
+        return { data, chunks };
+      };
+
+      const result = await a.send(Readable.from(['a', 'b']));
+
+      expect(result).toEqual({ data: undefined, chunks: ['a', 'b'] });
+    });
+
+    it('automatically sends Uint8Array input as one binary chunk', async () => {
+      const { a, b } = createPair();
+      b['exec'] = async (_data: unknown, _signal: AbortSignal, input?: Readable) => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of input ?? []) chunks.push(Buffer.from(chunk));
+        return Buffer.concat(chunks).toString('hex');
+      };
+
+      await expect(a.send(new Uint8Array([0, 1, 2, 255])))
+        .resolves.toBe('000102ff');
+    });
+
+    it('rejects two competing request input streams before posting', () => {
+      const modem = new TestModem();
+
+      expect(() => modem.send(
+        Readable.from(['data-stream']),
+        { input: Readable.from(['option-stream']) },
+      )).toThrow('only one request input stream');
+      expect(modem.posted).toEqual([]);
+    });
+
+    it('supports streamed input together with streamed output', async () => {
+      const { a, b } = createPair();
+      b['exec'] = async function* (
+        _data: unknown,
+        _signal: AbortSignal,
+        input?: Readable,
+      ) {
+        for await (const chunk of input ?? []) {
+          yield Buffer.from(chunk).toString('utf8').toUpperCase();
+        }
+      };
+
+      const output = a.stream(
+        { operation: 'uppercase' },
+        { input: Readable.from(['one', 'two']) },
+      );
+      const chunks: string[] = [];
+      for await (const chunk of output) chunks.push(chunk);
+
+      expect(chunks).toEqual(['ONE', 'TWO']);
+    });
+
+    it('does not pull an unconsumed request body without input credit', async () => {
+      const { a, b } = createPair();
+      let nextCalls = 0;
+      const iteratorReturn = vi.fn(async () => ({ done: true as const, value: undefined }));
+      const source = {
+        [Symbol.asyncIterator]() {
+          return {
+            async next() {
+              nextCalls++;
+              return { done: false as const, value: Buffer.from('chunk') };
+            },
+            return: iteratorReturn,
+          };
+        },
+      };
+      b['exec'] = async () => 'accepted-without-reading';
+
+      await expect(a.send({ filename: 'ignored.bin' }, { input: source }))
+        .resolves.toBe('accepted-without-reading');
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(nextCalls).toBeLessThanOrEqual(1);
+      expect(iteratorReturn).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects the request and aborts the peer when its input source fails', async () => {
+      const { a, b } = createPair();
+      let handlerSignal: AbortSignal | undefined;
+      b['exec'] = async (_data: unknown, signal: AbortSignal, input?: Readable) => {
+        handlerSignal = signal;
+        for await (const _chunk of input ?? []) {
+          // Consume until the source fails.
+        }
+        return 'unexpected';
+      };
+      const source = {
+        async *[Symbol.asyncIterator]() {
+          yield Buffer.from('first');
+          throw new Error('upload source failed');
+        },
+      };
+
+      await expect(a.send({ filename: 'broken.bin' }, { input: source }))
+        .rejects.toMatchObject({
+          name: 'MessageInputError',
+          message: 'upload source failed',
+          cause: expect.any(Error),
+        } satisfies Partial<MessageInputError>);
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(handlerSignal?.aborted).toBe(true);
+    });
+
+    it.each([null, undefined])('rejects an input stream chunk that Node Readable cannot represent: %s', async (value) => {
+      const { a, b } = createPair();
+      b['exec'] = async (_data: unknown, _signal: AbortSignal, input?: Readable) => {
+        for await (const _chunk of input ?? []) {
+          // Consume until input validation fails.
+        }
+        return 'unexpected';
+      };
+      const source = {
+        async *[Symbol.asyncIterator]() {
+          yield value;
+        },
+      };
+
+      await expect(a.send({ filename: 'invalid.bin' }, { input: source }))
+        .rejects.toMatchObject({
+          name: 'MessageInputError',
+          message: expect.stringContaining('null or undefined'),
+        });
+    });
+
+    it('returns the request input iterator when the caller aborts', async () => {
+      const { a, b } = createPair();
+      const iteratorReturn = vi.fn(async () => ({ done: true as const, value: undefined }));
+      const source = {
+        [Symbol.asyncIterator]() {
+          return {
+            next: async () => ({ done: false as const, value: Buffer.from('first') }),
+            return: iteratorReturn,
+          };
+        },
+      };
+      b['exec'] = async () => new Promise(() => {});
+      const controller = new AbortController();
+
+      const request = a.send({ filename: 'slow.bin' }, {
+        input: source,
+        signal: controller.signal,
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+      controller.abort();
+
+      await expect(request).rejects.toBeInstanceOf(AbortException);
+      expect(iteratorReturn).toHaveBeenCalledTimes(1);
+      expect(a['inputStreamProducers'].size).toBe(0);
+    });
+
+    it('fails immediately when the receiver advertises an invalid input window', async () => {
+      const modem = new TestModem();
+      const iteratorReturn = vi.fn(async () => ({ done: true as const, value: undefined }));
+      const source = {
+        [Symbol.asyncIterator]() {
+          return {
+            next: async () => ({ done: false as const, value: Buffer.from('chunk') }),
+            return: iteratorReturn,
+          };
+        },
+      };
+      const request = modem.send({ filename: 'invalid-credit.bin' }, {
+        input: source,
+        timeout: 200,
+      });
+
+      modem.receive({
+        id: 0,
+        mode: MESSAGE_MODEM_TYPE.STREAM_CREDIT,
+        twoway: false,
+        data: { direction: 'input', seq: 0, window: 65 },
+      });
+
+      await expect(request).rejects.toMatchObject({ status: 400 });
+      expect(iteratorReturn).not.toHaveBeenCalled();
+      expect(modem['inputStreamProducers'].size).toBe(0);
+    });
+
+    it('fails immediately when input credit skips a sequence number', async () => {
+      const modem = new TestModem();
+      const request = modem.send({ filename: 'future-credit.bin' }, {
+        input: Readable.from(['body']),
+        timeout: 200,
+      });
+
+      modem.receive({
+        id: 0,
+        mode: MESSAGE_MODEM_TYPE.STREAM_CREDIT,
+        twoway: false,
+        data: { direction: 'input', seq: 1, window: 1 },
+      });
+
+      await expect(request).rejects.toMatchObject({ status: 409 });
+      expect(modem['inputStreamProducers'].size).toBe(0);
+    });
+
+    it.each([-1, 0.5])('fails immediately for invalid input credit sequence %s', async (seq) => {
+      const modem = new TestModem();
+      const request = modem.send({ filename: 'invalid-sequence.bin' }, {
+        input: Readable.from(['body']),
+        timeout: 200,
+      });
+
+      modem.receive({
+        id: 0,
+        mode: MESSAGE_MODEM_TYPE.STREAM_CREDIT,
+        twoway: false,
+        data: { direction: 'input', seq, window: 1 },
+      });
+
+      await expect(request).rejects.toMatchObject({ status: 400 });
+      expect(modem['inputStreamProducers'].size).toBe(0);
+    });
+
+    it('fails immediately when input credits exceed the negotiated window', async () => {
+      const modem = new TestModem();
+      const request = modem.send({ filename: 'excess-credit.bin' }, {
+        input: Readable.from(['body']),
+        timeout: 200,
+      });
+
+      modem.receive({
+        id: 0,
+        mode: MESSAGE_MODEM_TYPE.STREAM_CREDIT,
+        twoway: false,
+        data: { direction: 'input', seq: 0, window: 1 },
+      });
+      modem.receive({
+        id: 0,
+        mode: MESSAGE_MODEM_TYPE.STREAM_CREDIT,
+        twoway: false,
+        data: { direction: 'input', seq: 1, window: 1 },
+      });
+
+      await expect(request).rejects.toMatchObject({ status: 429 });
+      expect(modem['inputStreamProducers'].size).toBe(0);
+    });
+
+    it('cancels an input producer that exceeds the granted receive window', async () => {
+      const modem = new TestModem();
+      const inputError = vi.fn();
+      modem['exec'] = async (_data: unknown, _signal: AbortSignal, input?: Readable) => {
+        input?.on('error', inputError);
+        return new Promise(() => {});
+      };
+      modem.receive({
+        id: 9,
+        mode: MESSAGE_MODEM_TYPE.REQUEST,
+        twoway: true,
+        streams: { input: true },
+        data: {},
+      });
+
+      modem.receive({
+        id: 9,
+        mode: MESSAGE_MODEM_TYPE.STREAM_DATA,
+        twoway: false,
+        data: { direction: 'input', seq: 0, payload: 'first', final: false },
+      });
+      modem.receive({
+        id: 9,
+        mode: MESSAGE_MODEM_TYPE.STREAM_DATA,
+        twoway: false,
+        data: { direction: 'input', seq: 1, payload: 'overflow', final: false },
+      });
+      await new Promise((resolve) => setImmediate(resolve));
+
+      expect(inputError).toHaveBeenCalledWith(expect.objectContaining({ status: 429 }));
+      expect(modem.posted).toContainEqual(expect.objectContaining({
+        id: 9,
+        mode: MESSAGE_MODEM_TYPE.STREAM_CANCEL,
+        data: expect.objectContaining({ direction: 'input' }),
+      }));
+      expect(modem['inputStreams'].size).toBe(0);
+    });
+
+    it('fails the original request immediately when the receiver rejects its input stream', async () => {
+      const { a, b } = createPair();
+      b['exec'] = async () => new Promise(() => {});
+      const request = a.send({ filename: 'overflow.bin' }, {
+        input: Readable.from(['first']),
+        timeout: 500,
+      });
+
+      b.receive({
+        id: 0,
+        mode: MESSAGE_MODEM_TYPE.STREAM_DATA,
+        twoway: false,
+        data: { direction: 'input', seq: 1, payload: 'overflow', final: false },
+      });
+
+      await expect(request).rejects.toMatchObject({ status: 409 });
+      expect(b['aborts'].size).toBe(0);
+      expect(b['inputStreams'].size).toBe(0);
+    });
+  });
+
   describe('onStreamResponse - empty chunk data', () => {
     it('ignores unknown stream response id', () => {
       const modem = new TestModem();
       modem.receive({
         id: 999,
-        mode: MESSAGE_MODEM_TYPE.RESPONSE,
-        stream: true,
-        data: { status: 200, seq: 0, payload: 'data', final: true },
+        mode: MESSAGE_MODEM_TYPE.STREAM_DATA,
+        data: { direction: 'output', status: 200, seq: 0, payload: 'data', final: true },
         twoway: false,
       });
       // no throw = pass
@@ -972,8 +1364,7 @@ describe('@hile/message-modem', () => {
 
       modem.receive({
         id: 0,
-        mode: MESSAGE_MODEM_TYPE.RESPONSE,
-        stream: true,
+        mode: MESSAGE_MODEM_TYPE.STREAM_DATA,
         data: null,
         twoway: false,
       });
@@ -991,17 +1382,55 @@ describe('@hile/message-modem', () => {
 
       modem.receive({
         id: 0,
-        mode: MESSAGE_MODEM_TYPE.RESPONSE,
-        stream: true,
-        data: { status: 200, seq: 1, payload: 'unexpected', final: false },
+        mode: MESSAGE_MODEM_TYPE.STREAM_DATA,
+        data: { direction: 'output', status: 200, seq: 1, payload: 'unexpected', final: false },
         twoway: false,
       });
 
       await expect(error).resolves.toMatchObject({ status: 409 });
       expect(modem.posted).toContainEqual(expect.objectContaining({
         mode: MESSAGE_MODEM_TYPE.ABORT,
-        data: 0,
+        id: 0,
       }));
+    });
+
+    it('ignores chunks received after the final response frame', async () => {
+      const modem = new TestModem();
+      const stream = modem.stream('data');
+      const errors: Error[] = [];
+      stream.on('error', (error) => errors.push(error));
+      const closed = new Promise<void>((resolve) => stream.once('close', resolve));
+      stream.resume();
+
+      modem.receive({
+        id: 0,
+        mode: MESSAGE_MODEM_TYPE.STREAM_DATA,
+        twoway: false,
+        data: { direction: 'output', status: 200, seq: 0, final: true },
+      });
+      modem.receive({
+        id: 0,
+        mode: MESSAGE_MODEM_TYPE.STREAM_DATA,
+        twoway: false,
+        data: { direction: 'output', status: 200, seq: 1, payload: 'late', final: false },
+      });
+
+      await closed;
+      expect(errors).toEqual([]);
+    });
+
+    it('releases completed response state even when the caller does not consume the stream', () => {
+      const modem = new TestModem();
+      modem.stream('data');
+
+      modem.receive({
+        id: 0,
+        mode: MESSAGE_MODEM_TYPE.STREAM_DATA,
+        twoway: false,
+        data: { direction: 'output', status: 200, seq: 0, final: true },
+      });
+
+      expect(modem['streams'].size).toBe(0);
     });
   });
 
@@ -1022,7 +1451,7 @@ describe('@hile/message-modem', () => {
       await new Promise(r => setImmediate(r));
 
       // Abort the request on b's side
-      b.receive({ id: 99, mode: MESSAGE_MODEM_TYPE.ABORT, twoway: false, data: 0 });
+      b.receive({ id: 0, mode: MESSAGE_MODEM_TYPE.ABORT, twoway: false });
 
       await new Promise(r => setImmediate(r));
 

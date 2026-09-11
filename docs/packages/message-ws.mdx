@@ -20,6 +20,7 @@ Use the message packages for request/response messaging over WebSocket, process 
 ## Do Not Use When
 
 - Do not use `stream()` for normal single-result calls.
+- Do not enable retries for a streamed request input. Input streams are consumed once and cannot be replayed safely.
 - Do not rely on message IDs for business idempotency. They are transport IDs.
 - Use `defineMicroMessage()` for Micro business handlers; reserve generic `defineMessage()` for transport-neutral loaders.
 - Do not pass zero, fractional, non-finite, or oversized message timeouts. Explicit timeout values must be safe integers from `1` through `2_147_483_647` milliseconds.
@@ -120,6 +121,42 @@ for await (const chunk of stream) {
 }
 ```
 
+Streaming request body with a normal response:
+
+```ts
+// src/messages/upload.msg.ts
+import { defineMicroMessage } from '@hile/micro'
+
+export default defineMicroMessage(async ({ data, input, invocation }) => {
+  if (!input) throw new Error('upload body is required')
+
+  let bytes = 0
+  for await (const chunk of input) bytes += Buffer.byteLength(chunk)
+
+  return {
+    filename: data.filename,
+    bytes,
+    requestId: invocation.context.values.requestId,
+  }
+})
+```
+
+```ts
+import { createReadStream } from 'node:fs'
+
+const result = await app.call(
+  'example.service',
+  '/upload',
+  { filename: 'archive.tar' },
+  { context, input: createReadStream('/tmp/archive.tar') },
+)
+```
+
+If no structured metadata is needed, pass an `AsyncIterable`, `Uint8Array`, or
+`ArrayBuffer` directly as `data`; Hile sends it as the request input stream and
+the handler receives `data === undefined`. `app.stream()` accepts the same
+request input forms when both request and response need to stream.
+
 Custom WebSocket modem:
 
 ```ts
@@ -148,14 +185,21 @@ Notice that `request()` returns a `Promise<T>`. Await it directly.
 - `MessageLoader` maps `*.msg.*` files to routes using `@hile/loader`.
 - `MessageLoader.dispatch(path, data, extras?)` invokes the matched handler.
 - `MessageModem._send()` returns a `Promise`.
+- `_send()` and `_stream()` accept `options.input` as an `AsyncIterable`, `Uint8Array`, or `ArrayBuffer`. Passing one of those values directly as `data` automatically selects request streaming and leaves the handler's structured `data` undefined.
 - `MessageModem._send()` and `_push()` use a `30_000` ms timeout when none is provided. An explicit timeout must be a safe integer from `1` through `2_147_483_647`; invalid values throw `TypeError` before a message is sent.
 - `MessageModem._stream()` returns a Node `Readable` in object mode.
-- Stream `timeout` and `idleTimeout` values use the same `1` through `2_147_483_647` ms range. The stream `window` must be a safe integer from `1` through `64` and defaults to `1`.
+- Stream `timeout` and `idleTimeout` values use the same `1` through `2_147_483_647` ms range. Idle timeout is refreshed by valid input or output stream activity. The response stream `window` must be a safe integer from `1` through `64` and defaults to `1`; request input uses receiver-issued credit with a window of `1`.
 - Each modem schedules request, total-stream, and idle-stream deadlines through one internal deadline scheduler. This reduces active Node.js timers without changing timeout, cancellation, ordering, or error semantics.
-- `@hile/message-ws` keeps public `decodeMessageFrame()` payloads isolated from caller-owned input by default. Its owned WebSocket `RawData` path uses a zero-copy binary Flight payload view internally.
+- Request and response chunks share `STREAM_DATA` frames and carry an explicit `direction: 'input' | 'output'`; each direction has independent sequence and credit state. `STREAM_CANCEL` stops one direction. A cancel carrying `status` fails the owning request immediately; `ABORT` cancels the whole invocation.
+- This frame model replaces the former response-only `stream`, `streamVersion`, and `streamWindow` fields. All peers on one transport connection must use compatible `@hile/message-modem` and transport package versions; do not mix old and new peers during a rolling deployment.
+- `@hile/message-ws` sends `Uint8Array` and `ArrayBuffer` request and response chunks as native binary frames rather than JSON/base64. Public `decodeMessageFrame()` payloads remain isolated from caller-owned input by default; the owned WebSocket `RawData` path uses a zero-copy binary view internally.
+- `@hile/message-ipc` transparently Base64-wraps only binary `STREAM_DATA` payloads so request and response streams survive Node child-process IPC's default JSON serialization. Other IPC frames keep their ordinary object representation.
 - A stream request requires `exec()` to return an async iterable.
-- `Application.call(namespace, url, data, options)` requires `options.context` and returns a promise.
-- `Application.stream(namespace, url, data, options)` requires `options.context` and returns a readable stream.
+- `defineMicroMessage()` handlers receive request streams as `input: Readable | undefined`, separately from structured `data` and `invocation`.
+- `Application.call(namespace, url, data, options)` requires `options.context` and returns a promise. It accepts `options.input` for a streamed request with a normal response.
+- `Application.stream(namespace, url, data, options)` requires `options.context` and returns a readable response stream; it can carry a request input stream at the same time.
+- `Application.call()` and `Application.stream()` default retries to `0` when request input is streamed. Explicit nonzero retries fail before service discovery because streamed input is non-replayable.
+- A caller-owned request input source failure is surfaced as `MessageInputError`, aborts the peer invocation, and is not counted against that peer's circuit-breaker health.
 - `Application.publish(topic, payload)` returns an object with `update()` and `unpublish()`.
 - `Application.subscribe(topic, callback)` returns an unsubscribe function.
 - `Registry` stores service addresses and retained config/topic state under `~/.registry`.
@@ -164,6 +208,7 @@ Notice that `request()` returns a `Promise<T>`. Await it directly.
 
 - Appending a secondary response getter to `client.request('/x', data)`
 - Returning a plain object from a handler called through `stream()`.
+- Retrying a consumed request stream or hiding it inside a replay-unsafe factory.
 - Using pub/sub as a durable queue.
 - Forgetting to register `shutdown(await app.listen(...))`.
 
@@ -172,6 +217,8 @@ Notice that `request()` returns a `Promise<T>`. Await it directly.
 - Micro message files default-export `defineMicroMessage(...)` and receive `invocation.context`.
 - RPC callers use `await app.call(..., { context })`.
 - Streaming handlers are async generators.
+- Request-stream handlers consume `input` and callers either pass `options.input` alongside metadata or pass a stream directly as `data`.
+- Streamed request calls do not configure nonzero retries.
 - Custom modem timeout values use the documented safe-integer range.
 - Registry is started before application nodes need discovery.
 - Micro apps use stable namespaces and advertise reachable hosts.

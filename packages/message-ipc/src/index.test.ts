@@ -1,25 +1,34 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { EventEmitter } from 'node:events'
+import { Readable } from 'node:stream'
 import { MessageIpc } from './index'
-import { Exception } from '@hile/message-modem'
+import { Exception, type MessageInput } from '@hile/message-modem'
 
 class EchoIpc extends MessageIpc {
   protected exec(data: any): Promise<any> {
     return Promise.resolve(data);
   }
 
-  public request<T = any>(data: any, options?: number | { timeout?: number; signal?: AbortSignal }) {
+  public request<T = any>(data: any, options?: number | {
+    timeout?: number;
+    signal?: AbortSignal;
+    input?: MessageInput;
+  }) {
     if (typeof options === 'number') {
       return this._send<T>(data, { timeout: options });
     }
-    return this._send<T>(data, { timeout: options?.timeout, signal: options?.signal });
+    return this._send<T>(data, {
+      timeout: options?.timeout,
+      signal: options?.signal,
+      input: options?.input,
+    });
   }
 }
 
 class CustomIpc extends MessageIpc {
-  public execFn: (data: any) => Promise<any> = async (d) => d;
-  protected exec(data: any): Promise<any> {
-    return this.execFn(data);
+  public execFn: (data: any, signal?: AbortSignal, input?: Readable) => Promise<any> = async (d) => d;
+  protected exec(data: any, signal?: AbortSignal, input?: Readable): Promise<any> {
+    return this.execFn(data, signal, input);
   }
 
   public request<T = any>(data: any, options?: number | { timeout?: number; signal?: AbortSignal }) {
@@ -43,6 +52,24 @@ function createMockChannel() {
   });
   const childSide = Object.assign(parentEmitter, {
     send: (data: any) => childEmitter.emit('message', data),
+  });
+
+  return { parentSide, childSide } as {
+    parentSide: any;
+    childSide: any;
+  };
+}
+
+function createJsonMockChannel() {
+  const parentEmitter = new EventEmitter();
+  const childEmitter = new EventEmitter();
+  const clone = (data: unknown) => JSON.parse(JSON.stringify(data));
+
+  const parentSide = Object.assign(childEmitter, {
+    send: (data: any) => parentEmitter.emit('message', clone(data)),
+  });
+  const childSide = Object.assign(parentEmitter, {
+    send: (data: any) => childEmitter.emit('message', clone(data)),
   });
 
   return { parentSide, childSide } as {
@@ -165,6 +192,23 @@ describe('@hile/message-ipc', () => {
       const result = await parent.request<{ id: number; name: string }>(null);
       expect(result.id).toBe(1);
       expect(result.name).toBe('test');
+    });
+
+    it('preserves binary request-stream chunks through default JSON IPC serialization', async () => {
+      const { parentSide, childSide } = createJsonMockChannel();
+      const parent = new EchoIpc(parentSide);
+      const child = new CustomIpc(childSide);
+      child.execFn = async (_data, _signal, input) => {
+        const chunks: Buffer[] = [];
+        for await (const chunk of input ?? []) chunks.push(Buffer.from(chunk));
+        return Buffer.concat(chunks).toString('hex');
+      };
+      track(parent, child);
+
+      await expect(parent.request(
+        { filename: 'bytes.bin' },
+        { input: Readable.from([new Uint8Array([0, 1, 2, 255])]) },
+      )).resolves.toBe('000102ff');
     });
   });
 

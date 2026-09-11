@@ -22,6 +22,7 @@ Use this file when an AI agent installs the npm package and needs package-local 
 |---|---|---|
 | Create an HTTP endpoint or Koa middleware | `@hile/http` | `packages/http.md`, `recipes/http-api-model-typeorm.md` |
 | Run Next.js and API controllers on one port | `@hile/http-next` | `packages/http-next.md`, `recipes/http-next-fullstack.md` |
+| Preserve HTTP semantics across a Micro call | `@hile/http-over-micro` | `packages/http-over-micro.md`, `packages/messaging-micro.md` |
 
 
 
@@ -277,6 +278,7 @@ Use this recipe when the user wants an HTTP endpoint backed by reusable business
 - Do not assume `@hile/http` Zod validation mutates or coerces `ctx.query`, `ctx.params`, or `ctx.request.body`.
 - Do not put reusable business logic only in controllers, pages, queue workers, or message handlers.
 - Do not use old message examples that append a secondary response getter; current request APIs return promises directly.
+- Do not invent service-specific HTTP-in-Micro envelopes or Base64 file bodies; use `@hile/http-over-micro` and its request/response streams.
 - Do not claim exactly-once delivery or execution from Redis locks, queues, idempotency, or rate limits.
 - Do not use queue `jobId` as the only side-effect idempotency boundary.
 - Do not log the entire async context by default.

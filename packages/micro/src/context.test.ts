@@ -74,6 +74,60 @@ describe('@hile/micro context propagation', () => {
     })).rejects.toThrow(UnsupportedExecutionContextVersionError);
   });
 
+  it('rejects retries for a non-replayable streamed request before registry lookup', async () => {
+    const consumer = new Application({
+      namespace: 'request-stream-retry-consumer',
+      registry: { host: '127.0.0.1', port: 1 },
+      ...testAdvertise,
+    });
+
+    await expect(consumer.call(
+      'provider',
+      '/upload',
+      Readable.from(['body']),
+      {
+        context: createExecutionContext({ requestId: 'stream-retry' }),
+        retries: 1,
+      },
+    )).rejects.toThrow('non-replayable');
+  });
+
+  it('rejects competing streamed inputs before registry lookup', async () => {
+    const consumer = new Application({
+      namespace: 'request-stream-conflict-consumer',
+      registry: { host: '127.0.0.1', port: 1 },
+      ...testAdvertise,
+    });
+
+    await expect(consumer.call(
+      'provider',
+      '/upload',
+      Readable.from(['data-stream']),
+      {
+        context: createExecutionContext({ requestId: 'stream-conflict' }),
+        input: Readable.from(['option-stream']),
+      },
+    )).rejects.toThrow('only one request input stream');
+  });
+
+  it('rejects an invalid streamed input before registry lookup', async () => {
+    const consumer = new Application({
+      namespace: 'request-stream-invalid-consumer',
+      registry: { host: '127.0.0.1', port: 1 },
+      ...testAdvertise,
+    });
+
+    await expect(consumer.call(
+      'provider',
+      '/upload',
+      { filename: 'invalid.bin' },
+      {
+        context: createExecutionContext({ requestId: 'stream-invalid' }),
+        input: {} as never,
+      },
+    )).rejects.toThrow('AsyncIterable, Uint8Array, or ArrayBuffer');
+  });
+
   it('propagates user-defined context through Application.call', async () => {
     const registryPort = await getAvailablePort();
     const providerPort = await getAvailablePort();
@@ -114,6 +168,125 @@ describe('@hile/micro context propagation', () => {
         memberId: 'member-1',
         channel: 'wechat',
       });
+    } finally {
+      unregister();
+      await disposeConsumer();
+      await disposeProvider();
+      await disposeRegistry();
+    }
+  });
+
+  it('propagates a streamed request input through Application.call', async () => {
+    const registryPort = await getAvailablePort();
+    const providerPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const provider = new Application({
+      namespace: 'request-stream-provider',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const consumer = new Application({
+      namespace: 'request-stream-consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeProvider = await provider.listen(providerPort);
+    const disposeConsumer = await consumer.listen(consumerPort);
+    const unregister = provider.register('/upload', async ({ data, input, invocation }) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of input ?? []) chunks.push(Buffer.from(chunk));
+      return {
+        data,
+        body: Buffer.concat(chunks).toString('utf8'),
+        requestId: invocation.context.values.requestId,
+      };
+    });
+
+    try {
+      const result = await consumer.call(
+        'request-stream-provider',
+        '/upload',
+        { filename: 'hello.txt' },
+        {
+          context: createExecutionContext({ requestId: 'stream-upload' }),
+          input: Readable.from([Buffer.from('hello'), Buffer.from(' world')]),
+          retries: 0,
+        },
+      );
+
+      expect(result).toEqual({
+        data: { filename: 'hello.txt' },
+        body: 'hello world',
+        requestId: 'stream-upload',
+      });
+
+      const inferred = await consumer.call(
+        'request-stream-provider',
+        '/upload',
+        Readable.from([Buffer.from('automatic')]),
+        { context: createExecutionContext({ requestId: 'stream-inferred' }) },
+      );
+      expect(inferred).toEqual({
+        data: undefined,
+        body: 'automatic',
+        requestId: 'stream-inferred',
+      });
+    } finally {
+      unregister();
+      await disposeConsumer();
+      await disposeProvider();
+      await disposeRegistry();
+    }
+  });
+
+  it('streams request input and response output through Application.stream', async () => {
+    const registryPort = await getAvailablePort();
+    const providerPort = await getAvailablePort();
+    const consumerPort = await getAvailablePort();
+
+    const registry = new Registry(testAdvertise);
+    const provider = new Application({
+      namespace: 'duplex-stream-provider',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+    const consumer = new Application({
+      namespace: 'duplex-stream-consumer',
+      registry: { host: '127.0.0.1', port: registryPort },
+      ...testAdvertise,
+    });
+
+    const disposeRegistry = await registry.listen(registryPort);
+    const disposeProvider = await provider.listen(providerPort);
+    const disposeConsumer = await consumer.listen(consumerPort);
+    const unregister = provider.register('/uppercase', async function* ({ input, invocation }) {
+      for await (const chunk of input ?? []) {
+        yield {
+          value: Buffer.from(chunk).toString('utf8').toUpperCase(),
+          requestId: invocation.context.values.requestId,
+        };
+      }
+    });
+
+    try {
+      const stream = await consumer.stream(
+        'duplex-stream-provider',
+        '/uppercase',
+        { operation: 'uppercase' },
+        {
+          context: createExecutionContext({ requestId: 'duplex-stream' }),
+          input: Readable.from([Buffer.from('one'), Buffer.from('two')]),
+        },
+      );
+
+      await expect(collectStream(stream)).resolves.toEqual([
+        { value: 'ONE', requestId: 'duplex-stream' },
+        { value: 'TWO', requestId: 'duplex-stream' },
+      ]);
     } finally {
       unregister();
       await disposeConsumer();

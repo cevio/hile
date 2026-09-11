@@ -1,4 +1,5 @@
 import type { InvocationContext } from '@hile/context';
+import type { Readable } from 'node:stream';
 import {
   defineMessage,
   type MessageFunction,
@@ -10,6 +11,7 @@ export type MicroMessageHandlerExtras = {
   client: Client;
   metadata?: MicroMessageMetadata;
   signal?: AbortSignal;
+  input?: Readable;
   invocation: InvocationContext;
 };
 

@@ -9,6 +9,7 @@ Use this map to decide what to read.
 | Start an app, manage lifecycle, graceful shutdown | `@hile/core`, `@hile/cli`, `@hile/bootstrap` | `packages/core-lifecycle.md` |
 | Create an HTTP endpoint or Koa middleware | `@hile/http` | `packages/http.md`, `recipes/http-api-model-typeorm.md` |
 | Run Next.js and API controllers on one port | `@hile/http-next` | `packages/http-next.md`, `recipes/http-next-fullstack.md` |
+| Preserve HTTP semantics across a Micro call | `@hile/http-over-micro` | `packages/http-over-micro.md`, `packages/messaging-micro.md` |
 | Run independently built RSC plugins through one Host | `@hile/rsc` | `packages/rsc.md`, `recipes/rsc-plugin-host.md` |
 | Compile immutable production RSC plugin artifacts | `@hile/rsc-build` | `packages/rsc.md` |
 | Add incremental RSC development and hot reload | `@hile/rsc-development` | `packages/rsc.md` |
@@ -37,6 +38,7 @@ Use this map to decide what to read.
 ## Common Selection Rules
 
 - If the task is a user-facing API, start with `@hile/http` or `@hile/http-next`.
+- If a public HTTP gateway delegates that API to an internal Micro service, compose it with `@hile/http-over-micro` instead of inventing a per-domain wire envelope.
 - If the task is reusable business behavior, put it in `@hile/model` even if the caller is HTTP, Next.js, queue, or micro.
 - If the task may retry or redeliver and has side effects, add `@hile/redis-idempotency`.
 - If the task is background work, use `@hile/redis-stream-queue`; do not use micro RPC as a queue.
@@ -71,6 +73,8 @@ Read `packages/http.md` when the task mentions:
 - file-system routes
 
 Packages: `@hile/http`, `@hile/loader`.
+
+For an HTTP gateway that delegates to a Micro service, also read `packages/http-over-micro.md`. The gateway keeps the public listener and policy; the package preserves the selected HTTP semantics across Micro.
 
 ## Next.js On The Same Port
 
@@ -131,7 +135,7 @@ Read `packages/messaging-micro.md` when the task mentions:
 - streaming RPC
 - pub/sub topics
 
-Packages: `@hile/message-modem`, `@hile/message-ws`, `@hile/message-ipc`, `@hile/message-worker-thread`, `@hile/message-loader`, `@hile/micro`, `@hile/micro-dynamic-configs`, `@hile/reloader`.
+Packages: `@hile/message-modem`, `@hile/message-ws`, `@hile/message-ipc`, `@hile/message-worker-thread`, `@hile/message-loader`, `@hile/micro`, `@hile/http-over-micro`, `@hile/micro-dynamic-configs`, `@hile/reloader`.
 
 ## Distributed MCP Capabilities
 

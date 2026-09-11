@@ -3,6 +3,7 @@ import {
   parseExecutionContext,
   type ExecutionContext,
 } from '@hile/context';
+import { isMessageInput, MessageInputError, type MessageInput } from '@hile/message-modem';
 import { Client, type ClientStreamOptions } from './client';
 import { Server, type MicroServerProps } from './server';
 import type {
@@ -209,11 +210,32 @@ export type ApplicationCallOptions = {
   timeout?: number;
   retries?: number;
   signal?: AbortSignal;
+  input?: MessageInput;
 };
 
 export type ApplicationStreamOptions = ClientStreamOptions & {
   retries?: number;
 };
+
+function resolveRequestRetries(
+  data: unknown,
+  input: MessageInput | undefined,
+  retries: number | undefined,
+): number {
+  if (input !== undefined) {
+    if (!isMessageInput(input)) {
+      throw new TypeError('Micro request input must be an AsyncIterable, Uint8Array, or ArrayBuffer');
+    }
+    if (isMessageInput(data)) {
+      throw new TypeError('A micro request accepts only one request input stream');
+    }
+  }
+  const hasInput = input !== undefined || isMessageInput(data);
+  if (hasInput && retries !== undefined && retries !== 0) {
+    throw new TypeError('Streamed request input is non-replayable and requires retries: 0');
+  }
+  return retries ?? (hasInput ? 0 : 1);
+}
 
 type TopicSnapshot<T = any> = {
   hasData: boolean;
@@ -675,6 +697,7 @@ export class Application extends Server {
   }
 
   private shouldRecordCircuitFailure(err: unknown) {
+    if (err instanceof MessageInputError) return false;
     try {
       return this._circuitBreaker.shouldRecordFailure(err);
     } catch (hookErr) {
@@ -929,7 +952,8 @@ export class Application extends Server {
   public async call<T = any>(namespace: string, url: string, data: any, options: ApplicationCallOptions): Promise<T> {
     if (!options?.context) throw new MissingExecutionContextError(`micro call ${namespace}${url}`);
     const context = parseExecutionContext(options.context);
-    const { timeout = this._requestTimeoutMs, retries = 1, signal } = options;
+    const { timeout = this._requestTimeoutMs, signal, input } = options;
+    const retries = resolveRequestRetries(data, input, options.retries);
     let remainingRetries = retries;
     let retrySourceError: unknown;
     let hasRetrySourceError = false;
@@ -948,6 +972,7 @@ export class Application extends Server {
           context,
           timeout: timeout ?? this._requestTimeoutMs,
           signal,
+          input,
         });
         this.recordSuccess(namespace, client.host, client.port, probe);
         return result;
@@ -974,7 +999,8 @@ export class Application extends Server {
   ): Promise<import('stream').Readable> {
     if (!options?.context) throw new MissingExecutionContextError(`micro stream ${namespace}${url}`);
     const context = parseExecutionContext(options.context);
-    const { signal, retries = 1, timeout, idleTimeout, window } = options;
+    const { signal, timeout, idleTimeout, window, input } = options;
+    const retries = resolveRequestRetries(data, input, options.retries);
     let remainingRetries = retries;
     let retrySourceError: unknown;
     let hasRetrySourceError = false;
@@ -989,7 +1015,14 @@ export class Application extends Server {
       }
       const { client, probe } = selected;
       try {
-        const readable = client.stream(url, data, { context, signal, timeout, idleTimeout, window });
+        const readable = client.stream(url, data, {
+          context,
+          signal,
+          timeout,
+          idleTimeout,
+          window,
+          input,
+        });
         return this.trackCircuitStream(namespace, client.host, client.port, probe, readable);
       } catch (err) {
         this.recordFailure(namespace, client.host, client.port, err, probe);

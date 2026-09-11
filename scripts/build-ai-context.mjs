@@ -77,6 +77,14 @@ const packageConfigs = {
     cards: ['packages/http.md'],
     recipes: ['recipes/http-api-model-typeorm.md'],
   },
+  '@hile/http-over-micro': {
+    dir: 'http-over-micro',
+    purpose: 'Preserve HTTP method, headers, status, JSON bodies, and binary streams across Registry-discovered Hile Micro calls.',
+    cards: ['packages/http-over-micro.md'],
+    recipes: ['recipes/micro-rpc-message-loader.md'],
+    install: 'pnpm add @hile/http-over-micro @hile/micro zod',
+    readmeSections: ['### Upload and download without a transport switch', '### Response metadata before response bytes'],
+  },
   '@hile/rsc': {
     dir: 'rsc',
     purpose: 'Build and run independently deployed React Server Component plugins behind one composable Next.js host.',
@@ -221,6 +229,7 @@ const docPackagePages = {
   'packages/create-hile.mdx': 'create-hile',
   'packages/http-next.mdx': '@hile/http-next',
   'packages/http.mdx': '@hile/http',
+  'packages/http-over-micro.mdx': '@hile/http-over-micro',
   'packages/rsc.mdx': '@hile/rsc',
   'packages/ioredis.mdx': '@hile/ioredis',
   'packages/loader.mdx': '@hile/loader',
@@ -248,6 +257,7 @@ const mintlifySourceRoutes = new Map([
   ['packages/core-lifecycle.md', { route: '/packages/core', label: 'Core lifecycle' }],
   ['packages/create-hile.md', { route: '/packages/create-hile', label: 'create-hile' }],
   ['packages/http.md', { route: '/packages/http', label: 'HTTP API' }],
+  ['packages/http-over-micro.md', { route: '/packages/http-over-micro', label: 'HTTP over Micro' }],
   ['packages/http-next.md', { route: '/packages/http-next', label: 'HttpNext' }],
   ['packages/rsc.md', { route: '/packages/rsc', label: 'RSC packages' }],
   ['packages/model-context.md', { route: '/packages/model', label: 'Model and context' }],
@@ -861,7 +871,9 @@ function writePackageReadme(packageName, config) {
     '',
     '## Install',
     '',
-    packageName === 'create-hile'
+    config.install
+      ? `\`\`\`bash\n${config.install}\n\`\`\``
+      : packageName === 'create-hile'
       ? '```bash\nnpx create-hile create my-app\n```'
       : `\`\`\`bash\npnpm add ${packageName}\n\`\`\``,
     '',

@@ -10,6 +10,8 @@ import {
 import { Server } from './server';
 import { WebSocket } from 'ws';
 import { EventEmitter } from 'node:events';
+import type { Readable } from 'node:stream';
+import { isMessageInput, type MessageInput } from '@hile/message-modem';
 
 export interface ClientProps {
   host: string;
@@ -18,10 +20,14 @@ export interface ClientProps {
   ws: WebSocket;
 }
 
-export interface ClientStreamOptions {
+export interface ClientRequestOptions {
   context: ExecutionContext;
   signal?: AbortSignal;
   timeout?: number;
+  input?: MessageInput;
+}
+
+export interface ClientStreamOptions extends ClientRequestOptions {
   idleTimeout?: number;
   window?: number;
 }
@@ -81,6 +87,19 @@ function getEnvelopeContext(data: MicroMessage): ExecutionContext | undefined {
   return context === undefined ? undefined : parseExecutionContext(context);
 }
 
+function splitMessageInput(data: unknown, input?: MessageInput): {
+  data: unknown;
+  input?: MessageInput;
+} {
+  if (input !== undefined) {
+    if (isMessageInput(data)) {
+      throw new TypeError('A micro request accepts only one request input stream');
+    }
+    return { data, input };
+  }
+  return isMessageInput(data) ? { data: undefined, input: data } : { data };
+}
+
 export class Client extends MessageWs {
   private readonly server: Server;
   private readonly socket: WebSocket;
@@ -125,7 +144,7 @@ export class Client extends MessageWs {
     }, checkInterval);
   }
 
-  protected async exec(data: MicroMessage, signal?: AbortSignal): Promise<any> {
+  protected async exec(data: MicroMessage, signal?: AbortSignal, input?: Readable): Promise<any> {
     if (data.url === '/-/heartbeat') {
       this.lastHeartbeat = Date.now();
       return;
@@ -147,19 +166,20 @@ export class Client extends MessageWs {
       client: this,
       metadata: data.metadata,
       signal,
+      input,
       invocation,
     });
   }
 
-  public request<T = any>(url: string, data: any, options: {
-    context: ExecutionContext;
-    timeout?: number;
-    signal?: AbortSignal;
-  }) {
+  public request<T = any>(url: string, data: any, options: ClientRequestOptions) {
     if (!this._online) throw new Error('Client is not online');
     if (!options?.context) throw new MissingExecutionContextError(`micro client request ${url}`);
-    const { context, ...transport } = options;
-    return this._send<T>(createEnvelope(url, data, context), transport);
+    const { context, input, ...transport } = options;
+    const request = splitMessageInput(data, input);
+    return this._send<T>(createEnvelope(url, request.data, context), {
+      ...transport,
+      input: request.input,
+    });
   }
 
   /** Framework-internal transport path. Business requests must use request() with context. */
@@ -192,8 +212,12 @@ export class Client extends MessageWs {
   public stream(url: string, data: any, options: ClientStreamOptions) {
     if (!this._online) throw new Error('Client is not online');
     if (!options?.context) throw new MissingExecutionContextError(`micro client stream ${url}`);
-    const { context, ...transport } = options;
-    return this._stream(createEnvelope(url, data, context), transport);
+    const { context, input, ...transport } = options;
+    const request = splitMessageInput(data, input);
+    return this._stream(createEnvelope(url, request.data, context), {
+      ...transport,
+      input: request.input,
+    });
   }
 
   public dispose(): void {

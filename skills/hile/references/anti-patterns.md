@@ -8,6 +8,7 @@
 - Do not assume `@hile/http` Zod validation mutates or coerces `ctx.query`, `ctx.params`, or `ctx.request.body`.
 - Do not put reusable business logic only in controllers, pages, queue workers, or message handlers.
 - Do not use old message examples that append a secondary response getter; current request APIs return promises directly.
+- Do not invent service-specific HTTP-in-Micro envelopes or Base64 file bodies; use `@hile/http-over-micro` and its request/response streams.
 - Do not claim exactly-once delivery or execution from Redis locks, queues, idempotency, or rate limits.
 - Do not use queue `jobId` as the only side-effect idempotency boundary.
 - Do not log the entire async context by default.
@@ -56,6 +57,8 @@ const result = await client.request('/x', data, { context })
 ```
 
 Avoid `stream()` for single-value RPC. It requires the remote handler to return an async iterable.
+
+For HTTP-over-Micro, call `callHttpOverMicro()` instead of choosing `call()` or consuming protocol frames directly. The adapter always uses a response stream because HTTP status and headers must arrive before an optional streamed body.
 
 ## Redis
 

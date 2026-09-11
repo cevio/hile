@@ -56,6 +56,7 @@ export default defineService('http', async (shutdown) => {
 | Start an app, manage lifecycle, graceful shutdown | `@hile/core`, `@hile/cli`, `@hile/bootstrap` | `packages/core-lifecycle.md` |
 | Create an HTTP endpoint or Koa middleware | `@hile/http` | `packages/http.md`, `recipes/http-api-model-typeorm.md` |
 | Run Next.js and API controllers on one port | `@hile/http-next` | `packages/http-next.md`, `recipes/http-next-fullstack.md` |
+| Preserve HTTP semantics across a Micro call | `@hile/http-over-micro` | `packages/http-over-micro.md`, `packages/messaging-micro.md` |
 | Run independently built RSC plugins through one Host | `@hile/rsc` | `packages/rsc.md`, `recipes/rsc-plugin-host.md` |
 | Compile immutable production RSC plugin artifacts | `@hile/rsc-build` | `packages/rsc.md` |
 | Add incremental RSC development and hot reload | `@hile/rsc-development` | `packages/rsc.md` |
@@ -89,6 +90,7 @@ export default defineService('http', async (shutdown) => {
 - Do not assume `@hile/http` Zod validation mutates or coerces `ctx.query`, `ctx.params`, or `ctx.request.body`.
 - Do not put reusable business logic only in controllers, pages, queue workers, or message handlers.
 - Do not use old message examples that append a secondary response getter; current request APIs return promises directly.
+- Do not invent service-specific HTTP-in-Micro envelopes or Base64 file bodies; use `@hile/http-over-micro` and its request/response streams.
 - Do not claim exactly-once delivery or execution from Redis locks, queues, idempotency, or rate limits.
 - Do not use queue `jobId` as the only side-effect idempotency boundary.
 - Do not log the entire async context by default.

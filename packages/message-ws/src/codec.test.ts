@@ -15,13 +15,26 @@ import {
 function binaryMessage(payload: Uint8Array): MessageTransferFormat {
   return {
     id: 7,
-    mode: MESSAGE_MODEM_TYPE.RESPONSE,
+    mode: MESSAGE_MODEM_TYPE.STREAM_DATA,
     twoway: false,
-    stream: true,
-    streamVersion: 1,
     data: {
+      direction: 'output',
       status: 200,
       seq: 3,
+      payload,
+      final: false,
+    },
+  };
+}
+
+function binaryInputMessage(payload: Uint8Array): MessageTransferFormat {
+  return {
+    id: 8,
+    mode: MESSAGE_MODEM_TYPE.STREAM_DATA,
+    twoway: false,
+    data: {
+      direction: 'input',
+      seq: 0,
       payload,
       final: false,
     },
@@ -56,19 +69,21 @@ describe('message-ws frame codec', () => {
   it('keeps non-binary stream chunks as JSON text', () => {
     const message: MessageTransferFormat = {
       id: 1,
-      mode: MESSAGE_MODEM_TYPE.RESPONSE,
+      mode: MESSAGE_MODEM_TYPE.STREAM_DATA,
       twoway: false,
-      stream: true,
-      streamVersion: 1,
-      data: { status: 200, seq: 0, payload: 'text', final: false },
+      data: { direction: 'output', status: 200, seq: 0, payload: 'text', final: false },
     };
 
     expect(typeof encodeMessageFrame(message)).toBe('string');
   });
 
-  it('keeps binary stream chunks on JSON for a legacy peer without protocol negotiation', () => {
-    const message = binaryMessage(Buffer.from([1, 2, 3]));
-    delete message.streamVersion;
+  it('keeps binary payloads outside stream-data frames on JSON', () => {
+    const message: MessageTransferFormat = {
+      id: 7,
+      mode: MESSAGE_MODEM_TYPE.RESPONSE,
+      twoway: false,
+      data: { status: 200, data: Buffer.from([1, 2, 3]) },
+    };
 
     expect(typeof encodeMessageFrame(message)).toBe('string');
   });
@@ -100,11 +115,34 @@ describe('message-ws frame codec', () => {
     expect(Buffer.isBuffer(encoded)).toBe(true);
     expect(decoded).toMatchObject({
       id: 7,
-      mode: MESSAGE_MODEM_TYPE.RESPONSE,
-      stream: true,
-      data: { status: 200, seq: 3, final: false },
+      mode: MESSAGE_MODEM_TYPE.STREAM_DATA,
+      data: { direction: 'output', status: 200, seq: 3, final: false },
     });
     expect(Buffer.from((decoded.data as any).payload)).toEqual(Buffer.from(payload));
+  });
+
+  it('uses the native binary frame for request input chunks', () => {
+    const encoded = encodeMessageFrame(binaryInputMessage(Buffer.from([1, 2, 3])));
+    const decoded = decodeMessageFrame(encoded, true);
+
+    expect(Buffer.isBuffer(encoded)).toBe(true);
+    expect(decoded).toMatchObject({
+      id: 8,
+      mode: MESSAGE_MODEM_TYPE.STREAM_DATA,
+      data: { direction: 'input', seq: 0, final: false },
+    });
+    expect(Buffer.from((decoded.data as any).payload)).toEqual(Buffer.from([1, 2, 3]));
+  });
+
+  it('uses the native binary frame for ArrayBuffer stream chunks', () => {
+    const message = binaryInputMessage(new Uint8Array([4, 5, 6]));
+    (message.data as any).payload = new Uint8Array([4, 5, 6]).buffer;
+
+    const encoded = encodeMessageFrame(message);
+    const decoded = decodeMessageFrame(encoded, true);
+
+    expect(Buffer.isBuffer(encoded)).toBe(true);
+    expect(Buffer.from((decoded.data as any).payload)).toEqual(Buffer.from([4, 5, 6]));
   });
 
   it('respects Uint8Array byteOffset and byteLength', () => {
@@ -243,14 +281,14 @@ describe('message-ws frame codec', () => {
   it.each([
     null,
     [],
-    { id: 1, mode: MESSAGE_MODEM_TYPE.REQUEST, stream: true, data: {} },
-    { id: 1, mode: MESSAGE_MODEM_TYPE.RESPONSE, stream: false, data: {} },
-    { id: 1, mode: MESSAGE_MODEM_TYPE.RESPONSE, stream: true, data: null },
+    { id: 1, mode: MESSAGE_MODEM_TYPE.REQUEST, twoway: false, data: {} },
+    { id: 1, mode: MESSAGE_MODEM_TYPE.RESPONSE, twoway: false, data: {} },
+    { id: 1, mode: MESSAGE_MODEM_TYPE.STREAM_DATA, twoway: false, data: null },
     {
       id: 1,
-      mode: MESSAGE_MODEM_TYPE.RESPONSE,
-      stream: true,
-      data: { payload: 'ambiguous' },
+      mode: MESSAGE_MODEM_TYPE.STREAM_DATA,
+      twoway: false,
+      data: { direction: 'output', payload: 'ambiguous' },
     },
   ])('rejects a binary header with an invalid envelope: %j', (headerValue) => {
     const header = Buffer.from(JSON.stringify(headerValue));

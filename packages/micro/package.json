@@ -27,6 +27,7 @@
     "@hile/context": "workspace:^",
     "@hile/logger": "workspace:^",
     "@hile/message-loader": "workspace:^",
+    "@hile/message-modem": "workspace:^",
     "@hile/message-ws": "workspace:^",
     "internal-ip": "^9.0.0",
     "ws": "^8.21.0",

@@ -37,8 +37,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function isBinaryPayload(value: unknown): value is Uint8Array {
-  return Buffer.isBuffer(value) || value instanceof Uint8Array;
+function isBinaryPayload(value: unknown): value is Uint8Array | ArrayBuffer {
+  return Buffer.isBuffer(value) || value instanceof Uint8Array || value instanceof ArrayBuffer;
 }
 
 function parseJson(value: string): unknown {
@@ -57,20 +57,17 @@ function toBuffer(raw: Buffer | ArrayBuffer | Buffer[] | Uint8Array | string): B
   return Buffer.from(raw.buffer, raw.byteOffset, raw.byteLength);
 }
 
-type BinaryStreamResponse = MessageTransferFormat<MessageStreamChunk<Uint8Array>> & {
-  mode: MESSAGE_MODEM_TYPE.RESPONSE;
-  stream: true;
-  streamVersion: 1;
-  data: MessageStreamChunk<Uint8Array>;
+type BinaryStreamData = MessageTransferFormat<MessageStreamChunk<Uint8Array | ArrayBuffer>> & {
+  mode: MESSAGE_MODEM_TYPE.STREAM_DATA;
+  data: MessageStreamChunk<Uint8Array | ArrayBuffer> & { payload: Uint8Array | ArrayBuffer };
 };
 
-function isBinaryStreamResponse(
+function isBinaryStreamData(
   message: MessageTransferFormat,
-): message is BinaryStreamResponse {
-  return message.mode === MESSAGE_MODEM_TYPE.RESPONSE
-    && message.stream === true
-    && message.streamVersion === 1
+): message is BinaryStreamData {
+  return message.mode === MESSAGE_MODEM_TYPE.STREAM_DATA
     && isRecord(message.data)
+    && (message.data.direction === 'input' || message.data.direction === 'output')
     && isBinaryPayload(message.data.payload);
 }
 
@@ -81,13 +78,11 @@ function validateBinaryEnvelope(value: unknown): asserts value is MessageTransfe
   if (
     !Number.isSafeInteger(value.id)
     || (value.id as number) < 0
-    || value.mode !== MESSAGE_MODEM_TYPE.RESPONSE
+    || value.mode !== MESSAGE_MODEM_TYPE.STREAM_DATA
     || value.twoway !== false
-    || value.stream !== true
-    || value.streamVersion !== 1
     || !isRecord(value.data)
   ) {
-    fail('ERR_MESSAGE_FRAME_ENVELOPE', 'binary frame header is not a stream response');
+    fail('ERR_MESSAGE_FRAME_ENVELOPE', 'binary frame header is not stream data');
   }
   if (Object.prototype.hasOwnProperty.call(value.data, 'payload')) {
     fail('ERR_MESSAGE_FRAME_ENVELOPE', 'binary frame header must not contain an inline payload');
@@ -96,9 +91,11 @@ function validateBinaryEnvelope(value: unknown): asserts value is MessageTransfe
     !Number.isSafeInteger(value.data.seq)
     || (value.data.seq as number) < 0
     || typeof value.data.final !== 'boolean'
-    || !(
-      typeof value.data.status === 'string'
-      || typeof value.data.status === 'number'
+    || (value.data.direction !== 'input' && value.data.direction !== 'output')
+    || (
+      value.data.direction === 'output'
+      && typeof value.data.status !== 'string'
+      && typeof value.data.status !== 'number'
     )
   ) {
     fail('ERR_MESSAGE_FRAME_ENVELOPE', 'binary frame chunk metadata is invalid');
@@ -106,13 +103,12 @@ function validateBinaryEnvelope(value: unknown): asserts value is MessageTransfe
 }
 
 export function encodeMessageFrame(message: MessageTransferFormat): string | Buffer {
-  if (!isBinaryStreamResponse(message)) return JSON.stringify(message);
+  if (!isBinaryStreamData(message)) return JSON.stringify(message);
 
-  const payload = Buffer.from(
-    message.data.payload.buffer,
-    message.data.payload.byteOffset,
-    message.data.payload.byteLength,
-  );
+  const source = message.data.payload;
+  const payload = source instanceof ArrayBuffer
+    ? Buffer.from(source)
+    : Buffer.from(source.buffer, source.byteOffset, source.byteLength);
   const { payload: _payload, ...chunkHeader } = message.data;
   const header = Buffer.from(JSON.stringify({
     ...message,

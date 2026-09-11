@@ -61,6 +61,8 @@ Hile uses `@hile/loader` conventions:
 - Current message APIs return promises or streams directly.
 - Do not append a secondary response getter to `request()`, `_send()`, or `Application.call()`.
 - Use `call()` for single values and `stream()` only when the handler returns an async iterable.
+- HTTP-over-Micro is the exception to that last selection rule: use `callHttpOverMicro()`, which internally opens one response stream so response metadata can precede an optional streamed body.
+- Preserve duplicate HTTP headers as ordered tuples across Micro. Keep public authentication, cookie, redirect, and forwarded-header policy at the HTTP gateway.
 
 ## Distributed Guarantees
 

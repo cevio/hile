@@ -4,6 +4,7 @@ import { Readable } from 'node:stream';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import WebSocket from 'ws';
 import { createExecutionContext } from '@hile/context';
+import { MessageInputError } from '@hile/message-modem';
 import { selectRandomRegistryAddress, parseAddressKey, parseConfigFilename } from './registry';
 import { Application, type CircuitBreakerOptions } from './application';
 import { Registry } from './registry';
@@ -1342,6 +1343,30 @@ describe('@hile/micro circuit breaker', () => {
 
     await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('business');
     await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 })).rejects.toThrow('business');
+
+    expect(peerA.request).toHaveBeenCalledTimes(2);
+    expect(peerB.request).not.toHaveBeenCalled();
+    expect(app.lookupExcludes[1]).toEqual([]);
+  });
+
+  it('does not count caller-owned request input failures against peer health', async () => {
+    let attempts = 0;
+    const peerA = createFakePeer(1001, vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) throw new MessageInputError(new Error('upload source failed'));
+      return { from: 'A' };
+    }));
+    const peerB = createFakePeer(1002, vi.fn(async () => ({ from: 'B' })));
+    const app = new CircuitBreakerTestApplication([peerA, peerB], {
+      failureThreshold: 1,
+    });
+
+    await expect(app.call('svc', '/upload', {}, {
+      context: testContext,
+      input: Readable.from(['body']),
+    })).rejects.toThrow('upload source failed');
+    await expect(app.call('svc', '/api', {}, { context: testContext, retries: 0 }))
+      .resolves.toEqual({ from: 'A' });
 
     expect(peerA.request).toHaveBeenCalledTimes(2);
     expect(peerB.request).not.toHaveBeenCalled();

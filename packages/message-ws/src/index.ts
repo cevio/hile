@@ -9,7 +9,7 @@ export * from './codec';
  * exec 方法由子类实现，本类不做实现。
  *
  * 构造时传入已连接的 WebSocket 实例，自动绑定 message 事件。
- * 普通消息通过 JSON 传输；二进制 stream response 使用 Hile 二进制帧，避免 Base64 开销。
+ * 普通消息通过 JSON 传输；二进制 stream input/output 使用 Hile 二进制帧，避免 Base64 开销。
  *
  * @example
  * class MyWs extends MessageWs {

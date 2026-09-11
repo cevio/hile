@@ -84,6 +84,42 @@ for await (const chunk of stream) {
 }
 ```
 
+Streaming request body with a normal response:
+
+```ts
+// src/messages/upload.msg.ts
+import { defineMicroMessage } from '@hile/micro'
+
+export default defineMicroMessage(async ({ data, input, invocation }) => {
+  if (!input) throw new Error('upload body is required')
+
+  let bytes = 0
+  for await (const chunk of input) bytes += Buffer.byteLength(chunk)
+
+  return {
+    filename: data.filename,
+    bytes,
+    requestId: invocation.context.values.requestId,
+  }
+})
+```
+
+```ts
+import { createReadStream } from 'node:fs'
+
+const result = await app.call(
+  'example.service',
+  '/upload',
+  { filename: 'archive.tar' },
+  { context, input: createReadStream('/tmp/archive.tar') },
+)
+```
+
+If no structured metadata is needed, pass an `AsyncIterable`, `Uint8Array`, or
+`ArrayBuffer` directly as `data`; Hile sends it as the request input stream and
+the handler receives `data === undefined`. `app.stream()` accepts the same
+request input forms when both request and response need to stream.
+
 Custom WebSocket modem:
 
 ```ts
@@ -158,5 +194,6 @@ const result = await app.call('billing', '/charge', {
 
 - Appending a secondary response getter to `client.request('/x', data)`
 - Returning a plain object from a handler called through `stream()`.
+- Retrying a consumed request stream or hiding it inside a replay-unsafe factory.
 - Using pub/sub as a durable queue.
 - Forgetting to register `shutdown(await app.listen(...))`.

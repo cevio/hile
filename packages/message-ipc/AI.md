@@ -103,6 +103,42 @@ for await (const chunk of stream) {
 }
 ```
 
+Streaming request body with a normal response:
+
+```ts
+// src/messages/upload.msg.ts
+import { defineMicroMessage } from '@hile/micro'
+
+export default defineMicroMessage(async ({ data, input, invocation }) => {
+  if (!input) throw new Error('upload body is required')
+
+  let bytes = 0
+  for await (const chunk of input) bytes += Buffer.byteLength(chunk)
+
+  return {
+    filename: data.filename,
+    bytes,
+    requestId: invocation.context.values.requestId,
+  }
+})
+```
+
+```ts
+import { createReadStream } from 'node:fs'
+
+const result = await app.call(
+  'example.service',
+  '/upload',
+  { filename: 'archive.tar' },
+  { context, input: createReadStream('/tmp/archive.tar') },
+)
+```
+
+If no structured metadata is needed, pass an `AsyncIterable`, `Uint8Array`, or
+`ArrayBuffer` directly as `data`; Hile sends it as the request input stream and
+the handler receives `data === undefined`. `app.stream()` accepts the same
+request input forms when both request and response need to stream.
+
 Custom WebSocket modem:
 
 ```ts
@@ -126,6 +162,68 @@ class RpcWs extends MessageWs {
 
 Notice that `request()` returns a `Promise<T>`. Await it directly.
 
+## Stream Wire Model
+
+One request ID owns the structured request and both optional stream directions:
+
+```ts
+type RequestFrame = {
+  id: number
+  mode: MESSAGE_MODEM_TYPE.REQUEST
+  twoway: boolean
+  data?: unknown
+  streams?: {
+    input?: true
+    output?: { window?: number }
+  }
+}
+
+type StreamDataFrame = {
+  id: number
+  mode: MESSAGE_MODEM_TYPE.STREAM_DATA
+  twoway: false
+  data: {
+    direction: 'input' | 'output'
+    seq: number
+    payload?: unknown
+    final: boolean
+    status?: string | number
+    message?: string
+  }
+}
+
+type StreamCreditFrame = {
+  id: number
+  mode: MESSAGE_MODEM_TYPE.STREAM_CREDIT
+  twoway: false
+  data: {
+    direction: 'input' | 'output'
+    seq: number
+    window?: number
+  }
+}
+
+type StreamCancelFrame = {
+  id: number
+  mode: MESSAGE_MODEM_TYPE.STREAM_CANCEL
+  twoway: false
+  data: {
+    direction: 'input' | 'output'
+    status?: string | number
+    message?: string
+  }
+}
+```
+
+`data` is the structured message payload; stream chunks never get embedded in
+it. The request frame declares the active directions, and every later stream
+frame reuses the request ID. Input and output sequence numbers, credits, and
+cancellation are independent.
+
+A non-final stream frame must carry a payload other than `null` or `undefined`.
+Node `Readable` reserves those values for its own end/no-op semantics, so Hile
+rejects them instead of silently losing a credit or ending a stream early.
+
 ## Use When
 
 Use the message packages for request/response messaging over WebSocket, process IPC, worker threads, file-system message handlers, service discovery, streaming RPC, and registry-backed pub/sub.
@@ -133,6 +231,7 @@ Use the message packages for request/response messaging over WebSocket, process 
 ## Do Not Use When
 
 - Do not use `stream()` for normal single-result calls.
+- Do not enable retries for a streamed request input. Input streams are consumed once and cannot be replayed safely.
 - Do not rely on message IDs for business idempotency. They are transport IDs.
 - Use `defineMicroMessage()` for Micro business handlers; reserve generic `defineMessage()` for transport-neutral loaders.
 - Do not pass zero, fractional, non-finite, or oversized message timeouts. Explicit timeout values must be safe integers from `1` through `2_147_483_647` milliseconds.
@@ -167,14 +266,21 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 - `MessageLoader` maps `*.msg.*` files to routes using `@hile/loader`.
 - `MessageLoader.dispatch(path, data, extras?)` invokes the matched handler.
 - `MessageModem._send()` returns a `Promise`.
+- `_send()` and `_stream()` accept `options.input` as an `AsyncIterable`, `Uint8Array`, or `ArrayBuffer`. Passing one of those values directly as `data` automatically selects request streaming and leaves the handler's structured `data` undefined.
 - `MessageModem._send()` and `_push()` use a `30_000` ms timeout when none is provided. An explicit timeout must be a safe integer from `1` through `2_147_483_647`; invalid values throw `TypeError` before a message is sent.
 - `MessageModem._stream()` returns a Node `Readable` in object mode.
-- Stream `timeout` and `idleTimeout` values use the same `1` through `2_147_483_647` ms range. The stream `window` must be a safe integer from `1` through `64` and defaults to `1`.
+- Stream `timeout` and `idleTimeout` values use the same `1` through `2_147_483_647` ms range. Idle timeout is refreshed by valid input or output stream activity. The response stream `window` must be a safe integer from `1` through `64` and defaults to `1`; request input uses receiver-issued credit with a window of `1`.
 - Each modem schedules request, total-stream, and idle-stream deadlines through one internal deadline scheduler. This reduces active Node.js timers without changing timeout, cancellation, ordering, or error semantics.
-- `@hile/message-ws` keeps public `decodeMessageFrame()` payloads isolated from caller-owned input by default. Its owned WebSocket `RawData` path uses a zero-copy binary Flight payload view internally.
+- Request and response chunks share `STREAM_DATA` frames and carry an explicit `direction: 'input' | 'output'`; each direction has independent sequence and credit state. `STREAM_CANCEL` stops one direction. A cancel carrying `status` fails the owning request immediately; `ABORT` cancels the whole invocation.
+- This frame model replaces the former response-only `stream`, `streamVersion`, and `streamWindow` fields. All peers on one transport connection must use compatible `@hile/message-modem` and transport package versions; do not mix old and new peers during a rolling deployment.
+- `@hile/message-ws` sends `Uint8Array` and `ArrayBuffer` request and response chunks as native binary frames rather than JSON/base64. Public `decodeMessageFrame()` payloads remain isolated from caller-owned input by default; the owned WebSocket `RawData` path uses a zero-copy binary view internally.
+- `@hile/message-ipc` transparently Base64-wraps only binary `STREAM_DATA` payloads so request and response streams survive Node child-process IPC's default JSON serialization. Other IPC frames keep their ordinary object representation.
 - A stream request requires `exec()` to return an async iterable.
-- `Application.call(namespace, url, data, options)` requires `options.context` and returns a promise.
-- `Application.stream(namespace, url, data, options)` requires `options.context` and returns a readable stream.
+- `defineMicroMessage()` handlers receive request streams as `input: Readable | undefined`, separately from structured `data` and `invocation`.
+- `Application.call(namespace, url, data, options)` requires `options.context` and returns a promise. It accepts `options.input` for a streamed request with a normal response.
+- `Application.stream(namespace, url, data, options)` requires `options.context` and returns a readable response stream; it can carry a request input stream at the same time.
+- `Application.call()` and `Application.stream()` default retries to `0` when request input is streamed. Explicit nonzero retries fail before service discovery because streamed input is non-replayable.
+- A caller-owned request input source failure is surfaced as `MessageInputError`, aborts the peer invocation, and is not counted against that peer's circuit-breaker health.
 - `Application.publish(topic, payload)` returns an object with `update()` and `unpublish()`.
 - `Application.subscribe(topic, callback)` returns an unsubscribe function.
 - `Registry` stores service addresses and retained config/topic state under `~/.registry`.
@@ -183,6 +289,7 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 
 - Appending a secondary response getter to `client.request('/x', data)`
 - Returning a plain object from a handler called through `stream()`.
+- Retrying a consumed request stream or hiding it inside a replay-unsafe factory.
 - Using pub/sub as a durable queue.
 - Forgetting to register `shutdown(await app.listen(...))`.
 
@@ -191,6 +298,8 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 - Micro message files default-export `defineMicroMessage(...)` and receive `invocation.context`.
 - RPC callers use `await app.call(..., { context })`.
 - Streaming handlers are async generators.
+- Request-stream handlers consume `input` and callers either pass `options.input` alongside metadata or pass a stream directly as `data`.
+- Streamed request calls do not configure nonzero retries.
 - Custom modem timeout values use the documented safe-integer range.
 - Registry is started before application nodes need discovery.
 - Micro apps use stable namespaces and advertise reachable hosts.
@@ -277,10 +386,13 @@ Use this recipe when services communicate over Hile registry-backed RPC.
 3. Default-export `defineMicroMessage()` handlers and load them through `app.load()`.
 4. Create context at ingress and call providers with `await app.call(namespace, url, data, { context })`.
 5. Use `app.stream()` only for async-generator handlers.
+6. For streamed request bodies, consume `input` in the `defineMicroMessage()` handler and pass the source through `options.input`; pass the stream as `data` only when no structured metadata is needed.
 
 ## Failure And Cleanup Behavior
 
 - `Application.call()` may retry; side-effecting handlers need idempotency.
+- A streamed request body is non-replayable. Its retry default is `0`, and an explicit nonzero retry count is rejected before discovery.
+- Request input and response output have independent credit-based backpressure and may be active together.
 - Registry disconnect triggers reconnect; apps re-declare topics and subscriptions.
 - Circuit breaker excludes failing nodes for cooldown.
 
@@ -290,6 +402,7 @@ Use this recipe when services communicate over Hile registry-backed RPC.
 - Provider namespace matches consumer call.
 - Handlers default-export `defineMicroMessage()` and consume explicit invocation context when needed.
 - Consumer code awaits `app.call(..., { context })` directly.
+- Streamed request handlers consume `input: Readable`, preserve structured metadata in `data`, and do not enable retries.
 
 
 
@@ -305,6 +418,7 @@ Use this recipe when services communicate over Hile registry-backed RPC.
 - Do not assume `@hile/http` Zod validation mutates or coerces `ctx.query`, `ctx.params`, or `ctx.request.body`.
 - Do not put reusable business logic only in controllers, pages, queue workers, or message handlers.
 - Do not use old message examples that append a secondary response getter; current request APIs return promises directly.
+- Do not invent service-specific HTTP-in-Micro envelopes or Base64 file bodies; use `@hile/http-over-micro` and its request/response streams.
 - Do not claim exactly-once delivery or execution from Redis locks, queues, idempotency, or rate limits.
 - Do not use queue `jobId` as the only side-effect idempotency boundary.
 - Do not log the entire async context by default.

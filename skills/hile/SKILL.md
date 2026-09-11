@@ -53,6 +53,7 @@ Then load the relevant package card or recipe:
 - `references/packages/core-lifecycle.md`
 - `references/packages/create-hile.md`
 - `references/packages/http-next.md`
+- `references/packages/http-over-micro.md`
 - `references/packages/http.md`
 - `references/packages/infrastructure.md`
 - `references/packages/mcp.md`
