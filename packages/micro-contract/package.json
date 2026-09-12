@@ -1,6 +1,6 @@
 {
   "name": "@hile/micro-contract",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Runtime-neutral typed Micro contracts and validated callers for Hile",
   "type": "module",
   "main": "./dist/index.js",

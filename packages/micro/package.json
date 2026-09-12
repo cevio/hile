@@ -1,6 +1,6 @@
 {
   "name": "@hile/micro",
-  "version": "4.0.6",
+  "version": "4.0.7",
   "type": "module",
   "main": "./dist/index.js",
   "scripts": {
@@ -25,8 +25,8 @@
   },
   "dependencies": {
     "@hile/context": "workspace:^",
-    "@hile/logger": "workspace:^",
     "@hile/loader": "workspace:^",
+    "@hile/logger": "workspace:^",
     "@hile/message-loader": "workspace:^",
     "@hile/message-modem": "workspace:^",
     "@hile/message-ws": "workspace:^",
