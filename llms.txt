@@ -35,6 +35,7 @@ Use `llms-full.txt` for complete examples. Use `references/package-map.md` to ch
 | Add request/response messaging over WS/IPC/worker | `@hile/message-*` | `packages/messaging-micro.md` |
 | Load file-based message handlers | `@hile/message-loader` | `packages/messaging-micro.md`, `recipes/micro-rpc-message-loader.md` |
 | Build service discovery or RPC | `@hile/micro` | `packages/messaging-micro.md`, `recipes/micro-rpc-message-loader.md` |
+| Share typed fixed-path unary operations across RPC and explicit local adapters | `@hile/micro-contract`, `@hile/micro` | `packages/micro-contract.md`, `packages/messaging-micro.md` |
 | Expose distributed microservice capabilities through one MCP server | `@hile/mcp` | `packages/mcp.md`, `recipes/mcp-distributed-gateway.md` |
 | Push runtime config without restarts | `@hile/micro-dynamic-configs` | `packages/messaging-micro.md`, `recipes/runtime-config.md` |
 | Stabilize config-driven runtime reloads | `@hile/reloader` | `packages/reloader.md`, `recipes/stable-runtime-reload.md` |

@@ -32,6 +32,11 @@ export interface MessageTransferFormat<T = any> {
 
 export type MessageInput<T = any> = AsyncIterable<T> | Uint8Array | ArrayBuffer;
 
+export interface MessageExecutionOptions {
+  /** Response mode decoded from the request frame, independent of its payload and input stream. */
+  readonly responseStream: boolean;
+}
+
 export interface MessageSendOptions<TInput = any> {
   signal?: AbortSignal;
   /** Maximum request or total stream lifetime in milliseconds. */
@@ -274,7 +279,12 @@ export abstract class MessageModem {
    * @param data - 消息数据
    * @returns 
    */
-  protected abstract exec(data: any, signal?: AbortSignal, input?: Readable): Promise<any>;
+  protected abstract exec(
+    data: any,
+    signal?: AbortSignal,
+    input?: Readable,
+    options?: MessageExecutionOptions,
+  ): Promise<any>;
 
   /**
    * 创建发送消息数据
@@ -760,7 +770,7 @@ export abstract class MessageModem {
     const controller = new AbortController();
     this.aborts.set(msg.id, controller);
     const input = msg.streams?.input ? this.createInputConsumer(msg.id) : undefined;
-    Promise.resolve(this.exec(msg.data, controller.signal, input))
+    Promise.resolve(this.exec(msg.data, controller.signal, input, { responseStream: false }))
       .then(value => {
         if (controller.signal.aborted) return;
         if (isAsyncIterable(value)) {
@@ -780,6 +790,8 @@ export abstract class MessageModem {
       })
       .catch(e => {
         if (controller.signal.aborted) return;
+        // Execution cannot be delivered; close its scope without replacing the original failure frame.
+        controller.abort();
         if (msg.twoway) {
           this.post({
             id: msg.id,
@@ -883,7 +895,7 @@ export abstract class MessageModem {
       if (controller.signal.aborted || producer.cancelled) throw new AbortException();
       producer.credits--;
     };
-    Promise.resolve(this.exec(msg.data, controller.signal, input))
+    Promise.resolve(this.exec(msg.data, controller.signal, input, { responseStream: true }))
       .then(async (value: AsyncIterable<any>) => {
         if (!isAsyncIterable(value)) {
           throw new Exception(500, 'Invalid async iterable');
@@ -927,6 +939,8 @@ export abstract class MessageModem {
       })
       .catch(e => {
         if (controller.signal.aborted || producer.cancelled) return;
+        // Cleanup may be asynchronous or uncooperative, so signal it before sending the failure.
+        controller.abort();
         this.post<MessageStreamChunk>({
           id: msg.id,
           mode: MESSAGE_MODEM_TYPE.STREAM_DATA,

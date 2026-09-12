@@ -37,7 +37,7 @@ export interface HttpOverMicroRequest<TBody = unknown> {
   body?: TBody | MessageInput;
 }
 
-export type HttpOverMicroCallOptions = Omit<ApplicationStreamOptions, 'input'> & {
+export type HttpOverMicroCallOptions = Omit<ApplicationStreamOptions, 'input' | 'protocol'> & {
   limits?: HttpOverMicroLimits;
 };
 
@@ -150,9 +150,12 @@ export async function callHttpOverMicro<TResponse = unknown, TRequest = unknown>
   }
 
   const { limits: _limits, ...streamOptions } = options;
-  const stream = await application.stream(namespace, url, checkedEnvelope.data, input
-    ? { ...streamOptions, input }
-    : streamOptions);
+  const stream = await application.stream(namespace, url, checkedEnvelope.data, {
+    ...streamOptions,
+    retries: streamOptions.retries ?? 0,
+    ...(input ? { input } : {}),
+    protocol: HTTP_OVER_MICRO_PROTOCOL,
+  });
   const first = await readNext(stream);
   if (first === END) throw invalidResponse('HTTP-over-Micro response ended before its response head');
 

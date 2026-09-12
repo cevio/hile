@@ -53,7 +53,7 @@ export default defineService('micro.app', async (shutdown) => {
   })
 
   await app.load(new URL('../messages', import.meta.url).pathname)
-  const stop = await app.listen(Number(process.env.MICRO_PORT ?? 0))
+  const stop = await app.listen(Number(process.env.MICRO_PORT ?? 9877))
   shutdown(stop)
   return app
 })
@@ -68,6 +68,22 @@ import { createExecutionContext } from '@hile/context'
 const context = createExecutionContext({ requestId: randomUUID() })
 const result = await app.call('example.service', '/ping', { hello: 'world' }, { context })
 ```
+
+## Generic loader protocol registration
+
+```ts
+import { defineMessage, MessageLoader } from '@hile/message-loader'
+
+const loader = new MessageLoader({})
+const definition = defineMessage(({ data }) => data, { protocol: 'example.protocol' })
+const release = loader.register('/echo', definition.fn, { protocol: definition.protocol })
+const value = await loader.dispatch('/echo', { hello: 'world' }, {}, { protocol: 'example.protocol' })
+release()
+```
+
+File loading preserves definition metadata automatically. Raw registration must pass the metadata explicitly. Ordinary definitions/dispatch omit `protocol` on both sides. Protocol tags are nonempty printable ASCII strings, at most 128 characters; registration snapshots the value. Neither payload fields nor Context/extras can select the dispatch protocol.
+
+After one route match, a different protocol throws `MessageProtocolMismatchError` (`HILE_MESSAGE_PROTOCOL_MISMATCH`) before the handler runs, with no fallback to another matching route. A tag prevents accidental protocol misdelivery, not unauthorized invocation by a caller able to set the tag.
 
 ## Boundaries
 
@@ -93,6 +109,8 @@ const result = await app.call('example.service', '/ping', { hello: 'world' }, { 
 - Request-stream handlers consume `input` and callers either pass `options.input` alongside metadata or pass a stream directly as `data`.
 - Streamed request calls do not configure nonzero retries.
 - Custom modem timeout values use the documented safe-integer range.
+- File and raw owner conflicts, atomic batch failure, concurrent load rejection, and protocol misdelivery are tested before any handler side effect.
+- Typed fixed-path services validate both actual source and compiled route trees; explicit local and real remote calls test the same provider executor, admission, cancellation, and bounded shutdown.
 - Registry is started before application nodes need discovery.
 - Micro apps use stable namespaces and advertise reachable hosts.
 

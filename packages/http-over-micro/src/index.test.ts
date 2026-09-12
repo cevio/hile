@@ -2,7 +2,7 @@ import { Readable } from 'node:stream';
 import { createServer } from 'node:net';
 import { createExecutionContext, createInvocationContext } from '@hile/context';
 import { Application, Registry } from '@hile/micro';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 import { z } from 'zod';
 import {
   HTTP_OVER_MICRO_PROTOCOL,
@@ -13,6 +13,7 @@ import {
   httpFieldsToRecord,
   httpOverMicroRequestEnvelopeSchema,
   type HttpOverMicroApplication,
+  type HttpOverMicroCallOptions,
   type HttpOverMicroResponseHead,
 } from './index';
 
@@ -138,7 +139,7 @@ describe('callHttpOverMicro', () => {
         query: [['tag', 'node'], ['tag', 'hile']],
         body: { kind: 'inline', value: { title: 'hello' } },
       },
-      { context, timeout: 5_000 },
+      { context, timeout: 5_000, retries: 0, protocol: HTTP_OVER_MICRO_PROTOCOL },
     );
     expect(response).toEqual({
       status: 201,
@@ -166,7 +167,7 @@ describe('callHttpOverMicro', () => {
       'upload.server',
       '/files',
       expect.objectContaining({ body: { kind: 'stream' } }),
-      { context, input: upload },
+      { context, retries: 0, input: upload, protocol: HTTP_OVER_MICRO_PROTOCOL },
     );
 
     const binary = new Uint8Array([1, 2, 3]);
@@ -181,7 +182,29 @@ describe('callHttpOverMicro', () => {
       'upload.server',
       '/bytes',
       expect.objectContaining({ body: { kind: 'stream' } }),
-      { context, input: binary },
+      { context, retries: 0, input: binary, protocol: HTTP_OVER_MICRO_PROTOCOL },
+    );
+  });
+
+  it('sets its transport protocol even when unchecked options try to override it', async () => {
+    expectTypeOf<HttpOverMicroCallOptions>().not.toHaveProperty('protocol');
+    const stream = vi.fn<HttpOverMicroApplication['stream']>(async () => Readable.from([
+      responseHead({ kind: 'empty' }, { status: 204 }),
+    ]));
+
+    await callHttpOverMicro(
+      { stream },
+      'service',
+      '/protocol',
+      { method: 'GET' },
+      { context, protocol: 'other-protocol' } as never,
+    );
+
+    expect(stream).toHaveBeenCalledWith(
+      'service',
+      '/protocol',
+      expect.any(Object),
+      { context, retries: 0, protocol: HTTP_OVER_MICRO_PROTOCOL },
     );
   });
 
@@ -354,6 +377,15 @@ describe('callHttpOverMicro', () => {
 });
 
 describe('defineHttpOverMicroMessage', () => {
+  it('declares its transport protocol before a handler can run', () => {
+    const definition = defineHttpOverMicroMessage(
+      { method: 'GET' },
+      async () => ({ status: 204 }),
+    );
+
+    expect(definition).toMatchObject({ protocol: HTTP_OVER_MICRO_PROTOCOL });
+  });
+
   it('validates and passes parsed request values to the handler', async () => {
     const handler = vi.fn(async ({ request, params, invocation: current }) => ({
       status: 200,
@@ -589,6 +621,95 @@ describe('defineHttpOverMicroMessage', () => {
 });
 
 describe('@hile/http-over-micro integration', () => {
+  it('rejects an HOM request before an input-ignoring ordinary Micro handler has side effects', async () => {
+    const harness = await createMicroHarness('http-over-micro.reject-ordinary');
+    const handler = vi.fn(async function* () {
+      yield responseHead({ kind: 'empty' }, { status: 204 });
+    });
+    const unregister = harness.provider.register('/ordinary', handler);
+
+    try {
+      await expect(callHttpOverMicro(
+        harness.consumer,
+        'http-over-micro.reject-ordinary',
+        '/ordinary',
+        { method: 'POST' },
+        { context, retries: 0 },
+      )).rejects.toThrow(/protocol/i);
+      expect(handler).not.toHaveBeenCalled();
+    } finally {
+      unregister();
+      await harness.close();
+    }
+  });
+
+  it('rejects an ordinary Micro request with a valid HOM envelope before the HOM handler runs', async () => {
+    const harness = await createMicroHarness('http-over-micro.reject-unmarked');
+    const handler = vi.fn(async () => ({ status: 204 }));
+    const message = defineHttpOverMicroMessage({ method: 'POST' }, handler);
+    const unregister = harness.provider.register('/http', message.fn, {
+      protocol: HTTP_OVER_MICRO_PROTOCOL,
+    });
+
+    try {
+      await expect((async () => {
+        const response = await harness.consumer.stream(
+          'http-over-micro.reject-unmarked',
+          '/http',
+          {
+            protocol: HTTP_OVER_MICRO_PROTOCOL,
+            version: HTTP_OVER_MICRO_VERSION,
+            type: 'request',
+            method: 'POST',
+            headers: [],
+            query: [],
+            body: { kind: 'empty' },
+          },
+          { context, retries: 0 },
+        );
+        await collect(response);
+      })()).rejects.toThrow(/protocol/i);
+      expect(handler).not.toHaveBeenCalled();
+    } finally {
+      unregister();
+      await harness.close();
+    }
+  });
+
+  it('preserves a legitimate inline HOM invocation and its execution context', async () => {
+    const harness = await createMicroHarness('http-over-micro.inline');
+    const message = defineHttpOverMicroMessage(
+      { method: 'POST', schema: { body: z.object({ title: z.string() }) } },
+      async ({ request, invocation: current }) => ({
+        status: 201,
+        body: { title: request.body.title, requestId: current.context.values.requestId },
+      }),
+    );
+    const unregister = harness.provider.register('/inline', message.fn, {
+      protocol: HTTP_OVER_MICRO_PROTOCOL,
+    });
+
+    try {
+      const response = await callHttpOverMicro(
+        harness.consumer,
+        'http-over-micro.inline',
+        '/inline',
+        { method: 'POST', body: { title: 'Hello' } },
+        { context, retries: 0 },
+      );
+
+      expect(response).toEqual({
+        status: 201,
+        headers: [],
+        bodyKind: 'inline',
+        body: { title: 'Hello', requestId: 'request-1' },
+      });
+    } finally {
+      unregister();
+      await harness.close();
+    }
+  });
+
   it('carries simultaneous request and response streams through Registry-discovered Micro', async () => {
     const harness = await createMicroHarness('http-over-micro.provider');
     const message = defineHttpOverMicroMessage({ method: 'POST' }, async ({ request }) => {
@@ -602,7 +723,9 @@ describe('@hile/http-over-micro integration', () => {
       };
     });
 
-    const unregister = harness.provider.register('/files', message.fn);
+    const unregister = harness.provider.register('/files', message.fn, {
+      protocol: HTTP_OVER_MICRO_PROTOCOL,
+    });
 
     try {
       const response = await callHttpOverMicro(
@@ -640,7 +763,9 @@ describe('@hile/http-over-micro integration', () => {
     };
     const input = { [Symbol.asyncIterator]: () => iterator };
     const message = defineHttpOverMicroMessage({ method: 'POST' }, async () => ({ status: 413 }));
-    const unregister = harness.provider.register('/upload', message.fn);
+    const unregister = harness.provider.register('/upload', message.fn, {
+      protocol: HTTP_OVER_MICRO_PROTOCOL,
+    });
 
     try {
       const response = await callHttpOverMicro(
@@ -669,7 +794,9 @@ describe('@hile/http-over-micro integration', () => {
       { method: 'GET' },
       async () => ({ status: 200, body: output }),
     );
-    const unregister = harness.provider.register('/download', message.fn);
+    const unregister = harness.provider.register('/download', message.fn, {
+      protocol: HTTP_OVER_MICRO_PROTOCOL,
+    });
 
     try {
       const response = await callHttpOverMicro(
@@ -690,6 +817,53 @@ describe('@hile/http-over-micro integration', () => {
       response.body.destroy();
       await vi.waitFor(() => expect(iterator.return).toHaveBeenCalledOnce());
     } finally {
+      unregister();
+      await harness.close();
+    }
+  });
+
+  it('preserves caller cancellation through the protocol-marked request', async () => {
+    const harness = await createMicroHarness('http-over-micro.abort-signal');
+    const controller = new AbortController();
+    const iterator = {
+      next: vi.fn(async () => ({ done: false as const, value: Buffer.from('chunk') })),
+      return: vi.fn(async () => ({ done: true as const, value: undefined })),
+    };
+    let providerSignal: AbortSignal | undefined;
+    const message = defineHttpOverMicroMessage({ method: 'GET' }, async ({ invocation: current }) => {
+      providerSignal = current.signal;
+      return { body: { [Symbol.asyncIterator]: () => iterator } };
+    });
+    const unregister = harness.provider.register('/download', message.fn, {
+      protocol: HTTP_OVER_MICRO_PROTOCOL,
+    });
+
+    try {
+      const response = await callHttpOverMicro(
+        harness.consumer,
+        'http-over-micro.abort-signal',
+        '/download',
+        { method: 'GET' },
+        { context, signal: controller.signal, retries: 0 },
+      );
+      if (response.bodyKind !== 'stream') throw new Error('expected stream');
+      await new Promise<void>((resolve, reject) => {
+        response.body.once('error', reject);
+        response.body.once('data', () => {
+          response.body.pause();
+          resolve();
+        });
+      });
+      const completion = collect(response.body);
+      controller.abort(new Error('cancelled-by-test'));
+
+      await expect(completion).rejects.toThrow('Abort');
+      await vi.waitFor(() => {
+        expect(providerSignal?.aborted).toBe(true);
+        expect(iterator.return).toHaveBeenCalledOnce();
+      });
+    } finally {
+      controller.abort();
       unregister();
       await harness.close();
     }

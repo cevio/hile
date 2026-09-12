@@ -58,6 +58,7 @@ Then load the relevant package card or recipe:
 - `references/packages/infrastructure.md`
 - `references/packages/mcp.md`
 - `references/packages/messaging-micro.md`
+- `references/packages/micro-contract.md`
 - `references/packages/model-context.md`
 - `references/packages/reactivity.md`
 - `references/packages/redis-reliability.md`

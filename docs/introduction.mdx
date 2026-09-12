@@ -42,6 +42,7 @@ The docs in this repository are generated from the same AI context that powers `
 | Add request/response messaging over WS/IPC/worker | `@hile/message-*` | [Messaging and Micro](/packages/micro) |
 | Load file-based message handlers | `@hile/message-loader` | [Messaging and Micro](/packages/micro), [Micro RPC](/techniques/messaging) |
 | Build service discovery or RPC | `@hile/micro` | [Messaging and Micro](/packages/micro), [Micro RPC](/techniques/messaging) |
+| Share typed fixed-path unary operations across RPC and explicit local adapters | `@hile/micro-contract`, `@hile/micro` | [Typed Micro contracts](/packages/micro-contract), [Messaging and Micro](/packages/micro) |
 | Expose distributed microservice capabilities through one MCP server | `@hile/mcp` | [MCP API](/packages/mcp), [Distributed MCP gateway](/techniques/mcp-gateway) |
 | Push runtime config without restarts | `@hile/micro-dynamic-configs` | [Messaging and Micro](/packages/micro), [Runtime config](/techniques/configuration) |
 | Stabilize config-driven runtime reloads | `@hile/reloader` | [Reloader](/packages/reloader), [Stable runtime reload](/packages/reloader) |
@@ -56,6 +57,7 @@ The docs in this repository are generated from the same AI context that powers `
 
 - If the task is a user-facing API, start with `@hile/http` or `@hile/http-next`.
 - If a public HTTP gateway delegates that API to an internal Micro service, compose it with `@hile/http-over-micro` instead of inventing a per-domain wire envelope.
+- For shared unary Micro DTOs, use `@hile/micro-contract`; keep explicit paths consistent with owning message files. Inject the loaded binding's local caller into same-service HOM/MCP adapters, and keep cross-service calls on the remote typed client. Dynamic routes and streams retain their native APIs.
 - If the task is reusable business behavior, put it in `@hile/model` even if the caller is HTTP, Next.js, queue, or micro.
 - If the task may retry or redeliver and has side effects, add `@hile/redis-idempotency`.
 - If the task is background work, use `@hile/redis-stream-queue`; do not use micro RPC as a queue.

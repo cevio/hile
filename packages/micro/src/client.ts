@@ -12,6 +12,9 @@ import { WebSocket } from 'ws';
 import { EventEmitter } from 'node:events';
 import type { Readable } from 'node:stream';
 import { isMessageInput, type MessageInput } from '@hile/message-modem';
+import { Exception, type MessageExecutionOptions } from '@hile/message-modem';
+import { MICRO_PROTOCOL_MISMATCH, toMicroTransportError } from './contract-errors';
+import { FRAMEWORK_CONTROL_INVOCATION, normalizeMicroProtocol } from './protocol';
 
 export interface ClientProps {
   host: string;
@@ -25,6 +28,7 @@ export interface ClientRequestOptions {
   signal?: AbortSignal;
   timeout?: number;
   input?: MessageInput;
+  protocol?: string;
 }
 
 export interface ClientStreamOptions extends ClientRequestOptions {
@@ -35,6 +39,7 @@ export interface ClientStreamOptions extends ClientRequestOptions {
 export type MicroMessageMetadata = {
   context?: ExecutionContext;
   control?: true;
+  protocol?: string;
   [key: string]: unknown;
 };
 
@@ -45,6 +50,7 @@ export type MicroMessage<T = any> = {
 };
 
 const FRAMEWORK_CONTROL_ROUTES = new Set([
+  '/-/health',
   '/-/config/get',
   '/-/configs',
   '/-/declare',
@@ -67,12 +73,13 @@ function assertFrameworkControlRoute(url: string): void {
   }
 }
 
-function createEnvelope<T = any>(url: string, data: T, context: ExecutionContext): MicroMessage<T> {
+function createEnvelope<T = any>(url: string, data: T, context: ExecutionContext, protocol?: string): MicroMessage<T> {
   return {
     url,
     data,
     metadata: {
       context: parseExecutionContext(context),
+      ...(protocol !== undefined ? { protocol: normalizeMicroProtocol(protocol) } : {}),
     },
   };
 }
@@ -144,8 +151,15 @@ export class Client extends MessageWs {
     }, checkInterval);
   }
 
-  protected async exec(data: MicroMessage, signal?: AbortSignal, input?: Readable): Promise<any> {
+  protected async exec(
+    data: MicroMessage,
+    signal?: AbortSignal,
+    input?: Readable,
+    execution?: MessageExecutionOptions,
+  ): Promise<any> {
+    const protocol = normalizeMicroProtocol(data.metadata?.protocol);
     if (data.url === '/-/heartbeat') {
+      if (protocol !== undefined) throw new Exception(MICRO_PROTOCOL_MISMATCH, 'Heartbeat requires the default protocol');
       this.lastHeartbeat = Date.now();
       return;
     }
@@ -162,21 +176,27 @@ export class Client extends MessageWs {
         `inbound micro message ${data.url}`,
       )
       : undefined;
-    return this.server.dispatch(data.url, data.data, {
-      client: this,
-      metadata: data.metadata,
-      signal,
-      input,
-      invocation,
-    });
+    try {
+      return await this.server.dispatch(data.url, data.data, {
+        client: this,
+        metadata: data.metadata,
+        signal,
+        input,
+        invocation,
+        responseStream: execution?.responseStream === true,
+        [FRAMEWORK_CONTROL_INVOCATION]: isControl,
+      }, { protocol });
+    } catch (error) {
+      throw toMicroTransportError(error);
+    }
   }
 
   public request<T = any>(url: string, data: any, options: ClientRequestOptions) {
     if (!this._online) throw new Error('Client is not online');
     if (!options?.context) throw new MissingExecutionContextError(`micro client request ${url}`);
-    const { context, input, ...transport } = options;
+    const { context, input, protocol, ...transport } = options;
     const request = splitMessageInput(data, input);
-    return this._send<T>(createEnvelope(url, request.data, context), {
+    return this._send<T>(createEnvelope(url, request.data, context, protocol), {
       ...transport,
       input: request.input,
     });
@@ -196,11 +216,12 @@ export class Client extends MessageWs {
     context: ExecutionContext;
     timeout?: number;
     signal?: AbortSignal;
+    protocol?: string;
   }) {
     if (!this._online) throw new Error('Client is not online');
     if (!options?.context) throw new MissingExecutionContextError(`micro client push ${url}`);
-    const { context, ...transport } = options;
-    return this._push(createEnvelope(url, data, context), transport);
+    const { context, protocol, ...transport } = options;
+    return this._push(createEnvelope(url, data, context, protocol), transport);
   }
 
   /** Framework-internal transport path. Business pushes must use push() with context. */
@@ -212,9 +233,9 @@ export class Client extends MessageWs {
   public stream(url: string, data: any, options: ClientStreamOptions) {
     if (!this._online) throw new Error('Client is not online');
     if (!options?.context) throw new MissingExecutionContextError(`micro client stream ${url}`);
-    const { context, input, ...transport } = options;
+    const { context, input, protocol, ...transport } = options;
     const request = splitMessageInput(data, input);
-    return this._stream(createEnvelope(url, request.data, context), {
+    return this._stream(createEnvelope(url, request.data, context, protocol), {
       ...transport,
       input: request.input,
     });

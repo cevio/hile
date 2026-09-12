@@ -36,7 +36,9 @@ export default defineHttpOverMicroMessage({
     body: z.object({ title: z.string().min(1), content: z.string() }),
   },
 }, async ({ request, params, invocation }) => {
-  // Call a model here; the example only shows the transport result.
+  // This example only shows HTTP projection. A real endpoint delegates to its
+  // injected canonical Micro operation with invocation, then projects its result.
+  // Do not call Models or duplicate business orchestration in this adapter.
   return {
     status: 201,
     headers: {
@@ -117,7 +119,7 @@ export default defineHttpOverMicroMessage({ method: ['GET', 'PUT'] }, async ({ r
 })
 ```
 
-Streaming request bodies are non-replayable. Leave retries unset or set `retries: 0`; an explicit nonzero value fails before dispatch.
+Every HOM call defaults to `retries: 0`, including reads, writes, inline bodies, and streams. Streaming request bodies are non-replayable: an explicit nonzero value fails before dispatch. Opt-in retry of replayable requests still needs an end-to-end attempt budget and business idempotency; failure does not prove that a write did not commit. The adapter never retries a malformed response after consuming its head/body.
 
 ## Response metadata before response bytes
 
@@ -158,6 +160,8 @@ Header tuples deliberately preserve order and duplicate fields such as `Set-Cook
 - Do not encode files as Base64 inside an inline JSON body.
 - Do not collapse response headers into a plain object when duplicate `Set-Cookie` values matter.
 - Do not enable retries for an upload stream.
+- Do not expose ordinary Micro handlers through a public route merely because their input schema happens to reject an HOM envelope; require the pre-handler protocol check on every selectable replica.
+- Do not create an additional business dispatcher, generated HTTP route table, or MCP capability catalog to wrap typed Micro operations.
 - Do not forward every inbound header, raw cookie, or identity credential merely because the protocol can carry it.
 
 ## Verify
@@ -168,6 +172,8 @@ Header tuples deliberately preserve order and duplicate fields such as `Set-Cook
 - Invalid request metadata fails with HTTP status `400`; invalid upstream response metadata fails locally with `502`.
 - Inline bodies are bounded and JSON-serializable; files use stream bodies.
 - Cancellation, timeout, idle timeout, and backpressure remain owned by `@hile/micro` and `@hile/message-modem`.
+- Real Registry/WebSocket tests cover ordinary-to-HOM and HOM-to-ordinary misdelivery with zero handler effects, including file-loaded marker preservation and explicit raw registration.
+- Same-service delegation uses the explicit local unary binding; native streamed business operations retain their native interfaces and must not be forced through the unary contract.
 
 ## More Context
 

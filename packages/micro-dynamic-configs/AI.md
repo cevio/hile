@@ -26,7 +26,9 @@ Use this file when an AI agent installs the npm package and needs package-local 
 
 # Messaging And Microservices
 
-Packages: `@hile/message-modem`, `@hile/message-ws`, `@hile/message-ipc`, `@hile/message-worker-thread`, `@hile/message-loader`, `@hile/micro`, `@hile/micro-dynamic-configs`.
+Packages: `@hile/message-modem`, `@hile/message-ws`, `@hile/message-ipc`, `@hile/message-worker-thread`, `@hile/message-loader`, `@hile/micro`, `@hile/micro-contract`, `@hile/micro-dynamic-configs`.
+
+For shared fixed-path unary operations, read `packages/micro-contract.md`. That opt-in layer retains file-system handlers and adds shared schemas, typed remote callers, explicit same-service local execution, and activation/drain lifecycle. The native dynamic/streaming examples below remain supported; they are not silently converted into a typed unary contract.
 
 ## Copy-Paste Example
 
@@ -65,7 +67,7 @@ export default defineService('micro.app', async (shutdown) => {
   })
 
   await app.load(new URL('../messages', import.meta.url).pathname)
-  const stop = await app.listen(Number(process.env.MICRO_PORT ?? 0))
+  const stop = await app.listen(Number(process.env.MICRO_PORT ?? 9877))
   shutdown(stop)
   return app
 })
@@ -82,6 +84,30 @@ const result = await app.call('example.service', '/ping', { hello: 'world' }, { 
 ```
 
 ## More Examples
+
+### Typed fixed-path operations
+
+Use `defineMicroContract()` and `createMicroClient()` from `@hile/micro-contract` to share stable JSON schemas and typed remote calls. Implement each operation in its matching message file with `defineMicroMessage(operation, handler)`, then call `loadMicroContract(app, contract, messagesDirectory)` from `@hile/micro` to obtain `{ local, activate, close }`.
+
+The binding validates filesystem paths and complete implementation coverage before activation. Explicit `local` calls are same-service unary calls through the provider executor, not a namespace-based optimization; normal calls still use RPC. Typed remote calls default to zero retries. Native dynamic and streaming APIs remain supported. See `packages/micro-contract.md` for the full example, schema constraints, and shutdown ordering.
+
+### Generic loader protocol registration
+
+```ts
+import { defineMessage, MessageLoader } from '@hile/message-loader'
+
+const loader = new MessageLoader({})
+const definition = defineMessage(({ data }) => data, { protocol: 'example.protocol' })
+const release = loader.register('/echo', definition.fn, { protocol: definition.protocol })
+const value = await loader.dispatch('/echo', { hello: 'world' }, {}, { protocol: 'example.protocol' })
+release()
+```
+
+File loading preserves definition metadata automatically. Raw registration must pass the metadata explicitly. Ordinary definitions/dispatch omit `protocol` on both sides. Protocol tags are nonempty printable ASCII strings, at most 128 characters; registration snapshots the value. Neither payload fields nor Context/extras can select the dispatch protocol.
+
+After one route match, a different protocol throws `MessageProtocolMismatchError` (`HILE_MESSAGE_PROTOCOL_MISMATCH`) before the handler runs, with no fallback to another matching route. A tag prevents accidental protocol misdelivery, not unauthorized invocation by a caller able to set the tag.
+
+### Native streaming and custom transports
 
 Streaming handler:
 
@@ -266,7 +292,10 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 ## Runtime And Lifecycle Notes
 
 - `MessageLoader` maps `*.msg.*` files to routes using `@hile/loader`.
-- `MessageLoader.dispatch(path, data, extras?)` invokes the matched handler.
+- `defineMessage(fn, options?)` and `MessageLoader.register(path, fn, options?)` accept `MessageProtocolOptions`; `MessageLoader.dispatch(path, data, extras?, options?)` checks that protocol before invoking the matched handler.
+- Raw registrations and file-loaded messages share route ownership. Duplicate normalized paths and equal-specificity overlaps fail with `MessageRouteConflictError` (`HILE_MESSAGE_ROUTE_CONFLICT`). This includes `/a/:x` versus `/:x/b`; regex parameters are conservatively treated as unrestricted, so disjoint regexes with the same route shape also conflict. Distinct static branches and different-specificity static/parameter/catch-all precedence remain supported by rou3.
+- A `MessageLoader.load()` batch is invisible until it commits. Import, bind, or final commit failure rolls back only that batch. Unload is idempotent and owner-specific; an old release cannot remove a replacement. Concurrent loads or raw registration during a load fail with `MessageLoadInProgressError` (`HILE_MESSAGE_LOAD_IN_PROGRESS`); releasing existing owners remains allowed and cannot resurrect them at commit.
+- `protected bind(file, metadata)` remains the extension point. An override that calls `super.bind` must return/compose its cleanup and unwind its own side effects on failure. The generic loader does not parse business payloads or inspect Context.
 - `MessageModem._send()` returns a `Promise`.
 - `_send()` and `_stream()` accept `options.input` as an `AsyncIterable`, `Uint8Array`, or `ArrayBuffer`. Passing one of those values directly as `data` automatically selects request streaming and leaves the handler's structured `data` undefined.
 - `MessageModem._send()` and `_push()` use a `30_000` ms timeout when none is provided. An explicit timeout must be a safe integer from `1` through `2_147_483_647`; invalid values throw `TypeError` before a message is sent.
@@ -278,13 +307,17 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 - `@hile/message-ws` sends `Uint8Array` and `ArrayBuffer` request and response chunks as native binary frames rather than JSON/base64. Public `decodeMessageFrame()` payloads remain isolated from caller-owned input by default; the owned WebSocket `RawData` path uses a zero-copy binary view internally.
 - `@hile/message-ipc` transparently Base64-wraps only binary `STREAM_DATA` payloads so request and response streams survive Node child-process IPC's default JSON serialization. Other IPC frames keep their ordinary object representation.
 - A stream request requires `exec()` to return an async iterable.
+- `MessageModem.exec(data, signal?, input?, execution?)` has an optional fourth `MessageExecutionOptions` argument. Its `responseStream` flag comes from the decoded request frame, not payload metadata or the presence of an input stream. Existing three-argument transport subclasses remain compatible; custom subclasses that forward execution to another dispatcher must preserve this argument when the receiver needs to enforce unary-only operations.
+- An execution whose response cannot be delivered (including a unary request returning an async iterable, or a stream failing during iteration) aborts its request scope before sending the original error. Cleanup is cooperative and does not delay the failure frame; provider shutdown still owns its bounded drain deadline.
 - `defineMicroMessage()` handlers receive request streams as `input: Readable | undefined`, separately from structured `data` and `invocation`.
 - `Application.call(namespace, url, data, options)` requires `options.context` and returns a promise. It accepts `options.input` for a streamed request with a normal response.
 - `Application.stream(namespace, url, data, options)` requires `options.context` and returns a readable response stream; it can carry a request input stream at the same time.
-- `Application.call()` and `Application.stream()` may target the application's own namespace. Self calls use the same Registry-discovered WebSocket and modem protocol as remote calls, so Context validation, request and response streams, cancellation, timeout, retry, circuit-breaker, and backpressure behavior stay uniform; business handlers do not need a local-call branch.
+- `Application.call()` and `Application.stream()` may target the application's own namespace. These self RPCs use normal Registry-discovered WebSocket/modem transport, not an automatic local branch; replica selection and network behavior remain unchanged. The separate `loadMicroContract()` binding provides explicit local execution only for its typed fixed-path unary operations, through the same provider executor. See `packages/micro-contract.md` for its distinct failure and lifecycle semantics.
 - A peer address (`host:port`) is the routing and reuse identity, not an individual WebSocket identity. If both peers dial each other concurrently, including an application dialing itself, the server preserves both physical connections while they are active instead of replacing a connection that may carry an in-flight request. Later calls still reuse the cached peer connection.
 - This connection bookkeeping does not add or change wire frames; request, response, stream, credit, cancel, and abort protocol fields remain unchanged.
 - `Application.call()` and `Application.stream()` default retries to `0` when request input is streamed. Explicit nonzero retries fail before service discovery because streamed input is non-replayable.
+- Native nonstream `Application.call()`/`stream()` retain the existing default of one transport retry. `createMicroClient()` and `callHttpOverMicro()` explicitly default to zero for both reads and writes. Opt-in retries remain subject to the underlying eligible-error policy and the caller's end-to-end attempt/idempotency budget; provider contract/protocol rejection, `HILE_MICRO_EXECUTION_FAILED`, and unavailable admission do not trigger automatic retries. Safe typed execution errors must not replay a whole orchestration after a downstream validation failure; native unknown-error handling is unchanged.
+- Micro adapters can pass `options.protocol`; it travels in existing request `metadata.protocol` and is checked by the generic message loader. There is no new modem frame or operation dispatcher. All selectable receivers must support this check before relying on protocol isolation: older receivers may ignore the marker.
 - A caller-owned request input source failure is surfaced as `MessageInputError`, aborts the peer invocation, and is not counted against that peer's circuit-breaker health.
 - `Application.publish(topic, payload)` returns an object with `update()` and `unpublish()`.
 - `Application.subscribe(topic, callback)` returns an unsubscribe function.
@@ -308,6 +341,8 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 - Request-stream handlers consume `input` and callers either pass `options.input` alongside metadata or pass a stream directly as `data`.
 - Streamed request calls do not configure nonzero retries.
 - Custom modem timeout values use the documented safe-integer range.
+- File and raw owner conflicts, atomic batch failure, concurrent load rejection, and protocol misdelivery are tested before any handler side effect.
+- Typed fixed-path services validate both actual source and compiled route trees; explicit local and real remote calls test the same provider executor, admission, cancellation, and bounded shutdown.
 - Registry is started before application nodes need discovery.
 - Micro apps use stable namespaces and advertise reachable hosts.
 

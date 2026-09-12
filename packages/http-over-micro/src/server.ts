@@ -247,5 +247,5 @@ export function defineHttpOverMicroMessage<
 
     const inlineBody = snapshotInlineBody(responseBody, maxInlineBodyBytes, 'response');
     yield createHead(status, response.headers, { kind: 'inline', value: inlineBody });
-  });
+  }, { protocol: HTTP_OVER_MICRO_PROTOCOL });
 }

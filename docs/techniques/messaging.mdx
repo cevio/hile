@@ -44,7 +44,7 @@ export default defineService('micro.app', async (shutdown) => {
   })
 
   await app.load(new URL('../messages', import.meta.url).pathname)
-  const stop = await app.listen(Number(process.env.MICRO_PORT ?? 0))
+  const stop = await app.listen(Number(process.env.MICRO_PORT ?? 9877))
   shutdown(stop)
   return app
 })
@@ -61,6 +61,30 @@ const result = await app.call('example.service', '/ping', { hello: 'world' }, { 
 ```
 
 ## More Examples
+
+### Typed fixed-path operations
+
+Use `defineMicroContract()` and `createMicroClient()` from `@hile/micro-contract` to share stable JSON schemas and typed remote calls. Implement each operation in its matching message file with `defineMicroMessage(operation, handler)`, then call `loadMicroContract(app, contract, messagesDirectory)` from `@hile/micro` to obtain `{ local, activate, close }`.
+
+The binding validates filesystem paths and complete implementation coverage before activation. Explicit `local` calls are same-service unary calls through the provider executor, not a namespace-based optimization; normal calls still use RPC. Typed remote calls default to zero retries. Native dynamic and streaming APIs remain supported. See [Typed Micro contracts](/packages/micro-contract) for the full example, schema constraints, and shutdown ordering.
+
+### Generic loader protocol registration
+
+```ts
+import { defineMessage, MessageLoader } from '@hile/message-loader'
+
+const loader = new MessageLoader({})
+const definition = defineMessage(({ data }) => data, { protocol: 'example.protocol' })
+const release = loader.register('/echo', definition.fn, { protocol: definition.protocol })
+const value = await loader.dispatch('/echo', { hello: 'world' }, {}, { protocol: 'example.protocol' })
+release()
+```
+
+File loading preserves definition metadata automatically. Raw registration must pass the metadata explicitly. Ordinary definitions/dispatch omit `protocol` on both sides. Protocol tags are nonempty printable ASCII strings, at most 128 characters; registration snapshots the value. Neither payload fields nor Context/extras can select the dispatch protocol.
+
+After one route match, a different protocol throws `MessageProtocolMismatchError` (`HILE_MESSAGE_PROTOCOL_MISMATCH`) before the handler runs, with no fallback to another matching route. A tag prevents accidental protocol misdelivery, not unauthorized invocation by a caller able to set the tag.
+
+### Native streaming and custom transports
 
 Streaming handler:
 

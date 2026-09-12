@@ -49,7 +49,9 @@ export default defineHttpOverMicroMessage({
     body: z.object({ title: z.string().min(1), content: z.string() }),
   },
 }, async ({ request, params, invocation }) => {
-  // Call a model here; the example only shows the transport result.
+  // This example only shows HTTP projection. A real endpoint delegates to its
+  // injected canonical Micro operation with invocation, then projects its result.
+  // Do not call Models or duplicate business orchestration in this adapter.
   return {
     status: 201,
     headers: {
@@ -132,7 +134,7 @@ export default defineHttpOverMicroMessage({ method: ['GET', 'PUT'] }, async ({ r
 })
 ```
 
-Streaming request bodies are non-replayable. Leave retries unset or set `retries: 0`; an explicit nonzero value fails before dispatch.
+Every HOM call defaults to `retries: 0`, including reads, writes, inline bodies, and streams. Streaming request bodies are non-replayable: an explicit nonzero value fails before dispatch. Opt-in retry of replayable requests still needs an end-to-end attempt budget and business idempotency; failure does not prove that a write did not commit. The adapter never retries a malformed response after consuming its head/body.
 
 ### Response metadata before response bytes
 
@@ -171,12 +173,14 @@ For a streamed request, `schema.body` receives the `Readable`. Use a Zod custom 
 
 - Use `@hile/http` or `@hile/http-next` for the one public HTTP listener and file-system Controller.
 - Use `@hile/micro` for Registry discovery, context propagation, cancellation, timeouts, and credit-based input/output flow control.
-- Use `@hile/model` behind the provider handler for reusable business behavior.
+- Use canonical Micro operations to compose `@hile/model` business behavior. Same-service HOM adapters can receive `binding.local` from `loadMicroContract()` and pass their existing `invocation`; cross-service adapters use `createMicroClient()` with explicit context/cancellation. Do not directly call Models from a protocol adapter. See `packages/micro-contract.md`.
 - Use the gateway's own policy to select which headers and cookies may cross the boundary; this package preserves selected values but does not authorize them.
 
 ## Runtime And Lifecycle Notes
 
-- `defineHttpOverMicroMessage()` returns a normal `defineMicroMessage()` definition and is loaded or registered through the standard Micro message loader.
+- `defineHttpOverMicroMessage()` returns a `defineMicroMessage()` definition marked with `protocol: '@hile/http-over-micro'`. File loading preserves this marker; raw `app.register(path, definition.fn, { protocol: definition.protocol })` must pass it explicitly.
+- `callHttpOverMicro()` fixes the outgoing protocol marker; callers cannot override it. Micro carries that marker in existing request metadata and rejects a route/protocol mismatch after route matching but before any handler/schema/business side effect. Plain Micro routes cannot become HOM routes by receiving a payload that resembles its HTTP envelope. The reverse misdelivery is rejected too, and a mismatch does not fall through to a less-specific route.
+- The marker is protocol isolation, not authentication or capability authorization. There is no new modem frame, operation addressing mode, dispatcher endpoint, or parallel discovery catalog. The optional metadata field is an incremental wire value: all selectable receiver replicas must be upgraded before relying on isolation, because older receivers may ignore it.
 - The Micro route remains the file/message path. HTTP method is protocol data and one definition may accept one method or a method list. Unsupported methods return `405` plus `Allow` without invoking the handler.
 - Inline bodies use JSON serialization semantics and default to a 1 MiB bound. Override `limits.maxInlineBodyBytes` explicitly on both ends when a deployment requires another limit; use streams for files and large byte bodies.
 - Final response statuses are `200..599`. `HEAD`, `204`, `205`, and `304` responses reject bodies. `1xx`, protocol upgrades, and trailers are intentionally out of scope.
@@ -184,7 +188,7 @@ For a streamed request, `schema.body` receives the `Readable`. Use a Zod custom 
 - Credit-based backpressure bounds buffered chunks, not the total number of transferred bytes. The HTTP ingress and provider handler must each enforce their endpoint-specific upload/download byte limit while consuming a stream.
 - The caller owns the returned response stream and must consume or destroy it. The package fully consumes empty and inline responses before resolving.
 - Cookies and `Location` are opaque response headers. The public gateway remains responsible for cookie ownership, security attributes, redirect policy, and hop-by-hop header removal.
-- Treat `namespace` and `url` as routing authority. A public gateway must resolve them through its validated provider catalog or an equivalent allow policy; never dispatch an arbitrary client-supplied namespace directly.
+- Treat `namespace` and `url` as public routing information, not authorization. Gateway owns external authentication and policy; an owning service exposes an HTTP adapter by explicitly defining its HOM message. Use normal Micro discovery and route protocol isolation, not a new Browser provider catalog. Deployments allowing client-selected service namespaces must evaluate that routing exposure explicitly; the marker does not prevent direct calls by trusted internal peers.
 
 ## Anti-Patterns
 
@@ -193,6 +197,8 @@ For a streamed request, `schema.body` receives the `Readable`. Use a Zod custom 
 - Do not encode files as Base64 inside an inline JSON body.
 - Do not collapse response headers into a plain object when duplicate `Set-Cookie` values matter.
 - Do not enable retries for an upload stream.
+- Do not expose ordinary Micro handlers through a public route merely because their input schema happens to reject an HOM envelope; require the pre-handler protocol check on every selectable replica.
+- Do not create an additional business dispatcher, generated HTTP route table, or MCP capability catalog to wrap typed Micro operations.
 - Do not forward every inbound header, raw cookie, or identity credential merely because the protocol can carry it.
 
 ## Verification Checklist
@@ -203,3 +209,5 @@ For a streamed request, `schema.body` receives the `Readable`. Use a Zod custom 
 - Invalid request metadata fails with HTTP status `400`; invalid upstream response metadata fails locally with `502`.
 - Inline bodies are bounded and JSON-serializable; files use stream bodies.
 - Cancellation, timeout, idle timeout, and backpressure remain owned by `@hile/micro` and `@hile/message-modem`.
+- Real Registry/WebSocket tests cover ordinary-to-HOM and HOM-to-ordinary misdelivery with zero handler effects, including file-loaded marker preservation and explicit raw registration.
+- Same-service delegation uses the explicit local unary binding; native streamed business operations retain their native interfaces and must not be forced through the unary contract.

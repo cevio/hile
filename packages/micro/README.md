@@ -53,7 +53,7 @@ export default defineService('micro.app', async (shutdown) => {
   })
 
   await app.load(new URL('../messages', import.meta.url).pathname)
-  const stop = await app.listen(Number(process.env.MICRO_PORT ?? 0))
+  const stop = await app.listen(Number(process.env.MICRO_PORT ?? 9877))
   shutdown(stop)
   return app
 })
@@ -68,6 +68,12 @@ import { createExecutionContext } from '@hile/context'
 const context = createExecutionContext({ requestId: randomUUID() })
 const result = await app.call('example.service', '/ping', { hello: 'world' }, { context })
 ```
+
+## Typed fixed-path operations
+
+Use `defineMicroContract()` and `createMicroClient()` from `@hile/micro-contract` to share stable JSON schemas and typed remote calls. Implement each operation in its matching message file with `defineMicroMessage(operation, handler)`, then call `loadMicroContract(app, contract, messagesDirectory)` from `@hile/micro` to obtain `{ local, activate, close }`.
+
+The binding validates filesystem paths and complete implementation coverage before activation. Explicit `local` calls are same-service unary calls through the provider executor, not a namespace-based optimization; normal calls still use RPC. Typed remote calls default to zero retries. Native dynamic and streaming APIs remain supported. See `packages/micro-contract.md` for the full example, schema constraints, and shutdown ordering.
 
 ## Boundaries
 
@@ -93,6 +99,8 @@ const result = await app.call('example.service', '/ping', { hello: 'world' }, { 
 - Request-stream handlers consume `input` and callers either pass `options.input` alongside metadata or pass a stream directly as `data`.
 - Streamed request calls do not configure nonzero retries.
 - Custom modem timeout values use the documented safe-integer range.
+- File and raw owner conflicts, atomic batch failure, concurrent load rejection, and protocol misdelivery are tested before any handler side effect.
+- Typed fixed-path services validate both actual source and compiled route trees; explicit local and real remote calls test the same provider executor, admission, cancellation, and bounded shutdown.
 - Registry is started before application nodes need discovery.
 - Micro apps use stable namespaces and advertise reachable hosts.
 

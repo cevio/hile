@@ -2,4 +2,5 @@ export * from './server';
 export * from './client';
 export * from './application';
 export * from './registry';
-export * from './message';
+export { defineMicroMessage } from './message';
+export type { MicroMessageHandlerExtras, MicroMessageFunction, MicroHandler, MicroContractMessage } from './message';

@@ -121,6 +121,7 @@ const packageConfigs = {
     purpose: 'Load file-based message handlers and dispatch messages by route.',
     cards: ['packages/messaging-micro.md'],
     recipes: ['recipes/micro-rpc-message-loader.md'],
+    readmeSections: ['### Generic loader protocol registration'],
   },
   '@hile/message-modem': {
     dir: 'message-modem',
@@ -149,11 +150,20 @@ const packageConfigs = {
   '@hile/micro': {
     dir: 'micro',
     purpose: 'Run registry-backed service discovery, RPC, streaming RPC, and pub/sub between Node services.',
-    cards: ['packages/messaging-micro.md'],
+    cards: ['packages/messaging-micro.md', 'packages/micro-contract.md'],
     recipes: ['recipes/micro-rpc-message-loader.md', 'recipes/runtime-config.md', 'recipes/stable-runtime-reload.md'],
+    readmeSections: ['### Typed fixed-path operations'],
     extraSections: [
       { rel: 'recipes/micro-registry-read-apis.md', heading: '## Registry Read APIs' },
     ],
+  },
+  '@hile/micro-contract': {
+    dir: 'micro-contract',
+    purpose: 'Share fixed-path unary Micro schemas and typed callers while retaining file-routed handlers and explicit local provider execution.',
+    cards: ['packages/micro-contract.md'],
+    recipes: [],
+    install: 'pnpm add @hile/micro-contract @hile/context zod',
+    readmeSections: ['## More Examples'],
   },
   '@hile/mcp': {
     dir: 'mcp',
@@ -241,6 +251,7 @@ const docPackagePages = {
   'packages/message-ws.mdx': '@hile/message-ws',
   'packages/micro-dynamic-configs.mdx': '@hile/micro-dynamic-configs',
   'packages/micro.mdx': '@hile/micro',
+  'packages/micro-contract.mdx': '@hile/micro-contract',
   'packages/mcp.mdx': '@hile/mcp',
   'packages/model.mdx': '@hile/model',
   'packages/redis-idempotency.mdx': '@hile/redis-idempotency',
@@ -263,6 +274,7 @@ const mintlifySourceRoutes = new Map([
   ['packages/model-context.md', { route: '/packages/model', label: 'Model and context' }],
   ['packages/infrastructure.md', { route: '/architecture', label: 'Infrastructure architecture' }],
   ['packages/messaging-micro.md', { route: '/packages/micro', label: 'Messaging and Micro' }],
+  ['packages/micro-contract.md', { route: '/packages/micro-contract', label: 'Typed Micro contracts' }],
   ['packages/mcp.md', { route: '/packages/mcp', label: 'MCP API' }],
   ['packages/reloader.md', { route: '/packages/reloader', label: 'Reloader' }],
   ['packages/reactivity.md', { route: '/packages/reactivity', label: 'Reactivity' }],

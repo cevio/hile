@@ -1,0 +1,43 @@
+{
+  "name": "@hile/micro-contract",
+  "version": "1.0.0",
+  "description": "Runtime-neutral typed Micro contracts and validated callers for Hile",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./internal": {
+      "types": "./dist/internal.d.ts",
+      "import": "./dist/internal.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b && fix-esm-import-path --preserve-import-type ./dist",
+    "dev": "tsc -b --watch",
+    "test": "vitest run"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.*",
+    "README.md",
+    "AI.md"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@hile/context": "workspace:^",
+    "@standard-schema/spec": "^1.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.2.0",
+    "fix-esm-import-path": "^1.10.3",
+    "vitest": "^4.0.18",
+    "zod": "^4.3.6"
+  }
+}

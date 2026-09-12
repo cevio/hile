@@ -440,6 +440,9 @@ importers:
       '@hile/context':
         specifier: workspace:^
         version: link:../context
+      '@hile/loader':
+        specifier: workspace:^
+        version: link:../loader
       '@hile/logger':
         specifier: workspace:^
         version: link:../logger
@@ -452,6 +455,12 @@ importers:
       '@hile/message-ws':
         specifier: workspace:^
         version: link:../message-ws
+      '@hile/micro-contract':
+        specifier: workspace:^
+        version: link:../micro-contract
+      '@standard-schema/spec':
+        specifier: ^1.0.0
+        version: 1.1.0
       internal-ip:
         specifier: ^9.0.0
         version: 9.0.0
@@ -474,6 +483,28 @@ importers:
       vitest:
         specifier: ^4.0.18
         version: 4.1.9(@types/node@26.2.0)(@vitest/coverage-v8@4.1.9)(vite@8.1.0(@types/node@26.2.0)(esbuild@0.28.2)(terser@5.50.0)(tsx@4.22.4)(yaml@2.9.0))
+
+  packages/micro-contract:
+    dependencies:
+      '@hile/context':
+        specifier: workspace:^
+        version: link:../context
+      '@standard-schema/spec':
+        specifier: ^1.0.0
+        version: 1.1.0
+    devDependencies:
+      '@types/node':
+        specifier: ^26.2.0
+        version: 26.2.0
+      fix-esm-import-path:
+        specifier: ^1.10.3
+        version: 1.10.3(supports-color@8.1.1)
+      vitest:
+        specifier: ^4.0.18
+        version: 4.1.9(@types/node@26.2.0)(@vitest/coverage-v8@4.1.9)(vite@8.1.0(@types/node@26.2.0)(esbuild@0.28.2)(terser@5.50.0)(tsx@4.22.4)(yaml@2.9.0))
+      zod:
+        specifier: ^4.3.6
+        version: 4.4.3
 
   packages/micro-dynamic-configs:
     dependencies:

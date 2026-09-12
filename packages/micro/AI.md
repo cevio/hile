@@ -21,13 +21,16 @@ Use this file when an AI agent installs the npm package and needs package-local 
 | User asks for | Use | Also read |
 |---|---|---|
 | Build service discovery or RPC | `@hile/micro` | `packages/messaging-micro.md`, `recipes/micro-rpc-message-loader.md` |
+| Share typed fixed-path unary operations across RPC and explicit local adapters | `@hile/micro-contract`, `@hile/micro` | `packages/micro-contract.md`, `packages/messaging-micro.md` |
 | Push runtime config without restarts | `@hile/micro-dynamic-configs` | `packages/messaging-micro.md`, `recipes/runtime-config.md` |
 
 
 
 # Messaging And Microservices
 
-Packages: `@hile/message-modem`, `@hile/message-ws`, `@hile/message-ipc`, `@hile/message-worker-thread`, `@hile/message-loader`, `@hile/micro`, `@hile/micro-dynamic-configs`.
+Packages: `@hile/message-modem`, `@hile/message-ws`, `@hile/message-ipc`, `@hile/message-worker-thread`, `@hile/message-loader`, `@hile/micro`, `@hile/micro-contract`, `@hile/micro-dynamic-configs`.
+
+For shared fixed-path unary operations, read `packages/micro-contract.md`. That opt-in layer retains file-system handlers and adds shared schemas, typed remote callers, explicit same-service local execution, and activation/drain lifecycle. The native dynamic/streaming examples below remain supported; they are not silently converted into a typed unary contract.
 
 ## Copy-Paste Example
 
@@ -66,7 +69,7 @@ export default defineService('micro.app', async (shutdown) => {
   })
 
   await app.load(new URL('../messages', import.meta.url).pathname)
-  const stop = await app.listen(Number(process.env.MICRO_PORT ?? 0))
+  const stop = await app.listen(Number(process.env.MICRO_PORT ?? 9877))
   shutdown(stop)
   return app
 })
@@ -83,6 +86,30 @@ const result = await app.call('example.service', '/ping', { hello: 'world' }, { 
 ```
 
 ## More Examples
+
+### Typed fixed-path operations
+
+Use `defineMicroContract()` and `createMicroClient()` from `@hile/micro-contract` to share stable JSON schemas and typed remote calls. Implement each operation in its matching message file with `defineMicroMessage(operation, handler)`, then call `loadMicroContract(app, contract, messagesDirectory)` from `@hile/micro` to obtain `{ local, activate, close }`.
+
+The binding validates filesystem paths and complete implementation coverage before activation. Explicit `local` calls are same-service unary calls through the provider executor, not a namespace-based optimization; normal calls still use RPC. Typed remote calls default to zero retries. Native dynamic and streaming APIs remain supported. See `packages/micro-contract.md` for the full example, schema constraints, and shutdown ordering.
+
+### Generic loader protocol registration
+
+```ts
+import { defineMessage, MessageLoader } from '@hile/message-loader'
+
+const loader = new MessageLoader({})
+const definition = defineMessage(({ data }) => data, { protocol: 'example.protocol' })
+const release = loader.register('/echo', definition.fn, { protocol: definition.protocol })
+const value = await loader.dispatch('/echo', { hello: 'world' }, {}, { protocol: 'example.protocol' })
+release()
+```
+
+File loading preserves definition metadata automatically. Raw registration must pass the metadata explicitly. Ordinary definitions/dispatch omit `protocol` on both sides. Protocol tags are nonempty printable ASCII strings, at most 128 characters; registration snapshots the value. Neither payload fields nor Context/extras can select the dispatch protocol.
+
+After one route match, a different protocol throws `MessageProtocolMismatchError` (`HILE_MESSAGE_PROTOCOL_MISMATCH`) before the handler runs, with no fallback to another matching route. A tag prevents accidental protocol misdelivery, not unauthorized invocation by a caller able to set the tag.
+
+### Native streaming and custom transports
 
 Streaming handler:
 
@@ -267,7 +294,10 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 ## Runtime And Lifecycle Notes
 
 - `MessageLoader` maps `*.msg.*` files to routes using `@hile/loader`.
-- `MessageLoader.dispatch(path, data, extras?)` invokes the matched handler.
+- `defineMessage(fn, options?)` and `MessageLoader.register(path, fn, options?)` accept `MessageProtocolOptions`; `MessageLoader.dispatch(path, data, extras?, options?)` checks that protocol before invoking the matched handler.
+- Raw registrations and file-loaded messages share route ownership. Duplicate normalized paths and equal-specificity overlaps fail with `MessageRouteConflictError` (`HILE_MESSAGE_ROUTE_CONFLICT`). This includes `/a/:x` versus `/:x/b`; regex parameters are conservatively treated as unrestricted, so disjoint regexes with the same route shape also conflict. Distinct static branches and different-specificity static/parameter/catch-all precedence remain supported by rou3.
+- A `MessageLoader.load()` batch is invisible until it commits. Import, bind, or final commit failure rolls back only that batch. Unload is idempotent and owner-specific; an old release cannot remove a replacement. Concurrent loads or raw registration during a load fail with `MessageLoadInProgressError` (`HILE_MESSAGE_LOAD_IN_PROGRESS`); releasing existing owners remains allowed and cannot resurrect them at commit.
+- `protected bind(file, metadata)` remains the extension point. An override that calls `super.bind` must return/compose its cleanup and unwind its own side effects on failure. The generic loader does not parse business payloads or inspect Context.
 - `MessageModem._send()` returns a `Promise`.
 - `_send()` and `_stream()` accept `options.input` as an `AsyncIterable`, `Uint8Array`, or `ArrayBuffer`. Passing one of those values directly as `data` automatically selects request streaming and leaves the handler's structured `data` undefined.
 - `MessageModem._send()` and `_push()` use a `30_000` ms timeout when none is provided. An explicit timeout must be a safe integer from `1` through `2_147_483_647`; invalid values throw `TypeError` before a message is sent.
@@ -279,13 +309,17 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 - `@hile/message-ws` sends `Uint8Array` and `ArrayBuffer` request and response chunks as native binary frames rather than JSON/base64. Public `decodeMessageFrame()` payloads remain isolated from caller-owned input by default; the owned WebSocket `RawData` path uses a zero-copy binary view internally.
 - `@hile/message-ipc` transparently Base64-wraps only binary `STREAM_DATA` payloads so request and response streams survive Node child-process IPC's default JSON serialization. Other IPC frames keep their ordinary object representation.
 - A stream request requires `exec()` to return an async iterable.
+- `MessageModem.exec(data, signal?, input?, execution?)` has an optional fourth `MessageExecutionOptions` argument. Its `responseStream` flag comes from the decoded request frame, not payload metadata or the presence of an input stream. Existing three-argument transport subclasses remain compatible; custom subclasses that forward execution to another dispatcher must preserve this argument when the receiver needs to enforce unary-only operations.
+- An execution whose response cannot be delivered (including a unary request returning an async iterable, or a stream failing during iteration) aborts its request scope before sending the original error. Cleanup is cooperative and does not delay the failure frame; provider shutdown still owns its bounded drain deadline.
 - `defineMicroMessage()` handlers receive request streams as `input: Readable | undefined`, separately from structured `data` and `invocation`.
 - `Application.call(namespace, url, data, options)` requires `options.context` and returns a promise. It accepts `options.input` for a streamed request with a normal response.
 - `Application.stream(namespace, url, data, options)` requires `options.context` and returns a readable response stream; it can carry a request input stream at the same time.
-- `Application.call()` and `Application.stream()` may target the application's own namespace. Self calls use the same Registry-discovered WebSocket and modem protocol as remote calls, so Context validation, request and response streams, cancellation, timeout, retry, circuit-breaker, and backpressure behavior stay uniform; business handlers do not need a local-call branch.
+- `Application.call()` and `Application.stream()` may target the application's own namespace. These self RPCs use normal Registry-discovered WebSocket/modem transport, not an automatic local branch; replica selection and network behavior remain unchanged. The separate `loadMicroContract()` binding provides explicit local execution only for its typed fixed-path unary operations, through the same provider executor. See `packages/micro-contract.md` for its distinct failure and lifecycle semantics.
 - A peer address (`host:port`) is the routing and reuse identity, not an individual WebSocket identity. If both peers dial each other concurrently, including an application dialing itself, the server preserves both physical connections while they are active instead of replacing a connection that may carry an in-flight request. Later calls still reuse the cached peer connection.
 - This connection bookkeeping does not add or change wire frames; request, response, stream, credit, cancel, and abort protocol fields remain unchanged.
 - `Application.call()` and `Application.stream()` default retries to `0` when request input is streamed. Explicit nonzero retries fail before service discovery because streamed input is non-replayable.
+- Native nonstream `Application.call()`/`stream()` retain the existing default of one transport retry. `createMicroClient()` and `callHttpOverMicro()` explicitly default to zero for both reads and writes. Opt-in retries remain subject to the underlying eligible-error policy and the caller's end-to-end attempt/idempotency budget; provider contract/protocol rejection, `HILE_MICRO_EXECUTION_FAILED`, and unavailable admission do not trigger automatic retries. Safe typed execution errors must not replay a whole orchestration after a downstream validation failure; native unknown-error handling is unchanged.
+- Micro adapters can pass `options.protocol`; it travels in existing request `metadata.protocol` and is checked by the generic message loader. There is no new modem frame or operation dispatcher. All selectable receivers must support this check before relying on protocol isolation: older receivers may ignore the marker.
 - A caller-owned request input source failure is surfaced as `MessageInputError`, aborts the peer invocation, and is not counted against that peer's circuit-breaker health.
 - `Application.publish(topic, payload)` returns an object with `update()` and `unpublish()`.
 - `Application.subscribe(topic, callback)` returns an unsubscribe function.
@@ -309,8 +343,204 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 - Request-stream handlers consume `input` and callers either pass `options.input` alongside metadata or pass a stream directly as `data`.
 - Streamed request calls do not configure nonzero retries.
 - Custom modem timeout values use the documented safe-integer range.
+- File and raw owner conflicts, atomic batch failure, concurrent load rejection, and protocol misdelivery are tested before any handler side effect.
+- Typed fixed-path services validate both actual source and compiled route trees; explicit local and real remote calls test the same provider executor, admission, cancellation, and bounded shutdown.
 - Registry is started before application nodes need discovery.
 - Micro apps use stable namespaces and advertise reachable hosts.
+
+# Typed Micro Contracts
+
+Package: `@hile/micro-contract`. Provider integration: `@hile/micro`.
+
+## Use When
+
+Use this package for a shared, fixed-path, unary service contract whose DTOs and typed callers are consumed by other services or protocol adapters. Shared contracts contain namespace, operation keys, explicit paths, and Standard Schema input/output schemas; implementations remain in the owning service's message files.
+
+The package root is runtime-neutral: importing a contract does not start a service, connect to Registry, or import provider handlers. `@hile/micro-contract/internal` is a framework integration subpath, not a business API. Application code must not use it to implement another executor or skip validation.
+
+## Do Not Use When
+
+- Keep existing dynamic URL parameters, request streams, response streams, and exact-peer streams on native `defineMicroMessage(handler)`, `Application.call`, `stream`, and `streamPeer` APIs. Do not silently migrate their URLs or DTOs to this unary contract.
+- Do not use a contract as a Model catalog, HTTP route catalog, MCP capability catalog, dependency container, or runtime service discovery source.
+- Do not infer local execution from namespace equality. Explicit local execution and RPC have different failure and routing semantics.
+
+## Install
+
+```bash
+pnpm add @hile/micro-contract @hile/context zod
+```
+
+The provider composition root also needs `@hile/micro`. Schemas implement Standard Schema V1. Zod is one supported schema provider, not a runtime dependency of this package.
+
+## Imports
+
+```ts
+import { defineMicroContract, createMicroClient, MicroContractError } from '@hile/micro-contract'
+import { Application, defineMicroMessage, loadMicroContract } from '@hile/micro'
+import { createExecutionContext, createInvocationContext } from '@hile/context'
+```
+
+## Copy-Paste Example
+
+Shared contract, published by its owning service's contract package:
+
+```ts
+// src/contract.ts (publish this module from the owning shared package)
+import { defineMicroContract } from '@hile/micro-contract'
+import { z } from 'zod'
+
+export const exampleContract = defineMicroContract({
+  namespace: 'example.service',
+  operations: {
+    ping: {
+      path: '/ping',
+      input: z.object({ message: z.string().max(200) }),
+      output: z.object({ message: z.string() }),
+    },
+  },
+})
+```
+
+One canonical file-loaded handler:
+
+```ts
+// src/messages/ping.msg.ts
+import { defineMicroMessage } from '@hile/micro'
+import { exampleContract } from '../contract.js'
+
+export default defineMicroMessage(exampleContract.operations.ping, async ({ data, invocation }) => {
+  invocation.signal.throwIfAborted()
+  // Real use cases compose owning-domain Models here.
+  return { message: data.message }
+})
+```
+
+Composition root:
+
+```ts
+import { Application, loadMicroContract } from '@hile/micro'
+import { exampleContract } from './contract.js'
+
+const app = new Application({
+  namespace: exampleContract.namespace,
+  registry: { host: '127.0.0.1', port: 9876 },
+  advertiseHost: '127.0.0.1',
+  shutdownTimeoutMs: 30_000,
+})
+const binding = await loadMicroContract(
+  app,
+  exampleContract,
+  new URL('./messages', import.meta.url).pathname,
+)
+
+// Inject binding.local into same-service adapters; install their attachments
+// and required dependencies before opening business admission.
+let stop: (() => Promise<void>) | undefined
+try {
+  stop = await app.listen(9877)
+  binding.activate()
+} catch (error) {
+  await binding.close()
+  await stop?.()
+  throw error
+}
+
+// Register stop with the owning Hile service's shutdown lifecycle.
+// Stop workers/local producers first; dispose domain dependencies after stop.
+```
+
+An Application accepts one contract load attempt. A failed, closed, or already loaded binding is not a hot-reload slot: create a fresh Application for a new generation. `activate()` is idempotent while active; it cannot reopen a closed binding. The same contract must be imported from one shared module instance in provider message files; reconstructed operation objects are not registered contract identities.
+
+## More Examples
+
+### Explicit remote and local calls
+
+```ts
+import { createMicroClient } from '@hile/micro-contract'
+import { createExecutionContext, createInvocationContext } from '@hile/context'
+
+const context = createExecutionContext({ requestId: 'example-request' })
+const remote = createMicroClient(app, exampleContract)
+const fromRpc = await remote.ping({ message: 'hello' }, { context })
+const fromLocal = await binding.local.ping(
+  { message: 'hello' },
+  createInvocationContext(context, new AbortController().signal),
+)
+```
+
+`remote.ping()` still calls `app.call(namespace, path, ...)` when the namespace is this Application's own namespace. It may execute on another compatible replica. `binding.local.ping()` executes this Application's installed handler and never performs Registry lookup or opens a transport connection.
+
+Local options are an `InvocationContext` with `context` and `signal`, not RPC options: do not pass local `timeout`, `retries`, `input`, `protocol`, or stream settings. Create a bounded cancellation signal at the owning ingress and propagate it. Cross-service orchestration always uses the remote typed client.
+
+### Protocol adapters share the executor, not the Model implementation
+
+Inject `binding.local` into same-service HOM/MCP adapters. An HOM message validates HTTP input and maps the result to HTTP; a Tool or dynamic Resource validates its MCP input and maps its MCP result. Both call the selected local operation with their existing `invocation`. They do not import or execute the message definition's `.fn`, and do not duplicate use-case composition or call Models directly.
+
+There is no generic HTTP router, centralized handler mount table, generated path file, runtime path catalog, or operation-ID dispatcher. Native MCP provider Tools/Resources/Prompts remain the capability catalog. Prompts remain side-effect-free templates, not invocation or authorization boundaries. The typed contract itself does not expose an operation to HTTP or MCP.
+
+## Compose With
+
+- `@hile/model` owns reusable domain behavior; canonical Micro messages validate service DTOs and compose Models.
+- `@hile/http-over-micro` adapts Browser HTTP semantics; `@hile/mcp` owns its native provider catalog and protocol.
+- `@hile/context` carries validated immutable execution metadata and cancellation. The credential owner still authenticates credentials; protocol tags and namespaces are not authorization.
+- The Application composition root owns dependencies, worker admission, adapter attachment, activation, and shutdown order.
+
+## Runtime And Lifecycle Notes
+
+### Public surface and addressing
+
+- `defineMicroContract({ namespace, operations })` returns immutable copied contract/operation metadata. Each operation has exactly `path`, `input`, and `output`; operation keys are stable nonreserved JavaScript identifiers and paths must be unique.
+- `createMicroClient(caller, contract)` accepts a structural caller exposing `call(namespace, path, data, options)`. It returns one typed function per operation without contacting the service at construction.
+- `defineMicroMessage(operation, handler)` declares typed metadata. The handler receives only parsed `data` and `invocation`; it must be loaded through `loadMicroContract(app, contract, messagesDirectory)`.
+- `loadMicroContract` returns `{ local, activate, close }`. File-system routes stay authoritative: after normal loader prefix/group/index mapping, each file path must exactly equal the shared explicit `operation.path`. A wrong namespace, foreign operation, missing/duplicate implementation, path mismatch, raw/file route conflict, or concurrent load fails closed and rolls back the batch.
+- Paths are fixed canonical absolute URLs, not templates. Root `/` is valid; query/hash, trailing or repeated separators, dot segments, percent-encoding, parameters, wildcards, and route-group syntax are not contract paths. Native dynamic messages may coexist outside the typed contract's operation set.
+
+### Schema and JSON boundaries
+
+RPC flow is client request parse → provider request parse → handler → provider response parse → client response parse. Explicit local flow uses the same provider executor, including provider request/response parsing, but has no remote client/network pipeline.
+
+Both schema input and parsed output must be canonical JSON data. Plain objects, dense arrays, finite numbers, strings, booleans, and `null` are supported. Object properties with `undefined` are omitted and negative zero becomes zero. Root `undefined`, array holes/undefined, nonfinite numbers, BigInt, functions, symbols, enumerable accessors, cycles, class instances, Date, Map/Set, binary values, and streams are rejected; no `toJSON` or getter is invoked to serialize a DTO. Snapshots prevent mutation of caller/handler-owned objects from crossing the boundary by reference.
+
+Schemas must be pure, deterministic, and safe to apply repeatedly to their own parsed values. Do not read services, authorize, mutate state, generate timestamps, or perform non-idempotent transforms in a schema. Parsing is real transformation, not just a type assertion: an output that another boundary rejects is an invalid shared wire contract. Keep HTTP/MCP-specific coercion in their adapter and use stable JSON DTOs in the shared contract.
+
+`MicroContractError` exposes a safe finite `status`, `phase`, `kind`, `namespace`, `operation`, and `path`. Phases distinguish client/provider request/response checks; provider wire errors are reconstructed from finite statuses and do not preserve arbitrary remote exception types or schema issue contents. Never forward raw issues, input values, or internal causes to public clients. Business execution failures are safe Micro execution failures, not evidence that a command did not commit.
+
+### Retries and replicas
+
+Typed remote calls default to `retries: 0` for both reads and writes, explicitly overriding the native Application nonstream default. Local calls never retry. An explicit remote retry count only enables the underlying transport's eligible retry handling; it does not retry provider contract rejection, `HILE_MICRO_EXECUTION_FAILED`, successful responses that fail client parsing, or replay a handler after local validation errors. Do not wrap response parsing in another automatic retry loop.
+
+A typed handler may compose local or remote downstream operations. When a downstream failure is wrapped as the current operation's safe execution failure, it still must not trigger replay of the whole orchestration; the wrapper does not falsely attribute the downstream schema phase to the current operation. Native unknown-error retry behavior is unchanged. A known typed execution failure is not an eligible transport failure, even when a caller explicitly enables retries.
+
+Timeout/connection failure may happen after a write committed. Any opt-in retry needs owning-domain idempotency or a durable uniqueness boundary, one end-to-end attempt budget, and cross-replica correctness. Do not stack HOM, adapter, Micro, and caller retries independently. There is no automatic replica schema negotiation: keep every selectable replica compatible with callers during rolling deployment, use additive migrations, and preserve old URLs/DTOs until their consumers have migrated.
+
+### Admission and shutdown
+
+Loading keeps local and inbound business admission closed, even if the internal listener is reachable. Only framework-owned control traffic can operate during startup. `activate()` opens admission after handlers, dependencies, and adapters are ready; raw/HOM/MCP business dispatch on that Application is included, not only typed operation URLs.
+
+`close()` is idempotent. It first rejects new network business ingress, drains previously admitted outer invocations (including stream lifetime), then closes local admission and drains local executions. Existing outer handlers can still call the local executor during the first drain phase. Stop local producers/workers before closing; do not treat the first drain phase as permission to launch new jobs. Caller cancellation waits for cooperative iterator `return()`/`finally` cleanup rather than immediately treating that outer invocation as finished. One `Application.shutdownTimeoutMs` budget bounds both contract drain phases, defaulting to 30 seconds; expiry aborts outstanding invocations and forcibly releases registration accounting. This bounds close; cancellation cannot forcibly terminate arbitrary JavaScript or guarantee rollback of side effects.
+
+`binding.close()` closes this binding, not the listener or domain dependencies. The teardown returned by `app.listen()` closes/drains the binding before disposing Micro transport resources. The composition root must still stop producers and clean up dependencies/attachments in their owning lifecycle order.
+
+Local execution shares schema/context/error policy, but not wire copies, serialization cost, Registry selection, connection failures, circuit-breaker bookkeeping, or replica choice. Local and remote error instances/stacks also differ. This API is explicit locality, not a transparent RPC optimization.
+
+## Anti-Patterns
+
+- Importing provider handlers/Models into a shared contract or another service.
+- Using `@hile/micro-contract/internal` from business packages.
+- Calling typed message `.fn` or adding a second use-case executor in HTTP/MCP code.
+- Deriving local execution from namespace equality or exporting a process-global local caller.
+- Generating paths from filenames, publishing a runtime path directory, or adding a fixed dispatcher endpoint.
+- Renaming dynamic routes or changing existing DTOs just to fit the first unary contract version.
+- Treating protocol isolation as public authorization or retry as exactly-once execution.
+
+## Verification Checklist
+
+- Shared contract import and client construction work while the provider is offline.
+- CI loads the actual source tree and compiled `dist` tree; missing/stale artifacts, path mismatches, duplicate owners, and parameter overlaps fail before activation. Load one tree per Application, never overlapping `src` and `dist` globs.
+- Handler input/output types and runtime schema checks are tested independently; local and real Registry/WebSocket calls exercise the same handler invariants.
+- Tests cover inactive/closed rejection, failed-load rollback, one load attempt, protocol misdelivery before side effects, cancellation, and full outer-stream drain.
+- HTTP/MCP delegation tests verify validation/context propagation and no direct Model access. Native dynamic and streaming APIs retain their existing URLs and DTOs.
+- Multi-replica tests cover compatible rolling versions, duplicate writes, timeout-after-commit, cancellation, and shutdown under load. Unit tests alone do not establish deployment compatibility.
 
 ## Registry Read APIs
 

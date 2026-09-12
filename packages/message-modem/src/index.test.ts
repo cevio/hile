@@ -4,6 +4,7 @@ import {
   MessageModem,
   MESSAGE_MODEM_TYPE,
   type MessageInput,
+  type MessageExecutionOptions,
   type MessageTransferFormat,
   Exception,
   AbortException,
@@ -96,6 +97,35 @@ describe('@hile/message-modem', () => {
   });
 
   describe('basic request/response', () => {
+    it.each([false, true])('passes decoded unary response mode to exec with request input=%s', async (withInput) => {
+      const { a, b } = createPair();
+      const payload = { responseStream: true, streams: { output: {} } };
+      const handler = vi.fn(async (
+        _data: unknown,
+        _signal?: AbortSignal,
+        input?: Readable,
+        _options?: MessageExecutionOptions,
+      ) => {
+        if (input) {
+          for await (const chunk of input) {
+            expect(Buffer.from(chunk).toString()).toBe('upload');
+          }
+        }
+        return 'reply';
+      });
+      b['exec'] = handler;
+
+      await expect(a.send(payload, withInput ? { input: Buffer.from('upload') } : undefined))
+        .resolves.toBe('reply');
+
+      expect(handler).toHaveBeenCalledWith(
+        payload,
+        expect.any(AbortSignal),
+        withInput ? expect.any(Readable) : undefined,
+        { responseStream: false },
+      );
+    });
+
     it('round trip returns exec result from peer', async () => {
       const { a, b } = createPair();
       const result = await a.send('hello');
@@ -175,6 +205,36 @@ describe('@hile/message-modem', () => {
   });
 
   describe('error handling', () => {
+    it('aborts undeliverable unary execution before returning its original error', async () => {
+      const { a, b } = createPair();
+      const events: string[] = [];
+      const iterator = {
+        next: vi.fn(() => new Promise<IteratorResult<string>>(() => {})),
+        return: vi.fn(() => new Promise<IteratorResult<string>>(() => {})),
+      };
+      const post = b['post'].bind(b);
+      b['post'] = (frame) => {
+        if (frame.mode === MESSAGE_MODEM_TYPE.RESPONSE) events.push('response');
+        post(frame);
+      };
+      b['exec'] = async (_data: unknown, signal?: AbortSignal) => {
+        signal?.addEventListener('abort', () => {
+          events.push('abort');
+          void iterator.return();
+        });
+        return { [Symbol.asyncIterator]: () => iterator };
+      };
+
+      await expect(a.send('unary')).rejects.toMatchObject({
+        status: 500,
+        message: 'Async iterable is not supported',
+      });
+
+      expect(events).toEqual(['abort', 'response']);
+      expect(iterator.next).not.toHaveBeenCalled();
+      expect(iterator.return).toHaveBeenCalledOnce();
+    });
+
     it('Exception in exec returns status and message', async () => {
       const { a, b } = createPair();
       b['exec'] = async () => { throw new Exception(403, 'forbidden'); };
@@ -366,6 +426,85 @@ describe('@hile/message-modem', () => {
   });
 
   describe('stream', () => {
+    it('aborts invalid streamed execution before returning its original error', async () => {
+      const { a, b } = createPair();
+      const events: string[] = [];
+      const post = b['post'].bind(b);
+      b['post'] = (frame) => {
+        if (frame.mode === MESSAGE_MODEM_TYPE.STREAM_DATA) events.push('response');
+        post(frame);
+      };
+      b['exec'] = async (_data: unknown, signal?: AbortSignal) => {
+        signal?.addEventListener('abort', () => events.push('abort'));
+        return 'not-an-iterable';
+      };
+      const response = a.stream('stream');
+      const error = new Promise<Error>((resolve) => response.once('error', resolve));
+      response.resume();
+
+      await expect(error).resolves.toMatchObject({
+        status: 500,
+        message: 'Invalid async iterable',
+      });
+      expect(events).toEqual(['abort', 'response']);
+    });
+
+    it('aborts a failed stream and returns its error without waiting for uncooperative iterator cleanup', async () => {
+      const { a, b } = createPair();
+      let handlerSignal: AbortSignal | undefined;
+      const iteratorReturn = vi.fn(() => new Promise<IteratorResult<string>>(() => {}));
+      b['exec'] = async (_data: unknown, signal?: AbortSignal) => {
+        handlerSignal = signal;
+        return {
+          [Symbol.asyncIterator]: () => ({
+            next: async () => { throw new Exception(409, 'stream-conflict'); },
+            return: iteratorReturn,
+          }),
+        };
+      };
+      const response = a.stream('failed-stream');
+      const error = new Promise<Error>((resolve) => response.once('error', resolve));
+      response.resume();
+
+      await expect(error).resolves.toMatchObject({ status: 409, message: 'stream-conflict' });
+      expect(handlerSignal?.aborted).toBe(true);
+      expect(iteratorReturn).toHaveBeenCalledOnce();
+      expect(b['aborts'].size).toBe(0);
+      expect(b['streamProducers'].size).toBe(0);
+    });
+
+    it.each([false, true])('passes decoded streamed response mode to exec with request input=%s', async (withInput) => {
+      const { a, b } = createPair();
+      const payload = { responseStream: false };
+      const handler = vi.fn(async (
+        _data: unknown,
+        _signal?: AbortSignal,
+        input?: Readable,
+        _options?: MessageExecutionOptions,
+      ) => {
+        if (input) {
+          for await (const chunk of input) {
+            expect(Buffer.from(chunk).toString()).toBe('upload');
+          }
+        }
+        return Readable.from(['reply']);
+      });
+      b['exec'] = handler;
+      const received: unknown[] = [];
+
+      for await (const chunk of a.stream(payload, withInput ? { input: Buffer.from('upload') } : undefined)) {
+        received.push(chunk);
+      }
+
+      expect(received).toEqual(['reply']);
+      expect(handler).toHaveBeenCalledWith(
+        payload,
+        expect.any(AbortSignal),
+        withInput ? expect.any(Readable) : undefined,
+        { responseStream: true },
+      );
+    });
+
     it('appends stream frame types without changing existing message type values', () => {
       expect(MESSAGE_MODEM_TYPE.REQUEST).toBe(0);
       expect(MESSAGE_MODEM_TYPE.RESPONSE).toBe(1);

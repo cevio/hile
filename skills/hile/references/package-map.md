@@ -25,6 +25,7 @@ Use this map to decide what to read.
 | Add request/response messaging over WS/IPC/worker | `@hile/message-*` | `packages/messaging-micro.md` |
 | Load file-based message handlers | `@hile/message-loader` | `packages/messaging-micro.md`, `recipes/micro-rpc-message-loader.md` |
 | Build service discovery or RPC | `@hile/micro` | `packages/messaging-micro.md`, `recipes/micro-rpc-message-loader.md` |
+| Share typed fixed-path unary operations across RPC and explicit local adapters | `@hile/micro-contract`, `@hile/micro` | `packages/micro-contract.md`, `packages/messaging-micro.md` |
 | Expose distributed microservice capabilities through one MCP server | `@hile/mcp` | `packages/mcp.md`, `recipes/mcp-distributed-gateway.md` |
 | Push runtime config without restarts | `@hile/micro-dynamic-configs` | `packages/messaging-micro.md`, `recipes/runtime-config.md` |
 | Stabilize config-driven runtime reloads | `@hile/reloader` | `packages/reloader.md`, `recipes/stable-runtime-reload.md` |
@@ -39,6 +40,7 @@ Use this map to decide what to read.
 
 - If the task is a user-facing API, start with `@hile/http` or `@hile/http-next`.
 - If a public HTTP gateway delegates that API to an internal Micro service, compose it with `@hile/http-over-micro` instead of inventing a per-domain wire envelope.
+- For shared unary Micro DTOs, use `@hile/micro-contract`; keep explicit paths consistent with owning message files. Inject the loaded binding's local caller into same-service HOM/MCP adapters, and keep cross-service calls on the remote typed client. Dynamic routes and streams retain their native APIs.
 - If the task is reusable business behavior, put it in `@hile/model` even if the caller is HTTP, Next.js, queue, or micro.
 - If the task may retry or redeliver and has side effects, add `@hile/redis-idempotency`.
 - If the task is background work, use `@hile/redis-stream-queue`; do not use micro RPC as a queue.
@@ -135,7 +137,9 @@ Read `packages/messaging-micro.md` when the task mentions:
 - streaming RPC
 - pub/sub topics
 
-Packages: `@hile/message-modem`, `@hile/message-ws`, `@hile/message-ipc`, `@hile/message-worker-thread`, `@hile/message-loader`, `@hile/micro`, `@hile/http-over-micro`, `@hile/micro-dynamic-configs`, `@hile/reloader`.
+Packages: `@hile/message-modem`, `@hile/message-ws`, `@hile/message-ipc`, `@hile/message-worker-thread`, `@hile/message-loader`, `@hile/micro`, `@hile/micro-contract`, `@hile/http-over-micro`, `@hile/micro-dynamic-configs`, `@hile/reloader`.
+
+Read `packages/micro-contract.md` for `defineMicroContract`, `createMicroClient`, typed `defineMicroMessage(operation, handler)`, `loadMicroContract`, explicit local execution, activation, and draining. The contract keeps explicit fixed paths checked against filesystem routes; it does not generate routes, publish a runtime catalog, or replace native dynamic/streaming interfaces.
 
 ## Distributed MCP Capabilities
 

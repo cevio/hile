@@ -122,6 +122,7 @@
             "group": "微服务",
             "pages": [
               "packages/micro",
+              "packages/micro-contract",
               "packages/http-over-micro",
               "packages/micro-dynamic-configs",
               "packages/mcp"

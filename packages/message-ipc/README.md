@@ -53,7 +53,7 @@ export default defineService('micro.app', async (shutdown) => {
   })
 
   await app.load(new URL('../messages', import.meta.url).pathname)
-  const stop = await app.listen(Number(process.env.MICRO_PORT ?? 0))
+  const stop = await app.listen(Number(process.env.MICRO_PORT ?? 9877))
   shutdown(stop)
   return app
 })
@@ -93,6 +93,8 @@ const result = await app.call('example.service', '/ping', { hello: 'world' }, { 
 - Request-stream handlers consume `input` and callers either pass `options.input` alongside metadata or pass a stream directly as `data`.
 - Streamed request calls do not configure nonzero retries.
 - Custom modem timeout values use the documented safe-integer range.
+- File and raw owner conflicts, atomic batch failure, concurrent load rejection, and protocol misdelivery are tested before any handler side effect.
+- Typed fixed-path services validate both actual source and compiled route trees; explicit local and real remote calls test the same provider executor, admission, cancellation, and bounded shutdown.
 - Registry is started before application nodes need discovery.
 - Micro apps use stable namespaces and advertise reachable hosts.
 

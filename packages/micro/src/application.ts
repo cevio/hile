@@ -5,6 +5,14 @@ import {
 } from '@hile/context';
 import { isMessageInput, MessageInputError, type MessageInput } from '@hile/message-modem';
 import { Client, type ClientStreamOptions } from './client';
+import { normalizePath, toRouterPath, type ScannedFile } from '@hile/loader';
+import type { MessageProtocolOptions, MessageRegisterProps } from '@hile/message-loader';
+import { MicroContractError, type MicroContract } from '@hile/micro-contract';
+import { getOperationMetadata } from '@hile/micro-contract/internal';
+import { MicroContractRuntime, type MicroBinding } from './contract-runtime';
+import { getMicroContractMessage } from './message';
+import { isNeutralMicroError, isNonRetryableMicroError, MicroUnavailableError } from './contract-errors';
+import { FRAMEWORK_CONTROL_INVOCATION, normalizeMicroProtocol } from './protocol';
 import { Server, type MicroServerProps } from './server';
 import type {
   RegistryAddress,
@@ -12,7 +20,7 @@ import type {
   RegistryTopicSnapshotsResult,
   RegistryTopicSummary,
   RegistryTopicsResult,
-} from './registry';
+} from './registry.js';
 
 enum RegistryLookupStatus {
   IDLE,
@@ -203,6 +211,8 @@ export type ApplicationProps = {
   requestTimeoutMs?: number;
   /** 本地内存熔断策略配置 */
   circuitBreaker?: CircuitBreakerOptions;
+  /** Shared deadline for contract ingress/local draining. Default: 30 seconds. */
+  shutdownTimeoutMs?: number;
 } & MicroServerProps;
 
 export type ApplicationCallOptions = {
@@ -211,6 +221,8 @@ export type ApplicationCallOptions = {
   retries?: number;
   signal?: AbortSignal;
   input?: MessageInput;
+  /** Transport adapter discriminator, never identity or authorization. */
+  protocol?: string;
 };
 
 export type ApplicationStreamOptions = ClientStreamOptions & {
@@ -242,6 +254,19 @@ type TopicSnapshot<T = any> = {
   payload: T;
 };
 
+const LOAD_MICRO_CONTRACT = Symbol('load-micro-contract');
+
+/** Loads one complete file-routed contract; does not activate business admission. */
+export function loadMicroContract<const C extends MicroContract>(
+  application: Application,
+  contract: C,
+  messagesDirectory: string,
+): Promise<MicroBinding<C>> {
+  return application[LOAD_MICRO_CONTRACT](contract, messagesDirectory);
+}
+
+export type { MicroBinding } from './contract-runtime.js';
+
 export class Application extends Server {
   private registry?: Client;
   private reconnectTimeout?: NodeJS.Timeout;
@@ -254,6 +279,9 @@ export class Application extends Server {
   private readonly _registryLookupTimeoutMs: number;
   private readonly _requestTimeoutMs: number;
   private readonly _circuitBreaker: ResolvedCircuitBreakerOptions;
+  private readonly shutdownTimeoutMs: number;
+  private contractLoadAttempted = false;
+  private contractRuntime?: MicroContractRuntime;
 
   private readonly namespaces = new Map<string, {
     host: string;
@@ -280,6 +308,7 @@ export class Application extends Server {
       registryLookupTimeoutMs = 10_000,
       requestTimeoutMs = 30_000,
       circuitBreaker,
+      shutdownTimeoutMs = 30_000,
       ...microAndLoader
     } = props;
     super(namespace, microAndLoader);
@@ -288,6 +317,10 @@ export class Application extends Server {
     this._registryLookupTimeoutMs = registryLookupTimeoutMs;
     this._requestTimeoutMs = requestTimeoutMs;
     this._circuitBreaker = resolveCircuitBreakerOptions(circuitBreaker);
+    if (!Number.isSafeInteger(shutdownTimeoutMs) || shutdownTimeoutMs < 1 || shutdownTimeoutMs > 2_147_483_647) {
+      throw new TypeError('shutdownTimeoutMs must be an integer from 1 through 2147483647');
+    }
+    this.shutdownTimeoutMs = shutdownTimeoutMs;
     this.events.on('disconnect', (client: Client) => {
       const disconnectedKey = `${client.host}:${client.port}`;
       // 一个物理连接可承载多个 namespace；集中清理可避免每次服务发现都向 Client 重复注册监听器。
@@ -306,6 +339,65 @@ export class Application extends Server {
       this.dispatchTopicUpdate(data.topic, data.payload);
       return Date.now();
     })
+  }
+
+  async [LOAD_MICRO_CONTRACT]<const C extends MicroContract>(contract: C, directory: string): Promise<MicroBinding<C>> {
+    if (this.contractLoadAttempted) throw new TypeError('An Application can load only one Micro contract');
+    this.contractLoadAttempted = true;
+    const runtime = new MicroContractRuntime(contract, this.shutdownTimeoutMs);
+    this.contractRuntime = runtime;
+    let unload: (() => void) | undefined;
+    try {
+      if (contract.namespace !== this.namespace) throw new TypeError('Micro contract namespace does not match Application');
+      unload = await this.load(directory);
+      return runtime.finish(unload);
+    } catch (error) {
+      const failures: unknown[] = [error];
+      try { unload?.(); } catch (cleanupError) { failures.push(cleanupError); }
+      try { await runtime.close(); } catch (cleanupError) { failures.push(cleanupError); }
+      if (failures.length > 1) throw new AggregateError(failures, 'Micro contract load failed and rollback was incomplete');
+      throw error;
+    }
+  }
+
+  protected override bind(file: ScannedFile, definition: MessageRegisterProps) {
+    const typed = getMicroContractMessage(definition);
+    if (!typed) return super.bind(file, definition);
+    if (!this.contractRuntime) throw new TypeError('Use loadMicroContract() to load typed Micro messages');
+    const bound = this.contractRuntime.bind(typed.operation, typed.handler, toRouterPath(normalizePath(file.routePath)));
+    try {
+      const unregister = super.bind(file, {
+        ...definition,
+        fn: async ({ data, invocation, input, responseStream }: any) => {
+          if (input !== undefined || responseStream === true) {
+            input?.destroy?.();
+            throw new MicroContractError(getOperationMetadata(typed.operation), 'provider_request', 'wire');
+          }
+          return bound.execute(data, invocation);
+        },
+      });
+      return () => {
+        try { unregister(); }
+        finally { bound.release(); }
+      };
+    } catch (error) {
+      bound.release();
+      throw error;
+    }
+  }
+
+  public override async dispatch(
+    path: string,
+    data: any,
+    extras: Record<string | symbol, any> = {},
+    options?: MessageProtocolOptions,
+  ): Promise<any> {
+    if (!this.contractLoadAttempted || extras[FRAMEWORK_CONTROL_INVOCATION] === true) {
+      return super.dispatch(path, data, extras, options);
+    }
+    if (!this.contractRuntime) throw new MicroUnavailableError();
+    return this.contractRuntime.networkInvocation(extras.invocation, (invocation) =>
+      super.dispatch(path, data, { ...extras, invocation, signal: invocation.signal }, options));
   }
 
   private dispatchTopicUpdate(topic: string, payload: any) {
@@ -338,7 +430,10 @@ export class Application extends Server {
     }
     // 这里不清理 topics 由业务方自己清理
     // 这里也不清理 declare 和 undeclare 由业务方自己清理
-    return async () => {
+    let closePromise: Promise<void> | undefined;
+    return () => closePromise ??= (async () => {
+      const failures: unknown[] = [];
+      try { await this.contractRuntime?.close(); } catch (error) { failures.push(error); }
       this.stopped = true;
       if (this.listenGeneration === generation) {
         this.listenGeneration++;
@@ -349,8 +444,9 @@ export class Application extends Server {
       }
       this.registry?.dispose();
       this.registry = undefined;
-      await callback();
-    };
+      try { await callback(); } catch (error) { failures.push(error); }
+      if (failures.length) throw new AggregateError(failures, 'Micro application shutdown failed');
+    })();
   }
 
   private scheduleRegistryRetry(generation = this.listenGeneration) {
@@ -697,7 +793,7 @@ export class Application extends Server {
   }
 
   private shouldRecordCircuitFailure(err: unknown) {
-    if (err instanceof MessageInputError) return false;
+    if (err instanceof MessageInputError || isNeutralMicroError(err)) return false;
     try {
       return this._circuitBreaker.shouldRecordFailure(err);
     } catch (hookErr) {
@@ -707,6 +803,7 @@ export class Application extends Server {
   }
 
   private shouldRetryCircuitFailure(err: unknown) {
+    if (isNonRetryableMicroError(err)) return false;
     try {
       return this._circuitBreaker.shouldRetry(err);
     } catch (hookErr) {
@@ -953,6 +1050,7 @@ export class Application extends Server {
     if (!options?.context) throw new MissingExecutionContextError(`micro call ${namespace}${url}`);
     const context = parseExecutionContext(options.context);
     const { timeout = this._requestTimeoutMs, signal, input } = options;
+    const protocol = normalizeMicroProtocol(options.protocol);
     const retries = resolveRequestRetries(data, input, options.retries);
     let remainingRetries = retries;
     let retrySourceError: unknown;
@@ -973,6 +1071,7 @@ export class Application extends Server {
           timeout: timeout ?? this._requestTimeoutMs,
           signal,
           input,
+          protocol,
         });
         this.recordSuccess(namespace, client.host, client.port, probe);
         return result;
@@ -1000,6 +1099,7 @@ export class Application extends Server {
     if (!options?.context) throw new MissingExecutionContextError(`micro stream ${namespace}${url}`);
     const context = parseExecutionContext(options.context);
     const { signal, timeout, idleTimeout, window, input } = options;
+    const protocol = normalizeMicroProtocol(options.protocol);
     const retries = resolveRequestRetries(data, input, options.retries);
     let remainingRetries = retries;
     let retrySourceError: unknown;
@@ -1022,6 +1122,7 @@ export class Application extends Server {
           idleTimeout,
           window,
           input,
+          protocol,
         });
         return this.trackCircuitStream(namespace, client.host, client.port, probe, readable);
       } catch (err) {
