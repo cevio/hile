@@ -31,6 +31,17 @@ async function getAvailablePort(): Promise<number> {
   throw new Error('Unable to allocate test port after 20 attempts');
 }
 
+async function listenOnAvailablePort(server: Server | Registry) {
+  for (let attempt = 0; ; attempt++) {
+    const port = await getAvailablePort();
+    try {
+      return { port, close: await server.listen(port) };
+    } catch (error) {
+      if (attempt >= 9 || (error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error;
+    }
+  }
+}
+
 async function waitForCondition(predicate: () => boolean, message: string): Promise<void> {
   const deadline = Date.now() + 1_000;
   while (Date.now() < deadline) {
@@ -55,17 +66,25 @@ function createDeferred<T = void>() {
 }
 
 async function startSelfApplication(namespace: string) {
-  const registryPort = await getAvailablePort();
-  const applicationPort = await getAvailablePort();
   const registry = new Registry(testAdvertise);
+  const registryListener = await listenOnAvailablePort(registry);
   const application = new Application({
     namespace,
-    registry: { host: '127.0.0.1', port: registryPort },
+    registry: { host: '127.0.0.1', port: registryListener.port },
     ...testAdvertise,
   });
-  const disposeRegistry = await registry.listen(registryPort);
-  const disposeApplication = await application.listen(applicationPort);
-  return { application, applicationPort, disposeApplication, disposeRegistry };
+  try {
+    const applicationListener = await listenOnAvailablePort(application);
+    return {
+      application,
+      applicationPort: applicationListener.port,
+      disposeApplication: applicationListener.close,
+      disposeRegistry: registryListener.close,
+    };
+  } catch (error) {
+    await registryListener.close();
+    throw error;
+  }
 }
 
 class PeerServer extends Server {
@@ -79,23 +98,20 @@ class PeerServer extends Server {
 
 describe('@hile/micro same-namespace self calls', () => {
   it('keeps the external inbound request connected while a handler calls its own namespace', async () => {
-    const registryPort = await getAvailablePort();
-    const applicationPort = await getAvailablePort();
-    const consumerPort = await getAvailablePort();
     const registry = new Registry(testAdvertise);
+    const registryListener = await listenOnAvailablePort(registry);
     const application = new Application({
       namespace: 'self-call-service',
-      registry: { host: '127.0.0.1', port: registryPort },
+      registry: { host: '127.0.0.1', port: registryListener.port },
       ...testAdvertise,
     });
     const consumer = new Application({
       namespace: 'self-call-consumer',
-      registry: { host: '127.0.0.1', port: registryPort },
+      registry: { host: '127.0.0.1', port: registryListener.port },
       ...testAdvertise,
     });
-    const disposeRegistry = await registry.listen(registryPort);
-    const disposeApplication = await application.listen(applicationPort);
-    const disposeConsumer = await consumer.listen(consumerPort);
+    const applicationListener = await listenOnAvailablePort(application);
+    const consumerListener = await listenOnAvailablePort(consumer);
     const unregisterInner = application.register('/inner', async ({ data, invocation }) => ({
       value: data.value,
       requestId: invocation.context.values.requestId,
@@ -122,26 +138,24 @@ describe('@hile/micro same-namespace self calls', () => {
     } finally {
       unregisterOuter();
       unregisterInner();
-      await disposeConsumer();
-      await disposeApplication();
-      await disposeRegistry();
+      await consumerListener.close();
+      await applicationListener.close();
+      await registryListener.close();
     }
   });
 
   it('does not interrupt simultaneous calls when both peers connect to each other', async () => {
-    const portA = await getAvailablePort();
-    const portB = await getAvailablePort();
     const peerA = new PeerServer('peer-a', testAdvertise);
     const peerB = new PeerServer('peer-b', testAdvertise);
-    const disposeA = await peerA.listen(portA);
-    const disposeB = await peerB.listen(portB);
+    const listenerA = await listenOnAvailablePort(peerA);
+    const listenerB = await listenOnAvailablePort(peerB);
     const unregisterA = peerA.register('/echo', async ({ data }) => ({ from: 'a', data }));
     const unregisterB = peerB.register('/echo', async ({ data }) => ({ from: 'b', data }));
 
     try {
       await expect(Promise.all([
-        peerA.callPeer('127.0.0.1', portB, '/echo', 'from-a'),
-        peerB.callPeer('127.0.0.1', portA, '/echo', 'from-b'),
+        peerA.callPeer('127.0.0.1', listenerB.port, '/echo', 'from-a'),
+        peerB.callPeer('127.0.0.1', listenerA.port, '/echo', 'from-b'),
       ])).resolves.toEqual([
         { from: 'b', data: 'from-a' },
         { from: 'a', data: 'from-b' },
@@ -149,8 +163,8 @@ describe('@hile/micro same-namespace self calls', () => {
     } finally {
       unregisterB();
       unregisterA();
-      await disposeB();
-      await disposeA();
+      await listenerB.close();
+      await listenerA.close();
     }
   });
 

@@ -309,8 +309,11 @@ Hile uses `@hile/loader` conventions:
 
 - `index.controller.ts` with default suffix `/index` maps to the parent path.
 - `[id].controller.ts` maps to `:id`.
+- `[...paths].controller.ts` is a required catch-all. It matches one or more remaining segments and exposes their slash-joined value as `ctx.params.paths`.
 - Backslashes normalize to forward slashes.
 - Parenthesized path segments are stripped by `normalizePath()`.
+- Dynamic and catch-all declarations must occupy a complete segment, use a safe JavaScript identifier, avoid object-meta names (`__proto__`, `prototype`, `constructor`), and have a unique name within the route. A catch-all must be last and unique. Optional catch-all (`[[...paths]]`), mixed segments, duplicate or object-meta names, non-terminal catch-all, and router-native file names are rejected during loading with the file path in the error.
+- Use `[...paths]` instead of a literal `*` file name. It is portable across npm packing and Windows, while Hile compiles it to the active router's native syntax.
 
 ## Controller Responses
 
@@ -712,6 +715,8 @@ src/
   services/         *.boot.ts and app services
 ```
 
+HttpNext inherits the `@hile/http` file-route DSL. A Gateway fallback such as `src/controllers/[namespace]/[...paths].controller.ts` matches `/-/blog/assets/logo.svg` and exposes `ctx.params.namespace === 'blog'` plus `ctx.params.paths === 'assets/logo.svg'`. The safe `[...paths]` file name is retained by npm and works on Windows; do not use a literal `*.controller.ts` catch-all file.
+
 Use `loadModel()` from pages or controllers for domain logic. If a Next.js page uses runtime model data, mark the route dynamic:
 
 ```tsx
@@ -746,12 +751,13 @@ The proxy must replace forwarded headers, set `X-Forwarded-Proto: https`, and be
 - Concurrent requests, multiple `HttpNext` instances, and compatible package copies in one JavaScript realm share one storage identity while retaining isolated asynchronous contexts. Separate PM2 processes, Workers, or VM realms intentionally keep independent request signals.
 - Development mode is determined by `process.env.NODE_ENV === 'development'`.
 - Controllers use `{cwd}/src/controllers` in development and `{cwd}/dist/controllers` in production with prefix `/-`.
+- Required catch-all controllers use the same `[...name]` final-segment convention as `@hile/http`; unmatched requests alone continue to Next.js.
 - `load(directory)` explicitly loads an additional controller directory with the same fixed conventions.
 - Call `use()` and `load()` before `start()`; configuration is frozen once startup begins.
 - Next.js exclusively owns `public/`, `distDir`, `/_next/static`, RSC, Server Functions, and `next.config`.
 - `start(onReady)` calls readiness only after Next is prepared and the shared HTTP server is listening.
 - The returned async stop function first asks the shared HTTP server to stop accepting new connections, then waits for HTTP drain and Next runtime cleanup concurrently. It tracks and terminates upgraded connections, including development HMR WebSockets, because Node's HTTP drain does not own their protocol lifecycle. Development shutdown also closes disposable HTTP/compiler connections, matching Next's own development-server policy; production HTTP requests retain graceful drain behavior.
-- Stop and startup rollback attempt both HTTP and Next cleanup even when either side fails. One failure is rethrown directly; multiple failures are reported together.
+- Normal stop attempts HTTP, Next, and startup-loaded controller cleanup even when one side fails. One cleanup failure is rethrown directly and multiple cleanup failures are reported together. Startup rollback also attempts every acquired cleanup, then preserves the original startup error.
 
 ## Anti-Patterns
 
@@ -1033,7 +1039,19 @@ File route examples:
 src/controllers/index.controller.ts -> /
 src/controllers/users/index.controller.ts -> /users
 src/controllers/users/[id].controller.ts -> /users/:id
+src/controllers/assets/[...paths].controller.ts -> /assets/*
 ```
+
+The catch-all declaration is required: `/assets/logo.svg` and `/assets/icons/logo.svg` match, while `/assets` does not. The controller reads the portable declaration name rather than find-my-way's internal wildcard key:
+
+```ts
+// src/controllers/assets/[...paths].controller.ts
+import { defineController } from '@hile/http'
+
+export default defineController('GET', (ctx) => ({ path: ctx.params.paths }))
+```
+
+`ctx.params.paths` is `icons/logo.svg` for `/assets/icons/logo.svg`. Dynamic names must be unique across the complete route and cannot be `__proto__`, `prototype`, or `constructor`. Static routes win over `[id]`, and `[id]` wins over `[...paths]`. Routes with the same structure but different parameter names conflict during loading. A configured `prefix` may use native `/:tenant` or bracket-style `/[tenant]` parameters and is compiled separately from portable file segments. Use `http.route()` when deliberately registering native find-my-way syntax by hand; native syntax is not accepted in file names.
 
 ## More Examples
 
@@ -1091,6 +1109,8 @@ Use `proxyIpHeader` only when the deployment uses a client-IP header other than 
 - `http.use(middleware)` registers Koa middleware before `listen()`.
 - `http.listen()` returns a close function.
 - `http.load(directory, options)` scans `*.controller.{ts,js,tsx,jsx,mjs}` by suffix.
+- `.d.ts` declarations and `.js.map` source maps are never controller routes.
+- File loading is atomic: invalid syntax, import failure, invalid exports, or conflicts unregister the routes already acquired by that batch.
 - `defineController()` supports method-only, method-plus-middlewares, and metadata-plus-Zod forms.
 - Response plugins transform handler return values and set `ctx.body` when the final result is not `undefined`.
 
@@ -1104,6 +1124,7 @@ Use `proxyIpHeader` only when the deployment uses a client-IP header other than 
 ## Verification Checklist
 
 - Controller files default-export `defineController(...)` or an array of controllers.
+- Required catch-all controllers use `[...name].controller.ts`, keep it as the final segment, and read the slash-joined value from `ctx.params.name`.
 - Controllers return response values.
 - Boot service awaits `http.load()` before `http.listen()`.
 - Zod schemas are used for validation, and parsed data is explicitly parsed when needed.
@@ -1139,7 +1160,15 @@ import redisService from '@hile/ioredis'
 import { createLogger } from '@hile/logger'
 import { Cache, defineCache, RedisCache } from '@hile/cache'
 import { Scheduler, defineJob } from '@hile/schedule'
-import { scanDirectory, compileRoutePath, toRouterPath, normalizePath, Loader } from '@hile/loader'
+import {
+  scanDirectory,
+  parseFileRoute,
+  compileFileRoute,
+  compileRoutePath,
+  toRouterPath,
+  normalizePath,
+  Loader,
+} from '@hile/loader'
 ```
 
 ## Copy-Paste Example
@@ -1207,6 +1236,8 @@ scheduler.add('daily-report', '0 8 * * *', async () => {
 - `Scheduler.add()` supports cron strings and `{ delay }`.
 - `Scheduler.load()` reads default exports from `*.schedule.*` files produced by `defineJob()`.
 - `scanDirectory()` matches `.ts`, `.js`, `.tsx`, `.jsx`, and `.mjs`.
+- `scanDirectory()` only parses and returns the structured `route` when routing consumers opt in with `fileRoutes: true`; that AST covers the file-relative route while `routePath` retains the configured prefix. This keeps router-native prefixes out of the portable file-name DSL and preserves non-routing loaders' filename contracts. `.d.ts` and source-map files do not match.
+- `parseFileRoute()` accepts static, `[id]`, and final required `[...paths]` segments, and rejects duplicate or object-meta dynamic names. `compileFileRoute()` targets either `find-my-way` or `rou3`, compiles configured native or bracket-style prefixes separately, and rejects parameter-name collisions across the complete route.
 
 ## Anti-Patterns
 
@@ -1974,6 +2005,8 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 ## Runtime And Lifecycle Notes
 
 - `MessageLoader` maps `*.msg.*` files to routes using `@hile/loader`.
+- Message files use the same portable DSL as controllers: `[id].msg.ts` declares one segment and `[...paths].msg.ts` declares one or more final segments. A catch-all handler reads the slash-joined value from `params.paths`; Hile compiles it to rou3's named catch-all syntax.
+- Optional catch-all, mixed or non-terminal dynamic segments, multiple catch-alls, duplicate dynamic names, unsafe or object-meta names, and router-native syntax in message file names fail during loading. The configured `prefix` may use rou3-native or bracket-style parameters, is compiled separately from file segments, and cannot duplicate a file parameter name; manual `register()` calls continue to accept rou3-native paths.
 - `defineMessage(fn, options?)` and `MessageLoader.register(path, fn, options?)` accept `MessageProtocolOptions`; `MessageLoader.dispatch(path, data, extras?, options?)` checks that protocol before invoking the matched handler.
 - Raw registrations and file-loaded messages share route ownership. Duplicate normalized paths and equal-specificity overlaps fail with `MessageRouteConflictError` (`HILE_MESSAGE_ROUTE_CONFLICT`). This includes `/a/:x` versus `/:x/b`; regex parameters are conservatively treated as unrestricted, so disjoint regexes with the same route shape also conflict. Distinct static branches and different-specificity static/parameter/catch-all precedence remain supported by rou3.
 - A `MessageLoader.load()` batch is invisible until it commits. Import, bind, or final commit failure rolls back only that batch. Unload is idempotent and owner-specific; an old release cannot remove a replacement. Concurrent loads or raw registration during a load fail with `MessageLoadInProgressError` (`HILE_MESSAGE_LOAD_IN_PROGRESS`); releasing existing owners remains allowed and cannot resurrect them at commit.
@@ -2017,6 +2050,7 @@ import { MessageWorkerThread } from '@hile/message-worker-thread'
 ## Verification Checklist
 
 - Micro message files default-export `defineMicroMessage(...)` and receive `invocation.context`.
+- Native untyped Micro message files may use `[...name].msg.ts`; typed Micro Contract implementations remain fixed-path only and reject all parameterized file routes.
 - RPC callers use `await app.call(..., { context })`.
 - Same-namespace `call()` and `stream()` use normal Registry discovery, while `streamPeer()` keeps its exact-address selection; all three use the normal WebSocket/modem transport path and callers do not branch on locality.
 - Streaming handlers are async generators.
@@ -3479,6 +3513,20 @@ export default defineController('GET', async () => {
 })
 ```
 
+Gateway-style required catch-all controller:
+
+```ts
+// src/controllers/[namespace]/[...paths].controller.ts
+import { defineController } from '@hile/http'
+
+export default defineController('GET', (ctx) => ({
+  namespace: ctx.params.namespace,
+  path: ctx.params.paths,
+}))
+```
+
+For `/-/blog/assets/logo.svg`, `paths` is `assets/logo.svg`. The catch-all requires at least one remaining segment and must be the final file-route segment.
+
 Next.js page:
 
 ```tsx
@@ -3923,6 +3971,21 @@ export default defineMicroMessage(async ({ data, invocation }) => {
   return { charged: true, input: data, requestId: invocation.context.values.requestId }
 })
 ```
+
+Untyped dynamic handlers may use a required catch-all when the operation is intentionally not a typed Micro Contract:
+
+```ts
+// src/messages/files/[...paths].msg.ts
+import { defineMicroMessage } from '@hile/micro'
+
+export default defineMicroMessage(async ({ params, data, invocation }) => ({
+  path: params.paths,
+  input: data,
+  requestId: invocation.context.values.requestId,
+}))
+```
+
+Typed Micro Contract `operation.path` values stay fixed and cannot use `[id]` or `[...paths]`.
 
 Provider boot:
 

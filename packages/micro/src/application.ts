@@ -5,7 +5,7 @@ import {
 } from '@hile/context';
 import { isMessageInput, MessageInputError, type MessageInput } from '@hile/message-modem';
 import { Client, type ClientStreamOptions } from './client';
-import { normalizePath, toRouterPath, type ScannedFile } from '@hile/loader';
+import { isScannedRouteFile, normalizePath, type ScannedFile } from '@hile/loader';
 import type { MessageProtocolOptions, MessageRegisterProps } from '@hile/message-loader';
 import { MicroContractError, type MicroContract } from '@hile/micro-contract';
 import { getOperationMetadata } from '@hile/micro-contract/internal';
@@ -364,7 +364,11 @@ export class Application extends Server {
     const typed = getMicroContractMessage(definition);
     if (!typed) return super.bind(file, definition);
     if (!this.contractRuntime) throw new TypeError('Use loadMicroContract() to load typed Micro messages');
-    const bound = this.contractRuntime.bind(typed.operation, typed.handler, toRouterPath(normalizePath(file.routePath)));
+    if (!isScannedRouteFile(file)) throw new TypeError(`file route was not parsed: ${file.relative}`);
+    if (file.route.segments.some(segment => segment.kind !== 'static')) {
+      throw new TypeError(`Typed Micro message ${file.relative} must use a fixed file route`);
+    }
+    const bound = this.contractRuntime.bind(typed.operation, typed.handler, normalizePath(file.routePath));
     try {
       const unregister = super.bind(file, {
         ...definition,

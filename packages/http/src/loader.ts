@@ -1,9 +1,16 @@
 import { pathToFileURL } from 'node:url';
 import { ControllerRegisterProps } from './controller';
 import { Http } from './http';
-import { glob } from 'glob';
-import { resolve, extname } from 'node:path';
-import { compileRoutePath, toRouterPath, normalizePath } from '@hile/loader';
+import compose from 'koa-compose';
+import type { Middleware } from 'koa';
+import {
+  compileFileRoute,
+  compileCompatibleRoutePath,
+  FileRouteBackend,
+  compileRoutePath,
+  scanDirectory,
+  type FileRoute,
+} from '@hile/loader';
 
 export type LoaderConflictStrategy = 'error' | 'warn' | 'override';
 
@@ -76,7 +83,10 @@ function summarizeExportType(value: unknown) {
 }
 
 export class Loader {
-  private readonly registeredRoutes = new Map<string, () => void>();
+  private readonly registeredRoutes = new Map<string, {
+    off: () => void;
+    source?: string;
+  }>();
 
   constructor(private readonly http: Http) { }
 
@@ -86,59 +96,110 @@ export class Loader {
   public compile(path: string, controllers: ControllerRegisterProps | ControllerRegisterProps[], options: LoaderCompileOptions = {
     defaultSuffix: '/index',
   }) {
+    const compiledPath = compileRoutePath(path, { defaultSuffix: options.defaultSuffix });
+    const compiled = compileCompatibleRoutePath(compiledPath, FileRouteBackend.FindMyWay, {
+      prefix: options.prefix,
+    });
+    return this.bindRoute(
+      compiled.path,
+      compiled.shape,
+      controllers,
+      options,
+      compiled.catchAllName,
+    );
+  }
+
+  private compileFileRoute(
+    route: FileRoute,
+    controllers: ControllerRegisterProps | ControllerRegisterProps[],
+    options: LoaderCompileOptions,
+    source?: string,
+  ) {
+    const compiled = compileFileRoute(route, FileRouteBackend.FindMyWay, { prefix: options.prefix });
+    return this.bindRoute(
+      compiled.path,
+      compiled.shape,
+      controllers,
+      options,
+      compiled.catchAllName,
+      source,
+    );
+  }
+
+  private bindRoute(
+    routePath: string,
+    routeShape: string,
+    controllers: ControllerRegisterProps | ControllerRegisterProps[],
+    options: LoaderCompileOptions,
+    catchAllName?: string,
+    source?: string,
+  ) {
     const callbacks: (() => void)[] = [];
     const normalizedControllers = normalizeControllers(controllers);
-    const routePath = toRouterPath(compileRoutePath(path, options));
     const strategy = options.conflict || 'error';
 
-    for (let i = 0; i < normalizedControllers.length; i++) {
-      const controller = normalizedControllers[i];
-      const { method, middlewares } = controller;
-      const routeKey = `${method}:${routePath}`;
-      const exists = this.registeredRoutes.get(routeKey);
+    try {
+      for (let i = 0; i < normalizedControllers.length; i++) {
+        const controller = normalizedControllers[i];
+        const { method, middlewares } = controller;
+        const routeKey = `${method}:${routePath}`;
+        const ownerKey = `${method}:${routeShape}`;
+        const exists = this.registeredRoutes.get(ownerKey);
 
-      if (exists) {
-        if (strategy === 'error') {
+        if (exists) {
+          if (strategy === 'error') {
+            options.onConflict?.({
+              routeKey,
+              method,
+              url: routePath,
+              strategy,
+              resolution: 'error',
+            });
+            const locations = [source, exists.source].filter(Boolean).join(' conflicts with ');
+            throw new Error(`route conflict: ${routeKey}${locations ? ` in ${locations}` : ''}`);
+          }
+
+          if (strategy === 'warn') {
+            options.onConflict?.({
+              routeKey,
+              method,
+              url: routePath,
+              strategy,
+              resolution: 'keep',
+            });
+            console.warn(`[hile/http] route conflict: ${routeKey}, keeping existing route`);
+            continue;
+          }
+
           options.onConflict?.({
             routeKey,
             method,
             url: routePath,
             strategy,
-            resolution: 'error',
+            resolution: 'override',
           });
-          throw new Error(`route conflict: ${routeKey}`);
+          exists.off();
+          this.registeredRoutes.delete(ownerKey);
         }
 
-        if (strategy === 'warn') {
-          options.onConflict?.({
-            routeKey,
-            method,
-            url: routePath,
-            strategy,
-            resolution: 'keep',
-          });
-          console.warn(`[hile/http] route conflict: ${routeKey}, keeping existing route`);
-          continue;
-        }
-
-        options.onConflict?.({
-          routeKey,
-          method,
-          url: routePath,
-          strategy,
-          resolution: 'override',
+        controller.data.url = routePath;
+        const routeMiddlewares = catchAllName
+          ? [requiredCatchAllMiddleware(catchAllName, middlewares)]
+          : middlewares;
+        const off = this.http.route(method, routePath, ...routeMiddlewares);
+        const registration = { off, source };
+        this.registeredRoutes.set(ownerKey, registration);
+        callbacks.push(() => {
+          const registered = this.registeredRoutes.get(ownerKey);
+          if (registered !== registration) return;
+          off();
+          this.registeredRoutes.delete(ownerKey);
         });
-        exists();
-        this.registeredRoutes.delete(routeKey);
       }
-
-      controller.data.url = routePath;
-      const off = this.http.route(method, routePath, ...middlewares);
-      this.registeredRoutes.set(routeKey, off);
-      callbacks.push(() => {
-        off();
-        this.registeredRoutes.delete(routeKey);
-      });
+    } catch (error) {
+      let index = callbacks.length;
+      while (index--) callbacks[index]();
+      throw error;
     }
 
     return () => {
@@ -155,31 +216,51 @@ export class Loader {
     suffix: 'controller',
   }) {
     const { suffix = 'controller', ...extras } = options;
+    const files = await scanDirectory(directory, { suffix, ...extras, fileRoutes: true });
+    const callbacks: (() => void)[] = [];
 
-    const files = await glob(`**/*.${suffix}.{ts,js,tsx,jsx}`, { cwd: directory });
+    try {
+      const pending = await Promise.all(files.map(async (file) => {
+        const controller = await import(pathToFileURL(file.absolute).href);
+        const { default: fn } = controller;
 
-    const callbacks = await Promise.all(files.map(async (file) => {
-      const path = resolve(directory, file);
-      const ext = extname(path);
-      const url = file.substring(0, file.length - suffix.length - ext.length - 1);
-      const _file = pathToFileURL(path).href;
-      const controller = await import(_file);
-      const { default: fn } = controller;
+        let normalized: ControllerRegisterProps[];
+        try {
+          normalized = normalizeControllers(fn);
+        } catch (error: any) {
+          const summary = summarizeExportType(fn);
+          throw new Error(`invalid service file: ${file.relative} (${summary}) - ${error?.message || String(error)}`);
+        }
 
-      let normalized: ControllerRegisterProps[];
-      try {
-        normalized = normalizeControllers(fn);
-      } catch (error: any) {
-        const summary = summarizeExportType(fn);
-        throw new Error(`invalid service file: ${file} (${summary}) - ${error?.message || String(error)}`);
+        return { file: file.route, controllers: normalized, source: file.relative };
+      }));
+
+      for (const item of pending) {
+        callbacks.push(this.compileFileRoute(item.file, item.controllers, extras, item.source));
       }
-
-      return this.compile(normalizePath(url), normalized, extras);
-    }));
+    } catch (error) {
+      let index = callbacks.length;
+      while (index--) callbacks[index]();
+      throw error;
+    }
 
     return () => {
       let i = callbacks.length;
       while (i--) callbacks[i]();
     }
   }
+}
+
+function requiredCatchAllMiddleware(name: string, middlewares: Middleware[]): Middleware {
+  const run = compose(middlewares);
+  return (ctx, next) => {
+    const value = ctx.params?.['*'];
+    if (typeof value !== 'string' || value.length === 0) return next();
+    // Keep renamed route params on a null-prototype object so parameter names
+    // cannot interact with Object.prototype setters.
+    const params = Object.assign(Object.create(null), ctx.params, { [name]: value });
+    delete params['*'];
+    ctx.params = params;
+    return run(ctx, next);
+  };
 }

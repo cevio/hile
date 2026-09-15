@@ -1,18 +1,26 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { dirname, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { AddressInfo } from 'node:net'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { HttpNext } from './index'
 
 describe('HttpNext integration', () => {
   let stop: (() => Promise<void>) | undefined
   let socket: WebSocket | undefined
+  let unloadControllers: (() => void) | undefined
+  let controllersDirectory: string | undefined
 
   afterEach(async () => {
     socket?.close()
     socket = undefined
     await stop?.()
     stop = undefined
+    unloadControllers?.()
+    unloadControllers = undefined
+    if (controllersDirectory) await rm(controllersDirectory, { recursive: true, force: true })
+    controllersDirectory = undefined
     vi.unstubAllEnvs()
   })
 
@@ -28,6 +36,20 @@ describe('HttpNext integration', () => {
       proxy: true,
       maxIpsCount: 1,
     })
+    controllersDirectory = await mkdtemp(join(tmpdir(), 'hile-http-next-controllers-'))
+    const namespaceDirectory = join(controllersDirectory, '[namespace]')
+    await mkdir(namespaceDirectory)
+    await writeFile(join(namespaceDirectory, '[...paths].controller.js'), `
+      export default {
+        id: 1,
+        method: 'GET',
+        middlewares: [(ctx) => {
+          ctx.body = { source: 'hile-controller', namespace: ctx.params.namespace, paths: ctx.params.paths }
+        }],
+        data: {},
+      }
+    `)
+    unloadControllers = await app.load(controllersDirectory)
     app.use(async (ctx, next) => {
       if (ctx.path !== '/proxy-session') return next()
       ctx.cookies.set('session', 'token', { httpOnly: true, secure: true, sameSite: 'lax' })
@@ -53,6 +75,15 @@ describe('HttpNext integration', () => {
     const publicFile = await fetch(`${origin}/probe.txt`)
     expect(publicFile.status).toBe(200)
     expect(await publicFile.text()).toBe('public-value\n')
+
+    const catchAllController = await fetch(`${origin}/-/blog/assets/logo.svg`)
+    expect(catchAllController.status).toBe(200)
+    expect(catchAllController.headers.get('content-type')).toContain('application/json')
+    expect(await catchAllController.json()).toEqual({
+      source: 'hile-controller',
+      namespace: 'blog',
+      paths: 'assets/logo.svg',
+    })
 
     const proxiedSession = await fetch(`${origin}/proxy-session`, {
       headers: {

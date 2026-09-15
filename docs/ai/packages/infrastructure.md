@@ -26,7 +26,15 @@ import redisService from '@hile/ioredis'
 import { createLogger } from '@hile/logger'
 import { Cache, defineCache, RedisCache } from '@hile/cache'
 import { Scheduler, defineJob } from '@hile/schedule'
-import { scanDirectory, compileRoutePath, toRouterPath, normalizePath, Loader } from '@hile/loader'
+import {
+  scanDirectory,
+  parseFileRoute,
+  compileFileRoute,
+  compileRoutePath,
+  toRouterPath,
+  normalizePath,
+  Loader,
+} from '@hile/loader'
 ```
 
 ## Copy-Paste Example
@@ -94,6 +102,8 @@ scheduler.add('daily-report', '0 8 * * *', async () => {
 - `Scheduler.add()` supports cron strings and `{ delay }`.
 - `Scheduler.load()` reads default exports from `*.schedule.*` files produced by `defineJob()`.
 - `scanDirectory()` matches `.ts`, `.js`, `.tsx`, `.jsx`, and `.mjs`.
+- `scanDirectory()` only parses and returns the structured `route` when routing consumers opt in with `fileRoutes: true`; that AST covers the file-relative route while `routePath` retains the configured prefix. This keeps router-native prefixes out of the portable file-name DSL and preserves non-routing loaders' filename contracts. `.d.ts` and source-map files do not match.
+- `parseFileRoute()` accepts static, `[id]`, and final required `[...paths]` segments, and rejects duplicate or object-meta dynamic names. `compileFileRoute()` targets either `find-my-way` or `rou3`, compiles configured native or bracket-style prefixes separately, and rejects parameter-name collisions across the complete route.
 
 ## Anti-Patterns
 

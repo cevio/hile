@@ -39,8 +39,11 @@ Hile uses `@hile/loader` conventions:
 
 - `index.controller.ts` with default suffix `/index` maps to the parent path.
 - `[id].controller.ts` maps to `:id`.
+- `[...paths].controller.ts` is a required catch-all. It matches one or more remaining segments and exposes their slash-joined value as `ctx.params.paths`.
 - Backslashes normalize to forward slashes.
 - Parenthesized path segments are stripped by `normalizePath()`.
+- Dynamic and catch-all declarations must occupy a complete segment, use a safe JavaScript identifier, avoid object-meta names (`__proto__`, `prototype`, `constructor`), and have a unique name within the route. A catch-all must be last and unique. Optional catch-all (`[[...paths]]`), mixed segments, duplicate or object-meta names, non-terminal catch-all, and router-native file names are rejected during loading with the file path in the error.
+- Use `[...paths]` instead of a literal `*` file name. It is portable across npm packing and Windows, while Hile compiles it to the active router's native syntax.
 
 ## Controller Responses
 

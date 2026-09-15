@@ -1,4 +1,4 @@
-import { Loader, toRouterPath, normalizePath } from '@hile/loader';
+import { compileFileRoute, FileRouteBackend, isScannedRouteFile, Loader } from '@hile/loader';
 import type { ScannedFile } from '@hile/loader';
 import { createRouter, addRoute, findRoute, removeRoute } from 'rou3';
 import type { RouterContext } from 'rou3';
@@ -116,13 +116,15 @@ export class MessageLoader extends Loader<MessageRegisterProps> {
       suffix: props.suffix || 'msg',
       defaultSuffix: props.defaultSuffix || '/index',
       prefix: props.prefix || '',
+      fileRoutes: true,
     });
     this.router = createRouter();
   }
 
   protected bind(file: ScannedFile, metadata: MessageRegisterProps) {
-    const routePath = toRouterPath(normalizePath(file.routePath));
-    return this.registerOwner(routePath, metadata);
+    if (!isScannedRouteFile(file)) throw new TypeError(`file route was not parsed: ${file.relative}`);
+    const routePath = compileFileRoute(file.route, FileRouteBackend.Rou3, { prefix: this.options.prefix }).path;
+    return this.registerOwner(routePath, metadata, file.relative);
   }
 
   /** A batch becomes visible atomically; concurrent writes must wait for its result. */
@@ -148,12 +150,12 @@ export class MessageLoader extends Loader<MessageRegisterProps> {
     }
   }
 
-  private registerOwner(routePath: string, metadata: MessageRegisterProps<any, any>): () => void {
+  private registerOwner(routePath: string, metadata: MessageRegisterProps<any, any>, source?: string): () => void {
     if (!metadata || typeof metadata.fn !== 'function') {
       throw new TypeError('Invalid message handler');
     }
     validateProtocol(metadata.protocol);
-    const owner = createRouteOwner(normalizeMessagePath(routePath), { ...metadata });
+    const owner = createRouteOwner(normalizeMessagePath(routePath), { ...metadata }, source);
     const owners = this.pendingOwners ?? this.owners;
     assertRouteAvailable(owner, owners);
     owners.add(owner);

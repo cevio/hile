@@ -87,6 +87,7 @@ const result = await app.call('example.service', '/ping', { hello: 'world' }, { 
 ## Verify
 
 - Micro message files default-export `defineMicroMessage(...)` and receive `invocation.context`.
+- Native untyped Micro message files may use `[...name].msg.ts`; typed Micro Contract implementations remain fixed-path only and reject all parameterized file routes.
 - RPC callers use `await app.call(..., { context })`.
 - Same-namespace `call()` and `stream()` use normal Registry discovery, while `streamPeer()` keeps its exact-address selection; all three use the normal WebSocket/modem transport path and callers do not branch on locality.
 - Streaming handlers are async generators.

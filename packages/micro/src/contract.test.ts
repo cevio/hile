@@ -104,6 +104,25 @@ afterEach(async () => {
 });
 
 describe('file-loaded Micro contracts', () => {
+  it('lets untyped file messages inherit the safe required catch-all route', async () => {
+    const app = application()
+    const unload = await app.load(await files({
+      'events/[...paths].msg.mjs': defineMicroMessage(({ params }) => params.paths),
+    }))
+    expect(await app.dispatch('/events/one/two', {})).toBe('one/two')
+    await expect(app.dispatch('/events', {})).rejects.toThrow()
+    unload()
+    await expect(app.dispatch('/events/one/two', {})).rejects.toThrow()
+  })
+
+  it('rejects catch-all files for typed fixed-path Micro operations with file context', async () => {
+    const directory = await files({
+      '[...paths].msg.mjs': defineMicroMessage(contract.operations.echo, ({ data }) => data),
+    })
+    await expect(loadMicroContract(application(), contract, directory))
+      .rejects.toThrow(/\[\.\.\.paths\]\.msg\.mjs.*fixed file route/)
+  })
+
   it('requires successful loading and activation before local or URL invocation', async () => {
     const handler = vi.fn(({ data, invocation: call }) => {
       expect(call.context.values.actor).toBe('reader');
@@ -201,7 +220,7 @@ describe('file-loaded Micro contracts', () => {
       namespace: contract.namespace,
       registry: { host: '127.0.0.1', port: 9876 },
       advertiseHost: '127.0.0.1',
-      prefix: '/prefix',
+      prefix: '/prefix/',
     });
     const binding = await loadMicroContract(app, grouped, await files({
       '(group)/echo/index.msg.mjs': defineMicroMessage(grouped.operations.echo, ({ data }) => data),

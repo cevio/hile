@@ -395,6 +395,8 @@ describe('HttpNext', () => {
   })
 
   it('onReady 失败时关闭已监听的 HTTP server 和 Next runtime', async () => {
+    const unloadControllers = vi.fn()
+    loadMock.mockResolvedValueOnce(unloadControllers)
     const app = new HttpNext({ port: 3000, cwd: '/proj' })
 
     await expect(app.start(async () => {
@@ -403,5 +405,59 @@ describe('HttpNext', () => {
 
     expect(closeHttpMock).toHaveBeenCalledOnce()
     expect(nextClose).toHaveBeenCalledOnce()
+    expect(unloadControllers).toHaveBeenCalledOnce()
+  })
+
+  it('启动与控制器卸载同时失败时保留原始启动错误', async () => {
+    const startupError = new Error('ready failed')
+    const unloadControllers = vi.fn(() => { throw new Error('controller unload failed') })
+    loadMock.mockResolvedValueOnce(unloadControllers)
+    const app = new HttpNext({ port: 3000, cwd: '/proj' })
+
+    await expect(app.start(async () => { throw startupError })).rejects.toBe(startupError)
+
+    expect(closeHttpMock).toHaveBeenCalledOnce()
+    expect(nextClose).toHaveBeenCalledOnce()
+    expect(unloadControllers).toHaveBeenCalledOnce()
+  })
+
+  it('正常停止后卸载启动时加载的控制器', async () => {
+    const unloadControllers = vi.fn()
+    loadMock.mockResolvedValueOnce(unloadControllers)
+    const app = new HttpNext({ port: 3000, cwd: '/proj' })
+
+    const stop = await app.start()
+    await stop()
+    await stop()
+
+    expect(unloadControllers).toHaveBeenCalledOnce()
+  })
+
+  it('控制器卸载失败时仍完成 HTTP 与 Next 清理并抛出该错误', async () => {
+    const unloadError = new Error('controller unload failed')
+    const unloadControllers = vi.fn(() => { throw unloadError })
+    loadMock.mockResolvedValueOnce(unloadControllers)
+    const app = new HttpNext({ port: 3000, cwd: '/proj' })
+
+    const stop = await app.start()
+
+    await expect(stop()).rejects.toBe(unloadError)
+    expect(closeHttpMock).toHaveBeenCalledOnce()
+    expect(nextClose).toHaveBeenCalledOnce()
+    expect(unloadControllers).toHaveBeenCalledOnce()
+  })
+
+  it('HTTP、Next 与控制器卸载都失败时保留全部错误', async () => {
+    const drainError = new Error('drain failed')
+    const nextError = new Error('next cleanup failed')
+    const unloadError = new Error('controller unload failed')
+    closeHttpMock.mockRejectedValueOnce(drainError)
+    nextClose.mockRejectedValueOnce(nextError)
+    loadMock.mockResolvedValueOnce(vi.fn(() => { throw unloadError }))
+    const app = new HttpNext({ port: 3000, cwd: '/proj' })
+
+    const stop = await app.start()
+
+    await expect(stop()).rejects.toMatchObject({ errors: [drainError, nextError, unloadError] })
   })
 })

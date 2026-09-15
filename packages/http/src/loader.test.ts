@@ -8,10 +8,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 describe('Loader', () => {
-  let closeServer: (() => void) | undefined
+  let closeServer: (() => Promise<void>) | undefined
 
-  afterEach(() => {
-    closeServer?.()
+  afterEach(async () => {
+    await closeServer?.()
     closeServer = undefined
   })
 
@@ -30,6 +30,191 @@ describe('Loader', () => {
   })
 
   describe('compile - 单个路由绑定编译', () => {
+    it('matches a required catch-all and exposes only its declared slash-joined parameter', async () => {
+      const http = new Http({ port: 5041 })
+      const loader = new Loader(http)
+      loader.compile('/[tenant]/files/[...paths]', defineController('GET', (ctx) => ({
+        tenant: ctx.params.tenant,
+        paths: ctx.params.paths,
+        hasRaw: Object.hasOwn(ctx.params, '*'),
+        nullPrototype: Object.getPrototypeOf(ctx.params) === null,
+      })))
+      loader.compile('/:tenant/archive/[...entries]', defineController('GET', (ctx) => ({
+        tenant: ctx.params.tenant,
+        entries: ctx.params.entries,
+        hasRaw: Object.hasOwn(ctx.params, '*'),
+      })))
+
+      closeServer = await http.listen()
+      const matched = await fetch('http://127.0.0.1:5041/acme/files/a/b/c')
+      expect(await matched.json()).toEqual({
+        tenant: 'acme',
+        paths: 'a/b/c',
+        hasRaw: false,
+        nullPrototype: true,
+      })
+      expect((await fetch('http://127.0.0.1:5041/acme/files/')).status).toBe(404)
+      expect(await (await fetch('http://127.0.0.1:5041/acme/archive/2026/entry')).json()).toEqual({
+        tenant: 'acme',
+        entries: '2026/entry',
+        hasRaw: false,
+      })
+      expect((await fetch('http://127.0.0.1:5041/acme/archive/')).status).toBe(404)
+    })
+
+    it('keeps static, parameter, and catch-all precedence independent of registration order', async () => {
+      const http = new Http({ port: 5042 })
+      const loader = new Loader(http)
+      loader.compile('/assets/[...paths]', defineController('GET', () => 'catch-all'))
+      loader.compile('/assets/[name]', defineController('GET', () => 'parameter'))
+      loader.compile('/assets/readme', defineController('GET', () => 'static'))
+      loader.compile('/assets/...', defineController('GET', () => 'literal-dots'))
+      loader.compile('/reverse-assets/readme', defineController('GET', () => 'reverse-static'))
+      loader.compile('/reverse-assets/[name]', defineController('GET', () => 'reverse-parameter'))
+      loader.compile('/reverse-assets/[...paths]', defineController('GET', () => 'reverse-catch-all'))
+
+      closeServer = await http.listen()
+      expect(await (await fetch('http://127.0.0.1:5042/assets/readme')).text()).toBe('static')
+      expect(await (await fetch('http://127.0.0.1:5042/assets/license')).text()).toBe('parameter')
+      expect(await (await fetch('http://127.0.0.1:5042/assets/icons/logo.svg')).text()).toBe('catch-all')
+      expect(await (await fetch('http://127.0.0.1:5042/assets/...')).text()).toBe('literal-dots')
+      expect(await (await fetch('http://127.0.0.1:5042/reverse-assets/readme')).text()).toBe('reverse-static')
+      expect(await (await fetch('http://127.0.0.1:5042/reverse-assets/license')).text()).toBe('reverse-parameter')
+      expect(await (await fetch('http://127.0.0.1:5042/reverse-assets/icons/logo.svg')).text()).toBe('reverse-catch-all')
+    })
+
+    it('rejects equivalent parameter and catch-all shapes with different names', () => {
+      const http = new Http({ port: 5043 })
+      const loader = new Loader(http)
+      loader.compile('/users/[id]', defineController('GET', () => 'id'))
+      expect(() => loader.compile('/users/[name]', defineController('GET', () => 'name')))
+        .toThrow('route conflict')
+
+      loader.compile('/files/[...paths]', defineController('POST', () => 'paths'))
+      expect(() => loader.compile('/files/[...rest]', defineController('POST', () => 'rest')))
+        .toThrow('route conflict')
+    })
+
+    it('keeps configured prefixes distinct from encoded file-route shapes', () => {
+      const http = { route: vi.fn(() => vi.fn()) } as unknown as Http
+      const loader = new Loader(http)
+
+      loader.compile('/[id]', defineController('GET', () => undefined), { prefix: '/s:users' })
+
+      expect(() => loader.compile('/users/[id]', defineController('GET', () => undefined))).not.toThrow()
+    })
+
+    it('normalizes equivalent dynamic prefix shapes for conflict detection', () => {
+      const http = { route: vi.fn(() => vi.fn()) } as unknown as Http
+      const loader = new Loader(http)
+      loader.compile('/users/[id]', defineController('GET', () => undefined), { prefix: '/:tenant' })
+
+      expect(() => loader.compile('/users/[name]', defineController('GET', () => undefined), {
+        prefix: '/:workspace',
+      })).toThrow('route conflict')
+    })
+
+    it('normalizes configured and inline prefixes to the same conflict shape', () => {
+      const http = { route: vi.fn(() => vi.fn()) } as unknown as Http
+      const loader = new Loader(http)
+      loader.compile('/users/[id]', defineController('GET', () => undefined), { prefix: '/:tenant' })
+
+      expect(() => loader.compile('/:workspace/users/[name]', defineController('GET', () => undefined)))
+        .toThrow('route conflict')
+    })
+
+    it('normalizes equivalent mixed native and portable shapes for conflict detection', () => {
+      const http = { route: vi.fn(() => vi.fn()) } as unknown as Http
+      const loader = new Loader(http)
+      loader.compile('/:tenant/users/[id]', defineController('GET', () => undefined))
+
+      expect(() => loader.compile('/:workspace/users/[name]', defineController('GET', () => undefined)))
+        .toThrow('route conflict')
+    })
+
+    it('applies conflict policy across pure and mixed spellings of the same route', () => {
+      const route = vi.fn(() => vi.fn())
+      const onConflict = vi.fn()
+      const loader = new Loader({ route } as unknown as Http)
+      loader.compile('/[tenant]/users/[id]', defineController('GET', () => undefined))
+
+      loader.compile('/:tenant/users/[id]', defineController('GET', () => undefined), {
+        conflict: 'warn',
+        onConflict,
+      })
+
+      expect(route).toHaveBeenCalledTimes(1)
+      expect(onConflict).toHaveBeenCalledWith(expect.objectContaining({ resolution: 'keep' }))
+    })
+
+    it('keeps escaped literal colons distinct in native routes', () => {
+      const route = vi.fn(() => vi.fn())
+      const loader = new Loader({ route } as unknown as Http)
+
+      loader.compile('/literal::foo', defineController('GET', () => undefined))
+      expect(() => loader.compile('/literal::bar', defineController('GET', () => undefined)))
+        .not.toThrow()
+      expect(route).toHaveBeenCalledTimes(2)
+    })
+
+    it('normalizes find-my-way parameter names that start with digits', () => {
+      const route = vi.fn(() => vi.fn())
+      const loader = new Loader({ route } as unknown as Http)
+
+      loader.compile('/:123', defineController('GET', () => undefined))
+      expect(() => loader.compile('/:456', defineController('GET', () => undefined)))
+        .toThrow('route conflict')
+      expect(route).toHaveBeenCalledTimes(1)
+    })
+
+    it('keeps direct compile calls with find-my-way regex syntax backward compatible', async () => {
+      const http = new Http({ port: 5046 })
+      const loader = new Loader(http)
+      loader.compile('/items/:id(\\d+)', defineController('GET', (ctx) => ctx.params.id))
+      loader.compile('/codes/:id([0-9]+)', defineController('GET', (ctx) => ctx.params.id))
+
+      closeServer = await http.listen()
+      expect(await (await fetch('http://127.0.0.1:5046/items/42')).text()).toBe('42')
+      expect((await fetch('http://127.0.0.1:5046/items/text')).status).toBe(404)
+      expect(await (await fetch('http://127.0.0.1:5046/codes/42')).text()).toBe('42')
+      expect((await fetch('http://127.0.0.1:5046/codes/text')).status).toBe(404)
+    })
+
+    it('keeps mixed parameter suffixes backward compatible in direct compile calls', () => {
+      const route = vi.fn(() => vi.fn())
+      const loader = new Loader({ route } as unknown as Http)
+
+      loader.compile('/files/[id].json', defineController('GET', () => undefined))
+
+      expect(route).toHaveBeenCalledWith('GET', '/files/:id.json', expect.any(Function))
+    })
+
+    it('normalizes route groups before classifying file-route syntax', () => {
+      const route = vi.fn(() => vi.fn())
+      const loader = new Loader({ route } as unknown as Http)
+
+      loader.compile('/(admin)/users/[id]', defineController('GET', () => undefined))
+      loader.compile('/(root)/index', defineController('POST', () => undefined))
+
+      expect(route).toHaveBeenCalledWith('GET', '/users/:id', expect.any(Function))
+      expect(route).toHaveBeenCalledWith('POST', '/', expect.any(Function))
+    })
+
+    it('keeps a native dynamic prefix while compiling portable path segments', () => {
+      const route = vi.fn(() => vi.fn())
+      const loader = new Loader({ route } as unknown as Http)
+
+      loader.compile('/users/[id]', defineController('GET', () => undefined), { prefix: '/:version' })
+      loader.compile('/:tenant/users/[id]', defineController('POST', () => undefined))
+      loader.compile('/users/[id]', defineController('PATCH', () => undefined), { prefix: '/[workspace]' })
+
+      expect(route).toHaveBeenCalledWith('GET', '/:version/users/:id', expect.any(Function))
+      expect(route).toHaveBeenCalledWith('POST', '/:tenant/users/:id', expect.any(Function))
+      expect(route).toHaveBeenCalledWith('PATCH', '/:workspace/users/:id', expect.any(Function))
+      expect(() => loader.compile('/files/[...paths]', defineController('DELETE', () => undefined), {
+        prefix: '/:paths',
+      })).toThrow(/duplicated/)
+    })
     it('正确绑定路由并响应请求', async () => {
       const http = new Http({ port: 5001 })
       const loader = new Loader(http)
@@ -206,12 +391,30 @@ describe('Loader', () => {
       const http = new Http({ port: 5015 })
       const loader = new Loader(http)
 
-      loader.compile('/override', defineController('GET', () => 'old'))
-      loader.compile('/override', defineController('GET', () => 'new'), { conflict: 'override' })
+      const releaseOld = loader.compile('/override/[...paths]', defineController('GET', () => 'old'))
+      const releaseNew = loader.compile('/override/[...rest]', defineController('GET', (ctx) => ctx.params.rest), {
+        conflict: 'override',
+      })
+      releaseOld()
 
       closeServer = await http.listen()
-      const res = await fetch('http://127.0.0.1:5015/override')
-      expect(await res.text()).toBe('new')
+      const res = await fetch('http://127.0.0.1:5015/override/a/b')
+      expect(await res.text()).toBe('a/b')
+      releaseNew()
+      expect((await fetch('http://127.0.0.1:5015/override/a/b')).status).toBe(404)
+    })
+
+    it('allows an unload cleanup to be retried after it throws', () => {
+      const off = vi.fn()
+        .mockImplementationOnce(() => { throw new Error('off failed') })
+        .mockImplementationOnce(() => undefined)
+      const http = { route: vi.fn(() => off) } as unknown as Http
+      const loader = new Loader(http)
+      const unload = loader.compile('/retry-unload', defineController('GET', () => undefined))
+
+      expect(() => unload()).toThrow('off failed')
+      expect(() => unload()).not.toThrow()
+      expect(off).toHaveBeenCalledTimes(2)
     })
 
     it('onConflict 回调可获得冲突上下文', () => {
@@ -233,6 +436,90 @@ describe('Loader', () => {
   })
 
   describe('from - 文件系统加载', () => {
+    it('keeps a batch invisible until every controller module has imported', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'hile-http-loader-'))
+      let releaseImport: (() => void) | undefined
+      let loading: Promise<() => void> | undefined
+      try {
+        const gatedController = (id: number, value: string) => `
+          globalThis.__hileHttpLoaderImportCount++
+          await globalThis.__hileHttpLoaderImportGate
+          export default { id: ${id}, method: 'GET', middlewares: [(ctx) => { ctx.body = '${value}' }], data: {} }
+        `
+        await writeFile(root + '/a.controller.js', gatedController(1, 'a'), 'utf8')
+        await writeFile(root + '/z.controller.js', gatedController(2, 'z'), 'utf8')
+        ;(globalThis as any).__hileHttpLoaderImportCount = 0
+        ;(globalThis as any).__hileHttpLoaderImportGate = new Promise<void>((resolve) => {
+          releaseImport = resolve
+        })
+
+        const http = new Http({ port: 5047 })
+        const loader = new Loader(http)
+        closeServer = await http.listen()
+        loading = loader.from(root)
+
+        await vi.waitFor(() => expect((globalThis as any).__hileHttpLoaderImportCount).toBe(2))
+        expect((await fetch('http://127.0.0.1:5047/a')).status).toBe(404)
+        expect((await fetch('http://127.0.0.1:5047/z')).status).toBe(404)
+
+        releaseImport()
+        const unload = await loading
+        expect(await (await fetch('http://127.0.0.1:5047/a')).text()).toBe('a')
+        expect(await (await fetch('http://127.0.0.1:5047/z')).text()).toBe('z')
+        unload()
+      } finally {
+        releaseImport?.()
+        await loading?.then(unload => unload()).catch(() => {})
+        delete (globalThis as any).__hileHttpLoaderImportCount
+        delete (globalThis as any).__hileHttpLoaderImportGate
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+
+    it('rolls back equivalent file routes and permits a clean retry', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'hile-http-loader-'))
+      try {
+        await mkdir(join(root, 'users'), { recursive: true })
+        const controller = (value: string) =>
+          `export default { id: 1, method: 'GET', middlewares: [(ctx) => { ctx.body = '${value}' }], data: {} }`
+        await writeFile(join(root, 'users', '[id].controller.js'), controller('id'), 'utf8')
+        await writeFile(join(root, 'users', '[name].controller.js'), controller('name'), 'utf8')
+
+        const http = new Http({ port: 5044 })
+        const loader = new Loader(http)
+        const conflict = await loader.from(root).catch(error => error as Error)
+        expect(conflict.message).toContain('route conflict')
+        expect(conflict.message).toContain('users/[id].controller.js')
+        expect(conflict.message).toContain('users/[name].controller.js')
+        await rm(join(root, 'users', '[name].controller.js'))
+        const unload = await loader.from(root)
+        closeServer = await http.listen()
+        expect(await (await fetch('http://127.0.0.1:5044/users/42')).text()).toBe('id')
+        unload()
+        expect((await fetch('http://127.0.0.1:5044/users/42')).status).toBe(404)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+
+    it('does not treat declaration files or source maps as controllers', async () => {
+      const root = await mkdtemp(join(tmpdir(), 'hile-http-loader-'))
+      try {
+        await writeFile(root + '/valid.controller.js',
+          `export default { id: 1, method: 'GET', middlewares: [(ctx) => { ctx.body = 'valid' }], data: {} }`, 'utf8')
+        await writeFile(root + '/types.controller.d.ts', 'not valid JavaScript', 'utf8')
+        await writeFile(root + '/valid.controller.js.map', 'not valid JavaScript', 'utf8')
+        const http = new Http({ port: 5045 })
+        const loader = new Loader(http)
+        const unload = await loader.from(root)
+        closeServer = await http.listen()
+        expect(await (await fetch('http://127.0.0.1:5045/valid')).text()).toBe('valid')
+        unload()
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    })
+
     it('非法默认导出时错误信息包含文件路径与导出摘要', async () => {
       const root = await mkdtemp(join(tmpdir(), 'hile-http-loader-'))
       try {

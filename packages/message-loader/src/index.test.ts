@@ -215,6 +215,84 @@ describe('MessageLoader', () => {
   })
 
   describe('动态路由参数', () => {
+    it('loads a grouped index file at the root route', async () => {
+      const loader = new MessageLoader({ suffix: 'msg' })
+      await writeMessageFile('(group)/index.msg.js', `export default { id: 1, fn: () => 'root' }`)
+
+      const off = await loader.load(root)
+      expect(await loader.dispatch('/', {})).toBe('root')
+      off()
+    })
+
+    it('keeps a native dynamic prefix separate from portable file segments', async () => {
+      const loader = new MessageLoader({ suffix: 'msg', prefix: '/:tenant' })
+      await writeMessageFile('users/[id].msg.js', `
+        export default { id: 1, fn: (ctx) => ({ tenant: ctx.params.tenant, workspace: ctx.params.workspace, id: ctx.params.id }) }
+      `)
+
+      const off = await loader.load(root)
+      expect(await loader.dispatch('/acme/users/42', {})).toEqual({ tenant: 'acme', workspace: undefined, id: '42' })
+      off()
+
+      const bracketLoader = new MessageLoader({ suffix: 'msg', prefix: '/[workspace]' })
+      const offBracket = await bracketLoader.load(root)
+      expect(await bracketLoader.dispatch('/docs/users/42', {})).toEqual({ tenant: undefined, workspace: 'docs', id: '42' })
+      offBracket()
+    })
+
+    it('rejects a prefix that duplicates a file-route parameter name', async () => {
+      const loader = new MessageLoader({ suffix: 'msg', prefix: '/:paths' })
+      await writeMessageFile('files/[...paths].msg.js', `export default { id: 1, fn: () => 'nope' }`)
+
+      await expect(loader.load(root)).rejects.toThrow(/duplicated/)
+    })
+
+    it('loads a required catch-all with its declared slash-joined parameter', async () => {
+      const loader = new MessageLoader({ suffix: 'msg' })
+      await writeMessageFile('tenants/[tenant]/files/[...paths].msg.js', `
+        export default { id: 1, fn: (ctx) => ({ tenant: ctx.params.tenant, paths: ctx.params.paths, raw: ctx.params['*'] }) }
+      `)
+      const off = await loader.load(root)
+      expect(await loader.dispatch('/tenants/acme/files/a/b/c', {})).toEqual({
+        tenant: 'acme',
+        paths: 'a/b/c',
+        raw: undefined,
+      })
+      await expect(loader.dispatch('/tenants/acme/files', {})).rejects.toThrow(NotFoundException)
+      await expect(loader.dispatch('/tenants/acme/files/', {})).rejects.toThrow(NotFoundException)
+      off()
+      await expect(loader.dispatch('/tenants/acme/files/a/b', {})).rejects.toThrow(NotFoundException)
+    })
+
+    it('keeps file-route static, parameter, and catch-all precedence', async () => {
+      const loader = new MessageLoader({ suffix: 'msg' })
+      await writeMessageFile('assets/[...paths].msg.js', `export default { id: 1, fn: () => 'catch-all' }`)
+      await writeMessageFile('assets/[name].msg.js', `export default { id: 2, fn: () => 'parameter' }`)
+      await writeMessageFile('assets/readme.msg.js', `export default { id: 3, fn: () => 'static' }`)
+      await writeMessageFile('reverse-assets/readme.msg.js', `export default { id: 4, fn: () => 'reverse-static' }`)
+      await writeMessageFile('reverse-assets/[name].msg.js', `export default { id: 5, fn: () => 'reverse-parameter' }`)
+      await writeMessageFile('reverse-assets/[...paths].msg.js', `export default { id: 6, fn: () => 'reverse-catch-all' }`)
+      const off = await loader.load(root)
+      expect(await loader.dispatch('/assets/readme', {})).toBe('static')
+      expect(await loader.dispatch('/assets/license', {})).toBe('parameter')
+      expect(await loader.dispatch('/assets/icons/logo.svg', {})).toBe('catch-all')
+      expect(await loader.dispatch('/reverse-assets/readme', {})).toBe('reverse-static')
+      expect(await loader.dispatch('/reverse-assets/license', {})).toBe('reverse-parameter')
+      expect(await loader.dispatch('/reverse-assets/icons/logo.svg', {})).toBe('reverse-catch-all')
+      off()
+    })
+
+    it('rejects equivalent catch-all file routes with different names and rolls back', async () => {
+      const loader = new MessageLoader({ suffix: 'msg' })
+      await writeMessageFile('files/[...paths].msg.js', `export default { id: 1, fn: () => 'paths' }`)
+      await writeMessageFile('files/[...rest].msg.js', `export default { id: 2, fn: () => 'rest' }`)
+      const conflict = await loader.load(root).catch(error => error as Error)
+      expect(conflict.message).toContain('Message routes conflict')
+      expect(conflict.message).toContain('files/[...paths].msg.js')
+      expect(conflict.message).toContain('files/[...rest].msg.js')
+      await expect(loader.dispatch('/files/a', {})).rejects.toThrow(NotFoundException)
+    })
+
     it('[param] 格式路径参数被正确解析', async () => {
       const loader = new MessageLoader({ suffix: 'msg' })
       await writeMessageFile('users/[id].msg.js', `

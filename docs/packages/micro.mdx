@@ -211,6 +211,8 @@ Notice that `request()` returns a `Promise<T>`. Await it directly.
 ## Runtime And Lifecycle Notes
 
 - `MessageLoader` maps `*.msg.*` files to routes using `@hile/loader`.
+- Message files use the same portable DSL as controllers: `[id].msg.ts` declares one segment and `[...paths].msg.ts` declares one or more final segments. A catch-all handler reads the slash-joined value from `params.paths`; Hile compiles it to rou3's named catch-all syntax.
+- Optional catch-all, mixed or non-terminal dynamic segments, multiple catch-alls, duplicate dynamic names, unsafe or object-meta names, and router-native syntax in message file names fail during loading. The configured `prefix` may use rou3-native or bracket-style parameters, is compiled separately from file segments, and cannot duplicate a file parameter name; manual `register()` calls continue to accept rou3-native paths.
 - `defineMessage(fn, options?)` and `MessageLoader.register(path, fn, options?)` accept `MessageProtocolOptions`; `MessageLoader.dispatch(path, data, extras?, options?)` checks that protocol before invoking the matched handler.
 - Raw registrations and file-loaded messages share route ownership. Duplicate normalized paths and equal-specificity overlaps fail with `MessageRouteConflictError` (`HILE_MESSAGE_ROUTE_CONFLICT`). This includes `/a/:x` versus `/:x/b`; regex parameters are conservatively treated as unrestricted, so disjoint regexes with the same route shape also conflict. Distinct static branches and different-specificity static/parameter/catch-all precedence remain supported by rou3.
 - A `MessageLoader.load()` batch is invisible until it commits. Import, bind, or final commit failure rolls back only that batch. Unload is idempotent and owner-specific; an old release cannot remove a replacement. Concurrent loads or raw registration during a load fail with `MessageLoadInProgressError` (`HILE_MESSAGE_LOAD_IN_PROGRESS`); releasing existing owners remains allowed and cannot resurrect them at commit.
@@ -268,6 +270,7 @@ subscriptions, or retained config data.
 ## Verification Checklist
 
 - Micro message files default-export `defineMicroMessage(...)` and receive `invocation.context`.
+- Native untyped Micro message files may use `[...name].msg.ts`; typed Micro Contract implementations remain fixed-path only and reject all parameterized file routes.
 - RPC callers use `await app.call(..., { context })`.
 - Same-namespace `call()` and `stream()` use normal Registry discovery, while `streamPeer()` keeps its exact-address selection; all three use the normal WebSocket/modem transport path and callers do not branch on locality.
 - Streaming handlers are async generators.
@@ -295,6 +298,21 @@ export default defineMicroMessage(async ({ data, invocation }) => {
   return { charged: true, input: data, requestId: invocation.context.values.requestId }
 })
 ```
+
+Untyped dynamic handlers may use a required catch-all when the operation is intentionally not a typed Micro Contract:
+
+```ts
+// src/messages/files/[...paths].msg.ts
+import { defineMicroMessage } from '@hile/micro'
+
+export default defineMicroMessage(async ({ params, data, invocation }) => ({
+  path: params.paths,
+  input: data,
+  requestId: invocation.context.values.requestId,
+}))
+```
+
+Typed Micro Contract `operation.path` values stay fixed and cannot use `[id]` or `[...paths]`.
 
 Provider boot:
 

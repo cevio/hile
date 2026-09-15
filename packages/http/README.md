@@ -32,7 +32,19 @@ File route examples:
 src/controllers/index.controller.ts -> /
 src/controllers/users/index.controller.ts -> /users
 src/controllers/users/[id].controller.ts -> /users/:id
+src/controllers/assets/[...paths].controller.ts -> /assets/*
 ```
+
+The catch-all declaration is required: `/assets/logo.svg` and `/assets/icons/logo.svg` match, while `/assets` does not. The controller reads the portable declaration name rather than find-my-way's internal wildcard key:
+
+```ts
+// src/controllers/assets/[...paths].controller.ts
+import { defineController } from '@hile/http'
+
+export default defineController('GET', (ctx) => ({ path: ctx.params.paths }))
+```
+
+`ctx.params.paths` is `icons/logo.svg` for `/assets/icons/logo.svg`. Dynamic names must be unique across the complete route and cannot be `__proto__`, `prototype`, or `constructor`. Static routes win over `[id]`, and `[id]` wins over `[...paths]`. Routes with the same structure but different parameter names conflict during loading. A configured `prefix` may use native `/:tenant` or bracket-style `/[tenant]` parameters and is compiled separately from portable file segments. Use `http.route()` when deliberately registering native find-my-way syntax by hand; native syntax is not accepted in file names.
 
 ## Boundaries
 
@@ -47,6 +59,7 @@ src/controllers/users/[id].controller.ts -> /users/:id
 ## Verify
 
 - Controller files default-export `defineController(...)` or an array of controllers.
+- Required catch-all controllers use `[...name].controller.ts`, keep it as the final segment, and read the slash-joined value from `ctx.params.name`.
 - Controllers return response values.
 - Boot service awaits `http.load()` before `http.listen()`.
 - Zod schemas are used for validation, and parsed data is explicitly parsed when needed.

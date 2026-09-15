@@ -236,6 +236,17 @@ describe('Http - HTTP 服务类', () => {
       expect(await res.text()).toBe('user-123')
     })
 
+    it('手工路由继续接受 find-my-way 原生 wildcard 语法和参数键', async () => {
+      const http = new Http({ port: 4009 })
+      http.get('/native/*', async (ctx) => {
+        ctx.body = ctx.params['*']
+      })
+      closeServer = await http.listen()
+
+      const res = await fetch('http://127.0.0.1:4009/native/one/two')
+      expect(await res.text()).toBe('one/two')
+    })
+
     it('端口冲突时 listen 应 reject', async () => {
       const occupied = createServer()
       await new Promise<void>((resolve) => occupied.listen(0, resolve))

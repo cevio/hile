@@ -98,7 +98,7 @@ export class HttpNext {
     this.stopUpgradeTracking = () => server.off('upgrade', onUpgrade)
   }
 
-  private async closeRuntime(stopHttp?: () => Promise<void>) {
+  private async closeRuntime(stopHttp?: () => Promise<void>, unloadControllers?: () => void) {
     this.stopping = true
     const cleanups: Promise<void>[] = []
     if (stopHttp) cleanups.push(invokeCleanup(stopHttp))
@@ -123,6 +123,13 @@ export class HttpNext {
     const errors = results.flatMap((result) => (
       result.status === 'rejected' ? [result.reason] : []
     ))
+    if (unloadControllers) {
+      try {
+        unloadControllers()
+      } catch (error) {
+        errors.push(error)
+      }
+    }
     if (errors.length === 1) throw errors[0]
     if (errors.length > 1) {
       throw new AggregateError(errors, 'Failed to close HttpNext runtime')
@@ -153,8 +160,9 @@ export class HttpNext {
     )
 
     let stopHttp: (() => Promise<void>) | undefined
+    let unloadControllers: (() => void) | undefined
     try {
-      await this.loadControllers(controllersPath)
+      unloadControllers = await this.loadControllers(controllersPath)
       let serverRef: Server | undefined
       const stopServer = await this.http.listen(async (server) => {
         serverRef = server
@@ -175,12 +183,12 @@ export class HttpNext {
 
       return () => {
         if (this.stopPromise) return this.stopPromise
-        this.stopPromise = this.closeRuntime(stopServer)
+        this.stopPromise = this.closeRuntime(stopServer, unloadControllers)
         return this.stopPromise
       }
     } catch (error) {
       try {
-        await this.closeRuntime(stopHttp)
+        await this.closeRuntime(stopHttp, unloadControllers)
       } catch {
         // Preserve the startup error after attempting every acquired cleanup.
       }

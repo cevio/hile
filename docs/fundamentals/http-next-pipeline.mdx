@@ -39,6 +39,8 @@ src/
   services/         *.boot.ts and app services
 ```
 
+HttpNext inherits the `@hile/http` file-route DSL. A Gateway fallback such as `src/controllers/[namespace]/[...paths].controller.ts` matches `/-/blog/assets/logo.svg` and exposes `ctx.params.namespace === 'blog'` plus `ctx.params.paths === 'assets/logo.svg'`. The safe `[...paths]` file name is retained by npm and works on Windows; do not use a literal `*.controller.ts` catch-all file.
+
 Use `loadModel()` from pages or controllers for domain logic. If a Next.js page uses runtime model data, mark the route dynamic:
 
 ```tsx
@@ -67,12 +69,13 @@ The proxy must replace forwarded headers, set `X-Forwarded-Proto: https`, and be
 - Concurrent requests, multiple `HttpNext` instances, and compatible package copies in one JavaScript realm share one storage identity while retaining isolated asynchronous contexts. Separate PM2 processes, Workers, or VM realms intentionally keep independent request signals.
 - Development mode is determined by `process.env.NODE_ENV === 'development'`.
 - Controllers use `{cwd}/src/controllers` in development and `{cwd}/dist/controllers` in production with prefix `/-`.
+- Required catch-all controllers use the same `[...name]` final-segment convention as `@hile/http`; unmatched requests alone continue to Next.js.
 - `load(directory)` explicitly loads an additional controller directory with the same fixed conventions.
 - Call `use()` and `load()` before `start()`; configuration is frozen once startup begins.
 - Next.js exclusively owns `public/`, `distDir`, `/_next/static`, RSC, Server Functions, and `next.config`.
 - `start(onReady)` calls readiness only after Next is prepared and the shared HTTP server is listening.
 - The returned async stop function first asks the shared HTTP server to stop accepting new connections, then waits for HTTP drain and Next runtime cleanup concurrently. It tracks and terminates upgraded connections, including development HMR WebSockets, because Node's HTTP drain does not own their protocol lifecycle. Development shutdown also closes disposable HTTP/compiler connections, matching Next's own development-server policy; production HTTP requests retain graceful drain behavior.
-- Stop and startup rollback attempt both HTTP and Next cleanup even when either side fails. One failure is rethrown directly; multiple failures are reported together.
+- Normal stop attempts HTTP, Next, and startup-loaded controller cleanup even when one side fails. One cleanup failure is rethrown directly and multiple cleanup failures are reported together. Startup rollback also attempts every acquired cleanup, then preserves the original startup error.
 
 ## Anti-Patterns
 

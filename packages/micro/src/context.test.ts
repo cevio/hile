@@ -30,6 +30,51 @@ async function getAvailablePort(): Promise<number> {
   return address.port;
 }
 
+async function listenOnAvailablePort(server: Application | Registry) {
+  for (let attempt = 0; ; attempt++) {
+    const port = await getAvailablePort();
+    try {
+      return { port, close: await server.listen(port) };
+    } catch (error) {
+      if (attempt >= 9 || (error as NodeJS.ErrnoException).code !== 'EADDRINUSE') throw error;
+    }
+  }
+}
+
+async function createHarness(providerNamespace: string, consumerNamespace: string) {
+  const registry = new Registry(testAdvertise);
+  const registryListener = await listenOnAvailablePort(registry);
+  const provider = new Application({
+    namespace: providerNamespace,
+    registry: { host: '127.0.0.1', port: registryListener.port },
+    ...testAdvertise,
+  });
+  const consumer = new Application({
+    namespace: consumerNamespace,
+    registry: { host: '127.0.0.1', port: registryListener.port },
+    ...testAdvertise,
+  });
+  let providerListener: Awaited<ReturnType<typeof listenOnAvailablePort>> | undefined;
+  let consumerListener: Awaited<ReturnType<typeof listenOnAvailablePort>> | undefined;
+  try {
+    providerListener = await listenOnAvailablePort(provider);
+    consumerListener = await listenOnAvailablePort(consumer);
+  } catch (error) {
+    await providerListener?.close();
+    await registryListener.close();
+    throw error;
+  }
+  return {
+    provider,
+    consumer,
+    close: async () => {
+      await consumerListener.close();
+      await providerListener.close();
+      await registryListener.close();
+    },
+  };
+}
+
 async function collectStream<T>(readable: Readable): Promise<T[]> {
   const chunks: T[] = [];
   for await (const chunk of readable) {
@@ -129,25 +174,7 @@ describe('@hile/micro context propagation', () => {
   });
 
   it('propagates user-defined context through Application.call', async () => {
-    const registryPort = await getAvailablePort();
-    const providerPort = await getAvailablePort();
-    const consumerPort = await getAvailablePort();
-
-    const registry = new Registry(testAdvertise);
-    const provider = new Application({
-      namespace: 'context-provider',
-      registry: { host: '127.0.0.1', port: registryPort },
-      ...testAdvertise,
-    });
-    const consumer = new Application({
-      namespace: 'context-consumer',
-      registry: { host: '127.0.0.1', port: registryPort },
-      ...testAdvertise,
-    });
-
-    const disposeRegistry = await registry.listen(registryPort);
-    const disposeProvider = await provider.listen(providerPort);
-    const disposeConsumer = await consumer.listen(consumerPort);
+    const { provider, consumer, close } = await createHarness('context-provider', 'context-consumer');
     const unregister = provider.register('/inspect-context', async ({ invocation }) => invocation.context.values);
 
     try {
@@ -170,32 +197,15 @@ describe('@hile/micro context propagation', () => {
       });
     } finally {
       unregister();
-      await disposeConsumer();
-      await disposeProvider();
-      await disposeRegistry();
+      await close();
     }
   });
 
   it('propagates a streamed request input through Application.call', async () => {
-    const registryPort = await getAvailablePort();
-    const providerPort = await getAvailablePort();
-    const consumerPort = await getAvailablePort();
-
-    const registry = new Registry(testAdvertise);
-    const provider = new Application({
-      namespace: 'request-stream-provider',
-      registry: { host: '127.0.0.1', port: registryPort },
-      ...testAdvertise,
-    });
-    const consumer = new Application({
-      namespace: 'request-stream-consumer',
-      registry: { host: '127.0.0.1', port: registryPort },
-      ...testAdvertise,
-    });
-
-    const disposeRegistry = await registry.listen(registryPort);
-    const disposeProvider = await provider.listen(providerPort);
-    const disposeConsumer = await consumer.listen(consumerPort);
+    const { provider, consumer, close } = await createHarness(
+      'request-stream-provider',
+      'request-stream-consumer',
+    );
     const unregister = provider.register('/upload', async ({ data, input, invocation }) => {
       const chunks: Buffer[] = [];
       for await (const chunk of input ?? []) chunks.push(Buffer.from(chunk));
@@ -237,32 +247,15 @@ describe('@hile/micro context propagation', () => {
       });
     } finally {
       unregister();
-      await disposeConsumer();
-      await disposeProvider();
-      await disposeRegistry();
+      await close();
     }
   });
 
   it('streams request input and response output through Application.stream', async () => {
-    const registryPort = await getAvailablePort();
-    const providerPort = await getAvailablePort();
-    const consumerPort = await getAvailablePort();
-
-    const registry = new Registry(testAdvertise);
-    const provider = new Application({
-      namespace: 'duplex-stream-provider',
-      registry: { host: '127.0.0.1', port: registryPort },
-      ...testAdvertise,
-    });
-    const consumer = new Application({
-      namespace: 'duplex-stream-consumer',
-      registry: { host: '127.0.0.1', port: registryPort },
-      ...testAdvertise,
-    });
-
-    const disposeRegistry = await registry.listen(registryPort);
-    const disposeProvider = await provider.listen(providerPort);
-    const disposeConsumer = await consumer.listen(consumerPort);
+    const { provider, consumer, close } = await createHarness(
+      'duplex-stream-provider',
+      'duplex-stream-consumer',
+    );
     const unregister = provider.register('/uppercase', async function* ({ input, invocation }) {
       for await (const chunk of input ?? []) {
         yield {
@@ -289,32 +282,15 @@ describe('@hile/micro context propagation', () => {
       ]);
     } finally {
       unregister();
-      await disposeConsumer();
-      await disposeProvider();
-      await disposeRegistry();
+      await close();
     }
   });
 
   it('keeps user-defined context active while a remote stream is iterated', async () => {
-    const registryPort = await getAvailablePort();
-    const providerPort = await getAvailablePort();
-    const consumerPort = await getAvailablePort();
-
-    const registry = new Registry(testAdvertise);
-    const provider = new Application({
-      namespace: 'context-stream-provider',
-      registry: { host: '127.0.0.1', port: registryPort },
-      ...testAdvertise,
-    });
-    const consumer = new Application({
-      namespace: 'context-stream-consumer',
-      registry: { host: '127.0.0.1', port: registryPort },
-      ...testAdvertise,
-    });
-
-    const disposeRegistry = await registry.listen(registryPort);
-    const disposeProvider = await provider.listen(providerPort);
-    const disposeConsumer = await consumer.listen(consumerPort);
+    const { provider, consumer, close } = await createHarness(
+      'context-stream-provider',
+      'context-stream-consumer',
+    );
     const unregister = provider.register('/stream-context', async function* ({ invocation }) {
       yield { shopId: invocation.context.values.shopId };
       await new Promise(resolve => setTimeout(resolve, 1));
@@ -340,9 +316,7 @@ describe('@hile/micro context propagation', () => {
       ]);
     } finally {
       unregister();
-      await disposeConsumer();
-      await disposeProvider();
-      await disposeRegistry();
+      await close();
     }
   });
 });

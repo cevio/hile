@@ -52,7 +52,15 @@ import redisService from '@hile/ioredis'
 import { createLogger } from '@hile/logger'
 import { Cache, defineCache, RedisCache } from '@hile/cache'
 import { Scheduler, defineJob } from '@hile/schedule'
-import { scanDirectory, compileRoutePath, toRouterPath, normalizePath, Loader } from '@hile/loader'
+import {
+  scanDirectory,
+  parseFileRoute,
+  compileFileRoute,
+  compileRoutePath,
+  toRouterPath,
+  normalizePath,
+  Loader,
+} from '@hile/loader'
 ```
 
 ## Copy-Paste Example
@@ -120,6 +128,8 @@ scheduler.add('daily-report', '0 8 * * *', async () => {
 - `Scheduler.add()` supports cron strings and `{ delay }`.
 - `Scheduler.load()` reads default exports from `*.schedule.*` files produced by `defineJob()`.
 - `scanDirectory()` matches `.ts`, `.js`, `.tsx`, `.jsx`, and `.mjs`.
+- `scanDirectory()` only parses and returns the structured `route` when routing consumers opt in with `fileRoutes: true`; that AST covers the file-relative route while `routePath` retains the configured prefix. This keeps router-native prefixes out of the portable file-name DSL and preserves non-routing loaders' filename contracts. `.d.ts` and source-map files do not match.
+- `parseFileRoute()` accepts static, `[id]`, and final required `[...paths]` segments, and rejects duplicate or object-meta dynamic names. `compileFileRoute()` targets either `find-my-way` or `rou3`, compiles configured native or bracket-style prefixes separately, and rejects parameter-name collisions across the complete route.
 
 ## Anti-Patterns
 
@@ -177,7 +187,19 @@ File route examples:
 src/controllers/index.controller.ts -> /
 src/controllers/users/index.controller.ts -> /users
 src/controllers/users/[id].controller.ts -> /users/:id
+src/controllers/assets/[...paths].controller.ts -> /assets/*
 ```
+
+The catch-all declaration is required: `/assets/logo.svg` and `/assets/icons/logo.svg` match, while `/assets` does not. The controller reads the portable declaration name rather than find-my-way's internal wildcard key:
+
+```ts
+// src/controllers/assets/[...paths].controller.ts
+import { defineController } from '@hile/http'
+
+export default defineController('GET', (ctx) => ({ path: ctx.params.paths }))
+```
+
+`ctx.params.paths` is `icons/logo.svg` for `/assets/icons/logo.svg`. Dynamic names must be unique across the complete route and cannot be `__proto__`, `prototype`, or `constructor`. Static routes win over `[id]`, and `[id]` wins over `[...paths]`. Routes with the same structure but different parameter names conflict during loading. A configured `prefix` may use native `/:tenant` or bracket-style `/[tenant]` parameters and is compiled separately from portable file segments. Use `http.route()` when deliberately registering native find-my-way syntax by hand; native syntax is not accepted in file names.
 
 ## More Examples
 
@@ -235,6 +257,8 @@ Use `proxyIpHeader` only when the deployment uses a client-IP header other than 
 - `http.use(middleware)` registers Koa middleware before `listen()`.
 - `http.listen()` returns a close function.
 - `http.load(directory, options)` scans `*.controller.{ts,js,tsx,jsx,mjs}` by suffix.
+- `.d.ts` declarations and `.js.map` source maps are never controller routes.
+- File loading is atomic: invalid syntax, import failure, invalid exports, or conflicts unregister the routes already acquired by that batch.
 - `defineController()` supports method-only, method-plus-middlewares, and metadata-plus-Zod forms.
 - Response plugins transform handler return values and set `ctx.body` when the final result is not `undefined`.
 
@@ -248,6 +272,7 @@ Use `proxyIpHeader` only when the deployment uses a client-IP header other than 
 ## Verification Checklist
 
 - Controller files default-export `defineController(...)` or an array of controllers.
+- Required catch-all controllers use `[...name].controller.ts`, keep it as the final segment, and read the slash-joined value from `ctx.params.name`.
 - Controllers return response values.
 - Boot service awaits `http.load()` before `http.listen()`.
 - Zod schemas are used for validation, and parsed data is explicitly parsed when needed.

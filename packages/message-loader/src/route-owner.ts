@@ -11,6 +11,7 @@ interface RouteVariant {
 
 export interface RouteOwner {
   path: string;
+  source?: string;
   metadata: MessageRegisterProps;
   variants: RouteVariant[];
 }
@@ -18,8 +19,10 @@ export interface RouteOwner {
 export class MessageRouteConflictError extends Error {
   public readonly status = 'HILE_MESSAGE_ROUTE_CONFLICT';
 
-  constructor() {
-    super('Message routes conflict');
+  constructor(path?: string, existing?: string) {
+    super(path && existing
+      ? `Message routes conflict: ${path} conflicts with ${existing}`
+      : 'Message routes conflict');
   }
 }
 
@@ -38,7 +41,7 @@ export function normalizeMessagePath(path: string): string {
 }
 
 /** Use rou3's own parsed tree so optional groups and catch-all aliases stay aligned. */
-export function createRouteOwner(path: string, metadata: MessageRegisterProps): RouteOwner {
+export function createRouteOwner(path: string, metadata: MessageRegisterProps, source?: string): RouteOwner {
   const router = createRouter<MessageRegisterProps>();
   addRoute(router, 'GET', path, metadata);
   const variants: RouteVariant[] = [];
@@ -59,7 +62,7 @@ export function createRouteOwner(path: string, metadata: MessageRegisterProps): 
     if (node.wildcard) visit(node.wildcard, [...segments, { kind: 'wildcard' }]);
   };
   visit(router.root, []);
-  return { path, metadata, variants };
+  return { path, source, metadata, variants };
 }
 
 /**
@@ -69,7 +72,9 @@ export function createRouteOwner(path: string, metadata: MessageRegisterProps): 
  */
 export function assertRouteAvailable(owner: RouteOwner, existing: Iterable<RouteOwner>): void {
   for (const other of existing) {
-    if (owner.path === other.path) throw new MessageRouteConflictError();
+    if (owner.path === other.path) {
+      throw new MessageRouteConflictError(owner.source ?? owner.path, other.source ?? other.path);
+    }
     for (const left of owner.variants) {
       for (const right of other.variants) {
         if (left.priority !== right.priority) continue;
@@ -83,7 +88,9 @@ export function assertRouteAvailable(owner: RouteOwner, existing: Iterable<Route
             break;
           }
         }
-        if (overlaps) throw new MessageRouteConflictError();
+        if (overlaps) {
+          throw new MessageRouteConflictError(owner.source ?? owner.path, other.source ?? other.path);
+        }
       }
     }
   }

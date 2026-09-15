@@ -39,6 +39,20 @@ export default defineController('GET', async () => {
 })
 ```
 
+Gateway-style required catch-all controller:
+
+```ts
+// src/controllers/[namespace]/[...paths].controller.ts
+import { defineController } from '@hile/http'
+
+export default defineController('GET', (ctx) => ({
+  namespace: ctx.params.namespace,
+  path: ctx.params.paths,
+}))
+```
+
+For `/-/blog/assets/logo.svg`, `paths` is `assets/logo.svg`. The catch-all requires at least one remaining segment and must be the final file-route segment.
+
 Next.js page:
 
 ```tsx

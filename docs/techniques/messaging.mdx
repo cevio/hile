@@ -180,6 +180,21 @@ export default defineMicroMessage(async ({ data, invocation }) => {
 })
 ```
 
+Untyped dynamic handlers may use a required catch-all when the operation is intentionally not a typed Micro Contract:
+
+```ts
+// src/messages/files/[...paths].msg.ts
+import { defineMicroMessage } from '@hile/micro'
+
+export default defineMicroMessage(async ({ params, data, invocation }) => ({
+  path: params.paths,
+  input: data,
+  requestId: invocation.context.values.requestId,
+}))
+```
+
+Typed Micro Contract `operation.path` values stay fixed and cannot use `[id]` or `[...paths]`.
+
 Provider boot:
 
 ```ts
