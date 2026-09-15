@@ -7,10 +7,7 @@ Packages: `@hile/rsc`, `@hile/rsc-build`, `@hile/rsc-development`, `@hile/rsc-di
 This page is the authoritative architecture and API-selection reference. To implement a working system, read it together with `recipes/rsc-plugin-host.md`; that recipe is the authoritative scaffold-first configuration, startup, development, and verification guide. A blank-directory reimplementation of boot orchestration is not the supported quick start: generate the maintained Host and plugin templates, then customize their explicit composition points. The maintained executable references are:
 
 - `packages/create-hile/templates/rsc-plugin` for the smallest reusable plugin service;
-- `packages/create-hile/templates/rsc-host` for the smallest single-endpoint Host;
-- `packages/test-rsc-demo-suite` for production and development orchestration;
-- `packages/test-rsc-plugin-capabilities-v2` for module-level `'use server'`, `useActionState`, Ant Design, CSS, and Model invocation;
-- `packages/test-rsc-host` for the outer Next layout, automatic discovery, middleware, Flight decoding, and browser runtime.
+- `packages/create-hile/templates/rsc-host` for the smallest single-endpoint Host.
 
 Do not invent another public plugin endpoint, static plugin inventory, manual activation API, mutable build directory, action-handler map, or Next-private decoder. If an example conflicts with this page, the recipe, or the current templates, use those sources in that order and report the conflict.
 

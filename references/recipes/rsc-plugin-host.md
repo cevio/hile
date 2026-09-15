@@ -795,8 +795,6 @@ export default function PluginPanel({ rsc }: { rsc: RscRouteIdentity }) {
 
 For a larger plugin, move the `ThemeConfig` into a plugin-owned module while keeping the provider at this boundary. Re-run raw-HTML, hydration, and compatibility tests whenever Ant Design or its Next registry version changes.
 
-Repository maintainers can compare the larger executable examples in `packages/test-rsc-plugin-capabilities-v2` and `packages/test-rsc-host`. Published-doc readers do not need those private demo paths to implement the provider structure above.
-
 ## 9. Production Build And Startup
 
 Start Registry in its own process:
@@ -903,27 +901,6 @@ curl --fail http://127.0.0.1:3000/plugins/org.example.rsc-plugin/page
 The response must contain the plugin's server-rendered heading. In a browser, open the same URL, increment local client state, submit the Server Function form added in sections 3–4, and confirm the Model result appears without a page error. Inspect Network to confirm plugin JS/CSS and the Server Function POST use `127.0.0.1:3000`; no browser request may target the plugin Micro port. Stop the plugin and wait past the configured missing-announcement grace to verify automatic removal, then restart it to verify automatic reinstallation. Edit a Server Component in the four-terminal development topology and verify a new immutable build ID appears only after a successful rebuild; introduce and repair a syntax error to verify last-good behavior.
 
 For a generated external project, record the browser's successful Server Function request and use “Copy as cURL” to repeat it with a wrong Origin, missing/incorrect CSRF token, stale build ID, unknown reference ID, oversized body, and an aborted connection. Every altered request must fail without invoking the Model. For upgrade coverage, build a new immutable `buildId`, start it at higher priority, verify new requests select it while an already-started slow request finishes on the old build, then remove the old announcement. For isolation coverage, generate a second plugin with a distinct `pluginId`, namespace, and Micro port, and verify neither plugin's assets or Server Function references resolve under the other identity.
-
-The following exhaustive architecture acceptance suite is available only to maintainers working in the Hile monorepo; it is not a command for scaffolded sibling projects:
-
-```bash
-pnpm --filter test-rsc-demo-suite test:contracts
-pnpm --filter test-rsc-demo-suite test:e2e
-pnpm --filter test-rsc-demo-suite test:e2e:dev
-```
-
-Monorepo-only interactive reference:
-
-```bash
-pnpm --filter test-rsc-demo-suite dev
-```
-
-Then open:
-
-- `http://127.0.0.1:3200/` for discovery and deployment state;
-- `http://127.0.0.1:3200/plugins/demo.rsc.capabilities?label=review&count=3` for Server/Client/CSS/lazy/action coverage;
-- `http://127.0.0.1:3200/plugins/demo.rsc.capabilities/details?source=review` for a server-only plugin route;
-- `http://127.0.0.1:3200/plugins/demo.rsc.isolation?marker=review` for independent plugin isolation.
 
 An implementation is not complete until tests prove:
 
