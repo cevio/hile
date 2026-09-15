@@ -1,7 +1,7 @@
 {
   "name": "@hile/http-over-micro",
   "description": "Preserve HTTP semantics across Hile Micro calls with validated metadata and bidirectional streaming",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

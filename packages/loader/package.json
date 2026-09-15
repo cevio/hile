@@ -1,6 +1,6 @@
 {
   "name": "@hile/loader",
-  "version": "4.0.5",
+  "version": "4.0.6",
   "description": "Shared file-scanning and route loader for @hile packages",
   "type": "module",
   "main": "./dist/index.js",
