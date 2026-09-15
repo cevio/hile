@@ -95,4 +95,16 @@ describe('resolveRscPluginArtifact', () => {
     await expect(resolveRscPluginArtifact(root))
       .rejects.toThrow('RSC artifact is missing: server-rsc/index.js');
   });
+
+  it('rejects declared artifact sizes that do not match immutable files', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'hile-rsc-resolve-'));
+    roots.push(root);
+    const target = await artifact(root, 'wrong-size');
+    const value = manifest('wrong-size');
+    value.server.size = Buffer.byteLength(serverSource) + 1;
+    await writeFile(path.join(target, 'plugin.json'), `${JSON.stringify(value, null, 2)}\n`);
+
+    await expect(resolveVerifiedRscPluginArtifact(target, HILE_RSC_RUNTIME))
+      .rejects.toThrow('size mismatch');
+  });
 });

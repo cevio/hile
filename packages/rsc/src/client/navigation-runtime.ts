@@ -29,6 +29,9 @@ export function installRscNavigationRuntime(navigation: RscClientNavigation): ()
       throw new TypeError(`RSC navigation ${operation} must be a function`);
     }
   }
+  if (navigation.prefetchRoute !== undefined && typeof navigation.prefetchRoute !== 'function') {
+    throw new TypeError('RSC navigation prefetchRoute must be a function');
+  }
   const installations = runtimeState().installations;
   const installation = { navigation, active: true };
   installations.push(installation);

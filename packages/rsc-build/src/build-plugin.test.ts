@@ -206,6 +206,8 @@ describe('buildRscPlugin', () => {
     const { outdir, manifest } = await build();
 
     expect(manifest.styles.length).toBeGreaterThan(0);
+    expect(manifest.styles.every(({ scope }) => scope === 'client')).toBe(true);
+    expect(manifest.clients[0].styles).toEqual(manifest.styles.map(({ path }) => path));
     const css = await readFile(path.join(outdir, manifest.styles[0].path), 'utf8');
     expect(css).toContain('.counter');
   });
@@ -245,6 +247,7 @@ describe('buildRscPlugin', () => {
       .toBe('.shared-theme { color: rebeccapurple; }\n');
     expect(manifest.styles[0].integrity)
       .toBe(sri('.shared-theme { color: rebeccapurple; }\n'));
+    expect(manifest.styles[0].scope).toBe('plugin');
   });
 
   it('rejects a build-scoped style that does not resolve to CSS', async () => {
@@ -277,20 +280,75 @@ describe('buildRscPlugin', () => {
     const { outdir, manifest } = await build();
     const server = await readFile(path.join(outdir, manifest.server.entry));
     expect(manifest.server.integrity).toBe(sri(server));
+    expect(manifest.server.size).toBe(server.byteLength);
 
     for (const client of manifest.clients) {
-      expect(client.integrity).toBe(sri(await readFile(path.join(outdir, client.module))));
-      expect(client.ssrIntegrity).toBe(sri(await readFile(path.join(outdir, client.ssrModule))));
+      const browserModule = await readFile(path.join(outdir, client.module));
+      const ssrModule = await readFile(path.join(outdir, client.ssrModule));
+      expect(client.integrity).toBe(sri(browserModule));
+      expect(client.size).toBe(browserModule.byteLength);
+      expect(client.ssrIntegrity).toBe(sri(ssrModule));
+      expect(client.ssrSize).toBe(ssrModule.byteLength);
       for (const chunk of client.chunks) {
-        expect(chunk.integrity).toBe(sri(await readFile(path.join(outdir, chunk.path))));
+        const bytes = await readFile(path.join(outdir, chunk.path));
+        expect(chunk.integrity).toBe(sri(bytes));
+        expect(chunk.size).toBe(bytes.byteLength);
       }
       for (const chunk of client.ssrChunks) {
         expect(chunk.integrity).toBe(sri(await readFile(path.join(outdir, chunk.path))));
       }
     }
     for (const style of manifest.styles) {
-      expect(style.integrity).toBe(sri(await readFile(path.join(outdir, style.path))));
+      const bytes = await readFile(path.join(outdir, style.path));
+      expect(style.integrity).toBe(sri(bytes));
+      expect(style.size).toBe(bytes.byteLength);
     }
+  });
+
+  it('emits route-scoped client references and an explicit safe preload policy', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'hile-rsc-route-graph-'));
+    const outdir = await mkdtemp(path.join(tmpdir(), 'hile-rsc-build-'));
+    tempDirs.push(cwd, outdir);
+    await mkdir(path.join(cwd, 'src'), { recursive: true });
+    await writeFile(path.join(cwd, 'src/first.tsx'),
+      `'use client'; export default function First() { return null; }\n`);
+    await writeFile(path.join(cwd, 'src/second.tsx'),
+      `'use client'; export default function Second() { return null; }\n`);
+    await writeFile(path.join(cwd, 'src/first-page.tsx'),
+      `import First from './first'; export default function FirstPage() { return <First />; }\n`);
+    await writeFile(path.join(cwd, 'src/second-page.tsx'),
+      `import Second from './second'; export default function SecondPage() { return <Second />; }\n`);
+    await writeFile(path.join(cwd, 'src/page.tsx'), `
+      export { default as FirstPage } from './first-page';
+      export { default as SecondPage } from './second-page';
+      export { default as "page-one" } from './first-page';
+    `);
+
+    const manifest = await buildRscPlugin({
+      pluginId: 'org.hile.route-graph', buildId: 'build-a', cwd,
+      entry: 'src/page.tsx', outdir,
+      routes: [
+        { path: '/first', entry: 'FirstPage' },
+        { path: '/second', entry: 'SecondPage', prefetch: 'route' },
+        { path: '/legacy-entry', entry: 'page-one' },
+      ],
+      runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
+    });
+
+    expect(manifest.routes).toEqual([
+      {
+        path: '/first', entry: 'FirstPage', prefetch: 'assets',
+        clientReferences: ['org.hile.route-graph/src/first#default'],
+      },
+      {
+        path: '/second', entry: 'SecondPage', prefetch: 'route',
+        clientReferences: ['org.hile.route-graph/src/second#default'],
+      },
+      {
+        path: '/legacy-entry', entry: 'page-one', prefetch: 'assets',
+        clientReferences: ['org.hile.route-graph/src/first#default'],
+      },
+    ]);
   });
 
   it('writes a manifest that passes the public protocol validator', async () => {

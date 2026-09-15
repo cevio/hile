@@ -31,7 +31,7 @@ const RscClientRuntimeContext = createContext<RscClientRuntime>({
   suspensePolicy: 'remote',
 });
 
-function normalizeAssetMountPath(value: string): string {
+export function normalizeRscAssetMountPath(value: string): string {
   if (!value.startsWith('/')) throw new TypeError('RSC asset mount path must be absolute');
   const normalized = value.replace(/\/+$/, '');
   if (!normalized) throw new TypeError('RSC asset mount path must not be the root path');
@@ -64,7 +64,7 @@ export function RscClientRuntimeProvider({
       throw new TypeError('RSC renderLoading is unavailable when suspensePolicy is "host"');
     }
     return {
-      assetMountPath: normalizeAssetMountPath(assetMountPath),
+      assetMountPath: normalizeRscAssetMountPath(assetMountPath),
       suspensePolicy: normalizedSuspensePolicy,
       renderLoading,
       renderError,

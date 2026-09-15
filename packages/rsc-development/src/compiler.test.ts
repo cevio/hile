@@ -46,6 +46,36 @@ async function exists(file: string) {
 }
 
 describe('createRscDevelopmentCompiler', () => {
+  it('uses the production server import policy for portable RscLink boundaries', async () => {
+    const { cwd, outdir } = await fixture();
+    await mkdir(path.join(cwd, 'node_modules/@hile'), { recursive: true });
+    await symlink(
+      path.resolve(import.meta.dirname, '../../rsc'),
+      path.join(cwd, 'node_modules/@hile/rsc'),
+    );
+    const page = path.join(cwd, 'src/page.tsx');
+    await writeFile(page, `
+      import React from 'react';
+      import Counter from './counter';
+      import { RscLink } from '@hile/rsc/client/navigation';
+      export default function Page() {
+        return React.createElement('main', null,
+          React.createElement(Counter, { initial: 1 }),
+          React.createElement(RscLink, { href: '/basic' }, 'Basic'));
+      }
+    `);
+    const compiler = await createRscDevelopmentCompiler(options(cwd, outdir));
+
+    const revision = await compiler.rebuild();
+
+    const navigationId = 'com.example.basic/@dependency/@hile/rsc/client/navigation#RscLink';
+    expect(revision.manifest.clients.map(({ id }) => id)).toContain(navigationId);
+    expect(revision.manifest.routes[0].clientReferences).toContain(navigationId);
+    expect(await readFile(path.join(revision.artifactRoot, revision.manifest.server.entry), 'utf8'))
+      .not.toContain("from '@hile/rsc/client/navigation'");
+    await compiler.dispose();
+  });
+
   it('emits build-scoped styles into every immutable development revision', async () => {
     const { cwd, outdir } = await fixture();
     const sharedStyle = path.join(cwd, 'src/shared.css');
@@ -57,6 +87,17 @@ describe('createRscDevelopmentCompiler', () => {
 
     const first = await compiler.rebuild();
     const firstStyle = first.manifest.styles.find(({ path: stylePath }) => stylePath.startsWith('styles/'))!;
+    expect(firstStyle.scope).toBe('plugin');
+    expect(first.manifest.server.size).toBeGreaterThan(0);
+    expect(first.manifest.routes).toEqual([{
+      path: '/basic',
+      entry: 'default',
+      prefetch: 'assets',
+      clientReferences: [
+        'com.example.basic/src/counter#default',
+        'com.example.basic/src/counter#CounterLabel',
+      ],
+    }]);
     expect(await readFile(path.join(first.artifactRoot, firstStyle.path), 'utf8'))
       .toBe('.shared { color: red; }\n');
 

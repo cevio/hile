@@ -1,9 +1,10 @@
-import { HILE_RSC_PLUGIN_METADATA_LIMITS } from './constants';
+import { HILE_RSC_MANIFEST_LIMITS, HILE_RSC_PLUGIN_METADATA_LIMITS } from './constants';
 import {
   HILE_RSC_PROTOCOL_VERSION,
   type RscPluginMetadata,
   type RscPluginManifest,
   type RscProtocolErrorCode,
+  type RscRoutePrefetch,
   type RscRuntimeCompatibility,
 } from './types';
 import { rscRouteParameterName, splitRscRoutePath } from './route-pattern';
@@ -40,6 +41,14 @@ function requireArray(value: unknown, field: string): unknown[] {
     fail('ERR_RSC_INVALID_MANIFEST', `${field} must be an array`);
   }
   return value;
+}
+
+function requireBoundedArray(value: unknown, field: string, limit: number): unknown[] {
+  const items = requireArray(value, field);
+  if (items.length > limit) {
+    fail('ERR_RSC_INVALID_MANIFEST', `${field} must contain at most ${limit} items`);
+  }
+  return items;
 }
 
 function requireRecord(value: unknown, field: string): Record<string, unknown> {
@@ -115,6 +124,14 @@ function validateIntegrity(value: unknown, field: string): string {
     fail('ERR_RSC_INVALID_MANIFEST', `${field} must be a sha256 SRI value`);
   }
   return integrity;
+}
+
+function validateOptionalSize(value: unknown, field: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    fail('ERR_RSC_INVALID_MANIFEST', `${field} must be a non-negative safe integer`);
+  }
+  return value as number;
 }
 
 function validateRuntime(
@@ -337,11 +354,18 @@ export function validateRscPluginManifest(
   const server = {
     entry: validateArtifactPath(serverValue.entry, 'server.entry'),
     integrity: validateIntegrity(serverValue.integrity, 'server.integrity'),
+    ...(serverValue.size === undefined ? {} : {
+      size: validateOptionalSize(serverValue.size, 'server.size')!,
+    }),
   };
 
   const serverFunctionIds = new Set<string>();
   const serverFunctionsValue = manifest.serverFunctions === undefined ? [] : manifest.serverFunctions;
-  const serverFunctions = requireArray(serverFunctionsValue, 'serverFunctions').map((item, index) => {
+  const serverFunctions = requireBoundedArray(
+    serverFunctionsValue,
+    'serverFunctions',
+    HILE_RSC_MANIFEST_LIMITS.serverFunctions,
+  ).map((item, index) => {
     const reference = requireRecord(item, `serverFunctions[${index}]`);
     const id = validateServerFunctionReferenceId(reference.id, `serverFunctions[${index}].id`);
     if (serverFunctionIds.has(id)) {
@@ -356,23 +380,45 @@ export function validateRscPluginManifest(
       module: validateArtifactPath(reference.module, `serverFunctions[${index}].module`),
       exportName: validateExportName(reference.exportName, `serverFunctions[${index}].exportName`),
       integrity: validateIntegrity(reference.integrity, `serverFunctions[${index}].integrity`),
+      ...(reference.size === undefined ? {} : {
+        size: validateOptionalSize(reference.size, `serverFunctions[${index}].size`)!,
+      }),
     };
   });
 
   const clientIds = new Set<string>();
-  const clients = requireArray(manifest.clients, 'clients').map((item, index) => {
+  const clients = requireBoundedArray(
+    manifest.clients,
+    'clients',
+    HILE_RSC_MANIFEST_LIMITS.clients,
+  ).map((item, index) => {
     const client = requireRecord(item, `clients[${index}]`);
     const id = validateClientReferenceId(client.id, `clients[${index}].id`);
     if (clientIds.has(id)) {
       fail('ERR_RSC_DUPLICATE_CLIENT_REFERENCE', `duplicate client reference: ${id}`);
     }
     clientIds.add(id);
+    const clientStyles = client.styles === undefined
+      ? undefined
+      : requireBoundedArray(
+          client.styles,
+          `clients[${index}].styles`,
+          HILE_RSC_MANIFEST_LIMITS.stylesPerClient,
+        ).map((value, styleIndex) =>
+          validateArtifactPath(value, `clients[${index}].styles[${styleIndex}]`));
+    if (clientStyles && new Set(clientStyles).size !== clientStyles.length) {
+      fail('ERR_RSC_INVALID_MANIFEST', `clients[${index}].styles must not contain duplicates`);
+    }
     return {
       id,
       module: validateArtifactPath(client.module, `clients[${index}].module`),
       ssrModule: validateArtifactPath(client.ssrModule, `clients[${index}].ssrModule`),
       exportName: validateExportName(client.exportName, `clients[${index}].exportName`),
-      chunks: requireArray(client.chunks, `clients[${index}].chunks`).map((item, chunkIndex) => {
+      chunks: requireBoundedArray(
+        client.chunks,
+        `clients[${index}].chunks`,
+        HILE_RSC_MANIFEST_LIMITS.chunksPerClient,
+      ).map((item, chunkIndex) => {
         const chunk = requireRecord(item, `clients[${index}].chunks[${chunkIndex}]`);
         return {
           path: validateArtifactPath(chunk.path, `clients[${index}].chunks[${chunkIndex}].path`),
@@ -380,9 +426,16 @@ export function validateRscPluginManifest(
             chunk.integrity,
             `clients[${index}].chunks[${chunkIndex}].integrity`,
           ),
+          ...(chunk.size === undefined ? {} : {
+            size: validateOptionalSize(chunk.size, `clients[${index}].chunks[${chunkIndex}].size`)!,
+          }),
         };
       }),
-      ssrChunks: requireArray(client.ssrChunks, `clients[${index}].ssrChunks`).map((item, chunkIndex) => {
+      ssrChunks: requireBoundedArray(
+        client.ssrChunks,
+        `clients[${index}].ssrChunks`,
+        HILE_RSC_MANIFEST_LIMITS.chunksPerClient,
+      ).map((item, chunkIndex) => {
         const chunk = requireRecord(item, `clients[${index}].ssrChunks[${chunkIndex}]`);
         return {
           path: validateArtifactPath(chunk.path, `clients[${index}].ssrChunks[${chunkIndex}].path`),
@@ -390,28 +443,65 @@ export function validateRscPluginManifest(
             chunk.integrity,
             `clients[${index}].ssrChunks[${chunkIndex}].integrity`,
           ),
+          ...(chunk.size === undefined ? {} : {
+            size: validateOptionalSize(chunk.size, `clients[${index}].ssrChunks[${chunkIndex}].size`)!,
+          }),
         };
       }),
       integrity: validateIntegrity(client.integrity, `clients[${index}].integrity`),
       ssrIntegrity: validateIntegrity(client.ssrIntegrity, `clients[${index}].ssrIntegrity`),
+      ...(client.size === undefined ? {} : {
+        size: validateOptionalSize(client.size, `clients[${index}].size`)!,
+      }),
+      ...(client.ssrSize === undefined ? {} : {
+        ssrSize: validateOptionalSize(client.ssrSize, `clients[${index}].ssrSize`)!,
+      }),
+      ...(clientStyles === undefined ? {} : { styles: clientStyles }),
     };
   });
 
   const stylePaths = new Set<string>();
-  const styles = requireArray(manifest.styles, 'styles').map((item, index) => {
+  const styles = requireBoundedArray(
+    manifest.styles,
+    'styles',
+    HILE_RSC_MANIFEST_LIMITS.styles,
+  ).map((item, index) => {
     const style = requireRecord(item, `styles[${index}]`);
     const stylePath = validateArtifactPath(style.path, `styles[${index}].path`);
     if (stylePaths.has(stylePath)) {
       fail('ERR_RSC_DUPLICATE_STYLE', `duplicate style artifact: ${stylePath}`);
     }
     stylePaths.add(stylePath);
+    const rawScope = style.scope;
+    if (rawScope !== undefined && rawScope !== 'plugin' && rawScope !== 'client') {
+      fail('ERR_RSC_INVALID_MANIFEST', `styles[${index}].scope is invalid`);
+    }
+    const scope = rawScope as 'plugin' | 'client' | undefined;
     return {
       path: stylePath,
       integrity: validateIntegrity(style.integrity, `styles[${index}].integrity`),
+      ...(style.size === undefined ? {} : {
+        size: validateOptionalSize(style.size, `styles[${index}].size`)!,
+      }),
+      ...(scope === undefined ? {} : { scope }),
     };
   });
+  clients.forEach((client, clientIndex) => {
+    for (const stylePath of client.styles ?? []) {
+      if (!stylePaths.has(stylePath)) {
+        fail(
+          'ERR_RSC_INVALID_MANIFEST',
+          `clients[${clientIndex}] references unknown style: ${stylePath}`,
+        );
+      }
+    }
+  });
 
-  const routeValues = requireArray(manifest.routes, 'routes');
+  const routeValues = requireBoundedArray(
+    manifest.routes,
+    'routes',
+    HILE_RSC_MANIFEST_LIMITS.routes,
+  );
   if (routeValues.length === 0) {
     fail('ERR_RSC_INVALID_ROUTE', 'routes must contain at least one route');
   }
@@ -423,9 +513,34 @@ export function validateRscPluginManifest(
       fail('ERR_RSC_DUPLICATE_ROUTE', `duplicate route path: ${routePath}`);
     }
     routePaths.add(routePath);
+    const prefetch = route.prefetch as RscRoutePrefetch | undefined;
+    if (prefetch !== undefined && prefetch !== 'none' && prefetch !== 'assets' && prefetch !== 'route') {
+      fail('ERR_RSC_INVALID_ROUTE', `routes[${index}].prefetch is invalid`);
+    }
+    const references = route.clientReferences === undefined
+      ? undefined
+      : requireBoundedArray(
+          route.clientReferences,
+          `routes[${index}].clientReferences`,
+          HILE_RSC_MANIFEST_LIMITS.clientReferencesPerRoute,
+        ).map((value, referenceIndex) => {
+        const id = validateClientReferenceId(
+          value,
+          `routes[${index}].clientReferences[${referenceIndex}]`,
+        );
+        if (!clientIds.has(id)) {
+          fail('ERR_RSC_INVALID_ROUTE', `routes[${index}] references unknown client: ${id}`);
+        }
+        return id;
+      });
+    if (references && new Set(references).size !== references.length) {
+      fail('ERR_RSC_INVALID_ROUTE', `routes[${index}].clientReferences must not contain duplicates`);
+    }
     return {
       path: routePath,
       entry: validateEntryName(route.entry, `routes[${index}].entry`),
+      ...(prefetch === undefined ? {} : { prefetch }),
+      ...(references === undefined ? {} : { clientReferences: references }),
     };
   });
   for (let left = 0; left < routes.length; left++) {

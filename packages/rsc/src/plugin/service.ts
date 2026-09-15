@@ -129,6 +129,7 @@ export class RscPluginService {
     manifest: RscPluginManifest;
     renderer: RscPluginServiceOptions['renderer'];
     serverFunctions?: RscPluginServiceOptions['serverFunctions'];
+    preparation?: Promise<void>;
   }>();
   private actionModels = new ModelActionRegistry();
   private unloadActiveModels?: () => void;
@@ -199,8 +200,58 @@ export class RscPluginService {
     return structuredClone(this.manifest);
   }
 
+  private prepareRevision(
+    revision: {
+      manifest: RscPluginManifest;
+      renderer: RscPluginServiceOptions['renderer'];
+      preparation?: Promise<void>;
+    },
+    signal?: AbortSignal,
+  ): Promise<void> {
+    let preparation = revision.preparation;
+    if (!preparation) {
+      if (signal?.aborted) return Promise.reject(signal.reason);
+      const prepare = revision.renderer.prepare;
+      preparation = prepare
+        ? Promise.resolve().then(() => prepare({
+          manifest: structuredClone(revision.manifest),
+          signal: this.shutdown.signal,
+        }))
+        : Promise.resolve();
+      revision.preparation = preparation;
+      preparation.catch(() => {
+        if (revision.preparation === preparation) revision.preparation = undefined;
+      });
+    }
+    if (!signal) return preparation;
+    if (signal.aborted) return Promise.reject(signal.reason);
+    return new Promise<void>((resolve, reject) => {
+      const abort = () => reject(signal.reason);
+      signal.addEventListener('abort', abort, { once: true });
+      void preparation.then(
+        () => {
+          signal.removeEventListener('abort', abort);
+          resolve();
+        },
+        (error) => {
+          signal.removeEventListener('abort', abort);
+          reject(error);
+        },
+      );
+    });
+  }
+
+  /** Prepares the active immutable renderer without invoking any route component. */
+  public prepare(options: { signal?: AbortSignal } = {}): Promise<void> {
+    this.assertActive();
+    return this.prepareRevision(
+      this.requiredRevision(this.manifest.buildId),
+      options.signal ?? this.shutdown.signal,
+    );
+  }
+
   /** Atomically switches new requests to a compatible immutable RSC revision. */
-  public activate(options: RscPluginServiceOptions): void {
+  public activate(options: RscPluginServiceOptions): void | Promise<void> {
     this.assertActive();
     if (options.manifest.pluginId !== this.manifest.pluginId) {
       throw new TypeError('RSC revision pluginId must match the active service');
@@ -213,16 +264,29 @@ export class RscPluginService {
     if (options.manifest.buildId === this.manifest.buildId) {
       throw new TypeError('RSC revision buildId must differ from the active immutable build');
     }
-    this.manifest = structuredClone(options.manifest);
-    this.renderer = options.renderer;
-    this.revisions.set(this.manifest.buildId, {
-      manifest: this.manifest,
-      renderer: this.renderer,
+    const previousBuildId = this.manifest.buildId;
+    const revision = {
+      manifest: structuredClone(options.manifest),
+      renderer: options.renderer,
       serverFunctions: options.serverFunctions,
-    });
-    while (this.revisions.size > this.retainedRevisions) {
-      this.revisions.delete(this.revisions.keys().next().value!);
+    };
+    const commit = () => {
+      this.assertActive();
+      if (this.manifest.buildId !== previousBuildId) {
+        throw new TypeError('RSC active revision changed while the replacement was preparing');
+      }
+      this.manifest = revision.manifest;
+      this.renderer = revision.renderer;
+      this.revisions.set(this.manifest.buildId, revision);
+      while (this.revisions.size > this.retainedRevisions) {
+        this.revisions.delete(this.revisions.keys().next().value!);
+      }
+    };
+    if (!revision.renderer.prepare) {
+      commit();
+      return;
     }
+    return this.prepareRevision(revision, this.shutdown.signal).then(commit);
   }
 
   private assertActive(): void {
@@ -297,6 +361,7 @@ export class RscPluginService {
         const leave = service.entered();
         const combined = combineSignals(invocation.signal, service.shutdown.signal);
         try {
+          await service.prepareRevision(revision, combined.signal);
           const iterable = await renderer({
             manifest,
             routeEntry: route.entry,

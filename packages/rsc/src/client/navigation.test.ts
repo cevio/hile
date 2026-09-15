@@ -1,5 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { useRscNavigation } from './navigation';
+import {
+  prefetchDeclaredRscRoute,
+  shouldPrefetchRscNavigation,
+  useRscNavigation,
+} from './navigation';
 import {
   getRscNavigationRuntime,
   installRscNavigationRuntime,
@@ -23,6 +27,36 @@ afterEach(() => {
 });
 
 describe('RSC client navigation link policy', () => {
+  it('prefetches only same-origin HTTP destinations', () => {
+    expect(shouldPrefetchRscNavigation('/blog', 'https://example.test/current')).toBe(true);
+    expect(shouldPrefetchRscNavigation('https://other.test/blog', 'https://example.test/current')).toBe(false);
+    expect(shouldPrefetchRscNavigation('javascript:alert(1)', 'https://example.test/current')).toBe(false);
+  });
+
+  it('uses only the Host policy-gated route prefetch operation for declarative links', () => {
+    const navigation = {
+      push: vi.fn(), replace: vi.fn(), refresh: vi.fn(), prefetch: vi.fn(),
+      prefetchRoute: vi.fn(() => true),
+    };
+
+    expect(prefetchDeclaredRscRoute(
+      navigation,
+      '/blog',
+      'https://example.test/current',
+    )).toBe(true);
+    expect(navigation.prefetchRoute).toHaveBeenCalledWith('/blog');
+    expect(navigation.prefetch).not.toHaveBeenCalled();
+
+    navigation.prefetchRoute.mockReturnValue(false);
+    expect(prefetchDeclaredRscRoute(
+      navigation,
+      '/blog',
+      'https://example.test/current',
+    )).toBe(false);
+    expect(navigation.prefetchRoute).toHaveBeenCalledTimes(2);
+    expect(navigation.prefetch).not.toHaveBeenCalled();
+  });
+
   it.each([
     '/blog/posts/hello',
     '?page=2',
@@ -97,6 +131,26 @@ describe('RSC Host navigation runtime ownership', () => {
 
     closeSecond();
     expect(getRscNavigationRuntime()).toBeUndefined();
+  });
+
+  it('preserves the explicit imperative prefetch contract for existing plugins', () => {
+    vi.stubGlobal('window', {
+      location: {
+        href: 'https://example.test/current',
+        origin: 'https://example.test',
+      },
+    });
+    const navigation = {
+      ...adapter(),
+      prefetchRoute: vi.fn(() => false),
+    };
+    const close = installRscNavigationRuntime(navigation);
+
+    useRscNavigation().prefetch('/blog');
+
+    expect(navigation.prefetch).toHaveBeenCalledWith('/blog');
+    expect(navigation.prefetchRoute).not.toHaveBeenCalled();
+    close();
   });
 
   it('restores the previous Host adapter when the latest installation closes first', () => {

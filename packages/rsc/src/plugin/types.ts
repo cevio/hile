@@ -65,9 +65,20 @@ export interface RscRenderContext {
   context: ExecutionContext;
 }
 
-export type RscRenderer = (
-  context: RscRenderContext,
-) => AsyncIterable<Uint8Array> | Promise<AsyncIterable<Uint8Array>>;
+export interface RscRendererPrepareContext {
+  manifest: RscPluginManifest;
+  signal: AbortSignal;
+}
+
+export interface RscRenderer {
+  (context: RscRenderContext): AsyncIterable<Uint8Array> | Promise<AsyncIterable<Uint8Array>>;
+  /** Optional readiness hook. It must not execute route business behavior. */
+  prepare?(context: RscRendererPrepareContext): Promise<void>;
+}
+
+export interface PreparedRscRenderer extends RscRenderer {
+  prepare(context: RscRendererPrepareContext): Promise<void>;
+}
 
 export interface RscPluginServiceOptions {
   manifest: RscPluginManifest;

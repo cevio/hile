@@ -15,6 +15,8 @@ export interface HileRscPluginRuntimeOptions {
   application: HileRscPluginRuntimeApplication;
   service: RscPluginService;
   port: number;
+  /** Maximum renderer readiness wait before startup fails. Defaults to 30 seconds. */
+  prepareTimeoutMs?: number;
   discovery: Omit<RegisterHileRscPluginDiscoveryOptions, 'application'>;
   /** Optional development adapter; production does not import development tooling. */
   bindDevelopment?: (
@@ -36,6 +38,8 @@ async function settlePhase(operations: readonly (() => void | Promise<void>)[], 
 export class HileRscPluginRuntime {
   readonly #options: HileRscPluginRuntimeOptions;
   readonly #resources: Set<{ close(): void | Promise<void> }>;
+  readonly #prepareTimeoutMs: number;
+  readonly #startup = new AbortController();
   #detach?: () => void;
   #stop?: () => Promise<void>;
   #discovery?: HileRscPluginDiscoveryRegistration;
@@ -51,7 +55,12 @@ export class HileRscPluginRuntime {
     if (!Number.isSafeInteger(options.port) || options.port < 0 || options.port > 65_535) {
       throw new TypeError('RSC plugin runtime port must be an integer between 0 and 65535');
     }
+    const prepareTimeoutMs = options.prepareTimeoutMs ?? 30_000;
+    if (!Number.isSafeInteger(prepareTimeoutMs) || prepareTimeoutMs < 1) {
+      throw new TypeError('RSC plugin runtime prepareTimeoutMs must be a positive safe integer');
+    }
     this.#options = options;
+    this.#prepareTimeoutMs = prepareTimeoutMs;
     this.#resources = new Set(options.resources ?? []);
   }
 
@@ -61,15 +70,25 @@ export class HileRscPluginRuntime {
     if (this.#startPromise) return this.#startPromise;
     const operation = (async () => {
       try {
+        await this.#options.service.prepare({
+          signal: AbortSignal.any([
+            this.#startup.signal,
+            AbortSignal.timeout(this.#prepareTimeoutMs),
+          ]),
+        });
+        this.#startup.signal.throwIfAborted();
         this.#detach = attachRscPluginService(this.#options.service, this.#options.application);
         this.#stop = await this.#options.application.listen(this.#options.port);
+        this.#startup.signal.throwIfAborted();
         this.#discovery = await registerHileRscPluginDiscovery({
           ...this.#options.discovery,
           application: this.#options.application,
         });
+        this.#startup.signal.throwIfAborted();
         if (this.#options.bindDevelopment) {
           this.#unbindDevelopment = await this.#options.bindDevelopment((artifactRoot) =>
             this.#discovery!.update(artifactRoot));
+          this.#startup.signal.throwIfAborted();
         }
         this.#started = true;
       } catch (error) {
@@ -136,6 +155,7 @@ export class HileRscPluginRuntime {
   public close(): Promise<void> {
     if (this.#closePromise) return this.#closePromise;
     this.#closing = true;
+    this.#startup.abort(new Error('Hile RSC plugin runtime is closing'));
     const operation = (async () => {
       await this.#startPromise?.catch(() => undefined);
       await this.#cleanup();

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { build, type BuildOptions, type Metafile, type Plugin } from 'esbuild';
@@ -47,6 +47,16 @@ function reachableChunks(
   entryOutput: string,
   primaryOutputs: ReadonlySet<string>,
 ): string[] {
+  return reachableOutputs(metafile, outputsByAbsolutePath, entryOutput)
+    .filter((output) => output.endsWith('.js') && !primaryOutputs.has(output))
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function reachableOutputs(
+  metafile: Metafile,
+  outputsByAbsolutePath: ReadonlyMap<string, string>,
+  entryOutput: string,
+): string[] {
   const visited = new Set<string>();
   const pending = [entryOutput];
   while (pending.length > 0) {
@@ -60,9 +70,7 @@ function reachableChunks(
       if (target && !visited.has(target)) pending.push(target);
     }
   }
-  return [...visited]
-    .filter((output) => output.endsWith('.js') && !primaryOutputs.has(output))
-    .sort((left, right) => left.localeCompare(right));
+  return [...visited];
 }
 
 async function chunkAssets(
@@ -73,6 +81,7 @@ async function chunkAssets(
   return Promise.all(outputs.map(async (output) => ({
     path: relativeArtifactPath(root, output),
     integrity: await integrityFor(path.resolve(output)),
+    size: (await stat(path.resolve(output))).size,
   })));
 }
 
@@ -142,6 +151,8 @@ export async function assembleRscSharedStyleArtifacts(
     emitted.set(digest, {
       path: relativeArtifactPath(root, target),
       integrity: await integrity(target),
+      size: content.byteLength,
+      scope: 'plugin',
     });
   }
   return [...emitted.values()];
@@ -183,6 +194,11 @@ export async function assembleRscClientArtifacts(
       reachableChunks(browser, browserOutputs, browserOutput, primaryBrowser), integrityFor);
     const ssrChunks = await chunkAssets(root,
       reachableChunks(ssr, ssrOutputs, ssrOutput, primarySsr), integrityFor);
+    const browserStyles = [...new Set(reachableOutputs(browser, browserOutputs, browserOutput)
+      .map((output) => browser.outputs[output]?.cssBundle)
+      .filter((output): output is string => output !== undefined)
+      .map((output) => relativeArtifactPath(root, output)))]
+      .sort((left, right) => left.localeCompare(right));
     for (const exportName of entry.exports) clients.push({
       id: `${entry.referenceBase}#${exportName}`,
       module: browserModule,
@@ -192,6 +208,9 @@ export async function assembleRscClientArtifacts(
       ssrChunks: ssrChunks.map((chunk) => ({ ...chunk })),
       integrity: await integrityFor(path.join(root, browserModule)),
       ssrIntegrity: await integrityFor(path.join(root, ssrModule)),
+      size: (await stat(path.join(root, browserModule))).size,
+      ssrSize: (await stat(path.join(root, ssrModule))).size,
+      styles: browserStyles,
     });
   }
   const styles = await Promise.all(Object.keys(browser.outputs)
@@ -200,6 +219,8 @@ export async function assembleRscClientArtifacts(
     .map(async (output) => ({
       path: relativeArtifactPath(root, output),
       integrity: await integrityFor(path.resolve(output)),
+      size: (await stat(path.resolve(output))).size,
+      scope: 'client' as const,
     })));
   return { clients, styles };
 }
@@ -227,11 +248,13 @@ export async function buildRscServerFunctionArtifacts(options: {
     });
     const module = relativeArtifactPath(options.root, output);
     const artifactIntegrity = await integrity(output);
+    const size = (await stat(output)).size;
     for (const exportName of entry.exports) references.push({
       id: `${entry.referenceBase}#${exportName}`,
       module,
       exportName,
       integrity: artifactIntegrity,
+      size,
     });
   }
   return references;

@@ -39,7 +39,7 @@ export async function bindRscPluginDevelopmentState(
       if (manifest.pluginId !== record.pluginId || manifest.buildId !== record.buildId) {
         throw new Error(`RSC development artifact identity mismatch: ${record.pluginId}@${record.buildId}`);
       }
-      service.activate({
+      await service.activate({
         manifest,
         renderer: createRenderer(record.artifactRoot),
         serverFunctions: (manifest.serverFunctions?.length ?? 0) > 0

@@ -1,5 +1,5 @@
 import { realpathSync } from 'node:fs';
-import { access, mkdir, mkdtemp, readdir, rename, rm, rmdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readdir, rename, rm, rmdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { build, type BuildResult, type Metafile, type Plugin } from 'esbuild';
 import {
@@ -22,6 +22,7 @@ import {
   rscArtifactIntegrity,
   toRscArtifactPath,
 } from './artifact-assembler';
+import { analyzeRouteClientReferences } from './route-analysis';
 
 export interface BuildRscPluginOptions {
   pluginId: string;
@@ -29,7 +30,7 @@ export interface BuildRscPluginOptions {
   cwd: string;
   entry: string;
   outdir: string;
-  routes: RscRouteDefinition[];
+  routes: Array<Omit<RscRouteDefinition, 'clientReferences'>>;
   /** Build-scoped CSS copied once into the immutable artifact. Package export specifiers are supported. */
   styles?: string[];
   metadata?: RscPluginMetadata;
@@ -106,18 +107,19 @@ async function buildRscPluginIntoEmptyDirectory(options: BuildRscPluginOptions):
   }
   const browserDir = path.join(outdir, 'client-browser');
   const ssrDir = path.join(outdir, 'client-ssr');
-  const browserBuild = await buildClients(
-    entries,
-    browserDir,
-    'browser',
-    [graph.boundaryPlugin('client')],
-  );
-  const ssrBuild = await buildClients(
-    entries,
-    ssrDir,
-    'ssr',
-    [graph.boundaryPlugin('client')],
-  );
+  const [browserBuild, ssrBuild, routeReferences] = await Promise.all([
+    buildClients(entries, browserDir, 'browser', [graph.boundaryPlugin('client')]),
+    buildClients(entries, ssrDir, 'ssr', [graph.boundaryPlugin('client')]),
+    analyzeRouteClientReferences({
+      cwd,
+      entry,
+      pluginId: options.pluginId,
+      buildId: options.buildId,
+      routes: options.routes,
+      clientIds: entries.flatMap(({ referenceBase, exports: names }) =>
+        names.map((exportName) => `${referenceBase}#${exportName}`)),
+    }),
+  ]);
   const { clients, styles: clientStyles } = await assembleRscClientArtifacts(
     outdir,
     entries,
@@ -129,6 +131,11 @@ async function buildRscPluginIntoEmptyDirectory(options: BuildRscPluginOptions):
     root: outdir,
     entries: graph.serverFunctionEntries(),
   });
+  const routes = options.routes.map((route, index) => ({
+    ...route,
+    prefetch: route.prefetch ?? 'assets',
+    clientReferences: routeReferences[index],
+  }));
 
   const manifest = validateRscPluginManifest({
     protocolVersion: HILE_RSC_PROTOCOL_VERSION,
@@ -138,11 +145,12 @@ async function buildRscPluginIntoEmptyDirectory(options: BuildRscPluginOptions):
     server: {
       entry: toRscArtifactPath(outdir, serverFile),
       integrity: await rscArtifactIntegrity(serverFile),
+      size: (await stat(serverFile)).size,
     },
     serverFunctions,
     clients,
     styles: [...sharedStyles, ...clientStyles],
-    routes: options.routes,
+    routes,
     metadata: options.metadata,
   }, options.runtime);
 

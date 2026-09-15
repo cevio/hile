@@ -114,6 +114,39 @@ function expectServiceError(fn: () => unknown, code: string) {
 
 describe('RscPluginService', () => {
   const modelsDirectory = fileURLToPath(new URL('../../test-fixtures/models', import.meta.url));
+  it('prepares the active renderer once and uses the same readiness barrier for render fallback', async () => {
+    const prepare = vi.fn(async () => undefined);
+    const renderer = Object.assign(
+      vi.fn(async function* () { yield Buffer.from('ready'); }),
+      { prepare },
+    );
+    const service = new RscPluginService({ manifest: manifest(), renderer });
+
+    await Promise.all([service.prepare(), service.prepare()]);
+    await expect(collect(service.render({ buildId: 'build-1', path: '/dashboard' })))
+      .resolves.toEqual(Buffer.from('ready'));
+
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(prepare).toHaveBeenCalledWith(expect.objectContaining({
+      manifest: expect.objectContaining({ buildId: 'build-1' }),
+      signal: expect.any(AbortSignal),
+    }));
+  });
+
+  it('does not start new renderer preparation for an already-aborted caller', async () => {
+    const prepare = vi.fn(async () => undefined);
+    const renderer = Object.assign(
+      vi.fn(async function* () {}),
+      { prepare },
+    );
+    const service = new RscPluginService({ manifest: manifest(), renderer });
+    const controller = new AbortController();
+    controller.abort(new Error('caller cancelled'));
+
+    await expect(service.prepare({ signal: controller.signal })).rejects.toThrow('caller cancelled');
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
   it('fails directly with a stable error when invocation context is missing', () => {
     const service = new BaseRscPluginService({
       manifest: manifest(),
@@ -160,6 +193,28 @@ describe('RscPluginService', () => {
       .resolves.toEqual(Buffer.from('new-revision'));
     await expect(collect(service.render({ buildId: 'build-1', path: '/dashboard' })))
       .resolves.toEqual(Buffer.from('old-revision'));
+  });
+
+  it('prepares a replacement renderer before atomically activating its revision', async () => {
+    const release = deferred<void>();
+    const service = new RscPluginService({
+      manifest: manifest(),
+      renderer: async function* () { yield Buffer.from('old'); },
+    });
+    const next = manifest();
+    next.buildId = 'build-2';
+    const nextRenderer = Object.assign(
+      async function* () { yield Buffer.from('new'); },
+      { prepare: vi.fn(() => release.promise) },
+    );
+
+    const activation = service.activate({ manifest: next, renderer: nextRenderer });
+    expect(service.describe().buildId).toBe('build-1');
+    release.resolve();
+    await activation;
+
+    expect(service.describe().buildId).toBe('build-2');
+    expect(nextRenderer.prepare).toHaveBeenCalledOnce();
   });
 
   it('bounds revision hand-off retention and evicts the oldest immutable build', async () => {

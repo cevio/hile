@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { RscPluginManifest } from '../protocol';
+import { selectRscClientStyles } from '../protocol/style-selection';
 import type { RemoteClientAssetResolution, RemoteClientBoundaryProps } from '../client';
 
 export interface RegisteredRscArtifacts {
@@ -137,11 +138,15 @@ export function createRemoteClientResolver(
     if (!reference || reference.exportName !== descriptor.exportName) {
       throw new Error(`RSC client reference is not registered: ${descriptor.referenceId}`);
     }
+    const styles = selectRscClientStyles(registered.manifest.styles, [reference]);
+    if (!styles) {
+      throw new Error(`RSC client style metadata is incomplete: ${descriptor.referenceId}`);
+    }
     return {
       moduleUrl: target === 'ssr'
         ? pathToFileURL(path.join(registered.root, reference.ssrModule)).href
         : urls.file(descriptor.pluginId, descriptor.buildId, reference.module),
-      styles: registered.manifest.styles.map((style) => ({
+      styles: styles.map((style) => ({
         href: urls.file(descriptor.pluginId, descriptor.buildId, style.path),
         integrity: style.integrity,
       })),

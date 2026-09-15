@@ -46,10 +46,16 @@ function publicManifest(manifest: RscPluginManifest, clients = manifest.clients)
     protocolVersion: manifest.protocolVersion,
     pluginId: manifest.pluginId,
     buildId: manifest.buildId,
-    clients: clients.map(({ id, module, exportName, chunks, integrity }) => ({
-      id, module, exportName, chunks, integrity,
+    clients: clients.map(({ id, module, exportName, chunks, integrity, size, styles }) => ({
+      id, module, exportName, chunks, integrity, size,
+      ...(styles === undefined ? {} : { styles }),
     })),
     styles: manifest.styles,
+    routes: manifest.routes.map(({ path, prefetch, clientReferences }) => ({
+      path,
+      ...(prefetch === undefined ? {} : { prefetch }),
+      ...(clientReferences === undefined ? {} : { clientReferences }),
+    })),
   };
 }
 

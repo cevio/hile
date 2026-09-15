@@ -19,8 +19,10 @@ import {
 import {
   assembleRscClientArtifacts,
   assembleRscSharedStyleArtifacts,
+  createRscRouteAnalyzer,
   buildRscServerFunctionArtifacts,
   createRscClientBuildOptions,
+  createRscServerImportsPlugin,
   isPathInside,
   RSC_BUILD_EXTERNALS,
   rscArtifactIntegrity,
@@ -72,7 +74,7 @@ interface ContextSlot {
   result: BuildResult;
 }
 
-const EXTERNAL = [...RSC_BUILD_EXTERNALS];
+  const EXTERNAL = RSC_BUILD_EXTERNALS.filter((specifier) => !specifier.startsWith('@hile/rsc'));
 
 async function buildInputFingerprint(results: readonly BuildResult[]): Promise<string> {
   const inputs = new Set(results.flatMap((result) => Object.keys(result.metafile?.inputs ?? {})));
@@ -216,6 +218,13 @@ export async function createRscDevelopmentCompiler(
   let successfulRevision = options.initialRevision ?? 0;
   let disposed = false;
   let queue = Promise.resolve<RscDevelopmentRevision | undefined>(undefined);
+  const routeAnalyzer = await createRscRouteAnalyzer({
+    cwd,
+    entry,
+    pluginId: options.pluginId,
+    buildId: () => activeBuildId,
+    routes: options.routes,
+  });
 
   const compile = async (): Promise<RscDevelopmentRevision> => {
     const revision = successfulRevision + 1;
@@ -223,7 +232,8 @@ export async function createRscDevelopmentCompiler(
     const sharedStyles = await assembleRscSharedStyleArtifacts(cwd, workdir, options.styles);
     const server = await execute('server', 'server', {
       absWorkingDir: cwd, entryPoints: [entry], outfile: serverFile, bundle: true, format: 'esm', platform: 'node',
-      target: 'node20', jsx: 'automatic', external: EXTERNAL, plugins: [graph.boundaryPlugin('server')], logLevel: 'silent',
+      target: 'node20', jsx: 'automatic', external: EXTERNAL,
+      plugins: [graph.boundaryPlugin('server'), createRscServerImportsPlugin()], logLevel: 'silent',
     });
     const entries = graph.clientEntries();
     if (entries.length === 0) throw new Error('RSC plugin must expose at least one use client boundary');
@@ -254,15 +264,20 @@ export async function createRscDevelopmentCompiler(
       && currentClientInputFingerprint === latestClientInputFingerprint
       && browserSlot?.signature === clientContextSignature
       && ssrSlot?.signature === clientContextSignature;
-    const [browser, ssr] = mayReuseClientArtifacts
-      ? [
+    const clientBuilds = mayReuseClientArtifacts
+      ? Promise.resolve([
           { result: browserSlot.result, state: 'cached' as const },
           { result: ssrSlot.result, state: 'cached' as const },
-        ]
-      : await Promise.all([
+        ] as const)
+      : Promise.all([
           execute('browser', clientContextSignature, browserOptions),
           execute('ssr', clientContextSignature, ssrOptions),
         ]);
+    const [[browser, ssr], routeReferences] = await Promise.all([
+      clientBuilds,
+      routeAnalyzer.analyze(entries.flatMap(({ referenceBase, exports: names }) =>
+        names.map((exportName) => `${referenceBase}#${exportName}`))),
+    ]);
     const browserMeta = browser.result.metafile!;
     const ssrMeta = ssr.result.metafile!;
     const { clients, styles: clientStyles } = await assembleRscClientArtifacts(workdir, entries, browserMeta, ssrMeta);
@@ -271,6 +286,11 @@ export async function createRscDevelopmentCompiler(
       root: workdir,
       entries: graph.serverFunctionEntries(),
     });
+    const routes = options.routes.map((route, index) => ({
+      ...route,
+      prefetch: route.prefetch ?? 'assets',
+      clientReferences: routeReferences[index],
+    }));
     const manifest = validateRscPluginManifest({
       protocolVersion: HILE_RSC_PROTOCOL_VERSION,
       pluginId: options.pluginId,
@@ -279,11 +299,12 @@ export async function createRscDevelopmentCompiler(
       server: {
         entry: toRscArtifactPath(workdir, serverFile),
         integrity: await rscArtifactIntegrity(serverFile),
+        size: (await stat(serverFile)).size,
       },
       serverFunctions,
       clients,
       styles: [...sharedStyles, ...clientStyles],
-      routes: [...options.routes],
+      routes,
       metadata: options.metadata,
     }, options.runtime);
     await writeFile(path.join(workdir, 'plugin.json'), `${JSON.stringify(manifest, null, 2)}\n`);
@@ -319,6 +340,7 @@ export async function createRscDevelopmentCompiler(
       await queue.catch(() => undefined);
       await Promise.all([...slots.values()].map((slot) => slot.context.dispose()));
       slots.clear();
+      await routeAnalyzer.dispose();
       await rm(workdir, { recursive: true, force: true });
     },
   };

@@ -9,6 +9,7 @@ export interface RscRuntimeCompatibility {
 export interface RscArtifact {
   entry: string;
   integrity: string;
+  size?: number;
 }
 
 export interface RscClientReference {
@@ -20,16 +21,24 @@ export interface RscClientReference {
   ssrChunks: RscChunkAsset[];
   integrity: string;
   ssrIntegrity: string;
+  size?: number;
+  ssrSize?: number;
+  /** Browser style artifacts reachable from this client boundary. */
+  styles?: string[];
 }
 
 export interface RscChunkAsset {
   path: string;
   integrity: string;
+  size?: number;
 }
 
 export interface RscStyleAsset {
   path: string;
   integrity: string;
+  size?: number;
+  /** Omitted by legacy manifests and therefore treated as plugin-wide. */
+  scope?: 'plugin' | 'client';
 }
 
 export interface RscServerFunctionReference {
@@ -37,11 +46,18 @@ export interface RscServerFunctionReference {
   module: string;
   exportName: string;
   integrity: string;
+  size?: number;
 }
+
+export type RscRoutePrefetch = 'none' | 'assets' | 'route';
 
 export interface RscRouteDefinition {
   path: string;
   entry: string;
+  /** Safe preload policy. `route` additionally permits a side-effect-free Flight prefetch. */
+  prefetch?: RscRoutePrefetch;
+  /** Build-generated client references reachable from this route entry. */
+  clientReferences?: string[];
 }
 
 /** Host-agnostic presentation data owned by one immutable plugin build. */

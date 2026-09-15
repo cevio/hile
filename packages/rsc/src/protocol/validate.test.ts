@@ -75,6 +75,66 @@ function expectProtocolError(fn: () => unknown, code: string): void {
 }
 
 describe('validateRscPluginManifest', () => {
+  it('accepts additive artifact sizes and route-scoped preload metadata', () => {
+    const manifest = createManifest();
+    manifest.server.size = 100;
+    manifest.clients[0].size = 40;
+    manifest.clients[0].ssrSize = 42;
+    manifest.clients[0].chunks[0].size = 12;
+    manifest.styles[0].size = 8;
+    manifest.styles[0].scope = 'client';
+    manifest.clients[0].styles = ['styles/counter.css'];
+    manifest.routes[0].prefetch = 'assets';
+    manifest.routes[0].clientReferences = ['counter#default'];
+
+    expect(validateRscPluginManifest(manifest, hostRuntime)).toEqual(manifest);
+  });
+
+  it('rejects invalid style scope and unknown client style references', () => {
+    const invalidScope = createManifest();
+    (invalidScope.styles[0] as { scope?: unknown }).scope = 'route';
+    expectProtocolError(
+      () => validateRscPluginManifest(invalidScope, hostRuntime),
+      'ERR_RSC_INVALID_MANIFEST',
+    );
+
+    const unknownStyle = createManifest();
+    unknownStyle.clients[0].styles = ['styles/missing.css'];
+    expectProtocolError(
+      () => validateRscPluginManifest(unknownStyle, hostRuntime),
+      'ERR_RSC_INVALID_MANIFEST',
+    );
+  });
+
+  it('bounds manifest collection fan-out before validating individual entries', () => {
+    const tooManyChunks = createManifest();
+    tooManyChunks.clients[0].chunks = Array.from({ length: 513 }, (_, index) => ({
+      path: `client-browser/chunk-${index}.js`,
+      integrity: 'sha256-EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE=',
+    }));
+
+    expectProtocolError(
+      () => validateRscPluginManifest(tooManyChunks, hostRuntime),
+      'ERR_RSC_INVALID_MANIFEST',
+    );
+  });
+
+  it('rejects invalid sizes and unknown route client references', () => {
+    const invalidSize = createManifest();
+    invalidSize.clients[0].size = -1;
+    expectProtocolError(
+      () => validateRscPluginManifest(invalidSize, hostRuntime),
+      'ERR_RSC_INVALID_MANIFEST',
+    );
+
+    const unknownReference = createManifest();
+    unknownReference.routes[0].clientReferences = ['missing#default'];
+    expectProtocolError(
+      () => validateRscPluginManifest(unknownReference, hostRuntime),
+      'ERR_RSC_INVALID_ROUTE',
+    );
+  });
+
   it('accepts bounded plugin metadata and returns a canonical defensive copy', () => {
     const manifest = createManifest();
     const metadata = {

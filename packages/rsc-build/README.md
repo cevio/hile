@@ -6,6 +6,8 @@ Builds are transactional: all graphs and the manifest are completed in a sibling
 
 `RscModuleGraph` is shared by production and incremental compilation. Reference source generation and artifact assembly live in separate modules, so directive semantics, chunk manifests, CSS artifacts, integrity values and Server Function bundles have one implementation.
 
+Every build records artifact byte sizes and analyzes all declared route exports in one build to emit their reachable browser client-reference IDs. Client-graph CSS is marked client-scoped and linked to the client references that reach it; configured shared CSS is marked plugin-wide. Routes default to the safe `assets` preload policy; set `prefetch: "none"` to disable proactive loading or `prefetch: "route"` only when the route's Flight render is side-effect free and may be prefetched by a Host. Dependency, style-scope, and size metadata are build output and must not be authored in configuration.
+
 ## Use
 
 ```bash

@@ -2,8 +2,14 @@
 
 import React, {
   forwardRef,
+  useCallback,
+  useEffect,
+  useRef,
   type AnchorHTMLAttributes,
+  type FocusEvent,
+  type ForwardedRef,
   type MouseEvent,
+  type PointerEvent,
 } from 'react';
 import {
   resolveRscNavigationUrl,
@@ -74,6 +80,30 @@ export interface RscLinkProps extends Omit<AnchorHTMLAttributes<HTMLAnchorElemen
   href: string;
   replace?: boolean;
   scroll?: boolean;
+  /** Opt-in Host route prefetch triggered by user intent or viewport visibility. */
+  prefetch?: false | 'intent' | 'viewport';
+}
+
+export function shouldPrefetchRscNavigation(href: string, currentHref: string): boolean {
+  const current = resolveRscNavigationUrl(currentHref, currentHref);
+  const destination = resolveRscNavigationUrl(href, currentHref);
+  return current !== undefined
+    && destination !== undefined
+    && destination.origin === current.origin;
+}
+
+export function prefetchDeclaredRscRoute(
+  navigation: RscClientNavigation,
+  href: string,
+  currentHref: string,
+): boolean {
+  return shouldPrefetchRscNavigation(href, currentHref)
+    && navigation.prefetchRoute?.(href) === true;
+}
+
+function assignRef<T>(ref: ForwardedRef<T>, value: T | null): void {
+  if (typeof ref === 'function') ref(value);
+  else if (ref) ref.current = value;
 }
 
 /**
@@ -85,11 +115,49 @@ export const RscLink = forwardRef<HTMLAnchorElement, RscLinkProps>(function RscL
   href,
   replace = false,
   scroll,
+  prefetch = false,
   target,
   download,
   onClick,
+  onFocus,
+  onPointerEnter,
   ...props
 }, ref) {
+  const anchorRef = useRef<HTMLAnchorElement | null>(null);
+  const prefetchedHref = useRef<string | undefined>(undefined);
+  const setAnchorRef = useCallback((node: HTMLAnchorElement | null) => {
+    anchorRef.current = node;
+    assignRef(ref, node);
+  }, [ref]);
+  const triggerPrefetch = useCallback((): boolean => {
+    const location = browserLocation();
+    const navigation = installedNavigation();
+    if (
+      !location
+      || !navigation
+      || prefetchedHref.current === href
+      || !shouldPrefetchRscNavigation(href, location.href)
+    ) {
+      return false;
+    }
+    if (!prefetchDeclaredRscRoute(navigation, href, location.href)) return false;
+    prefetchedHref.current = href;
+    return true;
+  }, [href]);
+
+  useEffect(() => {
+    if (prefetch !== 'viewport' || typeof IntersectionObserver === 'undefined' || !anchorRef.current) {
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some(({ isIntersecting }) => isIntersecting)) {
+        if (triggerPrefetch()) observer.disconnect();
+      }
+    });
+    observer.observe(anchorRef.current);
+    return () => observer.disconnect();
+  }, [prefetch, triggerPrefetch]);
+
   function handleClick(event: MouseEvent<HTMLAnchorElement>) {
     onClick?.(event);
     if (
@@ -107,12 +175,24 @@ export const RscLink = forwardRef<HTMLAnchorElement, RscLinkProps>(function RscL
     else navigation!.push(href, options);
   }
 
+  function handleFocus(event: FocusEvent<HTMLAnchorElement>) {
+    onFocus?.(event);
+    if (prefetch === 'intent' && !event.defaultPrevented) triggerPrefetch();
+  }
+
+  function handlePointerEnter(event: PointerEvent<HTMLAnchorElement>) {
+    onPointerEnter?.(event);
+    if (prefetch === 'intent' && !event.defaultPrevented) triggerPrefetch();
+  }
+
   return React.createElement('a', {
     ...props,
-    ref,
+    ref: setAnchorRef,
     href,
     target,
     download,
     onClick: handleClick,
+    onFocus: handleFocus,
+    onPointerEnter: handlePointerEnter,
   });
 });

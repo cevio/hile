@@ -15,3 +15,13 @@ export const HILE_RSC_PLUGIN_METADATA_LIMITS = Object.freeze({
   navigationGroupLength: 120,
   navigationOrderMagnitude: 1_000_000,
 } as const);
+
+export const HILE_RSC_MANIFEST_LIMITS = Object.freeze({
+  serverFunctions: 2_048,
+  clients: 2_048,
+  chunksPerClient: 512,
+  stylesPerClient: 512,
+  styles: 2_048,
+  routes: 2_048,
+  clientReferencesPerRoute: 512,
+} as const);

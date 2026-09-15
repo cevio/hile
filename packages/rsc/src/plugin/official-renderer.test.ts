@@ -36,6 +36,57 @@ function manifest(): RscPluginManifest {
 }
 
 describe('official RSC renderer', () => {
+  it('prepares the immutable server module and validates every route before rendering', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'hile-rsc-renderer-'));
+    roots.push(root);
+    await writeFile(path.join(root, 'server.mjs'), 'export function Page() { return null; }\n');
+    const renderer = createOfficialRscRenderer(root);
+    const value = manifest();
+    value.routes.push({ path: '/missing', entry: 'MissingPage' });
+
+    await expect(renderer.prepare({
+      manifest: value,
+      signal: new AbortController().signal,
+    })).rejects.toThrow('MissingPage');
+    expect(renderToPipeableStream).not.toHaveBeenCalled();
+  });
+
+  it('shares preparation work across concurrent readiness checks', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'hile-rsc-renderer-'));
+    roots.push(root);
+    await writeFile(path.join(root, 'server.mjs'), 'export function Page() { return null; }\n');
+    const renderer = createOfficialRscRenderer(root);
+    const value = manifest();
+
+    await Promise.all([
+      renderer.prepare({ manifest: value, signal: new AbortController().signal }),
+      renderer.prepare({ manifest: value, signal: new AbortController().signal }),
+    ]);
+
+    expect(renderToPipeableStream).not.toHaveBeenCalled();
+  });
+
+  it('retains one readiness result for repeated checks of the immutable renderer', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'hile-rsc-renderer-'));
+    roots.push(root);
+    await writeFile(path.join(root, 'server.mjs'), 'export function Page() { return null; }\n');
+    const renderer = createOfficialRscRenderer(root);
+    const value = manifest();
+    const routes = value.routes;
+    let routeReads = 0;
+    Object.defineProperty(value, 'routes', {
+      get() {
+        routeReads++;
+        return routes;
+      },
+    });
+
+    await renderer.prepare({ manifest: value, signal: new AbortController().signal });
+    await renderer.prepare({ manifest: value, signal: new AbortController().signal });
+
+    expect(routeReads).toBe(1);
+  });
+
   it('injects the immutable deployment identity into every route component', async () => {
     const root = await mkdtemp(path.join(tmpdir(), 'hile-rsc-renderer-'));
     roots.push(root);

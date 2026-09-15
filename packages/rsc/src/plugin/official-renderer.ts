@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { createElement, type ComponentType } from 'react';
 import type { RscPluginManifest } from '../protocol';
 import { HILE_REMOTE_CLIENT_MODULE_ID, HILE_REMOTE_CLIENT_REFERENCE } from '../protocol';
-import type { RscRenderer } from './types';
+import type { PreparedRscRenderer } from './types';
 
 function createClientManifest(manifest: RscPluginManifest) {
   void manifest;
@@ -17,18 +17,65 @@ function createClientManifest(manifest: RscPluginManifest) {
   };
 }
 
-export function createOfficialRscRenderer(artifactRoot: string): RscRenderer {
+export function createOfficialRscRenderer(artifactRoot: string): PreparedRscRenderer {
   let modulePromise: Promise<Record<string, unknown>> | undefined;
-  return async function render({ manifest, routeEntry, request, signal }) {
+  let flightRuntimePromise: Promise<typeof import('react-server-dom-webpack/server.node')> | undefined;
+  let readinessBuildId: string | undefined;
+  let readinessPromise: Promise<void> | undefined;
+  const loadModule = (manifest: RscPluginManifest) => {
     modulePromise ??= import(pathToFileURL(
       path.join(artifactRoot, manifest.server.entry),
     ).href) as Promise<Record<string, unknown>>;
-    const pluginModule = await modulePromise;
+    return modulePromise;
+  };
+  const loadFlightRuntime = () => {
+    flightRuntimePromise ??= import('react-server-dom-webpack/server.node');
+    return flightRuntimePromise;
+  };
+  const readinessFor = (manifest: RscPluginManifest) => {
+    if (readinessPromise) {
+      if (readinessBuildId !== manifest.buildId) {
+        return Promise.reject(new Error(
+          `RSC renderer is already bound to immutable build: ${readinessBuildId}`,
+        ));
+      }
+      return readinessPromise;
+    }
+    readinessBuildId = manifest.buildId;
+    readinessPromise = Promise.all([loadModule(manifest), loadFlightRuntime()]).then(([pluginModule]) => {
+      for (const route of manifest.routes) {
+        if (typeof pluginModule[route.entry] !== 'function') {
+          throw new Error(`RSC route entry is not a component: ${route.entry}`);
+        }
+      }
+    });
+    return readinessPromise;
+  };
+  const waitForSignal = (preparation: Promise<void>, signal: AbortSignal): Promise<void> => {
+    if (signal.aborted) return Promise.reject(signal.reason);
+    return new Promise<void>((resolve, reject) => {
+      const abort = () => reject(signal.reason);
+      signal.addEventListener('abort', abort, { once: true });
+      void preparation.then(
+        () => {
+          signal.removeEventListener('abort', abort);
+          resolve();
+        },
+        (error) => {
+          signal.removeEventListener('abort', abort);
+          reject(error);
+        },
+      );
+    });
+  };
+  const render: PreparedRscRenderer = async ({ manifest, routeEntry, request, signal }) => {
+    await render.prepare({ manifest, signal });
+    const pluginModule = await loadModule(manifest);
     const Component = pluginModule[routeEntry];
     if (typeof Component !== 'function') {
       throw new Error(`RSC route entry is not a component: ${routeEntry}`);
     }
-    const { renderToPipeableStream } = await import('react-server-dom-webpack/server.node');
+    const { renderToPipeableStream } = await loadFlightRuntime();
     const output = new PassThrough();
     let flight: ReturnType<typeof renderToPipeableStream> | undefined;
     const abort = () => {
@@ -64,4 +111,9 @@ export function createOfficialRscRenderer(artifactRoot: string): RscRenderer {
     flight.pipe(output);
     return output;
   };
+  render.prepare = ({ manifest, signal }: Parameters<PreparedRscRenderer['prepare']>[0]) => {
+    if (signal.aborted) return Promise.reject(signal.reason);
+    return waitForSignal(readinessFor(manifest), signal);
+  };
+  return render;
 }

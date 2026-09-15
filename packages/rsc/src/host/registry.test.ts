@@ -69,6 +69,17 @@ describe('RscArtifactCatalog composition', () => {
   it('builds a resolver from an injected catalog and URL policy', async () => {
     const catalog = new InMemoryRscArtifactCatalog();
     const value = manifest();
+    value.clients[0].styles = ['client-browser/interactive.css'];
+    value.styles[0].scope = 'client';
+    value.styles.push({
+      path: 'client-browser/unrelated.css',
+      integrity: 'sha256-EEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE=',
+      scope: 'client',
+    }, {
+      path: 'styles/theme.css',
+      integrity: 'sha256-FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF=',
+      scope: 'plugin',
+    });
     catalog.register('/tmp/plugin-root', value);
     const resolver = createRemoteClientResolver(catalog, createRscAssetUrls('/assets-v2'));
     const descriptor = {
@@ -80,7 +91,10 @@ describe('RscArtifactCatalog composition', () => {
 
     const browser = await resolver(descriptor, 'browser');
     expect(browser.moduleUrl).toBe('/assets-v2/org.hile.fixture/build-a/file/client-browser/interactive.js');
-    expect(browser.styles[0].href).toBe('/assets-v2/org.hile.fixture/build-a/file/client-browser/interactive.css');
+    expect(browser.styles.map(({ href }) => href)).toEqual([
+      '/assets-v2/org.hile.fixture/build-a/file/client-browser/interactive.css',
+      '/assets-v2/org.hile.fixture/build-a/file/styles/theme.css',
+    ]);
     const ssr = await resolver(descriptor, 'ssr');
     expect(ssr.moduleUrl).toMatch(/^file:\/\/\/tmp\/plugin-root\/client-ssr\/interactive\.js$/);
   });

@@ -97,6 +97,27 @@ export function getRscPluginArtifactFiles(manifest: RscPluginManifest): Map<stri
   return files;
 }
 
+function getRscPluginArtifactSizes(manifest: RscPluginManifest): Map<string, number | undefined> {
+  const sizes = new Map<string, number | undefined>();
+  const add = (artifactPath: string, size: number | undefined) => {
+    const previous = sizes.get(artifactPath);
+    if (sizes.has(artifactPath) && previous !== undefined && size !== undefined && previous !== size) {
+      throw new Error(`RSC artifact declares conflicting size: ${artifactPath}`);
+    }
+    if (!sizes.has(artifactPath) || previous === undefined) sizes.set(artifactPath, size);
+  };
+  add(manifest.server.entry, manifest.server.size);
+  for (const serverFunction of manifest.serverFunctions) add(serverFunction.module, serverFunction.size);
+  for (const client of manifest.clients) {
+    add(client.module, client.size);
+    add(client.ssrModule, client.ssrSize);
+    for (const chunk of client.chunks) add(chunk.path, chunk.size);
+    for (const chunk of client.ssrChunks) add(chunk.path, chunk.size);
+  }
+  for (const style of manifest.styles) add(style.path, style.size);
+  return sizes;
+}
+
 export async function verifyRscPluginArtifact(
   input: string,
   hostRuntime: RscRuntimeCompatibility,
@@ -105,15 +126,21 @@ export async function verifyRscPluginArtifact(
   const raw = JSON.parse(await readFile(manifestPath, 'utf8'));
   const manifest = validateRscPluginManifest(raw, hostRuntime);
   const files = getRscPluginArtifactFiles(manifest);
+  const sizes = getRscPluginArtifactSizes(manifest);
   for (const [artifactPath, expectedIntegrity] of files) {
     const absolute = path.resolve(root, artifactPath);
     if (!absolute.startsWith(`${root}${path.sep}`)) {
       throw new Error(`RSC artifact escapes its root: ${artifactPath}`);
     }
     await assertRegularArtifact(root, artifactPath);
-    const actualIntegrity = `sha256-${createHash('sha256').update(await readFile(absolute)).digest('base64')}`;
+    const content = await readFile(absolute);
+    const actualIntegrity = `sha256-${createHash('sha256').update(content).digest('base64')}`;
     if (actualIntegrity !== expectedIntegrity) {
       throw new Error(`RSC artifact integrity mismatch: ${artifactPath}`);
+    }
+    const expectedSize = sizes.get(artifactPath);
+    if (expectedSize !== undefined && content.byteLength !== expectedSize) {
+      throw new Error(`RSC artifact size mismatch: ${artifactPath}`);
     }
   }
   const manifestArtifactPath = path.relative(root, manifestPath).split(path.sep).join('/');

@@ -3106,7 +3106,7 @@ when a same-origin destination should use the public Host router:
 import { RscLink } from '@hile/rsc/client/navigation'
 
 export function PluginPage() {
-  return <RscLink href="/plugins/catalog/details">Details</RscLink>
+  return <RscLink href="/plugins/catalog/details" prefetch="intent">Details</RscLink>
 }
 ```
 
@@ -3118,6 +3118,24 @@ targets, external URLs, and consumer-cancelled events. Before the Host adapter h
 ordinary link remains a native anchor; imperative operations fall back to browser navigation.
 Imperative destinations accept only HTTP(S) URLs, and cross-origin `push` or `replace` uses a
 full browser navigation instead of passing an untrusted URL to the framework router.
+
+`RscLink` prefetch is opt-in: `intent` runs on focus or pointer entry and `viewport` runs when
+the link becomes visible. Both accept only same-origin HTTP(S) destinations and call the
+Host adapter's separate `prefetchRoute` gate. The explicit imperative `prefetch` API preserves
+its existing Host-adapter behavior and is not treated as automatic link speculation. With the Next adapter, the Host must supply
+`allowRoutePrefetch`; return `true` only after resolving the destination against the active
+manifest and finding a matching route that declares `prefetch: "route"`. A rejected prefetch is
+not cached by `RscLink`, so a later policy change can be retried.
+
+A Host can additionally call `preloadRscRouteAssets({ pluginId, buildId, path, budgetBytes,
+maxFiles })` from `@hile/rsc/client` to load the exact immutable route's browser modules,
+chunks, plugin-wide styles, and only the client-scoped styles reachable from that route. The
+preload is skipped before creating any links when the route opts out, build-generated dependency
+or size metadata is unavailable, the byte or file-count budget is exceeded, or browser preload
+support is absent. The default limits are 256 KiB and 128 files; retained preload DOM nodes are
+bounded and evicted nodes are removed. Asset preload never renders a route; full Flight prefetch
+is appropriate only for routes whose manifest declares `prefetch: "route"` and whose render is
+side-effect free.
 
 Plugin browser graphs may import only `@hile/rsc/client/navigation` from `@hile/rsc`; Host,
 transport, artifact, and general client-runtime imports fail during artifact compilation. Never
@@ -3239,7 +3257,7 @@ const revision = await compiler.rebuild()
 await compiler.dispose()
 ```
 
-The server, browser, and SSR esbuild contexts are reused. Browser and SSR contexts are recreated only when the set of `'use client'` entries or their exports changes. Server-only edits reuse emitted browser/SSR artifacts when their input fingerprint and the Server Function graph are unchanged; build-scoped Server Function graphs rebuild client artifacts conservatively. Build-scoped `styles` are reassembled into every immutable development revision even when the browser graph is cached. Relative styles inside `cwd` participate in source observation; package-export or absolute styles require an explicit rebuild or config reload after their external source changes. Failed rebuilds leave the last successful revision intact. Development output retention is bounded per session and across stale sessions; keep at least two revisions and size `maxRevisions` for the maximum activation/download overlap your environment permits. The mutable `.work/<session>` directory is removed on compiler disposal.
+The server, browser, SSR, and route-dependency analysis esbuild contexts are reused. Browser and SSR contexts are recreated only when the set of `'use client'` entries or their exports changes. Server-only edits reuse emitted browser/SSR artifacts when their input fingerprint and the Server Function graph are unchanged; build-scoped Server Function graphs rebuild client artifacts conservatively. Every development revision emits the same default route preload policy, route-scoped client references, scoped CSS metadata, and artifact sizes as a production build. Build-scoped `styles` are reassembled into every immutable development revision even when the browser graph is cached. Relative styles inside `cwd` participate in source observation; package-export or absolute styles require an explicit rebuild or config reload after their external source changes. Failed rebuilds leave the last successful revision intact. Development output retention is bounded per session and across stale sessions; keep at least two revisions and size `maxRevisions` for the maximum activation/download overlap your environment permits. The mutable `.work/<session>` directory is removed on compiler disposal.
 
 `HileRscPluginRuntime` is the reusable Hile composition root for a plugin process. It owns transport attachment, the internal listener, explicitly secured discovery registration, optional development binding, auxiliary watcher cleanup, renderer drain, and rollback. Plugin packages provide declarative namespace/port/trust/artifact configuration; they do not duplicate lifecycle ordering.
 
@@ -3279,7 +3297,9 @@ The word “Server Action” in React/Next documentation describes a Server Func
 
 The semantic baseline for Server Functions is the official [Next.js `use server` reference](https://nextjs.org/docs/app/api-reference/directives/use-server), [Next.js forms guide](https://nextjs.org/docs/app/guides/forms), and [React `useActionState` reference](https://react.dev/reference/react/useActionState). Those documents describe framework behavior; Hile deliberately supports the module-level async-export subset listed above and routes it through the independent plugin build/transport instead of Next's application compiler.
 
-`RscPluginService.activate()` switches new render requests to a verified manifest/renderer pair while in-flight requests finish on their captured revision. `RscPluginService.load()` atomically replaces the model snapshot; `bindRscModelDevelopment()` can watch model files without rebuilding RSC assets. The plugin updates its discovery announcement only after activation; `HileRscDiscoveryHost` authorizes, downloads, and enables that revision, then the Host may compose `createRscDevelopmentEventMiddleware()` and `RscDevelopmentReload` for browser refresh.
+`RscPluginService.prepare()` imports and validates the active renderer without executing route components. The official Hile plugin runtime waits for this readiness barrier before attaching transport, listening, or publishing discovery, bounded by `prepareTimeoutMs` (30 seconds by default), so a published instance can serve its first render without paying module and Flight-runtime initialization cost. Custom renderers without a preparation hook remain compatible and are treated as immediately ready.
+
+`RscPluginService.activate()` prepares an official replacement before atomically switching new render requests to its verified manifest/renderer pair, while in-flight requests finish on their captured revision. `RscPluginService.load()` atomically replaces the model snapshot; `bindRscModelDevelopment()` can watch model files without rebuilding RSC assets. The plugin updates its discovery announcement only after activation; `HileRscDiscoveryHost` authorizes, downloads, and enables that revision, then the Host may compose `createRscDevelopmentEventMiddleware()` and `RscDevelopmentReload` for browser refresh.
 
 This development path performs full-page refresh after activation. It does not claim React Fast Refresh state preservation across independently compiled plugin boundaries.
 
@@ -3303,7 +3323,9 @@ The core package root exports only the transport-neutral protocol. Build, develo
 - `@hile/rsc-next` is the isolated Next-private adapter. Keep every Next-version-specific import there.
 - A request holds an exact build lease until its decoder consumes or closes the Flight stream. Activation moves new requests to the new build while old leases drain.
 - Browser artifacts are immutable and integrity-checked before activation.
-- The public asset middleware exposes only browser modules, browser chunks, styles, and a sanitized browser manifest; server and SSR artifacts remain internal.
+- The compiler records non-negative artifact byte sizes, plugin-wide versus client-scoped styles, per-client style reachability, and route-scoped client-reference graphs. Routes default to safe asset preload, may opt out with `prefetch: "none"`, and may explicitly permit full Flight prefetch with `prefetch: "route"`.
+- Manifest server-function, client, chunk, style, route, and per-route reference collections have explicit protocol limits so one valid-looking artifact cannot create unbounded catalog or preload fan-out.
+- The public asset middleware exposes only browser modules, browser chunks, styles, route preload metadata, and a sanitized browser manifest; server and SSR artifacts remain internal.
 - Internal stream requests require protocol version 1 and per-chunk credit. Unsupported uncredited streams fail closed instead of disabling backpressure.
 - Flight streams accept `window` from 1 through 64 (default 1 for legacy peers), a total `timeout`, and an `idleTimeout` that resets after each valid chunk. Timeout and consumer cancellation send ABORT to the producer.
 - `RscHostRuntime` shares immutable manifest verification only when a locator supplies a stable concrete-endpoint `verificationKey`; unkeyed or dynamically routed leases are verified on every render. It emits one non-blocking observer event per render with identity, outcome, duration, bytes, and optional error.

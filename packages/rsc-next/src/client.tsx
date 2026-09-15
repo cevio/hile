@@ -18,17 +18,30 @@ installRscServerReferenceRuntime((id, callServer, name) =>
 export interface RscNextClientRuntimeProps {
   children: ReactNode;
   serverFunctions?: RscServerFunctionClientOptions;
+  /** Host-owned policy. Return true only for manifest routes declaring `prefetch: "route"`. */
+  allowRoutePrefetch?: (href: string) => boolean;
 }
 
 /** Installs the Next Server Reference and browser navigation adapters for remote client modules. */
-export function RscNextClientRuntime({ children, serverFunctions }: RscNextClientRuntimeProps) {
+export function RscNextClientRuntime({
+  children,
+  serverFunctions,
+  allowRoutePrefetch,
+}: RscNextClientRuntimeProps) {
   const router = useRouter();
   const navigation = useMemo<RscClientNavigation>(() => ({
     push: (href, options) => router.push(href, options),
     replace: (href, options) => router.replace(href, options),
     refresh: () => router.refresh(),
     prefetch: (href) => router.prefetch(href),
-  }), [router]);
+    ...(allowRoutePrefetch ? {
+      prefetchRoute: (href: string) => {
+        if (!allowRoutePrefetch(href)) return false;
+        router.prefetch(href);
+        return true;
+      },
+    } : {}),
+  }), [router, allowRoutePrefetch]);
   useEffect(() => installRscNavigationRuntime(navigation), [navigation]);
   if (serverFunctions) configureRscServerFunctionClient(serverFunctions);
   return children;

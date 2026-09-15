@@ -73,7 +73,10 @@ describe('RSC asset middleware composition', () => {
     expect(manifestContext.status).toBe(200);
     expect(manifestContext.body).toMatchObject({ buildId: 'build-a' });
     expect(manifestContext.body).not.toHaveProperty('server');
-    expect(manifestContext.body).not.toHaveProperty('routes');
+    expect(manifestContext.body).toMatchObject({
+      routes: [{ path: '/fixture' }],
+    });
+    expect(manifestContext.body).not.toHaveProperty('routes.0.entry');
     expect(manifestContext.body).not.toHaveProperty('clients.0.ssrModule');
     expect(manifestContext.body).not.toHaveProperty('clients.0.ssrChunks');
     expect(manifestContext.headers.get('Cache-Control')).toContain('immutable');

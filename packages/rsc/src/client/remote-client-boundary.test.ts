@@ -5,6 +5,7 @@ import {
   renderRemoteClientSuspense,
   renderRemoteClientErrorFallback,
   resolveRemoteClientAssets,
+  preloadRscRouteAssets,
 } from './remote-client-boundary';
 import React, { Suspense } from 'react';
 
@@ -15,10 +16,34 @@ afterEach(() => {
 
 function manifest(referenceId = 'src/counter#default') {
   return {
-    clients: [{ id: referenceId, module: 'client-browser/counter.js' }],
+    clients: [{
+      id: referenceId,
+      module: 'client-browser/counter.js',
+      integrity: 'sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=',
+      size: 40,
+      chunks: [{
+        path: 'client-browser/chunk.js',
+        integrity: 'sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=',
+        size: 20,
+      }],
+      styles: ['client-browser/style.css'],
+    }],
     styles: [{
       path: 'client-browser/style.css',
       integrity: 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+      size: 10,
+      scope: 'client',
+    }, {
+      path: 'client-browser/unrelated.css',
+      integrity: 'sha256-DDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD=',
+      size: 500,
+      scope: 'client',
+    }],
+    routes: [{
+      path: '/posts/[slug]',
+      entry: 'post',
+      prefetch: 'assets',
+      clientReferences: [referenceId],
     }],
   };
 }
@@ -155,5 +180,122 @@ describe('remote RSC client asset cache', () => {
       referenceId: 'src/counter#default', exportName: 'default',
     }, '/_hile/rsc/assets');
     expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('preloads exact-build route assets once within an explicit byte budget', async () => {
+    const fetch = vi.fn(async () => Response.json(manifest()));
+    const appended: Array<Record<string, unknown>> = [];
+    vi.stubGlobal('fetch', fetch);
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => ({})),
+      head: { appendChild: vi.fn((link) => appended.push({ ...link })) },
+    });
+
+    const input = {
+      pluginId: 'org.hile.fixture',
+      buildId: 'build-a',
+      path: '/posts/hello',
+      assetMountPath: '/_hile/rsc/assets/',
+      budgetBytes: 70,
+    };
+    await expect(preloadRscRouteAssets(input)).resolves.toMatchObject({
+      status: 'preloaded',
+      bytes: 70,
+      files: expect.arrayContaining([
+        expect.stringContaining('counter.js'),
+        expect.stringContaining('chunk.js'),
+        expect.stringContaining('style.css'),
+      ]),
+    });
+    await preloadRscRouteAssets(input);
+
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(fetch.mock.calls[0][0]).toBe('/_hile/rsc/assets/org.hile.fixture/build-a/plugin.json');
+    expect(appended).toHaveLength(3);
+    expect(appended.map(({ rel }) => rel)).toEqual(['preload', 'modulepreload', 'modulepreload']);
+  });
+
+  it('skips preload when policy or complete size metadata cannot satisfy the budget', async () => {
+    const noPrefetch = manifest();
+    noPrefetch.routes[0].prefetch = 'none';
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(noPrefetch)));
+    await expect(preloadRscRouteAssets({
+      pluginId: 'org.hile.fixture', buildId: 'build-a', path: '/posts/hello', budgetBytes: 70,
+    })).resolves.toMatchObject({ status: 'skipped', reason: 'policy' });
+
+    clearRscClientCaches();
+    const tooLarge = manifest();
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(tooLarge)));
+    await expect(preloadRscRouteAssets({
+      pluginId: 'org.hile.fixture', buildId: 'build-b', path: '/posts/hello', budgetBytes: 69,
+    })).resolves.toMatchObject({ status: 'skipped', reason: 'budget', bytes: 70 });
+  });
+
+  it('fails closed when route dependency metadata references a missing client', async () => {
+    const incomplete = manifest();
+    incomplete.routes[0].clientReferences = ['src/missing#default'];
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(incomplete)));
+
+    await expect(preloadRscRouteAssets({
+      pluginId: 'org.hile.fixture', buildId: 'build-a', path: '/posts/hello', budgetBytes: 70,
+    })).resolves.toMatchObject({ status: 'skipped', reason: 'metadata', files: [], bytes: 0 });
+  });
+
+  it('bounds preload DOM nodes and removes evicted immutable assets', async () => {
+    const manyAssets = manifest();
+    manyAssets.styles = [];
+    manyAssets.clients[0].styles = [];
+    manyAssets.clients[0].size = 1;
+    manyAssets.clients[0].chunks = Array.from({ length: 600 }, (_, index) => ({
+      path: `client-browser/chunk-${index}.js`,
+      integrity: 'sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=',
+      size: 1,
+    }));
+    const active = new Set<Record<string, unknown>>();
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(manyAssets)));
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => {
+        const link: Record<string, unknown> = {};
+        link.remove = () => active.delete(link);
+        return link;
+      }),
+      head: { appendChild: vi.fn((link) => active.add(link)) },
+    });
+
+    const options = {
+      pluginId: 'org.hile.fixture',
+      path: '/posts/hello',
+      budgetBytes: 2_000,
+      maxFiles: 700,
+    };
+    await expect(preloadRscRouteAssets({ ...options, buildId: 'build-many-a' }))
+      .resolves.toMatchObject({ status: 'preloaded' });
+    await expect(preloadRscRouteAssets({ ...options, buildId: 'build-many-b' }))
+      .resolves.toMatchObject({ status: 'preloaded' });
+
+    expect(active.size).toBe(1_024);
+  });
+
+  it('rejects excessive file fan-out before adding preload links', async () => {
+    const manyAssets = manifest();
+    manyAssets.styles = [];
+    manyAssets.clients[0].styles = [];
+    manyAssets.clients[0].size = 0;
+    manyAssets.clients[0].chunks = Array.from({ length: 128 }, (_, index) => ({
+      path: `client-browser/zero-${index}.js`,
+      integrity: 'sha256-CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=',
+      size: 0,
+    }));
+    const appendChild = vi.fn();
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(manyAssets)));
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => ({})),
+      head: { appendChild },
+    });
+
+    await expect(preloadRscRouteAssets({
+      pluginId: 'org.hile.fixture', buildId: 'build-fan-out', path: '/posts/hello',
+    })).resolves.toMatchObject({ status: 'skipped', reason: 'files' });
+    expect(appendChild).not.toHaveBeenCalled();
   });
 });

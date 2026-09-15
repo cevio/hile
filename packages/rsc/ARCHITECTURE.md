@@ -26,6 +26,8 @@ Core has no dependency on esbuild, TypeScript, filesystem watchers, EventSource 
 10. Optional presentation metadata is immutable build data. The Host derives it from the active deployment and matching artifact manifest; discovery does not carry a second copy and plugins do not control public URLs or visibility. Next.js pages import the lightweight `@hile/rsc/host/plugin-metadata` entry so artifact verification and streaming stay outside their dependency graph.
 11. Build-scoped styles use the same exact `{ pluginId, buildId }` identity as Flight. A Host may resolve their public URLs before rendering the remote client boundary so the HTML head can discover CSS before plugin markup, but it must fail closed when that exact artifact is absent.
 12. Remote browser navigation is a framework-neutral Host port. Plugin artifacts may bundle only the portable `@hile/rsc/client/navigation` entry; the Host adapter owns router integration, and links retain native browser fallback before hydration or without an adapter.
+13. Plugin readiness precedes discoverability. The official renderer imports the immutable server bundle and Flight runtime and validates route exports without rendering business components; the Hile runtime completes that preparation before transport attachment, listening, or Registry publication.
+14. Route preloading is exact-build and bounded by both bytes and file count. The compiler records route-scoped client references, client-scoped CSS reachability, and artifact byte sizes; the public asset manifest exposes only browser-safe metadata, and the client skips preloading before creating links when metadata is incomplete or exceeds either budget. Its global preload-node cache removes DOM nodes on eviction.
 
 ## Dependency direction
 

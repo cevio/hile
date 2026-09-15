@@ -75,7 +75,7 @@ when a same-origin destination should use the public Host router:
 import { RscLink } from '@hile/rsc/client/navigation'
 
 export function PluginPage() {
-  return <RscLink href="/plugins/catalog/details">Details</RscLink>
+  return <RscLink href="/plugins/catalog/details" prefetch="intent">Details</RscLink>
 }
 ```
 
@@ -87,6 +87,24 @@ targets, external URLs, and consumer-cancelled events. Before the Host adapter h
 ordinary link remains a native anchor; imperative operations fall back to browser navigation.
 Imperative destinations accept only HTTP(S) URLs, and cross-origin `push` or `replace` uses a
 full browser navigation instead of passing an untrusted URL to the framework router.
+
+`RscLink` prefetch is opt-in: `intent` runs on focus or pointer entry and `viewport` runs when
+the link becomes visible. Both accept only same-origin HTTP(S) destinations and call the
+Host adapter's separate `prefetchRoute` gate. The explicit imperative `prefetch` API preserves
+its existing Host-adapter behavior and is not treated as automatic link speculation. With the Next adapter, the Host must supply
+`allowRoutePrefetch`; return `true` only after resolving the destination against the active
+manifest and finding a matching route that declares `prefetch: "route"`. A rejected prefetch is
+not cached by `RscLink`, so a later policy change can be retried.
+
+A Host can additionally call `preloadRscRouteAssets({ pluginId, buildId, path, budgetBytes,
+maxFiles })` from `@hile/rsc/client` to load the exact immutable route's browser modules,
+chunks, plugin-wide styles, and only the client-scoped styles reachable from that route. The
+preload is skipped before creating any links when the route opts out, build-generated dependency
+or size metadata is unavailable, the byte or file-count budget is exceeded, or browser preload
+support is absent. The default limits are 256 KiB and 128 files; retained preload DOM nodes are
+bounded and evicted nodes are removed. Asset preload never renders a route; full Flight prefetch
+is appropriate only for routes whose manifest declares `prefetch: "route"` and whose render is
+side-effect free.
 
 Plugin browser graphs may import only `@hile/rsc/client/navigation` from `@hile/rsc`; Host,
 transport, artifact, and general client-runtime imports fail during artifact compilation. Never
