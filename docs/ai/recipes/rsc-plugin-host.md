@@ -572,6 +572,34 @@ HMAC deployments should source discovery secrets from a secret manager. All depl
 
 ## 7. Render Through A Dynamic Next Route
 
+For a document-heavy public Host that intentionally prefers complete SSR text
+before hydration data, register the bounded content-first adapter before starting
+`HttpNext`:
+
+```ts
+import HttpNext from '@hile/http-next'
+import { createContentFirstRscHtmlMiddleware } from '@hile/rsc-next/content-first'
+
+const host = new HttpNext({ port: 3000, cwd: process.cwd() })
+host.use(createContentFirstRscHtmlMiddleware({
+  maxDeferredFlightBytes: 512 * 1024,
+}))
+const stop = await host.start()
+```
+
+The adapter preserves ordinary HTML streaming and retains only the inline
+`self.__next_f` scripts. It emits those byte-identical scripts in their original
+order immediately before `</body>`. If the configured bound is exceeded, it
+flushes the retained scripts at that point and passes all remaining bytes through.
+At the first body write, only the exact `text/html` media type with no content
+encoding or identity encoding is transformed. Normal Next asset, RSC, and Server
+Function responses therefore pass through unchanged.
+This is an explicit latency trade-off: document text arrives before Flight, while
+hydration starts later. The byte bound applies to every in-flight HTML response;
+size it for expected concurrency. Host and third-party scripts must not depend on
+observing Next's private `self.__next_f` state before the body completes. Do not
+enable it merely to change source formatting.
+
 Create `src/app/plugins/[pluginId]/[[...path]]/page.tsx`:
 
 ```tsx
