@@ -1,4 +1,11 @@
-import type { RscRenderRequest } from '../plugin/types';
+import type {
+  RscDocumentMetadataRequest,
+  RscRenderRequest,
+} from '../plugin/types';
+import {
+  validateRscDocumentMetadata,
+  type RscDocumentMetadata,
+} from '../protocol';
 import {
   MissingExecutionContextError,
   parseExecutionContext,
@@ -16,7 +23,7 @@ export interface RscHostRuntimeOptions {
 }
 
 export interface RscHostRuntimeEvent {
-  operation: 'render';
+  operation: 'render' | 'documentMetadata';
   pluginId: string;
   buildId: string;
   outcome: 'success' | 'error' | 'cancelled';
@@ -49,6 +56,14 @@ function isCancellation(error: unknown, signal?: AbortSignal): boolean {
 export interface RscHostRenderRequest extends RscCallOptions {
   pluginId: string;
   request: RscRenderRequest;
+}
+
+export interface RscHostDocumentMetadataRequest {
+  pluginId: string;
+  request: RscDocumentMetadataRequest;
+  context: RscCallOptions['context'];
+  signal?: AbortSignal;
+  timeout?: number;
 }
 
 export class RscHostRuntime {
@@ -172,6 +187,93 @@ export class RscHostRuntime {
       if (timer) clearTimeout(timer);
       if (onAbort) signal?.removeEventListener('abort', onAbort);
     }
+  }
+
+  public async documentMetadata({
+    pluginId,
+    request,
+    context,
+    signal,
+    timeout,
+  }: RscHostDocumentMetadataRequest): Promise<RscDocumentMetadata | undefined> {
+    const startedAt = performance.now();
+    let bytes = 0;
+    const finish = (outcome: RscHostRuntimeEvent['outcome'], error?: unknown) => {
+      try {
+        this.observe?.({
+          operation: 'documentMetadata',
+          pluginId,
+          buildId: request.buildId,
+          outcome,
+          durationMs: performance.now() - startedAt,
+          bytes,
+          ...(error === undefined ? {} : { error }),
+        });
+      } catch {
+        // Observation must not alter request state.
+      }
+    };
+    try {
+      if (!context) throw new MissingExecutionContextError('RSC host document metadata');
+      context = parseExecutionContext(context);
+      validateCallOptions(timeout);
+      signal?.throwIfAborted();
+    } catch (error) {
+      finish(isCancellation(error, signal) ? 'cancelled' : 'error', error);
+      throw error;
+    }
+    let lease: Awaited<ReturnType<RscPluginLocator['resolve']>>;
+    try {
+      lease = await this.locator.resolve(
+        { pluginId, buildId: request.buildId },
+        { context, signal, timeout },
+      );
+    } catch (error) {
+      finish(isCancellation(error, signal) ? 'cancelled' : 'error', error);
+      throw error;
+    }
+    let primaryError: unknown;
+    let result: RscDocumentMetadata | undefined;
+    try {
+      if (this.verifyManifest) {
+        const verification = this.verify(
+          pluginId,
+          request.buildId,
+          lease.verificationKey,
+          context,
+        );
+        await this.waitForVerification(verification, signal, timeout);
+      }
+      if (!lease.client.documentMetadata) {
+        throw new Error('RSC plugin client does not support document metadata');
+      }
+      const metadata = await lease.client.documentMetadata(request, { context, signal, timeout });
+      signal?.throwIfAborted();
+      result = metadata === undefined ? undefined : validateRscDocumentMetadata(metadata);
+      if (result !== undefined) {
+        bytes = new TextEncoder().encode(JSON.stringify(result)).byteLength;
+      }
+    } catch (error) {
+      primaryError = error;
+    }
+    let cleanupError: unknown;
+    try {
+      await lease.release();
+    } catch (error) {
+      cleanupError = error;
+    }
+    if (primaryError !== undefined || cleanupError !== undefined) {
+      const error = primaryError !== undefined && cleanupError !== undefined
+        ? new AggregateError(
+            [primaryError, cleanupError],
+            'RSC document metadata and lease cleanup failed',
+          )
+        : primaryError ?? cleanupError;
+      finish(isCancellation(primaryError, signal) ? 'cancelled' : 'error', error);
+      throw error;
+    }
+    finish('success');
+    return result;
   }
 
   public async render({

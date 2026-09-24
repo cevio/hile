@@ -21,6 +21,13 @@ function render(
   return runtime.render({ context: testContext, ...request });
 }
 
+function documentMetadata(
+  runtime: RscHostRuntime,
+  request: Parameters<RscHostRuntime['documentMetadata']>[0],
+) {
+  return runtime.documentMetadata({ context: testContext, ...request });
+}
+
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   const promise = new Promise<T>((done) => { resolve = done; });
@@ -75,14 +82,20 @@ describe('RSC architecture composition', () => {
         return () => { handlers.delete(operation); };
       }),
     };
+    const serviceManifest = manifest();
+    serviceManifest.routes[0].metadataEntry = 'fixtureMetadata';
     const service = new RscPluginService({
-      manifest: manifest(),
-      renderer: async function* () { yield new Uint8Array([1, 2, 3]); },
+      manifest: serviceManifest,
+      renderer: Object.assign(
+        async function* () { yield new Uint8Array([1, 2, 3]); },
+        { documentMetadata: async () => ({ title: 'Fixture' }) },
+      ),
     });
 
     const detach = attachRscPluginService(service, registrar, {
       describe: 'contract.describe',
       render: 'contract.render',
+      documentMetadata: 'contract.document-metadata',
       action: 'contract.action',
       serverFunction: 'contract.server-function',
     });
@@ -90,6 +103,7 @@ describe('RSC architecture composition', () => {
     expect([...handlers.keys()]).toEqual([
       'contract.describe',
       'contract.render',
+      'contract.document-metadata',
       'contract.action',
       'contract.server-function',
     ]);
@@ -104,6 +118,13 @@ describe('RSC architecture composition', () => {
     const chunks: Uint8Array[] = [];
     for await (const chunk of stream) chunks.push(chunk);
     expect(chunks).toEqual([new Uint8Array([1, 2, 3])]);
+    await expect(handlers.get('contract.document-metadata')!({
+      data: { buildId: 'build-a', path: '/fixture' },
+      invocation: {
+        context: testContext,
+        signal: new AbortController().signal,
+      },
+    })).resolves.toEqual({ title: 'Fixture' });
 
     detach();
     expect(handlers.size).toBe(0);
@@ -124,9 +145,39 @@ describe('RSC architecture composition', () => {
     });
 
     expect(() => attachRscPluginService(service, registrar, {
-      describe: 'contract.describe', render: 'contract.render', action: 'contract.action',
+      describe: 'contract.describe', render: 'contract.render',
+      documentMetadata: 'contract.document-metadata', action: 'contract.action',
       serverFunction: 'contract.server-function',
     })).toThrow('operation conflict');
+    expect(handlers.size).toBe(0);
+  });
+
+  it('keeps legacy custom operation maps valid without exposing document metadata', () => {
+    const handlers = new Map<string, unknown>();
+    const registrar = {
+      register(operation: string, handler: unknown) {
+        handlers.set(operation, handler);
+        return () => { handlers.delete(operation); };
+      },
+    };
+    const service = new RscPluginService({
+      manifest: manifest(),
+      renderer: async function* () {},
+    });
+    const detach = attachRscPluginService(service, registrar, {
+      describe: 'legacy.describe',
+      render: 'legacy.render',
+      action: 'legacy.action',
+      serverFunction: 'legacy.server-function',
+    });
+
+    expect([...handlers.keys()]).toEqual([
+      'legacy.describe',
+      'legacy.render',
+      'legacy.action',
+      'legacy.server-function',
+    ]);
+    detach();
     expect(handlers.size).toBe(0);
   });
 
@@ -143,7 +194,8 @@ describe('RSC architecture composition', () => {
     };
     const service = new RscPluginService({ manifest: manifest(), renderer: async function* () {} });
     const detach = attachRscPluginService(service, registrar, {
-      describe: 'contract.describe', render: 'contract.render', action: 'contract.action',
+      describe: 'contract.describe', render: 'contract.render',
+      documentMetadata: 'contract.document-metadata', action: 'contract.action',
       serverFunction: 'contract.server-function',
     });
 
@@ -178,6 +230,7 @@ describe('RSC architecture composition', () => {
     const client = createHileRscPluginClient(application, 'plugin.runtime', {
       describe: 'manifest.read',
       render: 'tree.render',
+      documentMetadata: 'document.metadata',
       action: 'function.invoke',
       serverFunction: 'server-function.invoke',
     });
@@ -188,6 +241,10 @@ describe('RSC architecture composition', () => {
     await expect(client.describe(callOptions)).resolves.toMatchObject({ pluginId: 'org.hile.fixture' });
     await expect(client.render({ buildId: 'build-a', path: '/fixture' }, streamOptions))
       .resolves.toBeInstanceOf(Readable);
+    await expect(client.documentMetadata(
+      { buildId: 'build-a', path: '/fixture' },
+      callOptions,
+    )).resolves.toEqual({ accepted: true });
     await expect(client.action({ buildId: 'build-a', actionId: 'fixture', input: {} }, callOptions))
       .resolves.toEqual({ accepted: true });
     await expect(client.serverFunction({
@@ -202,14 +259,14 @@ describe('RSC architecture composition', () => {
       'plugin.runtime', 'tree.render', { buildId: 'build-a', path: '/fixture' }, streamOptions,
     );
     expect(application.call).toHaveBeenNthCalledWith(
-      2,
+      3,
       'plugin.runtime',
       'function.invoke',
       { buildId: 'build-a', actionId: 'fixture', input: {} },
       callOptions,
     );
     expect(application.call).toHaveBeenNthCalledWith(
-      3,
+      4,
       'plugin.runtime',
       'server-function.invoke',
       {
@@ -218,6 +275,70 @@ describe('RSC architecture composition', () => {
       },
       callOptions,
     );
+    expect(application.call).toHaveBeenNthCalledWith(
+      2,
+      'plugin.runtime',
+      'document.metadata',
+      { buildId: 'build-a', path: '/fixture' },
+      callOptions,
+    );
+  });
+
+  it('resolves document metadata through an exact build lease and revalidates returned data', async () => {
+    const client = {
+      describe: vi.fn(async () => manifest()),
+      render: vi.fn(async () => Readable.from([])),
+      documentMetadata: vi.fn(async () => ({ title: 'Fixture', robots: { index: true } })),
+      action: vi.fn(async () => undefined),
+      serverFunction: vi.fn(async () => ({ type: 'null' as const })),
+    };
+    const release = vi.fn();
+    const observe = vi.fn();
+    const runtime = new RscHostRuntime({
+      locator: { resolve: vi.fn(async () => ({ client, verificationKey: 'fixture.v1', release })) },
+      decoder: { decode: async () => null },
+      observe,
+    });
+
+    await expect(documentMetadata(runtime, {
+      pluginId: 'org.hile.fixture',
+      request: { buildId: 'build-a', path: '/fixture' },
+      timeout: 5_000,
+    })).resolves.toEqual({ title: 'Fixture', robots: { index: true } });
+
+    expect(client.documentMetadata).toHaveBeenCalledWith(
+      { buildId: 'build-a', path: '/fixture' },
+      { context: testContext, signal: undefined, timeout: 5_000 },
+    );
+    expect(release).toHaveBeenCalledTimes(2);
+    expect(observe).toHaveBeenCalledWith(expect.objectContaining({
+      operation: 'documentMetadata',
+      pluginId: 'org.hile.fixture',
+      buildId: 'build-a',
+      outcome: 'success',
+    }));
+  });
+
+  it('rejects non-data document metadata returned by a custom transport client', async () => {
+    const client = {
+      describe: vi.fn(async () => manifest()),
+      render: vi.fn(async () => Readable.from([])),
+      documentMetadata: vi.fn(async () => ({ title: () => 'not data' })),
+      action: vi.fn(async () => undefined),
+      serverFunction: vi.fn(async () => ({ type: 'null' as const })),
+    };
+    const release = vi.fn();
+    const runtime = new RscHostRuntime({
+      locator: { resolve: vi.fn(async () => ({ client, release })) },
+      decoder: { decode: async () => null },
+      verifyManifest: false,
+    });
+
+    await expect(documentMetadata(runtime, {
+      pluginId: 'org.hile.fixture',
+      request: { buildId: 'build-a', path: '/fixture' },
+    })).rejects.toThrow('serializable');
+    expect(release).toHaveBeenCalledOnce();
   });
 
   it('composes locator, transport and decoder without knowing Hile or Next', async () => {

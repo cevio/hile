@@ -28,6 +28,7 @@ Core has no dependency on esbuild, TypeScript, filesystem watchers, EventSource 
 12. Remote browser navigation is a framework-neutral Host port. Plugin artifacts may bundle only the portable `@hile/rsc/client/navigation` entry; the Host adapter owns router integration, and links retain native browser fallback before hydration or without an adapter.
 13. Plugin readiness precedes discoverability. The official renderer imports the immutable server bundle and Flight runtime and validates route exports without rendering business components; the Hile runtime completes that preparation before transport attachment, listening, or Registry publication.
 14. Route preloading is exact-build and bounded by both bytes and file count. The compiler records route-scoped client references, client-scoped CSS reachability, and artifact byte sizes; the public asset manifest exposes only browser-safe metadata, and the client skips preloading before creating links when metadata is incomplete or exceeds either budget. Its global preload-node cache removes DOM nodes on eviction.
+15. Dynamic route document metadata is an optional bounded-data operation, not React output or executable head code. It uses the same route matcher, exact build lease, captured parameters, Context, cancellation, and revision lifecycle as rendering. The application Host owns the metadata schema, public URL composition, authorization-safe fallback, robots policy, and framework adapter.
 
 ## Dependency direction
 
@@ -62,7 +63,7 @@ plugin manifest
   -> attachRscPluginService(registrar, operationMap)
   -> internal transport
   -> catalog-backed RscPluginLocator lease
-  -> RscHostRuntime.render()
+  -> RscHostRuntime.render() / documentMetadata()
   -> injected RscFlightDecoder
   -> host Next RSC tree
   -> RemoteClientBoundary
@@ -89,6 +90,7 @@ Fixed ABI:
 
 - protocol version and manifest field meanings;
 - bounded plugin presentation metadata and plugin-internal navigation paths;
+- bounded JSON mechanics and exact-build routing for dynamic document metadata;
 - exact React/React DOM/RSC runtime identity;
 - the logical `RemoteClientBoundary` reference;
 - the framework-neutral browser navigation port and its ownership-safe Host installation;
@@ -101,6 +103,7 @@ Configurable policy:
 - public asset/action/Server Function mount paths;
 - deployment selection and retention;
 - public navigation URL composition, localization, visibility, and authorization;
+- dynamic document metadata field semantics, canonical origin, robots policy, and framework mapping;
 - remote-versus-Host Suspense ownership and the Host's cold-entry fallback;
 - action origin, CSRF, authentication, and authorization;
 - error-to-route/status mapping;

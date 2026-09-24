@@ -1,8 +1,10 @@
 import type { RscPluginManifest } from '../protocol';
 import type { ExecutionContext } from '@hile/context';
 import type {
+  RscDocumentMetadata,
   RscServerFunctionReference,
 } from '../protocol';
+export type { RscDocumentMetadata } from '../protocol';
 import type { RscServerFunctionWireValue } from '../server-functions/codec';
 
 export interface RscRenderRequest {
@@ -11,6 +13,9 @@ export interface RscRenderRequest {
   params?: Record<string, string | string[]>;
   searchParams?: Record<string, string | string[]>;
 }
+
+/** Route selection input for metadata resolution; intentionally identical to rendering. */
+export type RscDocumentMetadataRequest = RscRenderRequest;
 
 /** Serializable identity of the immutable deployment rendering a route. */
 export interface RscRouteIdentity {
@@ -65,6 +70,24 @@ export interface RscRenderContext {
   context: ExecutionContext;
 }
 
+export interface RscDocumentMetadataContext {
+  manifest: RscPluginManifest;
+  metadataEntry: string;
+  request: RscRenderRequest;
+  signal: AbortSignal;
+  context: ExecutionContext;
+}
+
+export interface RscDocumentMetadataApi {
+  signal: AbortSignal;
+  context: ExecutionContext;
+}
+
+export type RscDocumentMetadataFunction = (
+  props: RscRouteProps,
+  api: RscDocumentMetadataApi,
+) => RscDocumentMetadata | undefined | Promise<RscDocumentMetadata | undefined>;
+
 export interface RscRendererPrepareContext {
   manifest: RscPluginManifest;
   signal: AbortSignal;
@@ -74,6 +97,10 @@ export interface RscRenderer {
   (context: RscRenderContext): AsyncIterable<Uint8Array> | Promise<AsyncIterable<Uint8Array>>;
   /** Optional readiness hook. It must not execute route business behavior. */
   prepare?(context: RscRendererPrepareContext): Promise<void>;
+  /** Resolves pure route data for the Host-owned document head, outside the React tree. */
+  documentMetadata?(
+    context: RscDocumentMetadataContext,
+  ): RscDocumentMetadata | undefined | Promise<RscDocumentMetadata | undefined>;
 }
 
 export interface PreparedRscRenderer extends RscRenderer {

@@ -72,12 +72,22 @@ export function attachRscPluginService(
   operations: RscOperationMap = DEFAULT_RSC_OPERATIONS,
 ): () => void {
   if (attachments.has(service)) throw new Error('RSC plugin service is already attached');
-  const unregister = registerRscOperations(registrar, [
+  const registrations: Array<readonly [string, (input: RscOperationInput) => unknown]> = [
     [operations.describe, () => service.describe()],
     [operations.render, (input) => service.render(input.data, requireInvocation(input, 'render'))],
     [operations.action, (input) => service.action(input.data, requireInvocation(input, 'action'))],
     [operations.serverFunction, (input) => service.serverFunction(input.data, requireInvocation(input, 'server function'))],
-  ]);
+  ];
+  if (operations.documentMetadata) {
+    registrations.splice(2, 0, [
+      operations.documentMetadata,
+      (input) => service.documentMetadata(
+        input.data,
+        requireInvocation(input, 'document metadata'),
+      ),
+    ]);
+  }
+  const unregister = registerRscOperations(registrar, registrations);
   let detached = false;
   let unsubscribe: () => void = () => undefined;
 

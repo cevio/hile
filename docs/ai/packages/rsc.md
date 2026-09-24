@@ -117,6 +117,14 @@ const tree = await runtime.render({
   idleTimeout: 10_000,
   window: 8,
 })
+
+const documentMetadata = await runtime.documentMetadata({
+  context: createExecutionContext({ requestId: randomUUID() }),
+  pluginId,
+  request: { buildId, path, params, searchParams },
+  signal,
+  timeout: 5_000,
+})
 ```
 
 `pluginId` accepts either one lowercase identifier such as `analytics` or a
@@ -132,6 +140,16 @@ parameter names and equal-specificity patterns that can match the same path.
 Presentation metadata navigation must reference a declared static route because
 a parameter pattern does not identify a concrete destination.
 
+A route may also declare `metadataEntry`, naming a server-entry export that
+returns dynamic document metadata for the same concrete path. The metadata
+operation uses the same exact build lease, route matcher, captured params,
+search params, execution context, cancellation, and revision retention as
+rendering, but it does not render React or produce Flight. Results are cloned,
+frozen, and bounded JSON objects. Their field vocabulary is deliberately owned
+by the application Host rather than `@hile/rsc`; validate an allowlist and map it
+through the Host framework's metadata API. Plugins cannot return React nodes,
+functions, URL instances, or executable head code.
+
 Every route entry receives framework-owned `RscRouteProps`. The `rsc`
 field is the exact immutable deployment identity selected for that render,
 including development revision suffixes. Pass this serializable value into
@@ -139,13 +157,36 @@ including development revision suffixes. Pass this serializable value into
 from configuration into browser code.
 
 ```tsx
-import type { RscRouteProps } from '@hile/rsc/plugin'
+import type {
+  RscDocumentMetadata,
+  RscDocumentMetadataApi,
+  RscRouteProps,
+} from '@hile/rsc/plugin'
 import InteractiveBoundary from './interactive'
 
 export function PluginPage({ rsc }: RscRouteProps) {
   return <InteractiveBoundary rsc={rsc} />
 }
+
+export async function pluginPageMetadata(
+  { params, rsc }: RscRouteProps,
+  { signal, context }: RscDocumentMetadataApi,
+): Promise<RscDocumentMetadata> {
+  const page = await loadPage(params.slug, { signal, context })
+  return {
+    title: page.title,
+    description: page.summary,
+    canonicalPath: `/pages/${params.slug}`,
+    buildId: rsc.buildId,
+  }
+}
 ```
+
+Declare that export on the route as
+`{ "path": "/pages/[slug]", "entry": "PluginPage", "metadataEntry": "pluginPageMetadata" }`.
+The Host remains responsible for composing the public canonical origin, robots
+policy, authorization-safe fallbacks, and the final framework-specific metadata
+object.
 
 ### Client navigation
 

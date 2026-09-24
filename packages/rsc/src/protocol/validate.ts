@@ -539,6 +539,12 @@ export function validateRscPluginManifest(
     return {
       path: routePath,
       entry: validateEntryName(route.entry, `routes[${index}].entry`),
+      ...(route.metadataEntry === undefined ? {} : {
+        metadataEntry: validateEntryName(
+          route.metadataEntry,
+          `routes[${index}].metadataEntry`,
+        ),
+      }),
       ...(prefetch === undefined ? {} : { prefetch }),
       ...(references === undefined ? {} : { clientReferences: references }),
     };

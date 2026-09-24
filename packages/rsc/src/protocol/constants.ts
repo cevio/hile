@@ -25,3 +25,11 @@ export const HILE_RSC_MANIFEST_LIMITS = Object.freeze({
   routes: 2_048,
   clientReferencesPerRoute: 512,
 } as const);
+
+/** Transport-neutral limits for one route's host-consumed document metadata. */
+export const HILE_RSC_DOCUMENT_METADATA_LIMITS = Object.freeze({
+  depth: 16,
+  nodes: 2_048,
+  stringBytes: 256 * 1024,
+  keyLength: 256,
+} as const);

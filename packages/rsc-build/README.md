@@ -22,4 +22,6 @@ The common commands default to `hile-rsc.json`, `.hile-rsc`, and the runtime tup
 
 Optional `metadata` is validated and emitted into the same immutable `plugin.json`. Navigation paths must reference declared plugin routes; public URL and visibility policy remain Host-owned. `build`, `inspect`, and `verify` expose the canonical metadata for automation.
 
+A route may declare `metadataEntry` to name a server-entry export that resolves dynamic document metadata. The compiler records only that export identity; `@hile/rsc` executes it as bounded data through the same exact-build route and Context boundary as rendering. The Host application owns the returned field schema and all framework-specific head behavior.
+
 Optional build-scoped CSS can be declared through `styles`. Each value is either an explicit relative path such as `./src/theme.css`, an absolute path, or a package export such as `@example/ui/theme.css`. The compiler content-hashes and deduplicates these files, copies them once below the immutable artifact's `styles/` directory, and records SHA-256 integrity in `plugin.json`. These inputs must be self-contained CSS: relative `url()` dependencies and external `@import` files are not copied or rewritten. Client-graph CSS remains supported and is appended after build-scoped styles.

@@ -322,6 +322,7 @@ describe('buildRscPlugin', () => {
       export { default as FirstPage } from './first-page';
       export { default as SecondPage } from './second-page';
       export { default as "page-one" } from './first-page';
+      export function SecondMetadata() { return { title: 'Second' }; }
     `);
 
     const manifest = await buildRscPlugin({
@@ -329,7 +330,12 @@ describe('buildRscPlugin', () => {
       entry: 'src/page.tsx', outdir,
       routes: [
         { path: '/first', entry: 'FirstPage' },
-        { path: '/second', entry: 'SecondPage', prefetch: 'route' },
+        {
+          path: '/second',
+          entry: 'SecondPage',
+          metadataEntry: 'SecondMetadata',
+          prefetch: 'route',
+        },
         { path: '/legacy-entry', entry: 'page-one' },
       ],
       runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
@@ -341,7 +347,7 @@ describe('buildRscPlugin', () => {
         clientReferences: ['org.hile.route-graph/src/first#default'],
       },
       {
-        path: '/second', entry: 'SecondPage', prefetch: 'route',
+        path: '/second', entry: 'SecondPage', metadataEntry: 'SecondMetadata', prefetch: 'route',
         clientReferences: ['org.hile.route-graph/src/second#default'],
       },
       {

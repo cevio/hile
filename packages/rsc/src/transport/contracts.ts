@@ -5,7 +5,11 @@ import {
   type ExecutionContext,
 } from '@hile/context';
 import type {
+  RscDocumentMetadata,
+} from '../protocol';
+import type {
   RscActionRequest,
+  RscDocumentMetadataRequest,
   RscRenderRequest,
   RscServerFunctionRequest,
 } from '../plugin/types';
@@ -15,13 +19,16 @@ import type { RscPluginManifest } from '../protocol';
 export interface RscOperationMap {
   describe: string;
   render: string;
+  /** Omit only when adapting a legacy transport that cannot expose route metadata. */
+  documentMetadata?: string;
   action: string;
   serverFunction: string;
 }
 
-export const DEFAULT_RSC_OPERATIONS: Readonly<RscOperationMap> = Object.freeze({
+export const DEFAULT_RSC_OPERATIONS: Readonly<Required<RscOperationMap>> = Object.freeze({
   describe: '/-/rsc/describe',
   render: '/-/rsc/render',
+  documentMetadata: '/-/rsc/document-metadata',
   action: '/-/rsc/action',
   serverFunction: '/-/rsc/server-function',
 });
@@ -51,6 +58,11 @@ export function requireRscCallOptions(
 export interface RscPluginClient {
   describe(options: RscCallOptions): Promise<RscPluginManifest>;
   render(request: RscRenderRequest, options: RscCallOptions): Promise<AsyncIterable<Uint8Array>>;
+  /** Optional only for compatibility with clients created before document metadata existed. */
+  documentMetadata?(
+    request: RscDocumentMetadataRequest,
+    options: RscCallOptions,
+  ): Promise<RscDocumentMetadata | undefined>;
   action(request: RscActionRequest, options: RscCallOptions): Promise<unknown>;
   serverFunction(
     request: RscServerFunctionRequest,

@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { createElement, type ComponentType } from 'react';
 import type { RscPluginManifest } from '../protocol';
 import { HILE_REMOTE_CLIENT_MODULE_ID, HILE_REMOTE_CLIENT_REFERENCE } from '../protocol';
-import type { PreparedRscRenderer } from './types';
+import type { PreparedRscRenderer, RscDocumentMetadataFunction } from './types';
 
 function createClientManifest(manifest: RscPluginManifest) {
   void manifest;
@@ -46,6 +46,12 @@ export function createOfficialRscRenderer(artifactRoot: string): PreparedRscRend
       for (const route of manifest.routes) {
         if (typeof pluginModule[route.entry] !== 'function') {
           throw new Error(`RSC route entry is not a component: ${route.entry}`);
+        }
+        if (
+          route.metadataEntry !== undefined
+          && typeof pluginModule[route.metadataEntry] !== 'function'
+        ) {
+          throw new Error(`RSC route metadata entry is not a function: ${route.metadataEntry}`);
         }
       }
     });
@@ -114,6 +120,31 @@ export function createOfficialRscRenderer(artifactRoot: string): PreparedRscRend
   render.prepare = ({ manifest, signal }: Parameters<PreparedRscRenderer['prepare']>[0]) => {
     if (signal.aborted) return Promise.reject(signal.reason);
     return waitForSignal(readinessFor(manifest), signal);
+  };
+  render.documentMetadata = async ({
+    manifest,
+    metadataEntry,
+    request,
+    signal,
+    context,
+  }) => {
+    await render.prepare({ manifest, signal });
+    const pluginModule = await loadModule(manifest);
+    const resolveMetadata = pluginModule[metadataEntry];
+    if (typeof resolveMetadata !== 'function') {
+      throw new Error(`RSC route metadata entry is not a function: ${metadataEntry}`);
+    }
+    signal.throwIfAborted();
+    const metadata = await (resolveMetadata as RscDocumentMetadataFunction)({
+      params: request.params ?? {},
+      searchParams: request.searchParams ?? {},
+      rsc: {
+        pluginId: manifest.pluginId,
+        buildId: manifest.buildId,
+      },
+    }, { signal, context });
+    signal.throwIfAborted();
+    return metadata;
   };
   return render;
 }

@@ -1,6 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { createExecutionContext } from '@hile/context';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RscPluginManifest } from '../protocol';
 import { createOfficialRscRenderer } from './official-renderer';
@@ -15,9 +16,11 @@ const renderToPipeableStream = vi.hoisted(() => vi.fn((element: { props: unknown
 vi.mock('react-server-dom-webpack/server.node', () => ({ renderToPipeableStream }));
 
 const roots: string[] = [];
+const metadataResolverStartedKey = Symbol.for('hile.rsc.test.metadata-resolver-started');
 
 afterEach(async () => {
   renderToPipeableStream.mockClear();
+  delete (globalThis as unknown as Record<symbol, unknown>)[metadataResolverStartedKey];
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -48,6 +51,68 @@ describe('official RSC renderer', () => {
       manifest: value,
       signal: new AbortController().signal,
     })).rejects.toThrow('MissingPage');
+    expect(renderToPipeableStream).not.toHaveBeenCalled();
+  });
+
+  it('validates and invokes route metadata exports as data outside the React tree', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'hile-rsc-renderer-'));
+    roots.push(root);
+    await writeFile(path.join(root, 'server.mjs'), `
+      export function Page() { return null; }
+      export function PageMetadata(props) {
+        return { title: props.params.slug, buildId: props.rsc.buildId };
+      }
+    `);
+    const renderer = createOfficialRscRenderer(root);
+    const value = manifest();
+    value.routes[0].metadataEntry = 'PageMetadata';
+
+    await expect(renderer.documentMetadata!({
+      manifest: value,
+      metadataEntry: 'PageMetadata',
+      request: {
+        buildId: 'v1-dev-session-r2',
+        path: '/',
+        params: { slug: 'fixture' },
+      },
+      signal: new AbortController().signal,
+      context: createExecutionContext({ requestId: 'metadata-test' }),
+    })).resolves.toEqual({ title: 'fixture', buildId: 'v1-dev-session-r2' });
+    expect(renderToPipeableStream).not.toHaveBeenCalled();
+  });
+
+  it('does not return document metadata that finishes after cancellation', async () => {
+    const root = await mkdtemp(path.join(tmpdir(), 'hile-rsc-renderer-'));
+    roots.push(root);
+    await writeFile(path.join(root, 'server.mjs'), `
+      export function Page() { return null; }
+      export async function PageMetadata(_props, { signal }) {
+        globalThis[Symbol.for('hile.rsc.test.metadata-resolver-started')] = true;
+        if (!signal.aborted) {
+          await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+        }
+        return { title: 'stale' };
+      }
+    `);
+    const renderer = createOfficialRscRenderer(root);
+    const value = manifest();
+    value.routes[0].metadataEntry = 'PageMetadata';
+    const controller = new AbortController();
+    await renderer.prepare({ manifest: value, signal: controller.signal });
+    const pending = renderer.documentMetadata!({
+      manifest: value,
+      metadataEntry: 'PageMetadata',
+      request: { buildId: 'v1-dev-session-r2', path: '/' },
+      signal: controller.signal,
+      context: createExecutionContext({ requestId: 'metadata-cancellation-test' }),
+    });
+
+    await vi.waitFor(() => expect(
+      (globalThis as unknown as Record<symbol, unknown>)[metadataResolverStartedKey],
+    ).toBe(true));
+    controller.abort(new Error('metadata cancelled'));
+
+    await expect(pending).rejects.toThrow('metadata cancelled');
     expect(renderToPipeableStream).not.toHaveBeenCalled();
   });
 

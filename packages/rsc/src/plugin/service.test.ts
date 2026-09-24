@@ -34,6 +34,10 @@ class RscPluginService extends BaseRscPluginService {
     return super.action(value, testInvocation(invocation));
   }
 
+  public override documentMetadata(value: unknown, invocation?: InvocationContext | AbortSignal) {
+    return super.documentMetadata(value, testInvocation(invocation));
+  }
+
   public override serverFunction(value: unknown, invocation?: InvocationContext | AbortSignal) {
     return super.serverFunction(value, testInvocation(invocation));
   }
@@ -290,6 +294,148 @@ describe('RscPluginService', () => {
       path: '/items/item-42',
       params: { locale: 'zh-CN' },
     }))).resolves.toEqual(Buffer.from('item'));
+  });
+
+  it('resolves bounded document metadata with the same route params and execution context', async () => {
+    const parameterizedManifest = manifest();
+    parameterizedManifest.routes = [{
+      path: '/items/[itemId]',
+      entry: 'itemDetail',
+      metadataEntry: 'itemMetadata',
+    }];
+    const documentMetadata = vi.fn(async ({ metadataEntry, request, context, signal }) => {
+      expect(metadataEntry).toBe('itemMetadata');
+      expect(request.params).toEqual({ locale: 'zh-CN', itemId: 'item-42' });
+      expect(context.values).toEqual({ requestId: 'rsc-plugin-test' });
+      expect(signal.aborted).toBe(false);
+      return {
+        title: 'Item 42',
+        alternates: { canonicalPath: '/items/item-42' },
+      };
+    });
+    const renderer = Object.assign(async function* () {}, { documentMetadata });
+    const service = new RscPluginService({ manifest: parameterizedManifest, renderer });
+
+    await expect(service.documentMetadata({
+      buildId: 'build-1',
+      path: '/items/item-42',
+      params: { locale: 'zh-CN' },
+    })).resolves.toEqual({
+      title: 'Item 42',
+      alternates: { canonicalPath: '/items/item-42' },
+    });
+    expect(documentMetadata).toHaveBeenCalledOnce();
+  });
+
+  it('returns undefined without executing plugin code when a route has no metadata export', async () => {
+    const documentMetadata = vi.fn();
+    const renderer = Object.assign(async function* () {}, { documentMetadata });
+    const service = new RscPluginService({ manifest: manifest(), renderer });
+
+    await expect(service.documentMetadata({
+      buildId: 'build-1',
+      path: '/dashboard',
+    })).resolves.toBeUndefined();
+    expect(documentMetadata).not.toHaveBeenCalled();
+  });
+
+  it('resolves document metadata from the requested retained immutable revision', async () => {
+    const firstManifest = manifest();
+    firstManifest.routes[0].metadataEntry = 'dashboardMetadata';
+    const firstRenderer = Object.assign(async function* () {}, {
+      documentMetadata: vi.fn(async () => ({ title: 'first' })),
+    });
+    const service = new RscPluginService({ manifest: firstManifest, renderer: firstRenderer });
+    const secondManifest = manifest();
+    secondManifest.buildId = 'build-2';
+    secondManifest.routes[0].metadataEntry = 'dashboardMetadata';
+    const secondRenderer = Object.assign(async function* () {}, {
+      documentMetadata: vi.fn(async () => ({ title: 'second' })),
+    });
+
+    service.activate({ manifest: secondManifest, renderer: secondRenderer });
+
+    await expect(service.documentMetadata({
+      buildId: 'build-1',
+      path: '/dashboard',
+    })).resolves.toEqual({ title: 'first' });
+    await expect(service.documentMetadata({
+      buildId: 'build-2',
+      path: '/dashboard',
+    })).resolves.toEqual({ title: 'second' });
+    expect(firstRenderer.documentMetadata).toHaveBeenCalledOnce();
+    expect(secondRenderer.documentMetadata).toHaveBeenCalledOnce();
+  });
+
+  it('rejects non-serializable or unbounded document metadata at the plugin boundary', async () => {
+    const value = manifest();
+    value.routes[0].metadataEntry = 'dashboardMetadata';
+    const renderer = Object.assign(async function* () {}, {
+      documentMetadata: vi.fn(async () => ({ title: () => 'not data' })),
+    });
+    const service = new RscPluginService({ manifest: value, renderer });
+
+    await expect(service.documentMetadata({
+      buildId: 'build-1',
+      path: '/dashboard',
+    })).rejects.toThrow('serializable');
+  });
+
+  it('propagates cancellation into document metadata work and releases in-flight state', async () => {
+    const value = manifest();
+    value.routes[0].metadataEntry = 'dashboardMetadata';
+    const started = deferred<void>();
+    const renderer = Object.assign(async function* () {}, {
+      documentMetadata: vi.fn(async ({ signal }) => {
+        started.resolve();
+        if (!signal.aborted) {
+          await new Promise<void>((resolve) =>
+            signal.addEventListener('abort', () => resolve(), { once: true }));
+        }
+        signal.throwIfAborted();
+        return { title: 'late' };
+      }),
+    });
+    const service = new RscPluginService({ manifest: value, renderer });
+    const controller = new AbortController();
+    const pending = service.documentMetadata(
+      { buildId: 'build-1', path: '/dashboard' },
+      controller.signal,
+    );
+
+    await started.promise;
+    controller.abort(new Error('metadata cancelled'));
+
+    await expect(pending).rejects.toThrow('metadata cancelled');
+    await expect(service.drain()).resolves.toBeUndefined();
+  });
+
+  it('terminates in-flight document metadata work when the plugin deactivates', async () => {
+    const value = manifest();
+    value.routes[0].metadataEntry = 'dashboardMetadata';
+    const started = deferred<void>();
+    const renderer = Object.assign(async function* () {}, {
+      documentMetadata: vi.fn(async ({ signal }) => {
+        started.resolve();
+        if (!signal.aborted) {
+          await new Promise<void>((resolve) =>
+            signal.addEventListener('abort', () => resolve(), { once: true }));
+        }
+        signal.throwIfAborted();
+        return { title: 'late' };
+      }),
+    });
+    const service = new RscPluginService({ manifest: value, renderer });
+    const pending = service.documentMetadata({
+      buildId: 'build-1',
+      path: '/dashboard',
+    });
+
+    await started.promise;
+    service.deactivate();
+
+    await expect(pending).rejects.toMatchObject({ code: 'ERR_RSC_PLUGIN_INACTIVE' });
+    await expect(service.drain()).resolves.toBeUndefined();
   });
 
   it('treats parameter syntax in a concrete path as a captured value, not an exact route', async () => {
@@ -735,6 +881,9 @@ describe('RscPluginService', () => {
       invocation: testInvocation(),
     });
     expect((await collect(stream)).toString()).toBe('flight');
+    await expect(server.dispatch('/-/rsc/document-metadata', {
+      buildId: 'build-1', path: '/dashboard',
+    }, { invocation: testInvocation() })).resolves.toBeUndefined();
     await expect(server.dispatch('/-/rsc/action', {
       buildId: 'build-1', actionId: 'ping', input: {},
     }, { invocation: testInvocation() })).resolves.toBe('pong');

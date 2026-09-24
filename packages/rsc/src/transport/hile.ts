@@ -1,11 +1,15 @@
 import type { Readable } from 'node:stream';
 import type {
   RscActionRequest,
+  RscDocumentMetadataRequest,
   RscRenderRequest,
   RscServerFunctionRequest,
 } from '../plugin/types';
 import type { RscServerFunctionWireValue } from '../server-functions/codec';
-import type { RscPluginManifest } from '../protocol';
+import {
+  validateRscDocumentMetadata,
+  type RscPluginManifest,
+} from '../protocol';
 import {
   DEFAULT_RSC_OPERATIONS,
   requireRscCallOptions,
@@ -50,6 +54,18 @@ export function createHileRscPluginClient(
         request,
         requireRscCallOptions(options, 'RSC plugin render transport'),
       );
+    },
+    async documentMetadata(request: RscDocumentMetadataRequest, options) {
+      if (!operations.documentMetadata) {
+        throw new Error('RSC transport does not define a document metadata operation');
+      }
+      const metadata = await application.call<unknown>(
+        namespace,
+        operations.documentMetadata,
+        request,
+        requireRscCallOptions(options, 'RSC plugin document metadata transport'),
+      );
+      return metadata === undefined ? undefined : validateRscDocumentMetadata(metadata);
     },
     action(request: RscActionRequest, options) {
       return application.call(

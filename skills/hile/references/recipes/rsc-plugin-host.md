@@ -177,7 +177,11 @@ Create `hile-rsc.json`:
   "pluginId": "org.example.rsc-plugin",
   "cwd": ".",
   "entry": "src/plugin/page.tsx",
-  "routes": [{ "path": "/page", "entry": "default" }],
+  "routes": [{
+    "path": "/page",
+    "entry": "default",
+    "metadataEntry": "pageMetadata"
+  }],
   "metadata": {
     "displayName": "Example plugin",
     "description": "An independently deployed Hile RSC plugin",
@@ -188,7 +192,7 @@ Create `hile-rsc.json`:
 }
 ```
 
-`pluginId` is the stable logical plugin identity. It may be one lowercase identifier such as `analytics` or a lowercase namespaced identifier such as `org.example.analytics`. The omitted `buildId` is generated for each immutable build, while the omitted `outdir` defaults to `.hile-rsc`; set `RSC_BUILD_ID` when a deployment system must provide the identity. Explicit `buildId` and `outdir` remain supported. Optional `styles` entries are build-scoped CSS files: use an explicit relative path such as `./src/plugin/theme.css`, an absolute path, or a package CSS export such as `@example/ui/theme.css`. The compiler content-hashes, deduplicates, copies, and integrity-declares them once per immutable build. These raw static inputs must be self-contained because relative `url()` dependencies and external `@import` files are not copied or rewritten. `routes` maps plugin-internal paths to exports from the server entry and may use named single-segment parameters such as `/items/[itemId]`. Captured values are supplied through `RscRouteProps.params`; exact routes win over parameterized routes, and ambiguous equal-specificity patterns are rejected during manifest validation. Optional `metadata` travels in the same immutable manifest; each navigation path must reference a declared static route because a parameter pattern is not a concrete destination. The Host URL prefix, authorization, visibility, localization, and final navigation components remain Host policy and are not configured here.
+`pluginId` is the stable logical plugin identity. It may be one lowercase identifier such as `analytics` or a lowercase namespaced identifier such as `org.example.analytics`. The omitted `buildId` is generated for each immutable build, while the omitted `outdir` defaults to `.hile-rsc`; set `RSC_BUILD_ID` when a deployment system must provide the identity. Explicit `buildId` and `outdir` remain supported. Optional `styles` entries are build-scoped CSS files: use an explicit relative path such as `./src/plugin/theme.css`, an absolute path, or a package CSS export such as `@example/ui/theme.css`. The compiler content-hashes, deduplicates, copies, and integrity-declares them once per immutable build. These raw static inputs must be self-contained because relative `url()` dependencies and external `@import` files are not copied or rewritten. `routes` maps plugin-internal paths to exports from the server entry and may use named single-segment parameters such as `/items/[itemId]`. Captured values are supplied through `RscRouteProps.params`; exact routes win over parameterized routes, and ambiguous equal-specificity patterns are rejected during manifest validation. A route's optional `metadataEntry` names a server export that returns bounded, framework-neutral document metadata through the same exact-build route semantics; it does not grant access to the Host document head. Optional top-level `metadata` travels in the same immutable manifest and describes the plugin itself; each navigation path must reference a declared static route because a parameter pattern is not a concrete destination. The Host URL prefix, authorization, visibility, localization, canonical origin, robots policy, and final framework metadata remain Host policy and are not configured here.
 
 For a shared or generated stylesheet that is not imported by the client graph, add the optional field to the same config:
 
@@ -223,7 +227,11 @@ The plugin process must use `NODE_OPTIONS=--conditions=react-server` so React re
 Server entry `src/plugin/page.tsx`:
 
 ```tsx
-import type { RscRouteProps } from '@hile/rsc/plugin'
+import type {
+  RscDocumentMetadata,
+  RscDocumentMetadataApi,
+  RscRouteProps,
+} from '@hile/rsc/plugin'
 import InteractiveBoundary from './interactive'
 
 export default async function PluginPage({ rsc, searchParams }: RscRouteProps) {
@@ -234,6 +242,19 @@ export default async function PluginPage({ rsc, searchParams }: RscRouteProps) {
       <InteractiveBoundary initialValue={initialValue} rsc={rsc} />
     </section>
   )
+}
+
+export async function pageMetadata(
+  { rsc }: RscRouteProps,
+  { signal }: RscDocumentMetadataApi,
+): Promise<RscDocumentMetadata> {
+  signal.throwIfAborted()
+  return {
+    title: 'Independent RSC plugin',
+    description: 'Plugin-owned route metadata transported as bounded data',
+    canonicalPath: '/page',
+    buildId: rsc.buildId,
+  }
 }
 ```
 
@@ -677,7 +698,7 @@ The Host owns `<html>`, `<body>`, navigation, authentication shell, global theme
 
 Plugin builds may publish bounded presentation metadata through `plugin.json`. Read it from the current active deployment and artifact catalogs with `listActiveRscPlugins(deployments, artifacts)`, then apply Host authorization and visibility policy before passing serializable navigation items to the shell. This is a derived view, not another plugin inventory, and it changes atomically with active `buildId` selection.
 
-Presentation metadata is data, not executable head code. The Host may map trusted fields such as `displayName` or `description` through Next metadata APIs, but arbitrary plugin code still cannot mutate the Host document head.
+Presentation metadata and route document metadata are data, not executable head code. For a route with `metadataEntry`, call `RscHostRuntime.documentMetadata()` from the Host framework's metadata hook using the same `{ pluginId, buildId, path, params, searchParams }` selection as `render()`. The call holds an exact build lease, preserves Context/cancellation/timeout, and returns only a bounded JSON object. Apply an application-owned schema and allowlist before mapping it to Next `Metadata`; compose public canonical URLs and robots policy in the Host. Arbitrary plugin code still cannot mutate the Host document head.
 
 ```ts
 import { listActiveRscPlugins } from '@hile/rsc/host/plugin-metadata'

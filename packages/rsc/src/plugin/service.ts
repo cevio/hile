@@ -1,4 +1,8 @@
-import type { RscPluginManifest } from '../protocol';
+import {
+  validateRscDocumentMetadata,
+  type RscDocumentMetadata,
+  type RscPluginManifest,
+} from '../protocol';
 import { createInvocationContext, type InvocationContext } from '@hile/context';
 import { rscRouteParameterName, splitRscRoutePath } from '../protocol/route-pattern';
 import {
@@ -96,6 +100,40 @@ function resolveRoute(
     );
   }
   return { route: selected.route, params: selected.params };
+}
+
+function resolveRouteRequest(
+  routes: RscPluginManifest['routes'],
+  value: Record<string, unknown>,
+): {
+  route: RscPluginManifest['routes'][number];
+  request: RscRenderRequest;
+} {
+  if (typeof value.path !== 'string' || !value.path.startsWith('/')) {
+    throw new RscPluginServiceError('ERR_RSC_INVALID_REQUEST', 'path must be absolute');
+  }
+  const resolvedRoute = resolveRoute(routes, value.path);
+  if (!resolvedRoute) {
+    throw new RscPluginServiceError('ERR_RSC_ROUTE_NOT_FOUND', `unknown RSC route: ${value.path}`);
+  }
+  const existingParams = value.params && typeof value.params === 'object' && !Array.isArray(value.params)
+    ? value.params as Record<string, unknown>
+    : {};
+  for (const key of Object.keys(resolvedRoute.params)) {
+    if (Object.hasOwn(existingParams, key)) {
+      throw new RscPluginServiceError(
+        'ERR_RSC_INVALID_REQUEST',
+        `RSC route parameter conflicts with request params: ${key}`,
+      );
+    }
+  }
+  return {
+    route: resolvedRoute.route,
+    request: {
+      ...value,
+      params: { ...existingParams, ...resolvedRoute.params },
+    } as unknown as RscRenderRequest,
+  };
 }
 
 function combineSignals(primary: AbortSignal | undefined, shutdown: AbortSignal): {
@@ -329,30 +367,8 @@ export class RscPluginService {
     this.assertActive();
     assertRecord(value, 'render request');
     assertBuildId(value.buildId);
-    if (typeof value.path !== 'string' || !value.path.startsWith('/')) {
-      throw new RscPluginServiceError('ERR_RSC_INVALID_REQUEST', 'path must be absolute');
-    }
     const revision = this.requiredRevision(value.buildId);
-    const resolvedRoute = resolveRoute(revision.manifest.routes, value.path);
-    if (!resolvedRoute) {
-      throw new RscPluginServiceError('ERR_RSC_ROUTE_NOT_FOUND', `unknown RSC route: ${value.path}`);
-    }
-    const existingParams = value.params && typeof value.params === 'object' && !Array.isArray(value.params)
-      ? value.params as Record<string, unknown>
-      : {};
-    for (const key of Object.keys(resolvedRoute.params)) {
-      if (Object.hasOwn(existingParams, key)) {
-        throw new RscPluginServiceError(
-          'ERR_RSC_INVALID_REQUEST',
-          `RSC route parameter conflicts with request params: ${key}`,
-        );
-      }
-    }
-    const request = {
-      ...value,
-      params: { ...existingParams, ...resolvedRoute.params },
-    } as unknown as RscRenderRequest;
-    const route = resolvedRoute.route;
+    const { request, route } = resolveRouteRequest(revision.manifest.routes, value);
     const { renderer, manifest } = revision;
     const service = this;
     return {
@@ -395,6 +411,43 @@ export class RscPluginService {
         }
       },
     };
+  }
+
+  public async documentMetadata(
+    value: unknown,
+    invocation: InvocationContext,
+  ): Promise<RscDocumentMetadata | undefined> {
+    invocation = createInvocationContext(
+      invocation?.context,
+      invocation?.signal,
+      'RSC plugin document metadata',
+    );
+    this.assertActive();
+    assertRecord(value, 'document metadata request');
+    assertBuildId(value.buildId);
+    const revision = this.requiredRevision(value.buildId);
+    const { request, route } = resolveRouteRequest(revision.manifest.routes, value);
+    if (route.metadataEntry === undefined) return undefined;
+    if (!revision.renderer.documentMetadata) {
+      throw new TypeError('RSC renderer does not support declared document metadata');
+    }
+    const leave = this.entered();
+    const combined = combineSignals(invocation.signal, this.shutdown.signal);
+    try {
+      await this.prepareRevision(revision, combined.signal);
+      const metadata = await revision.renderer.documentMetadata({
+        manifest: revision.manifest,
+        metadataEntry: route.metadataEntry,
+        request,
+        signal: combined.signal,
+        context: invocation.context,
+      });
+      combined.signal.throwIfAborted();
+      return metadata === undefined ? undefined : validateRscDocumentMetadata(metadata);
+    } finally {
+      combined.cleanup();
+      leave();
+    }
   }
 
   public async action(value: unknown, invocation: InvocationContext): Promise<unknown> {

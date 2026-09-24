@@ -54,6 +54,8 @@ export type RscRoutePrefetch = 'none' | 'assets' | 'route';
 export interface RscRouteDefinition {
   path: string;
   entry: string;
+  /** Optional server export that returns framework-neutral document metadata. */
+  metadataEntry?: string;
   /** Safe preload policy. `route` additionally permits a side-effect-free Flight prefetch. */
   prefetch?: RscRoutePrefetch;
   /** Build-generated client references reachable from this route entry. */

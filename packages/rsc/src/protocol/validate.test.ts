@@ -85,9 +85,20 @@ describe('validateRscPluginManifest', () => {
     manifest.styles[0].scope = 'client';
     manifest.clients[0].styles = ['styles/counter.css'];
     manifest.routes[0].prefetch = 'assets';
+    manifest.routes[0].metadataEntry = 'dashboardMetadata';
     manifest.routes[0].clientReferences = ['counter#default'];
 
     expect(validateRscPluginManifest(manifest, hostRuntime)).toEqual(manifest);
+  });
+
+  it('rejects an invalid route metadata export name', () => {
+    const manifest = createManifest();
+    manifest.routes[0].metadataEntry = '../escape';
+
+    expectProtocolError(
+      () => validateRscPluginManifest(manifest, hostRuntime),
+      'ERR_RSC_INVALID_MANIFEST',
+    );
   });
 
   it('rejects invalid style scope and unknown client style references', () => {

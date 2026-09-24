@@ -100,7 +100,7 @@ describe('HileRscPluginRuntime', () => {
     expect(events).toEqual([
       'prepare', 'listen', 'publish', 'bind',
       'unpublish', 'unregister', 'unbind', 'auxiliary', 'deactivate', 'drain',
-      'unregister', 'unregister', 'unregister', 'unregister', 'stop',
+      'unregister', 'unregister', 'unregister', 'unregister', 'unregister', 'stop',
     ]);
     await runtime.close();
     expect(auxiliary.close).toHaveBeenCalledOnce();
@@ -260,7 +260,7 @@ describe('HileRscPluginRuntime', () => {
     await expect(runtime.start()).rejects.toThrow('binding failed');
     expect(events).toEqual([
       'prepare', 'unpublish', 'unregister', 'auxiliary', 'deactivate', 'drain',
-      'unregister', 'unregister', 'unregister', 'unregister', 'stop',
+      'unregister', 'unregister', 'unregister', 'unregister', 'unregister', 'stop',
     ]);
     await expect(runtime.start()).rejects.toThrow('closing');
   });
