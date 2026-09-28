@@ -591,11 +591,16 @@ The adapter preserves ordinary HTML streaming and retains only the inline
 `self.__next_f` scripts. It emits those byte-identical scripts in their original
 order immediately before `</body>`. If the configured bound is exceeded, it
 flushes the retained scripts at that point and passes all remaining bytes through.
-At the first body write, only the exact `text/html` media type with no content
-encoding or identity encoding is transformed. Normal Next asset, RSC, and Server
-Function responses therefore pass through unchanged.
-This is an explicit latency trade-off: document text arrives before Flight, while
-hydration starts later. The byte bound applies to every in-flight HTML response;
+At the first body write, exact `text/html` responses with identity or gzip encoding
+are transformed. Gzip responses are decoded, reordered, and re-encoded as a
+streaming pipeline; other content encodings and gzip responses with an already-sent
+fixed content length pass through unchanged. Representation validators and digests
+are removed before transformation; a response whose validators were already sent
+passes through unchanged. Normal Next asset, RSC, and Server Function responses
+therefore pass through unchanged.
+This is an explicit latency and CPU trade-off: document text arrives before Flight,
+while hydration starts later and gzip responses are recompressed. The byte bound
+applies to every in-flight HTML response;
 size it for expected concurrency. Host and third-party scripts must not depend on
 observing Next's private `self.__next_f` state before the body completes. Do not
 enable it merely to change source formatting.

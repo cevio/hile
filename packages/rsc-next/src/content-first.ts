@@ -1,8 +1,15 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { Transform, type TransformCallback, Writable } from 'node:stream';
+import { pipeline, Transform, type TransformCallback, Writable } from 'node:stream';
+import { createGunzip, createGzip } from 'node:zlib';
 import { assertRscNextCompatibility } from './compatibility';
 
 const DEFAULT_MAX_DEFERRED_FLIGHT_BYTES = 512 * 1024;
+const INVALIDATED_REPRESENTATION_HEADERS = [
+  'etag',
+  'content-md5',
+  'content-digest',
+  'repr-digest',
+] as const;
 const SCRIPT_OPEN = Buffer.from('<script');
 const SCRIPT_OPEN_END = Buffer.from('>');
 const SCRIPT_SELF_CLOSE_BYTE = '/'.charCodeAt(0);
@@ -42,7 +49,9 @@ export function createContentFirstRscHtmlMiddleware(
   assertRscNextCompatibility();
   const normalized = normalizeOptions(options);
   return async (context, next) => {
-    installContentFirstResponseWriter(context.res, normalized);
+    if (context.req.method !== 'HEAD') {
+      installContentFirstResponseWriter(context.res, normalized);
+    }
     return next();
   };
 }
@@ -247,10 +256,11 @@ function installContentFirstResponseWriter(
   const endOriginal = (...args: unknown[]) => Reflect.apply(originalEnd, response, args);
   const ensureTransform = (): Transform | undefined => {
     if (passthrough !== undefined) return transform;
-    passthrough = !isTransformableHtml(response);
+    const contentEncoding = transformableContentEncoding(response);
+    passthrough = contentEncoding === undefined;
     if (passthrough) return undefined;
 
-    transform = new ContentFirstRscHtmlTransform(options.maxDeferredFlightBytes);
+    const contentFirst = new ContentFirstRscHtmlTransform(options.maxDeferredFlightBytes);
     const destination = new Writable({
       write(chunk: Buffer, _encoding, callback) {
         const accepted = writeOriginal(chunk) !== false;
@@ -278,12 +288,24 @@ function installContentFirstResponseWriter(
       if (!destination.writableFinished) transform?.destroy(createResponseClosedError());
     };
     response.once('close', onResponseClose);
-    transform.pipe(destination);
-    transform.once('error', (error) => destination.destroy(error));
-    destination.once('error', (error) => {
-      response.off('close', onResponseClose);
-      response.destroy(error);
-    });
+    if (!response.headersSent) {
+      for (const header of INVALIDATED_REPRESENTATION_HEADERS) {
+        response.removeHeader(header);
+      }
+      if (contentEncoding === 'gzip') response.removeHeader('content-length');
+    }
+    if (contentEncoding === 'gzip') {
+      const gunzip = createGunzip();
+      transform = gunzip;
+      pipeline(gunzip, contentFirst, createGzip(), destination, (error) => {
+        if (error) response.destroy(error);
+      });
+    } else {
+      transform = contentFirst;
+      pipeline(contentFirst, destination, (error) => {
+        if (error) response.destroy(error);
+      });
+    }
     destination.once('finish', () => {
       response.off('close', onResponseClose);
       if (endCallback) endOriginal(endCallback);
@@ -309,6 +331,13 @@ function installContentFirstResponseWriter(
     encodingOrCallback?: unknown,
     callback?: unknown,
   ): ServerResponse {
+    if (
+      passthrough === undefined
+      && (chunkOrCallback == null || typeof chunkOrCallback === 'function')
+    ) {
+      passthrough = true;
+      return endOriginal(...defined([chunkOrCallback, encodingOrCallback, callback])) as ServerResponse;
+    }
     const stream = ensureTransform();
     if (!stream) return endOriginal(...defined([chunkOrCallback, encodingOrCallback, callback])) as ServerResponse;
     const args = defined([chunkOrCallback, encodingOrCallback, callback]);
@@ -326,16 +355,31 @@ function createResponseClosedError(): Error {
   return new Error('HTTP response closed before content-first transform completed');
 }
 
-function isTransformableHtml(response: ServerResponse): boolean {
+function transformableContentEncoding(response: ServerResponse): 'identity' | 'gzip' | undefined {
+  if (
+    (response.statusCode >= 100 && response.statusCode < 200)
+    || response.statusCode === 204
+    || response.statusCode === 205
+    || response.statusCode === 304
+  ) return undefined;
   const contentType = String(response.getHeader('content-type') ?? '')
     .split(';', 1)[0]
     ?.trim()
     .toLowerCase();
-  if (contentType !== 'text/html') return false;
+  if (contentType !== 'text/html') return undefined;
   const contentEncoding = String(response.getHeader('content-encoding') ?? '')
     .trim()
     .toLowerCase();
-  return contentEncoding === '' || contentEncoding === 'identity';
+  let encoding: 'identity' | 'gzip';
+  if (contentEncoding === '' || contentEncoding === 'identity') encoding = 'identity';
+  else if (contentEncoding === 'gzip') encoding = 'gzip';
+  else return undefined;
+  if (!response.headersSent) return encoding;
+  if (INVALIDATED_REPRESENTATION_HEADERS.some(
+    (header) => response.getHeader(header) !== undefined,
+  )) return undefined;
+  if (encoding === 'gzip' && response.getHeader('content-length') !== undefined) return undefined;
+  return encoding;
 }
 
 function defined(values: readonly unknown[]): unknown[] {

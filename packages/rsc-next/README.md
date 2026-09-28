@@ -10,10 +10,14 @@ For document-heavy public routes, a Host may explicitly register
 bounded, byte-identical inline `self.__next_f` scripts, then emits those scripts in
 their original order immediately before `</body>`. If the configured Flight-byte
 bound is exceeded, the transform flushes the retained scripts at that point and
-passes all remaining bytes through unchanged. At the first body write, responses
-whose media type is not exactly `text/html`, or whose `Content-Encoding` is not
-identity, pass through unchanged. Normal Next asset, RSC, and Server Function
-responses therefore bypass the transform. This trades later hydration for earlier
+passes all remaining bytes through unchanged. At the first body write, exact
+`text/html` responses with identity or gzip encoding are transformed. Gzip
+responses are decoded, reordered, and re-encoded as a streaming pipeline; other
+content encodings and gzip responses with an already-sent fixed content length
+pass through unchanged. Representation validators and digests are removed before
+transformation; a response whose validators were already sent passes through
+unchanged. Normal Next asset, RSC, and Server Function responses therefore bypass
+the transform. This trades later hydration and gzip recompression work for earlier
 complete document text; use it only when that product trade-off is intentional.
 The byte limit applies to each in-flight HTML response, so size it for expected
 concurrency. Host and third-party scripts must not depend on observing Next's

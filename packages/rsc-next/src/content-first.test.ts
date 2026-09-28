@@ -1,5 +1,6 @@
 import { EventEmitter, once } from 'node:events';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createContentFirstRscHtmlMiddleware,
@@ -160,7 +161,7 @@ describe('content-first RSC HTML', () => {
       res: compressedResponse as unknown as ServerResponse,
     }, async () => {
       compressedResponse.setHeader('content-type', 'text/html');
-      compressedResponse.setHeader('content-encoding', 'gzip');
+      compressedResponse.setHeader('content-encoding', 'zstd');
       compressedResponse.end(
         '<script>(self.__next_f=self.__next_f||[]).push([0])</script>正文',
       );
@@ -176,11 +177,149 @@ describe('content-first RSC HTML', () => {
       res: emptyResponse as unknown as ServerResponse,
     }, async () => {
       emptyResponse.setHeader('content-type', 'text/html');
+      emptyResponse.setHeader('content-encoding', 'gzip');
       emptyResponse.end();
     });
     if (!emptyResponse.writableEnded) await once(emptyResponse, 'finish');
 
     expect(emptyResponse.writableEnded).toBe(true);
+    expect(emptyResponse.destroyError).toBeUndefined();
+
+    const headResponse = new MemoryServerResponse();
+    await middleware({
+      req: { method: 'HEAD' } as IncomingMessage,
+      res: headResponse as unknown as ServerResponse,
+    }, async () => {
+      headResponse.setHeader('content-type', 'text/html');
+      headResponse.setHeader('content-encoding', 'gzip');
+      headResponse.end('not a gzip body');
+    });
+
+    expect(headResponse.body).toBe('not a gzip body');
+    expect(headResponse.destroyError).toBeUndefined();
+
+    const notModifiedResponse = new MemoryServerResponse();
+    await middleware({
+      req: { method: 'GET' } as IncomingMessage,
+      res: notModifiedResponse as unknown as ServerResponse,
+    }, async () => {
+      notModifiedResponse.statusCode = 304;
+      notModifiedResponse.setHeader('content-type', 'text/html');
+      notModifiedResponse.setHeader('content-encoding', 'gzip');
+      notModifiedResponse.end('not a gzip body');
+    });
+
+    expect(notModifiedResponse.body).toBe('not a gzip body');
+    expect(notModifiedResponse.destroyError).toBeUndefined();
+  });
+
+  it('reorders gzip-compressed HTML and preserves gzip delivery', async () => {
+    const middleware = createContentFirstRscHtmlMiddleware();
+    const response = new MemoryServerResponse();
+    const source = '<html><body>'
+      + '<script>(self.__next_f=self.__next_f||[]).push([0])</script>'
+      + '<main><h1>正文</h1></main></body></html>';
+
+    await middleware({
+      req: { method: 'GET' } as IncomingMessage,
+      res: response as unknown as ServerResponse,
+    }, async () => {
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.setHeader('content-encoding', 'gzip');
+      const compressed = gzipSync(source);
+      response.setHeader('content-length', String(compressed.length));
+      response.setHeader('etag', '"original"');
+      response.setHeader('content-digest', 'sha-256=:original:');
+      response.end(compressed);
+    });
+    if (!response.writableEnded) await once(response, 'finish');
+
+    const html = gunzipSync(response.bodyBytes).toString('utf8');
+    expect(response.getHeader('content-encoding')).toBe('gzip');
+    expect(response.getHeader('content-length')).toBeUndefined();
+    expect(response.getHeader('etag')).toBeUndefined();
+    expect(response.getHeader('content-digest')).toBeUndefined();
+    expect(html.indexOf('正文')).toBeLessThan(html.indexOf('self.__next_f'));
+    expect(html.indexOf('self.__next_f')).toBeLessThan(html.indexOf('</body>'));
+  });
+
+  it('passes through gzip when a fixed content length was already sent', async () => {
+    const middleware = createContentFirstRscHtmlMiddleware();
+    const response = new MemoryServerResponse();
+    const compressed = gzipSync(
+      '<script>(self.__next_f=self.__next_f||[]).push([0])</script>正文',
+    );
+
+    await middleware({
+      req: { method: 'GET' } as IncomingMessage,
+      res: response as unknown as ServerResponse,
+    }, async () => {
+      response.setHeader('content-type', 'text/html');
+      response.setHeader('content-encoding', 'gzip');
+      response.setHeader('content-length', String(compressed.length));
+      response.headersSent = true;
+      response.end(compressed);
+    });
+
+    expect(response.bodyBytes).toEqual(compressed);
+    expect(response.getHeader('content-length')).toBe(String(compressed.length));
+  });
+
+  it('reorders gzip after headers were sent without a fixed content length', async () => {
+    const middleware = createContentFirstRscHtmlMiddleware();
+    const response = new MemoryServerResponse();
+    const source = '<script>(self.__next_f=self.__next_f||[]).push([0])</script>正文';
+
+    await middleware({
+      req: { method: 'GET' } as IncomingMessage,
+      res: response as unknown as ServerResponse,
+    }, async () => {
+      response.setHeader('content-type', 'text/html');
+      response.setHeader('content-encoding', 'gzip');
+      response.headersSent = true;
+      response.end(gzipSync(source));
+    });
+    if (!response.writableEnded) await once(response, 'finish');
+
+    const html = gunzipSync(response.bodyBytes).toString('utf8');
+    expect(html.indexOf('正文')).toBeLessThan(html.indexOf('self.__next_f'));
+  });
+
+  it('passes through HTML when a representation validator was already sent', async () => {
+    const middleware = createContentFirstRscHtmlMiddleware();
+    const response = new MemoryServerResponse();
+    const source = '<script>(self.__next_f=self.__next_f||[]).push([0])</script>正文';
+
+    await middleware({
+      req: { method: 'GET' } as IncomingMessage,
+      res: response as unknown as ServerResponse,
+    }, async () => {
+      response.setHeader('content-type', 'text/html');
+      response.setHeader('etag', '"original"');
+      response.headersSent = true;
+      response.end(source);
+    });
+
+    expect(response.body).toBe(source);
+    expect(response.getHeader('etag')).toBe('"original"');
+  });
+
+  it('destroys the response when gzip decoding fails', async () => {
+    const middleware = createContentFirstRscHtmlMiddleware();
+    const response = new MemoryServerResponse();
+    const closed = once(response, 'close');
+
+    await middleware({
+      req: { method: 'GET' } as IncomingMessage,
+      res: response as unknown as ServerResponse,
+    }, async () => {
+      response.setHeader('content-type', 'text/html');
+      response.setHeader('content-encoding', 'gzip');
+      response.end('not gzip');
+    });
+    await closed;
+
+    expect(response.destroyError).toBeInstanceOf(Error);
   });
 
   it('tears down a backpressured transform when the client disconnects', async () => {
@@ -225,12 +364,20 @@ async function transformBuffers(
 }
 
 class MemoryServerResponse extends EventEmitter {
+  public statusCode = 200;
   public writableEnded = false;
+  public headersSent = false;
+  public destroyed = false;
+  public destroyError: Error | undefined;
   readonly #headers = new Map<string, string>();
   readonly #chunks: Buffer[] = [];
 
   public get body(): string {
-    return Buffer.concat(this.#chunks).toString('utf8');
+    return this.bodyBytes.toString('utf8');
+  }
+
+  public get bodyBytes(): Buffer {
+    return Buffer.concat(this.#chunks);
   }
 
   public getHeader(name: string): string | undefined {
@@ -240,6 +387,10 @@ class MemoryServerResponse extends EventEmitter {
   public setHeader(name: string, value: string): this {
     this.#headers.set(name.toLowerCase(), value);
     return this;
+  }
+
+  public removeHeader(name: string): void {
+    this.#headers.delete(name.toLowerCase());
   }
 
   public write(chunk: string | Buffer, callback?: () => void): boolean {
@@ -256,21 +407,6 @@ class MemoryServerResponse extends EventEmitter {
     this.emit('finish');
     return this;
   }
-}
-
-class BackpressuredServerResponse extends MemoryServerResponse {
-  public destroyError: Error | undefined;
-  public destroyed = false;
-
-  public override write(chunk: string | Buffer, callback?: () => void): boolean {
-    super.write(chunk, callback);
-    return false;
-  }
-
-  public closeEarly(): void {
-    this.destroyed = true;
-    this.emit('close');
-  }
 
   public destroy(error?: Error): this {
     this.destroyError = error;
@@ -279,5 +415,17 @@ class BackpressuredServerResponse extends MemoryServerResponse {
       this.emit('close');
     }
     return this;
+  }
+}
+
+class BackpressuredServerResponse extends MemoryServerResponse {
+  public override write(chunk: string | Buffer, callback?: () => void): boolean {
+    super.write(chunk, callback);
+    return false;
+  }
+
+  public closeEarly(): void {
+    this.destroyed = true;
+    this.emit('close');
   }
 }
