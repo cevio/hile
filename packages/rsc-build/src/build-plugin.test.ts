@@ -1,7 +1,9 @@
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { validateRscPluginManifest } from '@hile/rsc/protocol';
 import { buildRscPlugin } from './build-plugin';
@@ -46,6 +48,75 @@ function sri(bytes: Buffer | string): string {
 }
 
 describe('buildRscPlugin', () => {
+  it('minifies production browser and SSR modules, lazy chunks and imported CSS with matching environment branches', async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), 'hile-rsc-production-source-'));
+    const outdir = await mkdtemp(path.join(tmpdir(), 'hile-rsc-production-build-'));
+    tempDirs.push(cwd, outdir);
+    await mkdir(path.join(cwd, 'src'));
+    await writeFile(path.join(cwd, 'src/client.css'), `
+      .production-client-style {
+        color: rgb(255, 0, 0);
+      }
+    `);
+    await writeFile(path.join(cwd, 'src/client.ts'), `
+      'use client';
+      import './client.css';
+      export default function Client() {
+        const unminifiedClientLabel = process.env.NODE_ENV === 'production'
+          ? 'production-client-marker'
+          : 'development-only-client-marker';
+        return unminifiedClientLabel;
+      }
+      export async function loadLazy() {
+        return (await import('./lazy')).lazyMessage;
+      }
+    `);
+    await writeFile(path.join(cwd, 'src/lazy.ts'), `
+      export const lazyMessage = process.env.NODE_ENV === 'production'
+        ? 'production-lazy-marker'
+        : 'development-only-lazy-marker';
+    `);
+    await writeFile(path.join(cwd, 'src/page.tsx'), `
+      import Client from './client';
+      export default function Page() { return <Client />; }
+    `);
+    const manifest = await buildRscPlugin({
+      pluginId: 'org.hile.production',
+      buildId: 'build-production',
+      cwd,
+      entry: 'src/page.tsx',
+      outdir,
+      routes: [{ path: '/', entry: 'default' }],
+      runtime: { react: '19.2.8', reactDom: '19.2.8', rsc: '19.2.8' },
+    });
+    const client = manifest.clients.find(({ exportName }) => exportName === 'default')!;
+    expect(manifest.styles.length).toBeGreaterThan(0);
+    const styles = await Promise.all(manifest.styles.map(({ path: file }) =>
+      readFile(path.join(outdir, file), 'utf8')));
+    expect(styles.join('\n')).toContain('.production-client-style{color:red}');
+
+    for (const [modulePath, chunks] of [
+      [client.module, client.chunks],
+      [client.ssrModule, client.ssrChunks],
+    ] as const) {
+      expect(chunks.length).toBeGreaterThan(0);
+      const sources = await Promise.all([modulePath, ...chunks.map(({ path }) => path)]
+        .map((file) => readFile(path.join(outdir, file), 'utf8')));
+      const code = sources.join('\n');
+      expect(code).not.toContain('unminifiedClientLabel');
+      expect(code).not.toContain('development-only-');
+      expect(code).not.toContain('process.env.NODE_ENV');
+      const result = execFileSync(process.execPath, [
+        '--input-type=module',
+        '--eval',
+        `const client = await import(process.argv[1]);
+         console.log(JSON.stringify([client.default(), await client.loadLazy()]));`,
+        pathToFileURL(path.join(outdir, modulePath)).href,
+      ], { encoding: 'utf8' });
+      expect(JSON.parse(result)).toEqual(['production-client-marker', 'production-lazy-marker']);
+    }
+  });
+
   it('uses a bounded content-addressed filename for long shared-style source names', async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), 'hile-rsc-style-source-'));
     const outdir = await mkdtemp(path.join(tmpdir(), 'hile-rsc-style-output-'));

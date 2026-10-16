@@ -43,7 +43,13 @@ async function buildClients(
   target: 'browser' | 'ssr',
   plugins: Plugin[],
 ): Promise<BuildResult & { metafile: Metafile }> {
-  return build(createRscClientBuildOptions(entries, outdir, target, plugins)) as Promise<BuildResult & { metafile: Metafile }>;
+  return build({
+    ...createRscClientBuildOptions(entries, outdir, target, plugins),
+    minify: true,
+    define: {
+      'process.env.NODE_ENV': '"production"',
+    },
+  }) as Promise<BuildResult & { metafile: Metafile }>;
 }
 
 async function buildRscPluginIntoEmptyDirectory(options: BuildRscPluginOptions): Promise<RscPluginManifest> {

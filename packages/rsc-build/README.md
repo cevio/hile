@@ -6,6 +6,8 @@ Builds are transactional: all graphs and the manifest are completed in a sibling
 
 `RscModuleGraph` is shared by production and incremental compilation. Reference source generation and artifact assembly live in separate modules, so directive semantics, chunk manifests, CSS artifacts, integrity values and Server Function bundles have one implementation.
 
+Production builds minify browser and SSR client graphs, including their lazy chunks and imported CSS, and compile both targets with `process.env.NODE_ENV` set to `"production"`. This removes development-only dependency code and keeps SSR and browser environment branches aligned. Incremental development compilation remains unminified. Artifact sizes and integrity values describe the final emitted bytes; rebuild plugins with a new immutable build ID to adopt this optimization.
+
 Every build records artifact byte sizes and analyzes all declared route exports in one build to emit their reachable browser client-reference IDs. Client-graph CSS is marked client-scoped and linked to the client references that reach it; configured shared CSS is marked plugin-wide. Routes default to the safe `assets` preload policy; set `prefetch: "none"` to disable proactive loading or `prefetch: "route"` only when the route's Flight render is side-effect free and may be prefetched by a Host. Dependency, style-scope, and size metadata are build output and must not be authored in configuration.
 
 ## Use
