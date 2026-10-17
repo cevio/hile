@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { isBuiltin } from 'node:module';
 import path from 'node:path';
-import type { Plugin } from 'esbuild';
-import { inspectModule, inspectModuleDirectives } from './directives';
+import type { OnResolveArgs, Plugin } from 'esbuild';
+import { createBrowserExclusionCheck } from './browser-exclusions';
+import { inspectModule, inspectModuleDirectives, type ModuleInspection } from './directives';
 import {
   createBrowserServerReferenceSource,
   createClientReferenceSource,
@@ -74,6 +76,24 @@ export class RscModuleGraph {
       name: `hile-rsc-boundary-${mode}`,
       setup(build) {
         const implementationSpecifiers = new Map<string, string>();
+        const isAliased = (specifier: string): boolean => Object.keys(build.initialOptions.alias ?? {})
+          .some((alias) => specifier === alias || specifier.startsWith(`${alias}/`));
+        const isBrowserDisabled = createBrowserExclusionCheck(build);
+        const inspectSource = async (
+          canonical: string,
+          args: OnResolveArgs,
+          validateExports: boolean,
+        ): Promise<ModuleInspection | undefined> => {
+          try {
+            const source = await readFile(canonical, 'utf8');
+            return validateExports
+              ? inspectModule(source, canonical)
+              : { ...inspectModuleDirectives(source, canonical), exports: [] };
+          } catch (error) {
+            if (await isBrowserDisabled(canonical, args)) return undefined;
+            throw error;
+          }
+        };
         if (mode === 'server' && graph.#options.clearOnServerBuild) build.onStart(() => {
           graph.#clients.clear();
           graph.#serverFunctions.clear();
@@ -96,31 +116,46 @@ export class RscModuleGraph {
             pluginData: { hileRscResolved: true },
             with: args.with,
           });
-          if (resolved.errors.length > 0 || resolved.external || resolved.namespace !== 'file') return resolved;
+          // Preserve esbuild's private state for browser-map disabled modules.
+          if (!resolved.errors.length && !resolved.external
+            && (!resolved.namespace || (resolved.namespace === 'file' && !existsSync(resolved.path)))) {
+            return undefined;
+          }
+          if (resolved.errors.length > 0) {
+            if (build.initialOptions.platform === 'browser' && isBuiltin(args.path) && !isAliased(args.path)) {
+              return { path: args.path.replace(/^node:/, ''), namespace: 'hile-rsc-browser-builtin' };
+            }
+            // Native esbuild preserves optional requires guarded by try/catch.
+            return undefined;
+          }
+          if (resolved.external || resolved.namespace !== 'file') return resolved;
           const canonical = realpathSync(resolved.path);
-          if (!SOURCE_EXTENSIONS.has(path.extname(canonical))) return resolved;
+          if (!SOURCE_EXTENSIONS.has(path.extname(canonical))) return undefined;
           const insidePlugin = isPathInside(graph.#options.cwd, canonical);
           const bareSpecifier = !args.path.startsWith('.') && !path.isAbsolute(args.path);
           if (!insidePlugin && !bareSpecifier) {
             const importerInsidePlugin = args.importer ? isPathInside(graph.#options.cwd, realpathSync(args.importer)) : true;
             if (importerInsidePlugin) throw new Error(`Plugin source escapes cwd through a relative import: ${resolved.path}`);
-            if (mode === 'client' && inspectModuleDirectives(await readFile(canonical, 'utf8'), canonical).useServer) {
+            if (mode === 'client' && (await inspectSource(canonical, args, false))?.useServer
+              && !await isBrowserDisabled(canonical, args)) {
               throw new Error(`External use server modules are unsupported in plugin client graphs: ${canonical}`);
             }
-            return resolved;
+            return undefined;
           }
           if (mode === 'client' && !insidePlugin) {
-            if (inspectModuleDirectives(await readFile(canonical, 'utf8'), canonical).useServer) {
+            if ((await inspectSource(canonical, args, false))?.useServer && !await isBrowserDisabled(canonical, args)) {
               throw new Error(`External use server modules are unsupported in plugin client graphs: ${canonical}`);
             }
-            return resolved;
+            return undefined;
           }
           let inspection = graph.#inspection.get(canonical);
           if (!inspection) {
-            inspection = inspectModule(await readFile(canonical, 'utf8'), canonical);
+            inspection = await inspectSource(canonical, args, true);
+            if (!inspection) return undefined;
             graph.#inspection.set(canonical, inspection);
           }
-          if (!inspection.useClient && !inspection.useServer) return resolved;
+          if (!inspection.useClient && !inspection.useServer) return undefined;
+          if (await isBrowserDisabled(canonical, args)) return undefined;
           const logicalPath = insidePlugin
             ? path.relative(graph.#options.cwd, canonical).split(path.sep).join('/')
             : `@dependency/${args.path}`;
@@ -140,7 +175,7 @@ export class RscModuleGraph {
             }
             return { path: canonical, namespace: 'hile-rsc-server-reference', pluginData: value };
           }
-          if (mode === 'client') return resolved;
+          if (mode === 'client') return undefined;
           let value = graph.#clients.get(canonical);
           if (!value) {
             value = {
@@ -155,6 +190,10 @@ export class RscModuleGraph {
           }
           return { path: canonical, namespace: 'hile-rsc-client-reference', pluginData: value };
         });
+        build.onLoad({ filter: /.*/, namespace: 'hile-rsc-browser-builtin' }, () => ({
+          contents: 'module.exports = {};',
+          loader: 'js',
+        }));
         build.onLoad({ filter: /.*/, namespace: 'hile-rsc-client-reference' }, (args) => ({
           contents: createClientReferenceSource(args.pluginData as RscGraphEntry),
           loader: 'js',

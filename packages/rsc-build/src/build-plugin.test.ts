@@ -48,7 +48,7 @@ function sri(bytes: Buffer | string): string {
 }
 
 describe('buildRscPlugin', () => {
-  it('minifies production browser and SSR modules, lazy chunks and imported CSS with matching environment branches', async () => {
+  it('minifies production modules and emits safe lazy chunk paths with matching environment branches', async () => {
     const cwd = await mkdtemp(path.join(tmpdir(), 'hile-rsc-production-source-'));
     const outdir = await mkdtemp(path.join(tmpdir(), 'hile-rsc-production-build-'));
     tempDirs.push(cwd, outdir);
@@ -68,10 +68,10 @@ describe('buildRscPlugin', () => {
         return unminifiedClientLabel;
       }
       export async function loadLazy() {
-        return (await import('./lazy')).lazyMessage;
+        return (await import('./lazy source with spaces')).lazyMessage;
       }
     `);
-    await writeFile(path.join(cwd, 'src/lazy.ts'), `
+    await writeFile(path.join(cwd, 'src/lazy source with spaces.ts'), `
       export const lazyMessage = process.env.NODE_ENV === 'production'
         ? 'production-lazy-marker'
         : 'development-only-lazy-marker';

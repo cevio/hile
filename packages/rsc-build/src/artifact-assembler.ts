@@ -102,7 +102,7 @@ export function createRscClientBuildOptions(
     target: 'es2022',
     jsx: 'automatic',
     entryNames: '[name]-[hash]',
-    chunkNames: 'chunks/[name]-[hash]',
+    chunkNames: 'chunks/chunk-[hash]',
     assetNames: 'assets/[name]-[hash]',
     external: RSC_BUILD_EXTERNALS.filter((specifier) =>
       !specifier.startsWith('react') && !specifier.startsWith('@hile/rsc')),
