@@ -16,6 +16,7 @@ import { FRAMEWORK_CONTROL_INVOCATION, normalizeMicroProtocol } from './protocol
 import { Server, type MicroServerProps } from './server';
 import type {
   RegistryAddress,
+  RegistrySnapshot,
   RegistryTopicSnapshot,
   RegistryTopicSnapshotsResult,
   RegistryTopicSummary,
@@ -1211,6 +1212,21 @@ export class Application extends Server {
     if (!this.pendingUnpublishes.has(topic)) return;
     await this.syncUnpublishedTopic(topic, { propagateError: true });
     if (!this.publishedTopics.has(topic)) this.pendingUnpublishes.delete(topic);
+  }
+
+  /** Reads current topology and config indexes without payloads or pub/sub side effects. */
+  public async getRegistrySnapshot(options?: { signal?: AbortSignal }): Promise<RegistrySnapshot> {
+    const registry = this.registry;
+    if (!registry) {
+      this.ensureRegistryReconnectScheduled();
+      throw new Error('Registry is not connected');
+    }
+    const result = await registry.requestControl<RegistrySnapshot>(
+      '/-/registry/snapshot',
+      {},
+      { ...this.registryRequestOptions(), signal: options?.signal },
+    );
+    return structuredClone(result);
   }
 
   /** Reads Registry topic metadata without creating a pub/sub subscription. */

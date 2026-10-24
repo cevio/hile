@@ -57,6 +57,7 @@ const FRAMEWORK_CONTROL_ROUTES = new Set([
   '/-/find',
   '/-/namespace/peers',
   '/-/namespaces',
+  '/-/registry/snapshot',
   '/-/registry/status',
   '/-/subscribe',
   '/-/topic/get',
